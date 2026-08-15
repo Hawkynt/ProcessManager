@@ -25,7 +25,12 @@ namespace Hawkynt.ProcessManager.Platform.Windows;
 [SupportedOSPlatform("windows")]
 public sealed class WindowsProbe : ISystemProbe {
 
-  private byte[] _buffer = new byte[512 * 1024];
+  // Pinned, and that is load-bearing twice over. The kernel writes absolute pointers into this
+  // buffer (every UNICODE_STRING's Buffer field points back into it), so an array the GC is free to
+  // move would leave those pointers dangling between the call and the parse. And a stable base
+  // address is what lets the parse express them as offsets, which is what makes a captured buffer
+  // replayable at all (PRD §9.4).
+  private byte[] _buffer = GC.AllocateUninitializedArray<byte>(512 * 1024, pinned: true);
   private readonly Dictionary<ProcessKey, string?> _commandLines = [];
   private readonly List<int> _seen = [];
 
@@ -40,7 +45,7 @@ public sealed class WindowsProbe : ISystemProbe {
     if (!this.QueryProcesses(out var length))
       return;
 
-    ParseProcesses(this._buffer.AsSpan(0, length), snapshot);
+    ParseProcesses(this._buffer.AsSpan(0, length), this.BufferAddress, snapshot);
     ReadMemory(ref snapshot.System);
   }
 
@@ -71,18 +76,36 @@ public sealed class WindowsProbe : ISystemProbe {
         return false;
       }
 
-      this._buffer = new byte[Math.Max(needed + 64 * 1024, this._buffer.Length * 2)];
+      this._buffer = GC.AllocateUninitializedArray<byte>(Math.Max(needed + 64 * 1024, this._buffer.Length * 2), pinned: true);
     }
 
     length = 0;
     return false;
   }
 
+  private nint BufferAddress {
+    get {
+      unsafe {
+        fixed (byte* pointer = this._buffer)
+          return (nint)pointer;
+      }
+    }
+  }
+
   /// <summary>
-  /// Walks the process chain into <paramref name="snapshot"/>. Public to the test assembly so a
-  /// captured buffer can be replayed on any OS (PRD §9.4).
+  /// Walks the process chain into <paramref name="snapshot"/>.
   /// </summary>
-  internal static void ParseProcesses(ReadOnlySpan<byte> buffer, SystemSnapshot snapshot) {
+  /// <param name="buffer">The bytes the query produced.</param>
+  /// <param name="bufferBaseAddress">
+  /// The address <paramref name="buffer"/> lived at when the kernel filled it. Every image name is a
+  /// <c>UNICODE_STRING</c> whose <c>Buffer</c> is an <em>absolute</em> pointer back into this same
+  /// allocation, so reading one means subtracting this base to get an offset. Passing the address in
+  /// rather than dereferencing the pointer is what makes a captured buffer replayable on a machine
+  /// that was not the one it came from — and it bounds-checks the read, which dereferencing did not
+  /// (PRD §9.4).
+  /// </param>
+  /// <param name="snapshot">Filled with what was read.</param>
+  internal static void ParseProcesses(ReadOnlySpan<byte> buffer, nint bufferBaseAddress, SystemSnapshot snapshot) {
     var count = CountProcesses(buffer);
     var records = snapshot.PrepareProcesses(count);
     var written = 0;
@@ -99,7 +122,7 @@ public sealed class WindowsProbe : ISystemProbe {
       // what the identity pair needs (PRD §3.2).
       record.Key = new(pid, (ulong)entry.CreateTime);
       record.ParentPid = (int)entry.InheritedFromUniqueProcessId;
-      record.Name = ReadImageName(buffer, entry.ImageName, pid);
+      record.Name = ReadImageName(buffer, bufferBaseAddress, entry.ImageName, pid);
       record.SessionId = (int)entry.SessionId;
       record.ThreadCount = (int)entry.NumberOfThreads;
       record.Priority = entry.BasePriority;
@@ -153,17 +176,28 @@ public sealed class WindowsProbe : ISystemProbe {
     return count;
   }
 
-  private static string ReadImageName(ReadOnlySpan<byte> buffer, NtStructures.UnicodeString name, int pid) {
+  private static string ReadImageName(
+    ReadOnlySpan<byte> buffer,
+    nint bufferBaseAddress,
+    NtStructures.UnicodeString name,
+    int pid
+  ) {
     // Pid 0 has no image name at all; pid 4 is the kernel. Both are real rows and both would
     // otherwise be blank.
     if (name.Buffer == 0 || name.Length == 0)
       return pid switch { 0 => "Idle", 4 => "System", _ => $"({pid})" };
 
-    unsafe {
-      // The buffer pointer addresses memory inside the same allocation the query filled, so the
-      // characters are read straight out of it rather than marshalled.
-      return new string((char*)name.Buffer, 0, name.Length / sizeof(char));
-    }
+    // Length is in bytes, not characters — the single most common way to read a UNICODE_STRING
+    // wrongly, and it reads double the name plus whatever follows it when you get it backwards.
+    var offset = (long)name.Buffer - bufferBaseAddress;
+    if (offset < 0 || offset + name.Length > buffer.Length)
+      return $"({pid})";
+
+    var characters = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, char>(
+      buffer.Slice((int)offset, name.Length)
+    );
+
+    return new string(characters);
   }
 
   private static void ReadProcessorTimes(SystemSnapshot snapshot) {

@@ -161,9 +161,12 @@ These are consequences of the design, not a to-do list; the to-do list is the PR
 
 - **macOS does not work.** The probe is a stub whose every member throws. Nothing samples, nothing
   renders.
-- **The Windows probe is unverified.** It is written — one `NtQuerySystemInformation` call for the
-  whole process and thread list, per-core times, memory, I/O, and the actions — and it has never
-  executed on Windows. Its structure-replay test (PRD §9.4) is the next thing to write.
+- **The Windows probe is exercised but not verified.** It is written — one
+  `NtQuerySystemInformation` call for the whole process and thread list, per-core times, memory, I/O,
+  and the actions — and its structure walk is replayed by tests on every CI leg. Those tests
+  synthesise the buffer from the same struct definition the parser reads, so they cannot catch that
+  definition being wrong, and **the probe has still never executed on Windows**. A buffer captured
+  from a real machine is the remaining half of PRD §9.4.
 - **Sampling costs more than it should.** 44 µs of CPU per process on Linux, where the budget says
   25 — three files are read per process and syscalls are the whole cost. Measured, tracked, and the
   trade is written down in PRD §4 rather than left as a number nobody intends to meet.

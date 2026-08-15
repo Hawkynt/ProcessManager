@@ -11,4 +11,10 @@
     <ProjectReference Include="..\ProcessManager.Core\ProcessManager.Core.csproj" />
   </ItemGroup>
 
+  <!-- The structure walk is tested by replaying a buffer through it (PRD §9.4); making it public API
+       just to be testable would put an implementation detail of one platform in the product surface. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Hawkynt.ProcessManager.Tests" />
+  </ItemGroup>
+
 </Project>

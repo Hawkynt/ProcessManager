@@ -482,10 +482,22 @@ without the OS under it.
       the zero interval, the first sample, a parent that is not in the snapshot, a parent cycle, and
       a process that is its own parent. Still missing: a process vanishing mid-sample, and the
       96-core file.
-- [ ] **9.4 Windows structure replay.** The `SYSTEM_PROCESS_INFORMATION` buffer captured to a blob
-      and replayed through the parser, so the Windows parsing path is testable on the Linux CI leg
-      too. Not done: the parser is already split out for it (`ParseProcesses` takes a span), but no
-      buffer has been captured, so **the Windows probe is unverified** — it has never executed.
+- [~] **9.4 Windows structure replay.** The `SYSTEM_PROCESS_INFORMATION` chain replayed through the
+      parser on every CI leg. Half done, and the halves are worth separating:
+      - *Done.* The buffer is **synthesised** by the tests and walked: chain terminator, FILETIME to
+        nanoseconds, the byte-versus-character length of a `UNICODE_STRING`, the identity pair, the
+        two nameless system processes, and an image-name pointer outside the buffer.
+      - *Not done.* A buffer captured from a real Windows machine. A synthesised one is written from
+        the same struct definition the parser reads, so it cannot catch that definition being wrong —
+        both sides would be wrong together. **The Windows probe is therefore exercised but not
+        verified**, and it has still never executed on Windows.
+      Doing this exposed a defect that would have made the capture unreplayable at all: each image
+      name is a `UNICODE_STRING` whose `Buffer` is an *absolute* pointer into the query's own
+      allocation, and the first implementation dereferenced it. A blob captured on one machine and
+      replayed on another would have read whatever happened to live at that address. The parse now
+      takes the buffer's base address and works in offsets, with a bounds check — and the query
+      buffer is allocated pinned, because a moving array would have dangled those pointers between
+      the call and the parse on a live machine too.
 - [x] **9.5 Trim/AOT gate.** A NativeAOT publish per RID with `TreatWarningsAsErrors=true`; any
       IL2xxx/IL3xxx fails the build.
 - [~] **9.6 Front-end smoke.** The TUI is rendered against the fixture into a captured buffer and
