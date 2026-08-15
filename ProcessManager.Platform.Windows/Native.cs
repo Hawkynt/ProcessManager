@@ -21,6 +21,18 @@ internal static partial class Native {
     out int returnLength
   );
 
+  /// <summary>
+  /// The same call as above against caller-owned unmanaged memory, for the queries whose result is a
+  /// chain of pointers into itself and therefore must not be copied into a managed array.
+  /// </summary>
+  [LibraryImport("ntdll.dll", EntryPoint = "NtQuerySystemInformation")]
+  internal static partial uint NtQuerySystemInformationRaw(
+    int systemInformationClass,
+    nint systemInformation,
+    uint systemInformationLength,
+    out uint returnLength
+  );
+
   [LibraryImport("psapi.dll", EntryPoint = "GetPerformanceInfo", SetLastError = true)]
   [return: MarshalAs(UnmanagedType.Bool)]
   internal static partial bool GetPerformanceInfo(ref NtStructures.PerformanceInformation info, uint size);
@@ -95,6 +107,48 @@ internal static partial class Native {
     uint length,
     out uint returnLength
   );
+
+  [LibraryImport("ntdll.dll")]
+  internal static partial uint NtQueryObject(nint handle, int informationClass, nint information, uint length, out uint returnLength);
+
+  [LibraryImport("kernel32.dll", SetLastError = true)]
+  [return: MarshalAs(UnmanagedType.Bool)]
+  internal static partial bool DuplicateHandle(
+    nint sourceProcess,
+    nint sourceHandle,
+    nint targetProcess,
+    out nint targetHandle,
+    uint desiredAccess,
+    [MarshalAs(UnmanagedType.Bool)] bool inheritHandle,
+    uint options
+  );
+
+  [LibraryImport("kernel32.dll")]
+  internal static partial nint GetCurrentProcess();
+
+  [LibraryImport("kernel32.dll", EntryPoint = "CreateToolhelp32Snapshot", SetLastError = true)]
+  internal static partial nint CreateToolhelp32Snapshot(uint flags, int processId);
+
+  [LibraryImport("kernel32.dll", EntryPoint = "Module32FirstW", SetLastError = true)]
+  [return: MarshalAs(UnmanagedType.Bool)]
+  internal static partial bool Module32FirstW(nint snapshot, ref NtStructures.ModuleEntry32 entry);
+
+  [LibraryImport("kernel32.dll", EntryPoint = "Module32NextW", SetLastError = true)]
+  [return: MarshalAs(UnmanagedType.Bool)]
+  internal static partial bool Module32NextW(nint snapshot, ref NtStructures.ModuleEntry32 entry);
+
+  public const int ObjectNameInformation = 1;
+  public const int ObjectTypeInformation = 2;
+
+  /// <summary><c>SystemExtendedHandleInformation</c> — every handle on the machine, with its owner.</summary>
+  public const int SystemExtendedHandleInformationClass = 64;
+
+  public const uint PROCESS_DUP_HANDLE = 0x0040;
+  public const uint DUPLICATE_SAME_ACCESS = 0x0002;
+
+  public const uint TH32CS_SNAPMODULE = 0x00000008;
+  public const uint TH32CS_SNAPMODULE32 = 0x00000010;
+  public static readonly nint INVALID_HANDLE_VALUE = -1;
 
   public const uint TOKEN_QUERY = 0x0008;
   public const int TokenUser = 1;

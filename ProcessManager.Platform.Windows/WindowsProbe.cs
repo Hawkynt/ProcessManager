@@ -36,11 +36,12 @@ public sealed class WindowsProbe : ISystemProbe {
   private readonly Dictionary<ProcessKey, string?> _commandLines = [];
   private readonly WindowsIdentityResolver _identities = new();
   private readonly HashSet<int> _livePids = [];
+  private readonly HandleNameResolver _handleNames = new();
   private int _bufferLength;
 
   public string Description => "windows:ntquerysysteminformation";
 
-  public void Dispose() { }
+  public void Dispose() => this._handleNames.Dispose();
 
   public void Sample(SystemSnapshot snapshot) {
     ArgumentNullException.ThrowIfNull(snapshot);
@@ -252,9 +253,134 @@ public sealed class WindowsProbe : ISystemProbe {
       ? []
       : SystemProcessInformationReader.ReadThreads(this._buffer.AsSpan(0, this._bufferLength), key);
 
-  public IReadOnlyList<ModuleRecord> GetModules(ProcessKey key) => [];
+  /// <summary>Loaded modules, through a Toolhelp snapshot.</summary>
+  /// <remarks>
+  /// Toolhelp rather than a PEB walk: it needs no read access to the target's address space, works
+  /// for a 32-bit process seen from a 64-bit one when both snapshot flags are passed, and is a
+  /// documented API rather than a structure that moves between Windows releases.
+  /// </remarks>
+  public IReadOnlyList<ModuleRecord> GetModules(ProcessKey key) {
+    var snapshot = Native.CreateToolhelp32Snapshot(
+      Native.TH32CS_SNAPMODULE | Native.TH32CS_SNAPMODULE32,
+      key.Pid
+    );
 
-  public IReadOnlyList<HandleRecord> GetHandles(ProcessKey key) => [];
+    if (snapshot == Native.INVALID_HANDLE_VALUE)
+      return [];
+
+    try {
+      var result = new List<ModuleRecord>();
+      var entry = new NtStructures.ModuleEntry32 {
+        Size = (uint)Marshal.SizeOf<NtStructures.ModuleEntry32>(),
+      };
+
+      if (!Native.Module32FirstW(snapshot, ref entry))
+        return result;
+
+      do {
+        var path = entry.ReadExePath();
+        result.Add(new(
+          path.Length > 0 ? path : entry.ReadModule(),
+          (ulong)entry.ModuleBaseAddress,
+          entry.ModuleBaseSize,
+          // Windows does not report per-module page protection here; the mapping's own protection is
+          // per-region rather than per-module, so claiming one would be inventing it.
+          string.Empty
+        ));
+
+        entry.Size = (uint)Marshal.SizeOf<NtStructures.ModuleEntry32>();
+      } while (Native.Module32NextW(snapshot, ref entry));
+
+      return result;
+    } finally {
+      Native.CloseHandle(snapshot);
+    }
+  }
+
+  /// <summary>
+  /// Every handle the process holds, named where the kernel will name it.
+  /// </summary>
+  /// <remarks>
+  /// The machine's whole handle table arrives in one call and is filtered by owner — there is no
+  /// per-process handle query. Each handle is then duplicated into this process to be asked about,
+  /// because a handle value is only meaningful in the process that owns it. Naming goes through
+  /// <see cref="HandleNameResolver"/>, which is where the hang described in PRD §5.2 is handled.
+  /// </remarks>
+  public IReadOnlyList<HandleRecord> GetHandles(ProcessKey key) {
+    var target = Native.OpenProcess(Native.PROCESS_DUP_HANDLE, false, key.Pid);
+    if (target == 0)
+      return [];
+
+    var buffer = 256 * 1024;
+    try {
+      for (var attempt = 0; attempt < 8; ++attempt) {
+        var memory = Marshal.AllocHGlobal(buffer);
+        try {
+          var status = Native.NtQuerySystemInformationRaw(
+            Native.SystemExtendedHandleInformationClass,
+            memory,
+            (uint)buffer,
+            out var needed
+          );
+
+          if (status == NtStructures.STATUS_INFO_LENGTH_MISMATCH) {
+            buffer = (int)Math.Max(needed + 64 * 1024, (uint)buffer * 2);
+            continue;
+          }
+
+          return status != NtStructures.STATUS_SUCCESS
+            ? []
+            : this.ReadHandles(memory, target, key.Pid);
+        } finally {
+          Marshal.FreeHGlobal(memory);
+        }
+      }
+
+      return [];
+    } finally {
+      Native.CloseHandle(target);
+    }
+  }
+
+  private List<HandleRecord> ReadHandles(nint memory, nint target, int pid) {
+    var result = new List<HandleRecord>();
+    var count = (long)(nuint)Marshal.ReadIntPtr(memory);
+    var entrySize = Marshal.SizeOf<NtStructures.SystemHandleTableEntryInfoEx>();
+    var first = memory + Marshal.SizeOf<NtStructures.SystemHandleInformationEx>();
+    var self = Native.GetCurrentProcess();
+
+    for (long i = 0; i < count; ++i) {
+      var entry = Marshal.PtrToStructure<NtStructures.SystemHandleTableEntryInfoEx>(first + (nint)(i * entrySize));
+      if ((int)entry.UniqueProcessId != pid)
+        continue;
+
+      if (!Native.DuplicateHandle(target, entry.HandleValue, self, out var copy, 0, false, Native.DUPLICATE_SAME_ACCESS))
+        continue;
+
+      try {
+        var type = HandleNameResolver.QueryType(copy);
+        var name = this._handleNames.TryGetName(copy);
+        result.Add(new((ulong)entry.HandleValue, ClassifyType(type), name, null));
+      } finally {
+        Native.CloseHandle(copy);
+      }
+    }
+
+    return result;
+  }
+
+  private static HandleKind ClassifyType(string? type) => type switch {
+    "File" => HandleKind.File,
+    "Directory" => HandleKind.Directory,
+    "Key" => HandleKind.Key,
+    "Event" => HandleKind.Event,
+    "Mutant" => HandleKind.Mutex,
+    "Section" => HandleKind.Section,
+    "Thread" => HandleKind.Thread,
+    "Process" => HandleKind.Process,
+    "Device" => HandleKind.Device,
+    _ => HandleKind.Unknown,
+  };
 
   public IReadOnlyList<ConnectionRecord> GetConnections(ProcessKey key) => [];
 

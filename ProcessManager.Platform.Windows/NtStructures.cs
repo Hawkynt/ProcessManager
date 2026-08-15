@@ -121,6 +121,71 @@ internal static class NtStructures {
     public uint ThreadCount;
   }
 
+  /// <summary>
+  /// One entry of <c>SystemExtendedHandleInformation</c>: a handle, and which process holds it.
+  /// </summary>
+  [StructLayout(LayoutKind.Sequential)]
+  public struct SystemHandleTableEntryInfoEx {
+    public nuint Object;
+    public nuint UniqueProcessId;
+    public nint HandleValue;
+    public uint GrantedAccess;
+    public ushort CreatorBackTraceIndex;
+    public ushort ObjectTypeIndex;
+    public uint HandleAttributes;
+    public uint Reserved;
+  }
+
+  /// <summary>The header the entries follow.</summary>
+  [StructLayout(LayoutKind.Sequential)]
+  public struct SystemHandleInformationEx {
+    public nuint NumberOfHandles;
+    public nuint Reserved;
+  }
+
+  /// <summary>
+  /// <c>MODULEENTRY32W</c>. The two fixed-length paths are why it is this large.
+  /// </summary>
+  /// <remarks>
+  /// The name buffers are <c>fixed char</c> rather than <c>[MarshalAs(ByValTStr)]</c> strings,
+  /// because the P/Invoke source generator only marshals blittable structs and a string field is not
+  /// one. Reading them by hand is the price of not falling back to the old marshaller, which would
+  /// have cost a copy of both 500-odd character buffers on every module of every call.
+  /// </remarks>
+  [StructLayout(LayoutKind.Sequential)]
+  public unsafe struct ModuleEntry32 {
+    public uint Size;
+    public uint ModuleId;
+    public uint ProcessId;
+    public uint GlblcntUsage;
+    public uint ProccntUsage;
+    public nint ModuleBaseAddress;
+    public uint ModuleBaseSize;
+    public nint ModuleHandle;
+    public fixed char Module[256];
+    public fixed char ExePath[260];
+
+    /// <summary>The module's own file name, up to its NUL.</summary>
+    public string ReadModule() {
+      fixed (char* pointer = this.Module)
+        return ReadFixed(pointer, 256);
+    }
+
+    /// <summary>The full path the module was loaded from, up to its NUL.</summary>
+    public string ReadExePath() {
+      fixed (char* pointer = this.ExePath)
+        return ReadFixed(pointer, 260);
+    }
+
+    private static string ReadFixed(char* pointer, int capacity) {
+      var length = 0;
+      while (length < capacity && pointer[length] != '\0')
+        ++length;
+
+      return new(pointer, 0, length);
+    }
+  }
+
   public const int SystemProcessInformationClass = 5;
   public const int SystemProcessorPerformanceInformationClass = 8;
 
