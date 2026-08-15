@@ -34,7 +34,9 @@ public sealed class WindowsProbe : ISystemProbe {
   // replayable at all (PRD §9.4).
   private byte[] _buffer = GC.AllocateUninitializedArray<byte>(512 * 1024, pinned: true);
   private readonly Dictionary<ProcessKey, string?> _commandLines = [];
-  private readonly List<int> _seen = [];
+  private readonly WindowsIdentityResolver _identities = new();
+  private readonly HashSet<int> _livePids = [];
+  private int _bufferLength;
 
   public string Description => "windows:ntquerysysteminformation";
 
@@ -47,8 +49,10 @@ public sealed class WindowsProbe : ISystemProbe {
     if (!this.QueryProcesses(out var length))
       return;
 
+    this._bufferLength = length;
     SystemProcessInformationReader.Parse(this._buffer.AsSpan(0, length), this.BufferAddress, snapshot);
     ReadMemory(ref snapshot.System);
+    this.ResolveOwnersAndCommandLines(snapshot);
   }
 
   /// <summary>
@@ -159,13 +163,94 @@ public sealed class WindowsProbe : ISystemProbe {
     system.UptimeSeconds = Environment.TickCount64 / 1000d;
   }
 
+  /// <summary>
+  /// Fills in the two things the bulk query does not carry: who owns each process, and what it was
+  /// started with. Both are constant for a process's lifetime, so both are cached and only new
+  /// processes cost anything (PRD §5.2).
+  /// </summary>
+  private void ResolveOwnersAndCommandLines(SystemSnapshot snapshot) {
+    this._livePids.Clear();
+    var processes = snapshot.ProcessBuffer;
+    for (var i = 0; i < processes.Length; ++i) {
+      ref var record = ref processes[i];
+      this._livePids.Add(record.Pid);
+
+      record.UserName = this._identities.Resolve(record.Pid, record.Key.StartTicks, out var userId);
+      record.UserId = userId;
+
+      if (this._commandLines.TryGetValue(record.Key, out var commandLine)) {
+        record.CommandLine = commandLine;
+        continue;
+      }
+
+      commandLine = ReadCommandLine(record.Pid);
+      this._commandLines[record.Key] = commandLine;
+      record.CommandLine = commandLine;
+    }
+
+    this._identities.Prune(this._livePids);
+    if (this._commandLines.Count > 4096)
+      foreach (var key in this._commandLines.Keys.Where(key => !this._livePids.Contains(key.Pid)).ToList())
+        this._commandLines.Remove(key);
+  }
+
+  /// <summary>
+  /// The command line, through <c>ProcessCommandLineInformation</c>.
+  /// </summary>
+  /// <remarks>
+  /// The alternative is reading the target's PEB across its address space, which needs far more
+  /// access and breaks on a cross-bitness target. This needs only
+  /// <c>PROCESS_QUERY_LIMITED_INFORMATION</c> and has existed since Windows 8.1. A process that
+  /// refuses is reported as having no command line, which is the truth as far as this user can see
+  /// it (PRD §3.4).
+  /// </remarks>
+  private static string? ReadCommandLine(int pid) {
+    var process = Native.OpenProcess(Native.PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+    if (process == 0)
+      return null;
+
+    try {
+      Native.NtQueryInformationProcess(process, Native.ProcessCommandLineInformation, 0, 0, out var needed);
+      if (needed is 0 or > 64 * 1024)
+        return null;
+
+      var buffer = Marshal.AllocHGlobal((int)needed);
+      try {
+        var status = Native.NtQueryInformationProcess(process, Native.ProcessCommandLineInformation, buffer, needed, out _);
+        if (status != NtStructures.STATUS_SUCCESS)
+          return null;
+
+        // The result is a UNICODE_STRING whose Buffer points just past itself, inside this same
+        // allocation — so the string is read from the buffer we own rather than from the target.
+        var length = (ushort)Marshal.ReadInt16(buffer);
+        var pointer = Marshal.ReadIntPtr(buffer, nint.Size);
+        return length == 0 || pointer == 0 ? null : Marshal.PtrToStringUni(pointer, length / sizeof(char));
+      } finally {
+        Marshal.FreeHGlobal(buffer);
+      }
+    } finally {
+      Native.CloseHandle(process);
+    }
+  }
+
   public Counter GetHandleCount(ProcessKey key) {
     // Already in the bulk query on this platform, so there is nothing to do on demand. Returning
     // NotSampledYet rather than a second query keeps the one source of truth.
     return Counter.NotSampledYet;
   }
 
-  public IReadOnlyList<ThreadRecord> GetThreads(ProcessKey key) => [];
+  /// <summary>
+  /// Threads, read back out of the buffer the last sample already produced.
+  /// </summary>
+  /// <remarks>
+  /// Costs nothing: <c>SYSTEM_PROCESS_INFORMATION</c> is followed by one
+  /// <c>SYSTEM_THREAD_INFORMATION</c> per thread, so the whole machine's threads arrived with the
+  /// process list. Linux has to open a directory per process for the same answer (PRD §5.1).
+  /// </remarks>
+  public IReadOnlyList<ThreadRecord> GetThreads(ProcessKey key)
+    => this._bufferLength == 0
+      ? []
+      : SystemProcessInformationReader.ReadThreads(this._buffer.AsSpan(0, this._bufferLength), key);
 
   public IReadOnlyList<ModuleRecord> GetModules(ProcessKey key) => [];
 

@@ -3,7 +3,7 @@ using Hawkynt.ProcessManager.Query;
 namespace Hawkynt.ProcessManager.App;
 
 /// <summary>Which face of the program the arguments asked for.</summary>
-internal enum RunMode : byte { Desktop, Terminal, List, Find, Kill, Help, Version }
+internal enum RunMode : byte { Desktop, Terminal, List, Find, Kill, SelfTest, Help, Version }
 
 /// <summary>
 /// The whole command line, parsed once into a value.
@@ -128,6 +128,10 @@ internal sealed record CommandLineOptions {
           explicitMode = true;
           break;
         }
+        case "--self-test":
+          options = options with { Mode = RunMode.SelfTest };
+          explicitMode = true;
+          break;
         case "--help" or "-h" or "-?":
           return options with { Mode = RunMode.Help };
         case "--version" or "-V":
@@ -187,6 +191,7 @@ internal sealed record CommandLineOptions {
       --interval <s>     seconds between samples (default 1)
       --json             machine-readable output for --list and --find
       --probe-root <d>   read a recorded /proc tree instead of the live one
+      --self-test        check the probe against the runtime's own view of this process
       --help, --version
 
     Exit codes: 0 success · 1 error · 2 nothing matched

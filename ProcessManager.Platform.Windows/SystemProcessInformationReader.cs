@@ -124,4 +124,64 @@ internal static class SystemProcessInformationReader {
     return new string(characters);
   }
 
+
+  /// <summary>
+  /// Walks the chain again for one process and yields its threads.
+  /// </summary>
+  /// <remarks>
+  /// Not part of <see cref="Parse"/>: the process list is refreshed every second and the thread list
+  /// is looked at when somebody opens a detail view, so materialising every thread of every process
+  /// on every sample would be work nobody asked for (PRD §3.5). The bytes are already here, which is
+  /// why it costs nothing to ask later.
+  /// </remarks>
+  public static IReadOnlyList<ThreadRecord> ReadThreads(ReadOnlySpan<byte> buffer, ProcessKey key) {
+    var entrySize = System.Runtime.CompilerServices.Unsafe.SizeOf<NtStructures.SystemProcessInformation>();
+    var threadSize = System.Runtime.CompilerServices.Unsafe.SizeOf<NtStructures.SystemThreadInformation>();
+
+    var offset = 0;
+    while (offset >= 0 && offset + entrySize <= buffer.Length) {
+      ref readonly var entry = ref MemoryMarshal.AsRef<NtStructures.SystemProcessInformation>(buffer[offset..]);
+      if ((int)entry.UniqueProcessId == key.Pid && (ulong)entry.CreateTime == key.StartTicks) {
+        var count = (int)entry.NumberOfThreads;
+        var threads = new List<ThreadRecord>(count);
+        var threadOffset = offset + entrySize;
+        for (var i = 0; i < count && threadOffset + threadSize <= buffer.Length; ++i, threadOffset += threadSize) {
+          ref readonly var thread = ref MemoryMarshal.AsRef<NtStructures.SystemThreadInformation>(buffer[threadOffset..]);
+          threads.Add(new(
+            (int)thread.ClientId.UniqueThread,
+            MapThreadState(thread.ThreadState),
+            Counter.Of((ulong)Math.Max(0, thread.KernelTime + thread.UserTime) * 100),
+            thread.CreateTime > 0 ? DateTime.FromFileTimeUtc(thread.CreateTime).Ticks : 0,
+            (ulong)thread.StartAddress,
+            null,
+            thread.Priority
+          ));
+        }
+
+        return threads;
+      }
+
+      if (entry.NextEntryOffset == 0)
+        break;
+
+      offset += (int)entry.NextEntryOffset;
+    }
+
+    return [];
+  }
+
+  /// <summary>
+  /// <c>KTHREAD_STATE</c> mapped onto the model's states. Windows distinguishes rather more of them
+  /// than a process list can usefully show, so several collapse onto one.
+  /// </summary>
+  private static ProcessState MapThreadState(uint state) => state switch {
+    0 => ProcessState.Idle,          // Initialized
+    1 => ProcessState.Sleeping,      // Ready
+    2 => ProcessState.Running,       // Running
+    3 => ProcessState.Sleeping,      // Standby
+    4 => ProcessState.Dead,          // Terminated
+    5 => ProcessState.Sleeping,      // Waiting
+    _ => ProcessState.Unknown,
+  };
+
 }

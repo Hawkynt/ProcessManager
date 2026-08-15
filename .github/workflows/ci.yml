@@ -72,6 +72,62 @@ jobs:
           path: ${{ runner.temp }}/tui.txt
           if-no-files-found: warn
 
+  self-test:
+    name: self-test ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build
+        run: dotnet build ProcessManager.slnx --configuration Release
+      # The fixture tests prove the parsers turn recorded bytes into the right numbers. This proves
+      # the numbers describe the machine: it asks the probe about the process it is running in and
+      # compares every field against System.Diagnostics.Process and Environment. A field read at the
+      # wrong offset, a unit converted the wrong way, or a platform that quietly does not fill a
+      # counter all pass a parser test and fail here.
+      #
+      # On the Windows leg this is the only thing in the whole pipeline that executes the Windows
+      # probe against a real kernel (PRD §9.4).
+      - name: Ask the probe about itself and check the runtime agrees
+        run: dotnet run --project ProcessManager.App --configuration Release --no-build -- --self-test
+
+  wine:
+    name: self-test (win-x64 under wine)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      # Wine's ntdll implements NtQuerySystemInformation with the real NT structure layout, so this
+      # exercises the Windows probe on a Linux runner. It is not a substitute for the Windows leg
+      # above — Wine does not fill every counter, and the run says which — but it is a fast check
+      # that survives a Windows runner queue, and it caught the missing owner resolution.
+      - name: Install wine
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends wine64 || sudo apt-get install -y --no-install-recommends wine
+      - name: Publish win-x64
+        run: >
+          dotnet publish ProcessManager.App/ProcessManager.App.csproj --configuration Release
+          --runtime win-x64 --self-contained -p:PublishAot=false -o wine-out
+      - name: Self-test under wine
+        env:
+          WINEPREFIX: ${{ runner.temp }}/wineprefix
+          WINEDEBUG: -all
+        run: |
+          mkdir -p "$WINEPREFIX"
+          # First run initialises the prefix and is noisy; the exit code of the second is the answer.
+          wine wine-out/procman.exe --version >/dev/null 2>&1 || true
+          wine wine-out/procman.exe --self-test
+
   desktop:
     name: desktop smoke (linux/gtk)
     runs-on: ubuntu-latest

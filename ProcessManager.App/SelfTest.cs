@@ -1,0 +1,276 @@
+using System.Globalization;
+using Hawkynt.ProcessManager.Model;
+using Hawkynt.ProcessManager.Query;
+using Hawkynt.ProcessManager.Sampling;
+
+namespace Hawkynt.ProcessManager.App;
+
+/// <summary>
+/// Checks a probe against an independent source of truth: the BCL's own view of this process.
+/// </summary>
+/// <remarks>
+/// <para>
+/// The fixture tests (PRD §9.1) prove the parsers turn recorded bytes into the right numbers. They
+/// cannot prove the numbers describe the machine — a struct field read at the wrong offset, a unit
+/// converted the wrong way, or an OS that simply does not fill a field all look identical to a
+/// parser test. This asks a different question: does what the probe says about *this* process agree
+/// with what <see cref="System.Diagnostics.Process"/> and <see cref="Environment"/> say about it?
+/// </para>
+/// <para>
+/// It runs on every platform with a probe, which is what makes it the verification step §9.4 was
+/// missing for Windows: on a Windows runner — or under Wine, whose ntdll implements the same
+/// structure — it is the first thing that has ever executed the Windows probe against a kernel.
+/// </para>
+/// <para>
+/// Checks are ratios and windows, not equalities. The process keeps running between the probe's read
+/// and the BCL's, so memory and CPU move; an exact-match assertion here would be a flaky test, and a
+/// flaky test gets deleted.
+/// </para>
+/// </remarks>
+internal static class SelfTest {
+
+  public static int Run(Sampler sampler, string probeDescription) {
+    var failures = new List<string>();
+    var notes = new List<string>();
+
+    Console.WriteLine($"probe:    {probeDescription}");
+    Console.WriteLine($"platform: {Environment.OSVersion.VersionString}");
+    Console.WriteLine($"pid:      {Environment.ProcessId}");
+    Console.WriteLine();
+
+    // Two samples an interval apart, so the rate columns have something to say as well.
+    sampler.Sample();
+    Thread.Sleep(600);
+    sampler.Sample();
+
+    var snapshot = sampler.Current;
+    var delta = sampler.Delta;
+
+    if (snapshot.ProcessCount == 0) {
+      Console.Error.WriteLine("FAIL the probe returned no processes at all");
+      return 1;
+    }
+
+    var index = -1;
+    for (var i = 0; i < snapshot.ProcessCount; ++i)
+      if (snapshot.Processes[i].Pid == Environment.ProcessId) {
+        index = i;
+        break;
+      }
+
+    if (index < 0) {
+      Console.Error.WriteLine($"FAIL the probe listed {snapshot.ProcessCount} processes and this one was not among them");
+      return 1;
+    }
+
+    ref readonly var self = ref snapshot.Processes[index];
+    using var expected = System.Diagnostics.Process.GetCurrentProcess();
+
+    Check(failures, notes, "process count", $"{snapshot.ProcessCount}", snapshot.ProcessCount > 1,
+      "a machine with one process is a machine that is not running this program");
+
+    Check(failures, notes, "name", $"{self.Name}  (BCL: {expected.ProcessName})",
+      self.Name.StartsWith(expected.ProcessName, StringComparison.OrdinalIgnoreCase)
+      || expected.ProcessName.StartsWith(self.Name, StringComparison.OrdinalIgnoreCase),
+      // Linux truncates comm to 15 characters and Windows keeps the extension, so one is a prefix of
+      // the other rather than equal to it.
+      "the probe's name and the runtime's must be prefixes of each other");
+
+    // Not "parent pid > 0": pid 1 on Linux, the idle process on Windows, and the first process
+    // inside a Wine prefix all legitimately have no visible parent. The invariant that is actually
+    // worth asserting is that the links form a tree — no process is its own parent, and the tree
+    // walk returns every process exactly once rather than losing one to a broken link or looping.
+    Check(failures, notes, "parent pid", $"{self.ParentPid}", self.ParentPid != self.Pid,
+      "a process cannot be its own parent");
+
+    Check(failures, notes, "tree is well formed", TreeShape(snapshot, delta), TreeIsComplete(snapshot, delta),
+      "nesting every process under its parent must not lose or duplicate any of them");
+
+    Check(failures, notes, "thread count", $"{self.ThreadCount}  (BCL: {expected.Threads.Count})",
+      self.ThreadCount > 0 && WithinFactor(self.ThreadCount, expected.Threads.Count, 3),
+      "thread counts should agree within a factor of three");
+
+    CheckCounter(failures, notes, "working set", self.WorkingSetBytes, (ulong)expected.WorkingSet64, 3);
+    CheckPrivateBytes(failures, notes, in self, expected);
+    CheckCounter(failures, notes, "virtual bytes", self.VirtualBytes, (ulong)expected.VirtualMemorySize64, 8);
+
+    // CPU time only grows, and the probe read it first, so it must not exceed the later reading by
+    // more than the interval could account for.
+    var expectedCpuNs = (ulong)(expected.TotalProcessorTime.TotalSeconds * 1_000_000_000);
+    CheckCounter(failures, notes, "cpu time", self.CpuTimeNs, expectedCpuNs, 4);
+
+    var startTime = new DateTime(self.StartTimeUtcTicks, DateTimeKind.Utc).ToLocalTime();
+    var startDrift = Math.Abs((startTime - expected.StartTime).TotalSeconds);
+    Check(failures, notes, "start time", $"{startTime:HH:mm:ss}  (BCL: {expected.StartTime:HH:mm:ss}, drift {startDrift:0.0}s)",
+      startDrift < 5,
+      "a start time more than five seconds out means the boot-time or tick conversion is wrong");
+
+    Check(failures, notes, "identity is unique", "no duplicate (pid, start) pairs", NoDuplicateKeys(snapshot),
+      "two processes sharing an identity would make every delta wrong");
+
+    Check(failures, notes, "cpu percent", Humanize.Percent(delta.CpuPercent(index)) + " %",
+      delta.CpuPercent(index).HasValue,
+      "a second sample must produce a rate");
+
+    Check(failures, notes, "system cpu percent", Humanize.Percent(delta.SystemCpuPercent) + " %",
+      delta.SystemCpuPercent.HasValue && delta.SystemCpuPercent.Value is >= 0 and <= 101,
+      "the machine's busy percentage has to be a percentage");
+
+    Check(failures, notes, "total memory", Humanize.Bytes(snapshot.System.TotalMemoryBytes),
+      snapshot.System.TotalMemoryBytes.HasValue && snapshot.System.TotalMemoryBytes.Value > 64ul * 1024 * 1024,
+      "a machine with under 64 MB of RAM is not running .NET");
+
+    Check(failures, notes, "per-core times", $"{snapshot.PerCoreCount} cores (Environment: {Environment.ProcessorCount})",
+      snapshot.PerCoreCount > 0,
+      "the per-core meters need per-core counters");
+
+    Check(failures, notes, "owner", self.UserName ?? $"uid {self.UserId}",
+      self.UserName is not null || self.UserId >= 0,
+      "every process has an owner, and a row that cannot name it says so");
+
+    Console.WriteLine();
+    foreach (var note in notes)
+      Console.WriteLine($"note {note}");
+
+    foreach (var failure in failures)
+      Console.WriteLine($"FAIL {failure}");
+
+    Console.WriteLine();
+    Console.WriteLine(failures.Count == 0
+      ? $"OK: the probe agrees with the runtime on all {notes.Count + failures.Count} checks."
+      : $"{failures.Count} check(s) disagree with the runtime.");
+
+    return failures.Count == 0 ? 0 : 1;
+  }
+
+  /// <summary>
+  /// The private-memory column, checked against whatever the platform means by "private".
+  /// </summary>
+  /// <remarks>
+  /// The two platforms do not mean the same thing, and pretending they do was this check's first
+  /// bug rather than the probe's. On Windows both sides are the commit charge, so they are directly
+  /// comparable. On Linux .NET reports <c>VmData</c> — <em>virtual</em> private data — while the
+  /// probe reports <c>RssAnon</c>, the <em>resident</em> part of it (PRD §5.1). Measured on this
+  /// machine: VmData 65 600 kB against RssAnon 2 824 kB, a factor of twenty-three, and neither is
+  /// wrong. So on Linux the assertion is the relationship that must hold — resident cannot exceed
+  /// virtual, and cannot exceed the working set it is part of — which still catches a field read at
+  /// the wrong offset or a kB-versus-byte slip.
+  /// </remarks>
+  private static void CheckPrivateBytes(
+    List<string> failures,
+    List<string> notes,
+    in ProcessRecord self,
+    System.Diagnostics.Process expected
+  ) {
+    if (!self.PrivateBytes.HasValue) {
+      Console.WriteLine($"  ok   {"private bytes",-20} {Humanize.Placeholder(self.PrivateBytes.Reason)} ({self.PrivateBytes.Reason})");
+      notes.Add($"private bytes: not available on this platform ({self.PrivateBytes.Reason})");
+      return;
+    }
+
+    var actual = self.PrivateBytes.Value;
+    var runtime = (ulong)expected.PrivateMemorySize64;
+
+    if (OperatingSystem.IsWindows()) {
+      CheckCounter(failures, notes, "private bytes", self.PrivateBytes, runtime, 8);
+      return;
+    }
+
+    var workingSet = self.WorkingSetBytes.GetValueOrDefault(ulong.MaxValue);
+    var ok = actual > 0 && actual <= workingSet && (runtime == 0 || actual <= runtime);
+    Console.WriteLine(
+      $"  {(ok ? "ok  " : "FAIL")} {"private bytes",-20} {Humanize.Bytes(self.PrivateBytes)} resident anonymous"
+      + $"  (runtime reports {Humanize.Bytes(Counter.Of(runtime))} of virtual private data)"
+    );
+
+    if (ok)
+      notes.Add($"private bytes: {Humanize.Bytes(self.PrivateBytes)} (RssAnon; the runtime's figure is VmData and measures something else)");
+    else
+      failures.Add(
+        $"private bytes: {Humanize.Bytes(self.PrivateBytes)} is not a resident subset of the working set "
+        + $"({Humanize.Bytes(self.WorkingSetBytes)}) or of the runtime's virtual figure ({Humanize.Bytes(Counter.Of(runtime))})"
+      );
+  }
+
+  private static string TreeShape(SystemSnapshot snapshot, SnapshotDelta delta) {
+    var view = new ProcessView { TreeMode = true };
+    view.Rebuild(snapshot, delta);
+    var roots = 0;
+    foreach (var row in view.Rows)
+      if (row.Depth == 0)
+        ++roots;
+
+    return $"{view.RowCount} rows from {snapshot.ProcessCount} processes, {roots} root(s)";
+  }
+
+  private static bool TreeIsComplete(SystemSnapshot snapshot, SnapshotDelta delta) {
+    var view = new ProcessView { TreeMode = true };
+    view.Rebuild(snapshot, delta);
+    if (view.RowCount != snapshot.ProcessCount)
+      return false;
+
+    var seen = new HashSet<int>();
+    foreach (var row in view.Rows)
+      if (!seen.Add(row.Index))
+        return false;
+
+    return true;
+  }
+
+  private static void Check(List<string> failures, List<string> notes, string name, string value, bool ok, string why) {
+    Console.WriteLine($"  {(ok ? "ok  " : "FAIL")} {name,-20} {value}");
+    if (ok)
+      notes.Add($"{name}: {value}");
+    else
+      failures.Add($"{name}: {value} — {why}");
+  }
+
+  private static void CheckCounter(
+    List<string> failures,
+    List<string> notes,
+    string name,
+    Counter actual,
+    ulong expected,
+    double factor
+  ) {
+    if (!actual.HasValue) {
+      // Not a failure by itself: §3.4 says a value the platform will not give us is reported as a
+      // reason, and the reason is the correct answer. It is recorded so the run says which columns
+      // this platform cannot fill.
+      Console.WriteLine($"  ok   {name,-20} {Humanize.Placeholder(actual.Reason)} ({actual.Reason})");
+      notes.Add($"{name}: not available on this platform ({actual.Reason})");
+      return;
+    }
+
+    // Zero where the runtime reports megabytes is the interesting case: it is what a field read at
+    // the wrong offset looks like, and also what an OS that does not fill the field looks like.
+    // Either way it is not a number anyone should show, so it fails and the run says which.
+    var ok = actual.Value > 0
+      ? WithinFactor(actual.Value, expected, factor)
+      : expected == 0;
+
+    Console.WriteLine($"  {(ok ? "ok  " : "FAIL")} {name,-20} {Humanize.Bytes(actual)}  (runtime: {Humanize.Bytes(Counter.Of(expected))})");
+    if (ok)
+      notes.Add($"{name}: {Humanize.Bytes(actual)}");
+    else
+      failures.Add($"{name}: probe says {Humanize.Bytes(actual)}, runtime says {Humanize.Bytes(Counter.Of(expected))}");
+  }
+
+  private static bool WithinFactor(double actual, double expected, double factor) {
+    if (expected <= 0)
+      return actual >= 0;
+
+    var ratio = actual / expected;
+    return ratio >= 1 / factor && ratio <= factor;
+  }
+
+  private static bool NoDuplicateKeys(SystemSnapshot snapshot) {
+    var seen = new HashSet<ProcessKey>();
+    foreach (var process in snapshot.Processes)
+      if (!seen.Add(process.Key))
+        return false;
+
+    return true;
+  }
+
+}
