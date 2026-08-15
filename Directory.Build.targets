@@ -1,0 +1,27 @@
+<Project>
+
+  <!-- Settings that can only be decided AFTER a project has said what it is. Directory.Build.props is
+       imported before the project body, where <IsTestProject> has not been written yet, so anything
+       keyed on it has to live here: this file is imported afterwards. -->
+
+  <!-- The trim/AOT rules of PRD §2 apply to shipping code. Test and benchmark projects run on the
+       full runtime, reference test frameworks that are built on reflection by design, and are never
+       published — holding them to the analyzer would produce a wall of warnings that says nothing
+       about the product and would train everyone to ignore the ones that do. -->
+  <PropertyGroup Condition="'$(IsTestProject)' == 'true' Or '$(IsBenchmarkProject)' == 'true'">
+    <IsAotCompatible>false</IsAotCompatible>
+    <IsTrimmable>false</IsTrimmable>
+    <EnableTrimAnalyzer>false</EnableTrimAnalyzer>
+    <EnableAotAnalyzer>false</EnableAotAnalyzer>
+    <EnableSingleFileAnalyzer>false</EnableSingleFileAnalyzer>
+  </PropertyGroup>
+
+  <!-- Fixture trees (PRD §9.1) are recorded /proc snapshots: thousands of tiny files whose *content*
+       is the test input. They are copied only when newer, because copying them on every build is
+       most of a rebuild's wall-clock. -->
+  <ItemGroup Condition="'$(IsTestProject)' == 'true'">
+    <None Include="Fixtures/**/*" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Golden/**/*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

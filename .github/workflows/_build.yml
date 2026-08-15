@@ -1,0 +1,109 @@
+name: Build artifacts
+
+# Shared build/publish block. Called by release.yml (manual dispatch) and
+# nightly.yml (auto, on CI success). Single place that turns a commit into
+# shippable artifacts so release and nightly never diverge.
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Git ref/SHA to build (defaults to caller ref)
+        type: string
+        required: false
+        default: ""
+    outputs:
+      built:
+        description: >-
+          "true" when artifacts were actually produced. Callers must gate their publish steps on
+          this — see the guard job below.
+        value: ${{ jobs.guard.outputs.has-solution }}
+
+permissions:
+  contents: read
+
+# Force JavaScript-based actions to run on Node 24 instead of the deprecated Node 20 ahead of
+# the 2026-06-16 hard cutover, until we bump each action to a Node-24-native major version.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  # Mirrors the guard in ci.yml: the repo ships the PRD and this pipeline before it ships code, so a
+  # nightly fired by a (correctly) green CI must not go red for having nothing to build. Callers read
+  # the `built` output above and skip their publish steps when it is false.
+  # DELETE THIS JOB AT M0, together with the `outputs:` block and every reference to it.
+  guard:
+    runs-on: ubuntu-latest
+    outputs:
+      has-solution: ${{ steps.probe.outputs.has-solution }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - id: probe
+        run: |
+          if [ -f ProcessManager.slnx ]; then
+            echo "has-solution=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has-solution=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No ProcessManager.slnx yet — see docs/PRD.md §10 M0. Nothing to publish."
+          fi
+
+  build:
+    name: publish ${{ matrix.rid }}
+    needs: guard
+    if: needs.guard.outputs.has-solution == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            rid: linux-x64
+          - os: ubuntu-24.04-arm
+            rid: linux-arm64
+          - os: windows-latest
+            rid: win-x64
+    # Cross-publishing a NativeAOT binary is not a thing: the linker and the platform toolchain have
+    # to be the host's. Each RID is therefore built on its own runner, and the artifacts are merged
+    # by the caller.
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0                           # version.pl counts commits
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Install NativeAOT prerequisites (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev
+      - name: Stamp per-project versions
+        shell: bash
+        run: perl .github/workflows/scripts/version.pl --stamp
+      # Three binaries ship: the desktop UI, the terminal UI, and the privileged helper they both
+      # start on demand (PRD §8). The helper is published alongside them rather than embedded —
+      # a program that unpacks the thing it will run as root is a worse story to explain than one
+      # that ships it next to itself.
+      - name: Publish (NativeAOT, self-contained)
+        shell: bash
+        run: |
+          for proj in ProcessManager.App ProcessManager.Tui ProcessManager.Elevated; do
+            dotnet publish "$proj/$proj.csproj" \
+              --configuration Release --runtime ${{ matrix.rid }} --self-contained \
+              -p:PublishAot=true -p:DebugType=none -p:DebugSymbols=false \
+              -o "stage/${{ matrix.rid }}"
+          done
+      - name: Package
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp README.md LICENSE "stage/${{ matrix.rid }}/"
+          case "${{ matrix.rid }}" in
+            win-*) (cd "stage/${{ matrix.rid }}" && 7z a -tzip "../../dist/ProcessManager-${{ matrix.rid }}.zip" .) ;;
+            *)     tar czf "dist/ProcessManager-${{ matrix.rid }}.tar.gz" -C "stage/${{ matrix.rid }}" . ;;
+          esac
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-artifacts-${{ matrix.rid }}
+          path: dist/*
+          if-no-files-found: error

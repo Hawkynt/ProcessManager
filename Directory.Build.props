@@ -1,0 +1,50 @@
+<Project>
+
+  <!-- Shared defaults for every project in the repo. Kept central because ProcessManager ships
+       several assemblies (Core + one probe per platform + the helper + two front-ends + tests)
+       that would otherwise repeat the same TFM, nullable and authorship metadata. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+
+  <!-- PRD §2: reflection-free, trimmable, AOT-clean everywhere. The analyzers are the enforcement;
+       the AOT publish leg in ci.yml turns their warnings into build errors so this cannot rot. -->
+  <PropertyGroup>
+    <IsAotCompatible>true</IsAotCompatible>
+    <IsTrimmable>true</IsTrimmable>
+    <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+    <EnableAotAnalyzer>true</EnableAotAnalyzer>
+    <EnableSingleFileAnalyzer>true</EnableSingleFileAnalyzer>
+  </PropertyGroup>
+
+  <!-- Authorship metadata (LGPL, same as every Hawkynt repo). Deliberately NO Version here: each
+       project declares its own MAJOR.MINOR.PATCH in its own csproj, and
+       .github/workflows/scripts/version.pl (stamp mode) appends the commit count of THAT project's
+       folder as the BUILD field. A project whose folder did not change therefore composes the
+       identical version on the next release. -->
+  <PropertyGroup>
+    <Authors>Hawkynt</Authors>
+    <Company>Hawkynt</Company>
+    <Product>ProcessManager</Product>
+    <Copyright>Copyright (c) Hawkynt</Copyright>
+    <PackageLicenseExpression>LGPL-3.0-or-later</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/Hawkynt/ProcessManager</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/Hawkynt/ProcessManager.git</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+  </PropertyGroup>
+
+  <!-- Release builds ship a single clean binary: no loose PDBs next to the executables the release
+       workflow packages. -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+    <AllowedReferenceRelatedFileExtensions>none</AllowedReferenceRelatedFileExtensions>
+  </PropertyGroup>
+
+</Project>

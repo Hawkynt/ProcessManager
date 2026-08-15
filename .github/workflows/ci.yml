@@ -1,0 +1,179 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_call: {}
+
+# Force JavaScript-based actions to run on Node 24 instead of the deprecated Node 20 ahead of
+# the 2026-06-16 hard cutover, until we bump each action to a Node-24-native major version.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  # The repository ships the PRD and this pipeline before it ships code (README, "Nothing is
+  # implemented yet"). Every job below is keyed on the solution existing, so the badge reports the
+  # truth — green because there is nothing to break — instead of a red build for a repo that is
+  # working as intended. DELETE THIS JOB AT M0, together with every `needs: guard`/`if:` referencing
+  # it: once the solution exists, a missing solution is a broken checkout and must fail loudly.
+  guard:
+    runs-on: ubuntu-latest
+    outputs:
+      has-solution: ${{ steps.probe.outputs.has-solution }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: probe
+        run: |
+          if [ -f ProcessManager.slnx ]; then
+            echo "has-solution=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has-solution=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No ProcessManager.slnx yet — see docs/PRD.md §10 M0. Build jobs skipped."
+          fi
+
+  test:
+    name: test ${{ matrix.os }}
+    needs: guard
+    if: needs.guard.outputs.has-solution == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0                          # version.pl needs full history
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Restore
+        run: dotnet restore ProcessManager.slnx
+      - name: Build
+        run: dotnet build ProcessManager.slnx --configuration Release --no-restore
+      # The engine is tested against recorded /proc trees and captured Windows structures (PRD §9.1,
+      # §9.4), so every OS leg runs every parser — the Linux probe's tests are not skipped on Windows
+      # and vice versa. A leg that only exercises its own platform would leave half the parsers
+      # untested on every push.
+      - name: Test
+        run: dotnet test ProcessManager.slnx --configuration Release --no-build --logger "trx;LogFileName=tests.trx"
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.os }}
+          path: '**/TestResults/*.trx'
+
+  tui:
+    name: tui smoke (fixture replay)
+    needs: guard
+    if: needs.guard.outputs.has-solution == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build
+        run: dotnet build ProcessManager.slnx --configuration Release
+      # PRD §9.6: the terminal UI rendered against a fixture probe into a captured buffer and diffed
+      # against a golden frame. This is the only job that exercises the renderer at all — the unit
+      # tests stop at the snapshot, and a layout that divides by a zero-width terminal passes every
+      # one of them.
+      - name: Render the TUI against a fixture and compare to the golden frame
+        run: >
+          dotnet run --project ProcessManager.Tui --configuration Release --no-build --
+          --probe-root Tests/Fixtures/proc-desktop --capture-frame /tmp/tui.txt --compare-golden Tests/Golden/tui-desktop.txt
+      - name: Upload the captured frame
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tui-frame
+          path: /tmp/tui.txt
+          if-no-files-found: warn
+
+  desktop:
+    name: desktop smoke (linux/gtk)
+    needs: guard
+    if: needs.guard.outputs.has-solution == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      # NativeForms' GTK backend needs GTK itself, and a display to put windows on. Xvfb is enough:
+      # the smoke run drives itself in-process rather than through the X server.
+      - name: Install GTK and a virtual display
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libgtk-3-0 xvfb
+      - name: Build
+        run: dotnet build ProcessManager.slnx --configuration Release
+      # PRD §9.6: bring the whole window up against a fixture probe and photograph it. A plot control
+      # that throws on its first paint, or a TreeListView sized from a wrong system metric, passes
+      # every unit test and fails here on the first frame.
+      - name: Shoot the window
+        run: >
+          xvfb-run -a --server-args="-screen 0 1600x1000x24"
+          dotnet run --project ProcessManager.App --configuration Release --no-build --
+          --probe-root Tests/Fixtures/proc-desktop --shoot "${{ runner.temp }}/shots"
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-screenshots
+          # The log comes too: a windowed app cannot report a startup failure to a console nobody is
+          # attached to, so the artifact has to be able to explain an empty shot on its own.
+          path: |
+            ${{ runner.temp }}/shots/*.png
+            ${{ runner.temp }}/shots/*.log
+          if-no-files-found: warn
+
+  aot:
+    name: aot ${{ matrix.rid }}
+    needs: guard
+    if: needs.guard.outputs.has-solution == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            rid: linux-x64
+          - os: windows-latest
+            rid: win-x64
+          - os: macos-latest
+            rid: osx-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Install NativeAOT prerequisites (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev
+      # PRD §9.5. TreatWarningsAsErrors makes any trim/AOT (IL2xxx/IL3xxx) warning fail the build, so
+      # the reflection-free rule of §2 can never silently regress — and it regresses the moment
+      # anybody reaches for reflection to enumerate columns.
+      - name: Publish with NativeAOT (trim/AOT warnings are errors)
+        shell: bash
+        run: |
+          for proj in ProcessManager.App ProcessManager.Tui ProcessManager.Elevated; do
+            dotnet publish "$proj/$proj.csproj" \
+              --configuration Release --runtime ${{ matrix.rid }} --self-contained \
+              -p:PublishAot=true -p:TreatWarningsAsErrors=true \
+              -o "aot-out/$proj"
+          done
+      # Footprint is a first-class goal (PRD §4) — surface the native binary sizes on every run.
+      # `find -printf` is GNU-only and this step also runs on the macOS and Windows legs, so the sizes
+      # come from `ls -l` — portable across all three, and the numbers are what matters here.
+      - name: Report native binary sizes
+        shell: bash
+        run: |
+          echo "### NativeAOT size — ${{ matrix.rid }}" >> "$GITHUB_STEP_SUMMARY"
+          ls -lh aot-out/*/* 2>/dev/null \
+            | grep -viE '\.(pdb|dbg|dwarf|json|xml)$' \
+            | awk 'NF>=5 {print $5, $NF}' >> "$GITHUB_STEP_SUMMARY" || true
