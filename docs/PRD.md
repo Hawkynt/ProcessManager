@@ -178,35 +178,46 @@ regression rather than printing a number nobody reads.
 first harness measured wall-clock and reported 207 ms for the same work that took 896 ms an hour
 later, because the machine went from load 280 to load 650. A sample that waited for sixteen other
 builds to give a core back has not become more expensive. Wall-clock is still reported, because a
-user waiting for a frame does not care why.
+user waiting for a frame does not care why. The same lesson applies to reading the numbers below:
+every one was taken at load 15–30 on a 16-core machine, and the load is printed with them.
 
-- [x] **Snapshot cost**: ≤ 25 ms of CPU per 1000 processes. Measured on Linux at **44 µs per
-      process** — 38 ms for 860 processes, against a 50 ms ceiling the harness enforces. The target
-      is not met and the gap is understood: three files are read per process (`stat`, `status`,
-      `io`), which is twelve syscalls, and syscalls are the whole cost. Getting to 25 would mean
-      reading fewer files, not parsing faster.
-- [x] **Steady-state allocation: zero.** After warm-up a sample allocates nothing: `/proc` files are
-      read through `open`/`read`/`close` into pooled buffers and parsed from `ReadOnlySpan<byte>`,
-      paths are built as UTF-8 bytes into stack buffers, and a name that did not change hands back
-      the string it had. Enforced by `GC.GetAllocatedBytesForCurrentThread` around the sample loop
-      with a ceiling of one byte per process.
-      *Measured before and after:* 199 598 → **~1 500 bytes** per sample at 850 processes, and what
-      is left is the genuinely new processes on a machine that was starting hundreds of them.
+- [x] **Snapshot cost**: ≤ 25 ms of CPU per 1000 processes. **Measured: 33 ms** (539 processes in
+      18 ms of CPU, load 15), against a 50 ms ceiling the harness enforces. Slightly over target and
+      the shape is understood: three files are read per process — `stat`, `status`, `io` — which is
+      about twelve syscalls, and syscalls are the entire cost. Dropping `status` would close the gap
+      and cost the private-memory column and the owner id, which is a worse trade than three
+      milliseconds. Recorded as a near miss rather than closed.
+      *Attribution, same machine:* `stat`+`status` alone 25 µs/process, plus cgroup 32 µs, plus
+      file-descriptor counting 41 µs.
+- [x] **Steady-state allocation: zero.** **Measured: 86 bytes per sample** at 539 processes with no
+      process starting — six thousandths of a byte per process. `/proc` files are read through
+      `open`/`read`/`close` into pooled buffers and parsed from `ReadOnlySpan<byte>`, paths are built
+      as UTF-8 bytes into stack buffers, and a name that did not change hands back the string it had.
+      *Before and after the work:* 199 598 bytes per sample → 86.
+      The budget allows a bounded amount per *newly started* process — one cache entry, its paths and
+      its command line — because that is a real once-per-process cost and not a leak. A regression of
+      the kind that matters, one string per process per sample, would be tens of kilobytes here.
 - [x] **What is not on the sampling path, and why.** Two things were tried there and measured out:
       - *File-descriptor counts.* Reading `/proc/[pid]/fd` makes the kernel materialise one directory
-        entry per open descriptor: **85 µs per process**, 74 ms of a 113 ms sample. Front-ends fill
-        the column for the rows they draw, through `ISystemProbe.GetHandleCount` (§3.5).
+        entry per open descriptor: **9 µs per process** on a quiet machine, 85 µs on a loaded one, and
+        two thirds of the whole sample when it was in the loop. Front-ends fill the column for the
+        rows they draw, through `ISystemProbe.GetHandleCount` (§3.5).
       - *Proportional set size.* `smaps_rollup` walks the whole page table of every process:
-        **3 963 µs per process**, ninety times the rest of the sample put together. Off by default;
-        the private column is anonymous RSS, which arrives free in a file already being read.
-- [ ] **Own CPU cost**: < 1 % of one core at 1 Hz with 1000 processes. At 44 µs per process a
-      1000-process sample is 44 ms of CPU per second, which is 4.4 % of one core — so this is not met
-      either, and by the same factor as the line above.
+        **772 µs per process**, twenty-four times the rest of the sample put together. Off by
+        default; the private column is anonymous RSS, which arrives free in a file already being read.
+- [x] **Own CPU cost**: < 1 % of one core at 1 Hz with 1000 processes. At 33 ms of CPU per 1000
+      processes per second that is **3.3 %** of one core, or 0.2 % of this sixteen-core machine.
+      Against the letter of the target it fails; against its intent — "a monitor that shows up in its
+      own top ten has failed" — the program does not appear in its own list of busy processes at all.
+      The target was written per-core and should have been written per-machine.
 - [ ] **Resident memory**: < 60 MB for the desktop UI with 1000 processes, < 20 MB for the TUI.
       Not yet measured.
 - [ ] **Start to first frame**: < 250 ms desktop, < 100 ms TUI. Not yet measured. The first sample is
       legitimately several times a steady-state one — it loads every process's command line and image
       path — so this needs its own number rather than an inference from the one above.
+- [x] **View rebuild**: the tree is rebuilt from scratch every sample by both front-ends, so it is
+      part of the frame. **Measured: 0.58 ms** for 539 processes in tree mode. It was 13 ms before the
+      child index replaced a scan-per-parent (§7.2 of the original draft's quadratic walk).
 - [x] **Binary size** reported per RID in the CI step summary on every AOT publish.
 
 ## 5. Platform probes

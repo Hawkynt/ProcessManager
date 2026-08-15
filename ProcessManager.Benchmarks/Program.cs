@@ -87,17 +87,31 @@ internal static class Program {
     GC.Collect();
     GC.WaitForPendingFinalizers();
     var before = GC.GetAllocatedBytesForCurrentThread();
-    for (var i = 0; i < 10; ++i)
+    var started = 0;
+    for (var i = 0; i < 10; ++i) {
       sampler.Sample();
+      started += sampler.Delta.StartedCount;
+    }
 
     var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
     var perSample = allocated / 10d;
     Report("sample.allocated.bytes", perSample);
-    // Not zero: the first samples of this loop can still grow a buffer, and the process table itself
-    // changes between them. One byte per process per sample is the line — that is a hundred times
-    // less than a single string per process, which is what a regression here looks like.
-    if (perSample > processes)
-      failures.Add($"a steady-state sample allocated {perSample:0} bytes ({processes} processes); the budget is zero");
+    Report("sample.new.processes", started / 10d);
+
+    // "Zero" means zero for a process that was already there. A process that just started is a new
+    // cache entry — its four /proc paths as UTF-8, its command line, its image path — and that is a
+    // real, bounded, once-per-process cost, not a leak. So the budget is zero per steady process
+    // plus a generous ceiling per new one; on a build machine spawning ten processes a second the
+    // difference is the whole measurement.
+    //
+    // What this still catches is the regression that matters: one string per process per sample
+    // would be tens of kilobytes here, three orders of magnitude above the line.
+    var allowance = started / 10d * 1024 + 512;
+    if (perSample > allowance)
+      failures.Add(
+        $"a steady-state sample allocated {perSample:0} bytes for {processes} processes "
+        + $"with {started / 10d:0.0} starting per sample; the allowance is {allowance:0}"
+      );
 
     // The view is rebuilt once per sample by both front-ends, so its cost is part of the frame.
     var view = new ProcessView { TreeMode = true, SortColumn = ProcessColumn.CpuPercent };
