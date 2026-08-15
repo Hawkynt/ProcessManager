@@ -34,14 +34,15 @@ internal static class Program {
         return _ExitOk;
     }
 
-    var probe = ProbeFactory.Create(options.ProbeRoot);
+    var probe = ProbeFactory.Create(options.ProbeRoot, options.UseHelper);
     if (probe is null) {
       Console.Error.WriteLine($"procman: there is no probe for this platform yet ({Environment.OSVersion.Platform}).");
       Console.Error.WriteLine("Linux and Windows are supported; macOS is PRD §10 M9.");
       return _ExitError;
     }
 
-    using (probe) {
+    using (probe)
+    using (ProbeFactory.Elevated) {
       var actions = ProbeFactory.CreateActions(options.ProbeRoot);
       using var sampler = new Sampler(probe);
 

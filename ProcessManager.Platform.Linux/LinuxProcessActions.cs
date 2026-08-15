@@ -32,9 +32,13 @@ public sealed class LinuxProcessActions(LinuxProbeOptions? options = null) : IPr
     if (!check.Succeeded)
       return check;
 
-    return Native.SetNice(key.Pid, priority) == 0
-      ? ActionResult.Ok
-      : Translate(Native.LastError, $"could not set nice to {priority}");
+    if (Native.SetNice(key.Pid, priority) == 0)
+      return ActionResult.Ok;
+
+    var errno = Native.LastError;
+    return errno is Native.EPERM or Native.EACCES
+      ? this.ThroughHelper(ElevatedOpcode.SetPriority, key, priority, $"could not set nice to {priority}")
+      : Translate(errno, $"could not set nice to {priority}");
   }
 
   public ActionResult SetAffinity(ProcessKey key, ulong mask) {
@@ -44,9 +48,13 @@ public sealed class LinuxProcessActions(LinuxProbeOptions? options = null) : IPr
     if (mask == 0)
       return ActionResult.Fail(ActionOutcome.Refused, "an affinity mask with no cores in it would leave nothing to run on");
 
-    return Native.SetAffinityMask(key.Pid, mask) == 0
-      ? ActionResult.Ok
-      : Translate(Native.LastError, "could not set CPU affinity");
+    if (Native.SetAffinityMask(key.Pid, mask) == 0)
+      return ActionResult.Ok;
+
+    var errno = Native.LastError;
+    return errno is Native.EPERM or Native.EACCES
+      ? this.ThroughHelper(ElevatedOpcode.SetAffinity, key, (long)mask, "could not set CPU affinity")
+      : Translate(errno, "could not set CPU affinity");
   }
 
   private ActionResult Signal(ProcessKey key, int signal) {
@@ -54,9 +62,43 @@ public sealed class LinuxProcessActions(LinuxProbeOptions? options = null) : IPr
     if (!check.Succeeded)
       return check;
 
-    return Native.SendSignal(key.Pid, signal) == 0
-      ? ActionResult.Ok
-      : Translate(Native.LastError, $"could not send signal {signal}");
+    if (Native.SendSignal(key.Pid, signal) == 0)
+      return ActionResult.Ok;
+
+    var errno = Native.LastError;
+    if (errno is not (Native.EPERM or Native.EACCES))
+      return Translate(errno, $"could not send signal {signal}");
+
+    // Another user's process. The helper can, if the user has authorised one — and it re-validates
+    // the identity itself before acting, so this is not the check being skipped (PRD §8.2).
+    var opcode = signal switch {
+      Native.SIGTERM => ElevatedOpcode.Terminate,
+      Native.SIGSTOP => ElevatedOpcode.Suspend,
+      Native.SIGCONT => ElevatedOpcode.Resume,
+      _ => ElevatedOpcode.None,
+    };
+
+    return opcode == ElevatedOpcode.None
+      ? Translate(errno, $"could not send signal {signal}")
+      : this.ThroughHelper(opcode, key, 0, $"could not send signal {signal}");
+  }
+
+  /// <summary>Asks the helper, when there is one. Its refusals are reported as the helper's own.</summary>
+  private ActionResult ThroughHelper(ElevatedOpcode opcode, ProcessKey key, long argument, string what) {
+    if (this._options.Elevated is not { } channel)
+      return ActionResult.Fail(ActionOutcome.NotPermitted, $"{what}: not permitted as this user");
+
+    var (status, _) = channel.Send(opcode, key, argument);
+    return status switch {
+      ElevatedStatus.Ok => ActionResult.Ok,
+      ElevatedStatus.IdentityMismatch => ActionResult.Fail(
+        ActionOutcome.IdentityMismatch,
+        $"pid {key.Pid} is no longer the process it was; it has been reused by another program"
+      ),
+      ElevatedStatus.ProcessExited => ActionResult.Fail(ActionOutcome.ProcessExited, $"{what}: the process ended first"),
+      ElevatedStatus.NotPermitted => ActionResult.Fail(ActionOutcome.NotPermitted, $"{what}: the helper refused it too"),
+      _ => ActionResult.Fail(ActionOutcome.Failed, $"{what}: the helper answered {status}"),
+    };
   }
 
   /// <summary>Confirms that the pid is still the process the caller meant.</summary>

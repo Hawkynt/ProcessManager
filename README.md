@@ -107,7 +107,8 @@ Most of what this program shows needs no privileges at all. A few things do: rea
 command line and open files, ending another user's process, and per-process network capture.
 
 ProcessManager stays **unprivileged** and starts a small separate helper (`procman-helper`) only when
-an action needs one — polkit on Linux, a UAC-elevated child on Windows. The helper accepts a fixed
+an action needs one — polkit on Linux; **Windows is not implemented**, because it cannot both elevate
+a child and redirect its standard handles in one call. The helper accepts a fixed
 set of typed requests over a private pipe, checks each one against an allowlist, and exits with the
 program. It does not evaluate anything it receives, and it never runs the UI. When the helper is not
 available the affected columns and actions are disabled with the reason shown, rather than the whole
@@ -161,6 +162,9 @@ These are consequences of the design, not a to-do list; the to-do list is the PR
 
 - **macOS does not work.** The probe is a stub whose every member throws. Nothing samples, nothing
   renders.
+- **Elevation is Linux-only.** The helper, its framed protocol and its polkit policy work and are
+  tested; Windows elevation needs a named pipe the elevated child connects back to, which is not
+  written. See [`packaging/`](packaging/README.md).
 - **The Windows probe is exercised but not verified.** It is written — one
   `NtQuerySystemInformation` call for the whole process and thread list, per-core times, memory, I/O,
   and the actions — and its structure walk is replayed by tests on every CI leg. Those tests

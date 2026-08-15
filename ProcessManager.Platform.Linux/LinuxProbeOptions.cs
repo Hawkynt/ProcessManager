@@ -65,4 +65,16 @@ public sealed record LinuxProbeOptions {
   /// </summary>
   public int EffectiveUserId { get; init; } = Native.EffectiveUserId;
 
+  /// <summary>
+  /// A channel to the privileged helper, or null to run entirely unprivileged (PRD §8).
+  /// </summary>
+  /// <remarks>
+  /// Used only for the <em>on-demand</em> queries — another user's environment block, their open
+  /// descriptors — and never inside a sample. Each request is a round trip to another process; doing
+  /// that per process per second would cost more than everything else in the sample put together
+  /// (PRD §4). The per-sample I/O column stays unprivileged and reports `NotPermitted`, which is the
+  /// truth about what this user can see.
+  /// </remarks>
+  public Abstractions.ElevatedChannel? Elevated { get; init; }
+
 }

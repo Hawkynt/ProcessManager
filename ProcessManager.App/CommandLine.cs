@@ -38,6 +38,12 @@ internal sealed record CommandLineOptions {
   /// <summary>Bring the window up, photograph it and exit — the CI desktop smoke leg.</summary>
   public string? ShootPath { get; init; }
 
+  /// <summary>
+  /// Whether the privileged helper may be started at all. It is never started without a request that
+  /// needs it, so the flag is for people who would rather it could not happen (PRD §8.1).
+  /// </summary>
+  public bool UseHelper { get; init; } = true;
+
   public string? Error { get; init; }
 
   public static CommandLineOptions Parse(string[] args) {
@@ -97,6 +103,9 @@ internal sealed record CommandLineOptions {
         }
         case "--user":
           options = options with { AllUsers = false };
+          break;
+        case "--no-helper":
+          options = options with { UseHelper = false };
           break;
         case "--probe-root": {
           if (!TryValue(args, ref i, inlineValue, out var root))
@@ -195,6 +204,7 @@ internal sealed record CommandLineOptions {
       --interval <s>     seconds between samples (default 1)
       --json             machine-readable output for --list and --find
       --probe-root <d>   read a recorded /proc tree instead of the live one
+      --no-helper        never start the privileged helper, even for an action that needs it
       --self-test        check the probe against the runtime's own view of this process
       --helper-check     talk to the privileged helper over its pipe, unelevated, and check it
       --help, --version

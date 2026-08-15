@@ -470,11 +470,13 @@ NativeForms has no plotting controls, so they are ours, owner-drawn against `IGr
 
 ### 8.3 Degradation
 
-- [~] Refused elevation is a normal outcome: the channel records why, answers `NotPermitted`, and
-      never retries. What is **not** wired yet is the last step — the probes do not consult the
-      channel, so a column that reads `—` today would still read `—` with the helper running. The
-      channel, the helper and the protocol are done and tested; joining them to `LinuxProbe` is the
-      remainder of M7.
+- [x] Refused elevation is a normal outcome: the channel records why, answers `NotPermitted`, and
+      never retries. The probe and the actions consult it — another user's environment block and open
+      descriptors are asked of the helper when the direct read is refused, and `Terminate`/`Suspend`/
+      `Resume`/`SetPriority`/`SetAffinity` fall through to it on `EPERM`. Deliberately **not** routed
+      through it: the per-sample I/O column, because that would be a round trip to another process
+      per process per second and would cost more than the entire sample (PRD §4). It reports
+      `NotPermitted`, which is the truth about what this user can see.
 - [x] A dead or crashed helper is noticed at the next request and reported once; the program keeps
       running unprivileged.
 
@@ -558,7 +560,7 @@ without the OS under it.
 | **M4** | Desktop v1 | §7.1 layout, §7.2 plot controls, process properties | **partial** — window, plots, meters and tree are in; docked layout, detail tabs, row colours and properties windows are not (§7.1) |
 | **M5** | Windows probe | §5.2 including the `NtQueryObject` timeout worker | **partial** — the bulk query, per-core times, memory and actions are written; handles, modules, threads and command lines are stubs, and none of it has run on Windows yet (§9.4) |
 | **M6** | Details & search | §6.2 views, §6.5 search in both front-ends | **partial** — `--find` searches names, command lines, open files and mappings; neither front-end has the detail views |
-| **M7** | Privilege helper | §8 end to end, both platforms | **partial** — protocol, helper, client channel, polkit policy and both halves of §9.8 are done and green on Linux; the probes do not consult the channel yet, and Windows elevation needs a named pipe (§8.1) |
+| **M7** | Privilege helper | §8 end to end, both platforms | **done on Linux** — protocol, helper, client channel, polkit policy, probe and action wiring, and both halves of §9.8. **Not on Windows**: elevation there needs a named pipe rather than redirected stdio (§8.1) |
 | **M8** | Polish & budget | §4 met and enforced, dark mode, persisted layout | **partial** — the harness is in and gating; two of its budgets are not met (§4) |
 | **M9** | macOS | Replace the §5.3 stub with a real probe | not started |
 

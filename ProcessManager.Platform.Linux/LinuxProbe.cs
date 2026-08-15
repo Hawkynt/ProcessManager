@@ -572,7 +572,7 @@ public sealed class LinuxProbe : ISystemProbe {
     try {
       entries = Directory.GetFiles(fdRoot);
     } catch (UnauthorizedAccessException) {
-      return result;
+      return this.HandlesThroughHelper(key, result);
     } catch (IOException) {
       return result;
     }
@@ -583,6 +583,31 @@ public sealed class LinuxProbe : ISystemProbe {
 
       var target = this._reader.TryReadLink(entry);
       result.Add(new((ulong)fd, ClassifyFd(target), target, null));
+    }
+
+    return result;
+  }
+
+  /// <summary>
+  /// The same list, asked of the helper. It answers with one <c>fd\ttarget</c> line per descriptor —
+  /// the helper formats it rather than shipping a directory handle back, because a file descriptor
+  /// is only meaningful in the process that holds it.
+  /// </summary>
+  private List<HandleRecord> HandlesThroughHelper(ProcessKey key, List<HandleRecord> result) {
+    if (this._options.Elevated is not { } channel)
+      return result;
+
+    var (status, payload) = channel.Send(Abstractions.ElevatedOpcode.ListFds, key);
+    if (status != Abstractions.ElevatedStatus.Ok)
+      return result;
+
+    foreach (var line in Abstractions.ElevatedProtocol.DecodePayload(payload).Split('\n', StringSplitOptions.RemoveEmptyEntries)) {
+      var tab = line.IndexOf('\t', StringComparison.Ordinal);
+      if (tab < 0 || !int.TryParse(line.AsSpan(0, tab), out var fd))
+        continue;
+
+      var target = line[(tab + 1)..];
+      result.Add(new((ulong)fd, ClassifyFd(target.Length == 0 ? null : target), target.Length == 0 ? null : target, null));
     }
 
     return result;
@@ -723,9 +748,25 @@ public sealed class LinuxProbe : ISystemProbe {
 
   public IReadOnlyList<KeyValuePair<string, string>> GetEnvironment(ProcessKey key) {
     var result = new List<KeyValuePair<string, string>>();
-    if (!this._reader.TryRead($"{this._procRoot}/{key.Pid}/environ", out var content, out _))
-      return result;
+    if (!this._reader.TryRead($"{this._procRoot}/{key.Pid}/environ", out var content, out var errno)) {
+      // Another user's environment block is not ours to read. If a helper is running, it is — and
+      // this is exactly the kind of one-shot question worth a round trip (PRD §8).
+      if (errno is not (Native.EACCES or Native.EPERM) || this._options.Elevated is not { } channel)
+        return result;
 
+      var (status, payload) = channel.Send(Abstractions.ElevatedOpcode.ReadEnviron, key);
+      if (status != Abstractions.ElevatedStatus.Ok)
+        return result;
+
+      ParseEnvironment(payload, result);
+      return result;
+    }
+
+    ParseEnvironment(content, result);
+    return result;
+  }
+
+  private static void ParseEnvironment(ReadOnlySpan<byte> content, List<KeyValuePair<string, string>> result) {
     foreach (var range in content.Split((byte)0)) {
       var entry = content[range];
       if (entry.IsEmpty)
@@ -737,8 +778,6 @@ public sealed class LinuxProbe : ISystemProbe {
 
       result.Add(new(Encoding.UTF8.GetString(entry[..equals]), Encoding.UTF8.GetString(entry[(equals + 1)..])));
     }
-
-    return result;
   }
 
   #endregion
