@@ -66,7 +66,7 @@ internal static class Program {
 
     // Headless: compose two frames (the second is the one with rates in it) and write the text.
     // This is the CI gate for the renderer — see PRD §9.6.
-    var ui = new TerminalUi(sampler, probe, actions, 120, 40, ColorDepth.None);
+    var ui = new TerminalUi(sampler, probe, actions, 120, 40, ColorDepth.None) { ShowTiming = false };
     ui.View.TreeMode = options.TreeMode;
     ui.View.SortColumn = options.SortColumn;
     ui.View.SortDescending = options.SortDescending;

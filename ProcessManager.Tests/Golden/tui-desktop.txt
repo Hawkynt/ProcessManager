@@ -1,0 +1,40 @@
+  0[?                                                    ]    1[?                                                    ]
+  2[?                                                    ]    3[?                                                    ]
+Mem[||||||||||||||||||||||||||                 7.8G/15.6G]  Swp[|||||||||||||                               1.0G/4.0G]
+Tasks: 4, 3 running             Load average: 1.25 0.80 0.55        Uptime: 1d 10:17:36
+
+   PID▴ User       State    CPU Private Working   Read/s  Write/s Thre Handl Process
+      1 root       sleep    0.0    7.8M   15.6M        0        0    1     … + systemd
+   1000 alice      sleep    0.0    2.9M    4.7M        0        0    1     …   + bash
+   1001 alice      run      0.0   87.9M   97.7M        0        0    8     …       foo) 0 (bar
+   1002 alice      sleep    0.0    500K    1.6M        0        0    1     …       sleep
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+F5 tree  F6 sort  F9 kill  / search  u user  h handles  C cpu%  q quit

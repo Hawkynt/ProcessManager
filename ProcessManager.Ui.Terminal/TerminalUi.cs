@@ -51,6 +51,14 @@ public sealed class TerminalUi {
   /// <summary>True once the user has asked to leave.</summary>
   public bool ShouldQuit { get; private set; }
 
+  /// <summary>
+  /// Whether the status bar carries the sample cost. On for a person watching, off for a captured
+  /// frame — a millisecond figure is the one thing in the frame that differs between two runs of
+  /// identical input, and a golden test with a moving number in it is a golden test nobody keeps
+  /// (PRD §9.6).
+  /// </summary>
+  public bool ShowTiming { get; set; } = true;
+
   public void Resize(int width, int height) => this._screen.Resize(width, height);
 
   /// <summary>Takes a sample and composes the next frame. Does not write to any terminal.</summary>
@@ -534,12 +542,15 @@ public sealed class TerminalUi {
     var keys = "F5 tree  F6 sort  F9 kill  / search  u user  h handles  C cpu%  q quit";
     this._screen.Write(0, y, keys, Attributes.Header);
 
-    if (this._message.Length > 0) {
+    var right = this._message.Length > 0 ? this._message : string.Empty;
+    if (this.ShowTiming) {
       var cost = $"{this._sampler.LastSampleDuration.TotalMilliseconds:0.0} ms";
-      this._screen.Write(0, y - 0, keys, Attributes.Header);
-      this._screen.WriteRight(0, y, this._screen.Width - 1, $"{this._message}   {cost}", this._messageAttribute);
-    } else
-      this._screen.WriteRight(0, y, this._screen.Width - 1, $"{this._sampler.LastSampleDuration.TotalMilliseconds:0.0} ms", Attributes.Header);
+      right = right.Length > 0 ? $"{right}   {cost}" : cost;
+    }
+
+    if (right.Length > 0)
+      this._screen.WriteRight(0, y, this._screen.Width - 1, right,
+        this._message.Length > 0 ? this._messageAttribute : Attributes.Header);
   }
 
   #endregion

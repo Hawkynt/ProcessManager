@@ -1,0 +1,239 @@
+using Hawkynt.ProcessManager.Model;
+using Hawkynt.ProcessManager.Platform.Linux;
+using Hawkynt.ProcessManager.Query;
+using Hawkynt.ProcessManager.Sampling;
+
+namespace Hawkynt.ProcessManager.Tests;
+
+/// <summary>
+/// The Linux probe against a recorded <c>/proc</c> tree (PRD §9.1, §9.2).
+/// </summary>
+/// <remarks>
+/// Runs on every OS, not just Linux: the probe reads a directory, and the fixture is a directory.
+/// That is the whole reason <see cref="LinuxProbeOptions.ProcRoot"/> exists — a parser tested only on
+/// the platform it parses for is a parser tested on one CI leg out of three.
+/// </remarks>
+[TestFixture]
+public sealed class LinuxProbeFixtureTests {
+
+  private static string FixtureRoot
+    => Path.Combine(TestContext.CurrentContext.TestDirectory, "Fixtures", "proc-desktop");
+
+  private static LinuxProbeOptions Options => new() {
+    ProcRoot = FixtureRoot,
+    PasswdPath = Path.Combine(FixtureRoot, "passwd"),
+    // Stated, not inherited: the fixture was written with USER_HZ 100, and reading the running
+    // machine's value would make every CPU time in it wrong by a constant factor on a machine that
+    // uses a different one — silently.
+    ClockTicksPerSecond = 100,
+    PageSize = 4096,
+    // The fixture was recorded by somebody else, so the live uid would refuse every file in it.
+    EffectiveUserId = 0,
+    CountFileDescriptors = true,
+  };
+
+  [Test]
+  public void ItReadsEveryProcessInTheFixture() {
+    using var probe = new LinuxProbe(Options);
+    var snapshot = new SystemSnapshot();
+    probe.Sample(snapshot);
+
+    Assert.That(snapshot.ProcessCount, Is.EqualTo(4));
+    var pids = new List<int>();
+    foreach (var process in snapshot.Processes)
+      pids.Add(process.Pid);
+
+    Assert.That(pids, Is.EquivalentTo(new[] { 1, 1000, 1001, 1002 }));
+  }
+
+  [Test]
+  public void ACommandNameContainingBracketsAndSpacesIsParsedWhole() {
+    // "foo) 0 (bar" is a legal comm and is the exact shape that breaks a parser splitting on the
+    // first ')' or on whitespace. Everything after it in the record must still land in the right
+    // field, which the assertions below check by reading past it (PRD §5.1, §9.3).
+    using var probe = new LinuxProbe(Options);
+    var snapshot = new SystemSnapshot();
+    probe.Sample(snapshot);
+
+    var process = Find(snapshot, 1001);
+    Assert.That(process.Name, Is.EqualTo("foo) 0 (bar"));
+    Assert.That(process.ParentPid, Is.EqualTo(1000));
+    Assert.That(process.State, Is.EqualTo(ProcessState.Running));
+    Assert.That(process.Nice, Is.EqualTo(-5));
+    Assert.That(process.ThreadCount, Is.EqualTo(8));
+    Assert.That(process.Key.StartTicks, Is.EqualTo(100500ul));
+  }
+
+  [Test]
+  public void CpuTimeIsConvertedFromClockTicksToNanoseconds() {
+    using var probe = new LinuxProbe(Options);
+    var snapshot = new SystemSnapshot();
+    probe.Sample(snapshot);
+
+    // pid 1001: utime 9000 + stime 1000 = 10000 ticks at 100 Hz = 100 seconds.
+    var process = Find(snapshot, 1001);
+    Assert.That(process.CpuTimeNs.Value, Is.EqualTo(100_000_000_000ul));
+    Assert.That(process.UserTimeNs.Value, Is.EqualTo(90_000_000_000ul));
+    Assert.That(process.KernelTimeNs.Value, Is.EqualTo(10_000_000_000ul));
+  }
+
+  [Test]
+  public void MemoryComesFromStatusInBytes() {
+    using var probe = new LinuxProbe(Options);
+    var snapshot = new SystemSnapshot();
+    probe.Sample(snapshot);
+
+    var process = Find(snapshot, 1001);
+    Assert.That(process.PrivateBytes.Value, Is.EqualTo(90000ul * 1024), "RssAnon");
+    Assert.That(process.WorkingSetBytes.Value, Is.EqualTo(25000ul * 4096), "rss pages from stat");
+    Assert.That(process.VirtualBytes.Value, Is.EqualTo(99000000ul));
+  }
+
+  [Test]
+  public void IoCountersAreRead() {
+    using var probe = new LinuxProbe(Options);
+    var snapshot = new SystemSnapshot();
+    probe.Sample(snapshot);
+
+    var process = Find(snapshot, 1001);
+    Assert.That(process.ReadBytes.Value, Is.EqualTo(1048576ul));
+    Assert.That(process.WriteBytes.Value, Is.EqualTo(2097152ul));
+  }
+
+  [Test]
+  public void UsersAreResolvedFromThePasswdFile() {
+    using var probe = new LinuxProbe(Options);
+    var snapshot = new SystemSnapshot();
+    probe.Sample(snapshot);
+
+    Assert.That(Find(snapshot, 1).UserName, Is.EqualTo("root"));
+    Assert.That(Find(snapshot, 1000).UserName, Is.EqualTo("alice"));
+  }
+
+  [Test]
+  public void TheCommandLineIsJoinedFromItsNulSeparatedParts() {
+    using var probe = new LinuxProbe(Options);
+    var snapshot = new SystemSnapshot();
+    probe.Sample(snapshot);
+
+    Assert.That(Find(snapshot, 1).CommandLine, Is.EqualTo("/sbin/init splash"));
+    Assert.That(Find(snapshot, 1002).CommandLine, Is.EqualTo("sleep 600"));
+  }
+
+  [Test]
+  public void TheCgroupPathIsTakenFromTheV2Line() {
+    using var probe = new LinuxProbe(Options);
+    var snapshot = new SystemSnapshot();
+    probe.Sample(snapshot);
+
+    Assert.That(Find(snapshot, 1000).ContainerPath, Is.EqualTo("/user.slice/user-1000.slice/session-3.scope"));
+  }
+
+  [Test]
+  public void SystemCountersComeFromStatMeminfoLoadavgAndUptime() {
+    using var probe = new LinuxProbe(Options);
+    var snapshot = new SystemSnapshot();
+    probe.Sample(snapshot);
+
+    Assert.That(snapshot.PerCoreCount, Is.EqualTo(4));
+    Assert.That(snapshot.System.CoreCount, Is.EqualTo(4));
+    Assert.That(snapshot.System.TotalMemoryBytes.Value, Is.EqualTo(16384000ul * 1024));
+    Assert.That(snapshot.System.AvailableMemoryBytes.Value, Is.EqualTo(8192000ul * 1024));
+    // SwapTotal 4194304 kB minus SwapFree 3145728 kB.
+    Assert.That(snapshot.System.UsedSwapBytes.Value, Is.EqualTo(1048576ul * 1024));
+    Assert.That(snapshot.System.LoadAverage1, Is.EqualTo(1.25).Within(0.0001));
+    Assert.That(snapshot.System.LoadAverage15, Is.EqualTo(0.55).Within(0.0001));
+    Assert.That(snapshot.System.UptimeSeconds, Is.EqualTo(123456.78).Within(0.01));
+    Assert.That(snapshot.System.RunningProcesses, Is.EqualTo(3));
+  }
+
+  [Test]
+  public void PerCoreTimesAreScaledAndTheAggregateIsTheirSum() {
+    using var probe = new LinuxProbe(Options);
+    var snapshot = new SystemSnapshot();
+    probe.Sample(snapshot);
+
+    // cpu0: user 100000 ticks at 100 Hz = 1000 s = 1e12 ns.
+    Assert.That(snapshot.PerCore[0].UserNs, Is.EqualTo(1_000_000_000_000ul));
+
+    ulong userSum = 0;
+    foreach (var core in snapshot.PerCore)
+      userSum += core.UserNs;
+
+    Assert.That(snapshot.System.Cpu.UserNs, Is.EqualTo(userSum));
+  }
+
+  [Test]
+  public void TheProcessTreeMatchesTheFixture() {
+    using var probe = new LinuxProbe(Options);
+    using var sampler = new Sampler(probe);
+    sampler.Sample();
+
+    var view = new ProcessView { TreeMode = true, SortColumn = ProcessColumn.Pid, SortDescending = false };
+    view.Rebuild(sampler.Current, sampler.Delta);
+
+    var lines = new List<string>();
+    foreach (var row in view.Rows) {
+      ref readonly var process = ref sampler.Current.Processes[row.Index];
+      lines.Add(new string(' ', row.Depth * 2) + process.Name);
+    }
+
+    Assert.That(lines, Is.EqualTo(new[] { "systemd", "  bash", "    foo) 0 (bar", "    sleep" }));
+  }
+
+  [Test]
+  public void FileDescriptorsAreCountedWithoutDotAndDotDot() {
+    using var probe = new LinuxProbe(Options with { CountFileDescriptors = true });
+    var snapshot = new SystemSnapshot();
+    probe.Sample(snapshot);
+
+    Assert.That(Find(snapshot, 1000).HandleCount.Value, Is.EqualTo(3ul));
+  }
+
+  [Test]
+  public void TheHandleCountIsAlsoAvailableOnDemand() {
+    using var probe = new LinuxProbe(Options);
+    var snapshot = new SystemSnapshot();
+    probe.Sample(snapshot);
+
+    var key = Find(snapshot, 1000).Key;
+    Assert.That(probe.GetHandleCount(key).Value, Is.EqualTo(3ul));
+  }
+
+  [Test]
+  public void WithFileDescriptorCountingOffTheColumnSaysSoRatherThanShowingZero() {
+    using var probe = new LinuxProbe(Options with { CountFileDescriptors = false });
+    var snapshot = new SystemSnapshot();
+    probe.Sample(snapshot);
+
+    var handles = Find(snapshot, 1000).HandleCount;
+    Assert.That(handles.HasValue, Is.False);
+    Assert.That(handles.Reason, Is.EqualTo(UnknownReason.NotSampledYet));
+  }
+
+  [Test]
+  public void SamplingTwiceProducesTheSameAnswer() {
+    // The buffers are reused between samples; a stale field from the previous one would show up here
+    // and nowhere else.
+    using var probe = new LinuxProbe(Options);
+    var snapshot = new SystemSnapshot();
+    probe.Sample(snapshot);
+    var first = Find(snapshot, 1001);
+    probe.Sample(snapshot);
+    var second = Find(snapshot, 1001);
+
+    Assert.That(second.Name, Is.EqualTo(first.Name));
+    Assert.That(second.CpuTimeNs, Is.EqualTo(first.CpuTimeNs));
+    Assert.That(second.Key, Is.EqualTo(first.Key));
+  }
+
+  private static ProcessRecord Find(SystemSnapshot snapshot, int pid) {
+    foreach (var process in snapshot.Processes)
+      if (process.Pid == pid)
+        return process;
+
+    Assert.Fail($"pid {pid} is not in the snapshot");
+    return default;
+  }
+
+}

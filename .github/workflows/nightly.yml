@@ -32,10 +32,7 @@ jobs:
       ref: ${{ github.event.workflow_run.head_sha || github.ref }}
 
   benchmark:
-    # `needs: build` only for its `built` output — the benchmark does not consume the artifacts.
-    # Drop the output check at M0 (see the guard job in _build.yml).
-    needs: build
-    if: ${{ needs.build.outputs.built == 'true' }}
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -71,7 +68,6 @@ jobs:
 
   publish:
     needs: build
-    if: ${{ needs.build.outputs.built == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
