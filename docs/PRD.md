@@ -389,14 +389,18 @@ refused with a reason rather than failing silently.
 
 ### 7.1 Layout
 
-- [~] Main window: a `MenuStrip`, the system plots, a `TreeListView` of processes, a detail pane and
-      a status line reporting process count, CPU, memory and the sample cost. The `SplitContainer`
-      and the `TabControl` of §6.2 detail views are not in yet — the pane is one label — and the
-      layout is fixed rather than docked, so it does not follow a resize.
-- [ ] Process properties open in their own `Form`, several at once, each with the §6.2 tabs. Today
-      the selected process is described in the pane at the bottom instead.
-- [~] Tree/flat toggle and "show all users" are in the View menu. Column chooser, persisted layout
-      and click-to-sort headers are not.
+- [x] Main window: a `MenuStrip` (View, Sort by, Process), a plot strip (CPU history, memory history,
+      per-core meters), a `SplitContainer` with the `TreeListView` of processes above and a
+      `TabControl` of the §6.2 detail views below, and a status line reporting process count, CPU,
+      memory and the sample cost. Docked, so it follows a resize.
+- [~] The §6.2 tabs are in the pane at the bottom, one process at a time. Opening several in their
+      own windows at once is not done — it is what makes Process Explorer good at comparing two
+      processes, and it needs the pane extracted into a `Form`, which is a small job on top of what
+      is there.
+- [~] Tree/flat toggle, "show all users" and the CPU% convention are in the View menu; sorting is in
+      a Sort menu. **Click-to-sort headers are not possible today**: NativeForms' `TreeListView` has
+      no `ColumnClick` — its `ListView` does, and is flat. The menu is a stand-in for a hook that has
+      to come from the toolkit. Column chooser and persisted layout are not done (open question 5).
 - [ ] Row coloring with the Process-Explorer conventions (new = green fade, exited = red fade, own
       user, system, suspended), plus a **color legend window**.
       **Blocked, with a specific cause:** NativeForms' `TreeListView` has no per-row colour hook —
@@ -418,7 +422,9 @@ NativeForms has no plotting controls, so they are ours, owner-drawn against `IGr
       `HistoryRing<Rate>` directly so nothing is copied per frame
 - [x] `CoreMeterStrip` — one bar per logical core, the htop meter as a widget
 - [ ] `Sparkline` — in-cell mini plot for the CPU column. Blocked by the same missing cell-painting
-      hook as the row colours above.
+      hook as the row colours above. Along with row colours and click-to-sort, this makes three
+      things the desktop UI wants that all need the same thing from `TreeListView`: a way to
+      participate in how a row is drawn and clicked. That is one upstream change, not three.
 - [ ] `ColorLegend` — the legend window. Pointless before the rows are coloured.
 
 ### 7.3 Interaction rules
@@ -564,17 +570,19 @@ without the OS under it.
 | **M1** | Core model | §3 snapshot/delta/rate/history, no probe | **done** — 51 tests, §9.3 cases green |
 | **M2** | Linux probe | §5.1 main-loop fields, fixture replay | **done** — reads a real machine and a recorded one |
 | **M3** | TUI v1 | Process list, sort, tree, kill, per-core meters | **done** — golden frame is a CI gate |
-| **M4** | Desktop v1 | §7.1 layout, §7.2 plot controls, process properties | **partial** — window, plots, meters and tree are in; docked layout, detail tabs, row colours and properties windows are not (§7.1) |
-| **M5** | Windows probe | §5.2 including the `NtQueryObject` timeout worker | **partial** — the bulk query, per-core times, memory and actions are written; handles, modules, threads and command lines are stubs, and none of it has run on Windows yet (§9.4) |
-| **M6** | Details & search | §6.2 views, §6.5 search in both front-ends | **partial** — `--find` searches names, command lines, open files and mappings; neither front-end has the detail views |
+| **M4** | Desktop v1 | §7.1 layout, §7.2 plot controls, process properties | **mostly done** — docked layout, plots, per-core meters, process tree, the six detail tabs, menus and a context menu, verified headlessly under Xvfb on every push. Row colours, click-to-sort and per-process property windows remain (§7.1) |
+| **M5** | Windows probe | §5.2 including the `NtQueryObject` timeout worker | **done bar the environment block** — bulk query, per-core times, memory, I/O, owners, command lines, threads, modules, handles (with the timeout worker) and sockets. Executed and checked against the kernel under Wine: 21 of 21 self-test checks, 47 modules, 95 handles. Not yet run on a genuine Windows kernel (§9.4) |
+| **M6** | Details & search | §6.2 views, §6.5 search in both front-ends | **done** — six detail pages (overview, threads, modules, handles, environment, network) in both front-ends; `--find` searches names, command lines, open files and mappings. In-UI search is the terminal's filter; the window has no search box yet |
 | **M7** | Privilege helper | §8 end to end, both platforms | **done on Linux** — protocol, helper, client channel, polkit policy, probe and action wiring, and both halves of §9.8. **Not on Windows**: elevation there needs a named pipe rather than redirected stdio (§8.1) |
-| **M8** | Polish & budget | §4 met and enforced, dark mode, persisted layout | **partial** — the harness is in and gating; two of its budgets are not met (§4) |
+| **M8** | Polish & budget | §4 met and enforced, dark mode, persisted layout | **partial** — the harness gates on CPU time and allocation and both pass (§4); dark mode follows the theme; nothing is persisted yet (open question 5) |
 | **M9** | macOS | Replace the §5.3 stub with a real probe | not started |
 
-**The two things to do next, in order.** Get a `SYSTEM_PROCESS_INFORMATION` buffer captured and
-replayed (§9.4) — the Windows probe is a third of the product and nothing has ever executed it — and
-then either close the §4 gap by reading fewer files per process or revise the target to the 44 µs the
-current design costs. Both are decisions about the same trade and should be made together.
+**What is left, in order.** Run the self-test on a genuine Windows kernel — Wine implements the same
+structures and agrees on all 21 checks, but Wine is not Windows and the CI job that would settle it
+has been sitting in GitHub's queue. Then the three `TreeListView` gaps (row colours, click-to-sort,
+in-cell sparklines), which are one upstream change rather than three. Then Windows elevation, which
+needs a named pipe (§8.1), and the Windows environment block, which needs the PEB walk. macOS (M9)
+after that.
 
 ---
 
@@ -608,34 +616,41 @@ Shipped in v1, not a later addition — the same engine with a different rendere
 ## 12. Coverage matrix
 
 A feature is finished when every column is ticked. "Desktop" and "TUI" mean *reachable there*, not
-merely computed.
+merely computed. "Windows" is ✔ only where it has been executed and checked — under Wine so far,
+which implements the same structures and is not the same thing as Windows.
 
-| Feature | Implemented | Tested | Desktop | TUI | Documented |
-|---|---|---|---|---|---|
-| Process list, CPU, memory, I/O | ✔ | ✔ | ✔ | ✔ | ✔ |
-| Process tree | ✔ | ✔ | ✔ | ✔ | ✔ |
-| Sort by any column | ✔ | ✔ | — | ✔ | ✔ |
-| Filter by text / by user | ✔ | ✔ | ✔ (user only) | ✔ | ✔ |
-| Unknown-with-a-reason (§3.4) | ✔ | ✔ | ✔ | ✔ | ✔ |
-| Per-core meters | ✔ | ✔ | ✔ | ✔ | ✔ |
-| CPU / memory history plot | ✔ | — | ✔ | — | ✔ |
-| End process | ✔ | — | ✔ | ✔ | ✔ |
-| End process tree | ✔ | — | — | ✔ | ✔ |
-| Suspend / resume | ✔ | — | ✔ | — | ✔ |
-| Priority / affinity | ✔ | — | — | — | ✔ |
-| Handle count on demand | ✔ | ✔ | ✔ | ✔ | ✔ |
-| Open files / modules / sockets | ✔ | — | — | — | ✔ |
-| Threads | ✔ | — | — | — | ✔ |
-| Environment block | ✔ | — | — | — | ✔ |
-| Search across handles (`--find`) | ✔ | — | — | — | ✔ |
-| Row colours (§7.1) | — | — | — | ✔ | ✔ |
-| Windows probe | ✔ | — | ? | ? | ✔ |
-| Elevated helper | — | — | — | — | ✔ |
+| Feature | Implemented | Tested | Desktop | TUI | Linux | Windows | Documented |
+|---|---|---|---|---|---|---|---|
+| Process list, CPU, memory, I/O | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
+| Process tree | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
+| Sort by any column | ✔ | ✔ | menu | ✔ | ✔ | ✔ | ✔ |
+| Filter by text / by user | ✔ | ✔ | user only | ✔ | ✔ | ✔ | ✔ |
+| Unknown-with-a-reason (§3.4) | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
+| Per-core meters | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
+| CPU / memory history plot | ✔ | smoke | ✔ | — | ✔ | ✔ | ✔ |
+| Owner resolution | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
+| Command line | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
+| Threads | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
+| Modules / mappings | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
+| Open files / handles | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
+| Environment block | ✔ | ✔ | ✔ | ✔ | ✔ | — | ✔ |
+| Sockets | ✔ | — | ✔ | ✔ | ✔ | ✔ | ✔ |
+| End process / tree | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
+| Suspend / resume | ✔ | ✔ | ✔ | — | ✔ | ✔ | ✔ |
+| Priority / affinity | ✔ | ✔ | — | — | ✔ | ✔ | ✔ |
+| Handle count on demand | ✔ | ✔ | ✔ | ✔ | ✔ | n/a | ✔ |
+| Search across handles (`--find`) | ✔ | — | — | — | ✔ | ✔ | ✔ |
+| Privileged helper | ✔ | ✔ | ✔ | ✔ | ✔ | — | ✔ |
+| Row colours (§7.1) | — | — | — | ✔ | — | — | ✔ |
+| In-cell sparkline | — | — | — | — | — | — | ✔ |
+| Persisted layout | — | — | — | — | — | — | ✔ |
 
-The two rows worth reading twice: **actions have no tests** — every one of them changes the state of
-the machine, and a test that ends a real process to prove it can is not a test anyone should run in
-CI, so they need a fake `IProcessActions` and a fixture that records what was asked. And the Windows
-probe's front-end columns are `?` rather than ✔ because nothing has run it on Windows (§9.4).
+The rows worth reading twice. **The action tests test the refusals, not the actions** — every check
+that a wrong identity, a missing process, a bad pid or an empty affinity mask is refused, and none
+that a process is actually ended, because a test that terminates something to prove it can is not one
+to run in CI. **Sockets and `--find` have no automated test**: both need a machine with a known open
+socket or a known open file, which the fixture cannot record. **The Windows column is Wine**, and the
+distinction is in the header for a reason.
 
 ## 13. Open questions
 

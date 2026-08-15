@@ -23,12 +23,13 @@
 > Windows and real GTK windows on Linux without a second UI codebase.
 
 > [!IMPORTANT]
-> **Early, and honest about it.** The engine, the Linux probe and the terminal UI work and are
-> tested; the desktop window comes up and shows the tree and the plots but is not finished; the
-> Windows probe is written and **has never been run on Windows**; macOS throws; the privileged helper
-> refuses everything. [`docs/PRD.md`](docs/PRD.md) tracks all of it box by box — when a box is
-> unticked there, the feature does not exist. §12 is the per-feature coverage matrix and §10 the
-> milestone state.
+> **Working, with the gaps written down.** Linux is complete: engine, probe, both front-ends, the six
+> detail views, and the privileged helper. Windows is complete bar the environment block, and has
+> been executed and checked against a kernel **under Wine** — 21 of 21 self-test checks, 47 modules,
+> 95 handles — but not yet on a genuine Windows machine. macOS throws by design. Three desktop
+> features (row colours, click-to-sort, in-cell sparklines) are blocked on one missing hook in the UI
+> toolkit. [`docs/PRD.md`](docs/PRD.md) tracks all of it box by box; §12 is the per-feature coverage
+> matrix and §10 the milestone state.
 
 ## ✨ What it is
 
@@ -82,12 +83,18 @@ procman --tui --sort=cpu      # start sorted by CPU, tree mode off
 procman --list --json         # one snapshot to stdout as JSON, then exit
 procman --find "libssl"       # which processes have a handle/mapping matching this?
 procman --kill 1234 --tree    # end a process and its descendants
+
+procman --self-test           # ask the probe about itself; the runtime checks its answer
+procman --helper-check        # talk to the privileged helper over its pipe, unelevated
+procman --no-helper           # never start the helper, even for an action that needs it
 ```
 
 The terminal UI keeps the keys htop users already have in their fingers — `F5` tree, `F6` sort,
-`F9` kill, `F10` quit, `/` search, `\` filter, `u` filter by user, `H` show/hide threads — and the
-desktop UI keeps the layout Process Explorer users already have in their eyes: a tree on top, a
-detail pane below, a system graph in the toolbar, double-click for process properties.
+`F9` kill, `F10` quit, `/` search, `\` filter, `u` filter by user — plus `Enter` for a process's
+details and `h` to read handle counts for the visible rows. The desktop UI keeps the layout Process
+Explorer users already have in their eyes: plots and per-core meters on top, the process tree below
+them, and a tabbed detail pane under that — overview, threads, modules, handles, environment,
+network.
 
 ## 📊 What it shows
 
@@ -165,18 +172,22 @@ These are consequences of the design, not a to-do list; the to-do list is the PR
 - **Elevation is Linux-only.** The helper, its framed protocol and its polkit policy work and are
   tested; Windows elevation needs a named pipe the elevated child connects back to, which is not
   written. See [`packaging/`](packaging/README.md).
-- **The Windows probe is exercised but not verified.** It is written — one
-  `NtQuerySystemInformation` call for the whole process and thread list, per-core times, memory, I/O,
-  and the actions — and its structure walk is replayed by tests on every CI leg. Those tests
-  synthesise the buffer from the same struct definition the parser reads, so they cannot catch that
-  definition being wrong, and **the probe has still never executed on Windows**. A buffer captured
-  from a real machine is the remaining half of PRD §9.4.
-- **Sampling costs more than it should.** 44 µs of CPU per process on Linux, where the budget says
-  25 — three files are read per process and syscalls are the whole cost. Measured, tracked, and the
-  trade is written down in PRD §4 rather than left as a number nobody intends to meet.
-- **The desktop rows are not coloured.** The green-for-new, red-for-exited convention is in the
-  terminal UI and not in the window, because NativeForms' `TreeListView` has no per-row colour hook.
-  The engine already reports what the colours would say; the fix belongs in the toolkit.
+- **The Windows probe has run against Wine, not against Windows.** Wine's `ntdll` implements the
+  same structures, and every field the runtime can cross-check agrees — but Wine is not Windows, and
+  two counters it leaves at zero (private bytes among them) are therefore untested. `procman
+  --self-test` is what settles it on any machine, and it runs on the Windows CI leg.
+- **The Windows environment block is not readable.** It needs a walk of the target's PEB across its
+  address space; the command line comes from `NtQueryInformationProcess` instead, which needs far
+  less access. Linux reads both.
+- **Sampling costs a third more than the budget says.** 33 ms of CPU per 1000 processes against a
+  target of 25 — three files are read per process, and syscalls are the entire cost. Closing it means
+  dropping `status` and with it the private-memory column and the owner id, which is a worse trade
+  than three milliseconds. Measured and written down in PRD §4 rather than left as a number nobody
+  intends to meet.
+- **Three desktop features need one hook the toolkit does not have.** Row colours (green for new, red
+  for exited), click-to-sort headers and in-cell sparklines all need `TreeListView` to let a caller
+  participate in drawing and clicking a row. The terminal UI colours its rows from exactly the data
+  the window would use, and sorting is in a menu meanwhile. That is one upstream change, not three.
 - **Per-process network capture needs the helper.** Linux attributes sockets to processes through
   `/proc/net` plus inode matching, which is unprivileged but coarse; anything finer needs root.
 - **No kernel driver, ever.** Everything Process Explorer does through its driver — real thread

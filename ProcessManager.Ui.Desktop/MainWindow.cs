@@ -218,6 +218,48 @@ public sealed class MainWindow : Form {
     }));
 
     menu.Items.Add(view);
+
+    // Sorting lives in a menu because the header cannot carry it: NativeForms' TreeListView has no
+    // ColumnClick (its ListView does, and is flat). Click-to-sort is the gesture people expect, so
+    // this is a stand-in for a hook that has to come from the toolkit, not a preference.
+    var sort = new ToolStripMenuItem("Sort by");
+    foreach (var column in (ReadOnlySpan<ProcessColumn>)[
+      ProcessColumn.CpuPercent,
+      ProcessColumn.PrivateBytes,
+      ProcessColumn.WorkingSetBytes,
+      ProcessColumn.ReadBytesPerSecond,
+      ProcessColumn.WriteBytesPerSecond,
+      ProcessColumn.ThreadCount,
+      ProcessColumn.Name,
+      ProcessColumn.Pid,
+      ProcessColumn.UserName,
+      ProcessColumn.StartTime,
+    ]) {
+      var chosen = column;
+      sort.DropDownItems.Add(Item(column.ToHeader(), () => {
+        this._view.SortColumn = chosen;
+        this._view.SortDescending = chosen.PrefersDescending();
+        this.Refresh();
+      }));
+    }
+
+    sort.DropDownItems.Add(new ToolStripSeparator());
+    sort.DropDownItems.Add(Item("Reverse", () => {
+      this._view.SortDescending = !this._view.SortDescending;
+      this.Refresh();
+    }));
+
+    menu.Items.Add(sort);
+
+    var process = new ToolStripMenuItem("Process");
+    process.DropDownItems.Add(Item("End process", () => this.Act("end", key => this._actions!.Terminate(key))));
+    process.DropDownItems.Add(Item("Suspend", () => this.Act("suspend", key => this._actions!.Suspend(key))));
+    process.DropDownItems.Add(Item("Resume", () => this.Act("resume", key => this._actions!.Resume(key))));
+    process.DropDownItems.Add(new ToolStripSeparator());
+    process.DropDownItems.Add(Item("Read handle count", this.FillHandleCounts));
+    process.DropDownItems.Add(Item("Refresh details", () => this._details.Invalidate()));
+    menu.Items.Add(process);
+
     this.Controls.Add(menu);
   }
 
