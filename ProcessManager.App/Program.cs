@@ -191,26 +191,15 @@ internal static class Program {
 
     sampler.Sample();
     var snapshot = sampler.Current;
-    var target = ProcessKey.None;
-    foreach (var process in snapshot.Processes)
-      if (process.Pid == options.TargetPid) {
-        target = process.Key;
-        break;
-      }
-
+    var target = ProcessTree.Find(snapshot, options.TargetPid);
     if (target.IsNone) {
       Console.Error.WriteLine($"procman: no process with pid {options.TargetPid}");
       return _ExitNoMatch;
     }
 
-    var targets = new List<ProcessKey>();
-    Collect(options.TargetPid);
-    if (options.KillTree)
-      // Deepest first: ending the parent first can reparent its children to init, and they are then
-      // no longer findable as its descendants.
-      targets.Reverse();
-    else
-      targets.RemoveRange(1, targets.Count - 1);
+    var targets = options.KillTree
+      ? ProcessTree.DescendantsFirst(snapshot, options.TargetPid)
+      : [target];
 
     var failed = 0;
     foreach (var key in targets) {
@@ -224,22 +213,6 @@ internal static class Program {
     }
 
     return failed == 0 ? _ExitOk : _ExitError;
-
-    void Collect(int pid) {
-      var processes = snapshot.Processes;
-      for (var i = 0; i < processes.Length; ++i)
-        if (processes[i].Pid == pid) {
-          targets.Add(processes[i].Key);
-          break;
-        }
-
-      if (!options.KillTree)
-        return;
-
-      for (var i = 0; i < processes.Length; ++i)
-        if (processes[i].ParentPid == pid && processes[i].Pid != pid)
-          Collect(processes[i].Pid);
-    }
   }
 
   #endregion

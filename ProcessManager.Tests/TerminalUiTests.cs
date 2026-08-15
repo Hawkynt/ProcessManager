@@ -1,3 +1,4 @@
+using Hawkynt.ProcessManager.Model;
 using Hawkynt.ProcessManager.Platform.Linux;
 using Hawkynt.ProcessManager.Query;
 using Hawkynt.ProcessManager.Sampling;
@@ -131,5 +132,106 @@ public sealed class GoldenFrameTests {
 
   private static string Normalize(string text)
     => text.Replace("\r\n", "\n", StringComparison.Ordinal).TrimEnd();
+
+}
+
+/// <summary>
+/// The terminal's process-properties view, against the recorded machine (PRD §6.2, §11).
+/// </summary>
+[TestFixture]
+public sealed class DetailViewTests {
+
+  private static string FixtureRoot
+    => Path.Combine(TestContext.CurrentContext.TestDirectory, "Fixtures", "proc-desktop");
+
+  private static LinuxProbe Probe() => new(new() {
+    ProcRoot = FixtureRoot,
+    PasswdPath = Path.Combine(FixtureRoot, "passwd"),
+    ClockTicksPerSecond = 100,
+    PageSize = 4096,
+    EffectiveUserId = 0,
+  });
+
+  private static (LinuxProbe Probe, SystemSnapshot Snapshot, ProcessRecord Process) Sample(int pid) {
+    var probe = Probe();
+    var snapshot = new SystemSnapshot();
+    probe.Sample(snapshot);
+    foreach (var process in snapshot.Processes)
+      if (process.Pid == pid)
+        return (probe, snapshot, process);
+
+    Assert.Fail($"pid {pid} is not in the fixture");
+    return default;
+  }
+
+  [Test]
+  public void TheOverviewNamesTheProcessAndItsNumbers() {
+    var (probe, _, process) = Sample(1001);
+    using (probe) {
+      var view = new DetailView(probe);
+      view.Open(process.Key);
+      view.Collect(in process);
+
+      var screen = new TerminalScreen(120, 40, ColorDepth.None);
+      screen.BeginFrame();
+      view.Draw(screen, in process);
+      var frame = screen.Capture();
+
+      Assert.That(frame, Does.Contain("foo) 0 (bar"), "the title names the process");
+      Assert.That(frame, Does.Contain("Overview"));
+      Assert.That(frame, Does.Contain("alice"), "the owner is resolved");
+      Assert.That(frame, Does.Contain("--stress"), "the command line is shown");
+    }
+  }
+
+  [Test]
+  public void EveryTabCollectsWithoutThrowing() {
+    // The pages hit five different probe queries, three of which return nothing for a fixture that
+    // records no threads, handles or sockets. Nothing may throw on that — an empty page is a normal
+    // answer and has to render as one.
+    var (probe, _, process) = Sample(1000);
+    using (probe) {
+      var view = new DetailView(probe);
+      view.Open(process.Key);
+
+      for (var i = 0; i < 6; ++i) {
+        var screen = new TerminalScreen(120, 40, ColorDepth.None);
+        screen.BeginFrame();
+        Assert.That(() => view.Draw(screen, in process), Throws.Nothing, $"tab {view.Tab}");
+        view.NextTab();
+      }
+    }
+  }
+
+  [Test]
+  public void APageWithNothingOnItSaysSoRatherThanLookingBroken() {
+    var (probe, _, process) = Sample(1002);
+    using (probe) {
+      var view = new DetailView(probe);
+      view.Open(process.Key);
+      view.NextTab();                                    // Overview -> Threads
+      while (view.Tab != DetailTab.Network)
+        view.NextTab();
+
+      var screen = new TerminalScreen(120, 40, ColorDepth.None);
+      screen.BeginFrame();
+      view.Draw(screen, in process);
+
+      Assert.That(screen.Capture(), Does.Contain("nothing to show"));
+    }
+  }
+
+  [Test]
+  public void TabsWrapInBothDirections() {
+    using var probe = Probe();
+    var view = new DetailView(probe);
+    Assert.That(view.Tab, Is.EqualTo(DetailTab.Overview));
+
+    view.PreviousTab();
+    Assert.That(view.Tab, Is.EqualTo(DetailTab.Network), "backwards from the first is the last");
+
+    view.NextTab();
+    Assert.That(view.Tab, Is.EqualTo(DetailTab.Overview));
+  }
 
 }

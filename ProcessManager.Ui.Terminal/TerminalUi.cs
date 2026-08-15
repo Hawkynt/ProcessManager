@@ -19,6 +19,7 @@ public sealed class TerminalUi {
   private readonly TerminalScreen _screen;
   private readonly HistoryRing<Rate> _cpuHistory = new(240);
   private readonly Dictionary<ProcessKey, Counter> _handleCounts = [];
+  private readonly DetailView _detail;
 
   private int _selectedRow;
   private ProcessKey _selectedKey;
@@ -30,7 +31,7 @@ public sealed class TerminalUi {
   private ProcessKey _confirmTarget;
   private bool _confirmTree;
 
-  private enum InputMode : byte { Normal, Search, Filter, ConfirmKill }
+  private enum InputMode : byte { Normal, Search, Filter, ConfirmKill, Detail }
 
   public TerminalUi(Sampler sampler, ISystemProbe probe, IProcessActions? actions, int width, int height, ColorDepth depth) {
     ArgumentNullException.ThrowIfNull(sampler);
@@ -39,6 +40,7 @@ public sealed class TerminalUi {
     this._probe = probe;
     this._actions = actions;
     this._screen = new(width, height, depth);
+    this._detail = new(probe);
     this._view.TreeMode = false;
     this._view.SortColumn = ProcessColumn.CpuPercent;
     this._view.SortDescending = true;
@@ -137,6 +139,8 @@ public sealed class TerminalUi {
         return this.HandleTextInput(key);
       case InputMode.ConfirmKill:
         return this.HandleConfirm(key);
+      case InputMode.Detail:
+        return this.HandleDetail(key);
       default:
         return this.HandleNormal(key);
     }
@@ -155,6 +159,7 @@ public sealed class TerminalUi {
       case ConsoleKey.F9: this.BeginKill(tree: false); return true;
       case ConsoleKey.F10 or ConsoleKey.Escape: this.ShouldQuit = true; return false;
       case ConsoleKey.F3: this.BeginInput(InputMode.Search); return true;
+      case ConsoleKey.Enter: this.OpenDetail(); return true;
     }
 
     switch (key.KeyChar) {
@@ -167,6 +172,7 @@ public sealed class TerminalUi {
       case 'K': this.BeginKill(tree: true); return true;
       case 'I': this._view.SortDescending = !this._view.SortDescending; return true;
       case 'h': this.FillHandleCounts(); return true;
+      case 'i': this.OpenDetail(); return true;
       case '<': this.PreviousSortColumn(); return true;
       case '>': this.NextSortColumn(); return true;
       case 'P': this._view.SortColumn = ProcessColumn.CpuPercent; this._view.SortDescending = true; return true;
@@ -211,6 +217,40 @@ public sealed class TerminalUi {
 
   private void ApplyFilter()
     => this._view.TextFilter = string.IsNullOrEmpty(this._input) ? null : this._input;
+
+  private void OpenDetail() {
+    if (this._selectedKey.IsNone) {
+      this.Say("nothing selected", Attributes.Dim);
+      return;
+    }
+
+    this._detail.Open(this._selectedKey);
+    this._mode = InputMode.Detail;
+  }
+
+  private bool HandleDetail(ConsoleKeyInfo key) {
+    var page = Math.Max(1, this._screen.Height - 4);
+    switch (key.Key) {
+      case ConsoleKey.Escape or ConsoleKey.Backspace:
+        this._mode = InputMode.Normal;
+        this._screen.NeedsFullRepaint = true;
+        return true;
+      case ConsoleKey.Tab or ConsoleKey.RightArrow: this._detail.NextTab(); return true;
+      case ConsoleKey.LeftArrow: this._detail.PreviousTab(); return true;
+      case ConsoleKey.UpArrow: this._detail.ScrollBy(-1, page); return true;
+      case ConsoleKey.DownArrow: this._detail.ScrollBy(1, page); return true;
+      case ConsoleKey.PageUp: this._detail.ScrollBy(-page, page); return true;
+      case ConsoleKey.PageDown: this._detail.ScrollBy(page, page); return true;
+    }
+
+    switch (key.KeyChar) {
+      case 'q' or 'i':
+        this._mode = InputMode.Normal;
+        this._screen.NeedsFullRepaint = true;
+        return true;
+      default: return false;
+    }
+  }
 
   private bool HandleConfirm(ConsoleKeyInfo key) {
     this._mode = InputMode.Normal;
@@ -310,31 +350,17 @@ public sealed class TerminalUi {
   }
 
   private void KillTree(ProcessKey root) {
-    // Children first: killing the parent first can reparent the children to init and lose them.
-    var snapshot = this._sampler.Current;
-    var order = new List<ProcessKey>();
-    Collect(root.Pid);
-    order.Reverse();
-
+    // Deepest first — see ProcessTree.DescendantsFirst for why the order is not incidental.
+    var order = ProcessTree.DescendantsFirst(this._sampler.Current, root.Pid);
     var killed = 0;
     foreach (var key in order)
       if (this._actions!.Terminate(key).Succeeded)
         ++killed;
 
-    this.Say($"sent SIGTERM to {killed} of {order.Count} processes", killed == order.Count ? Attributes.Good : Attributes.Warn);
-
-    void Collect(int pid) {
-      var processes = snapshot.Processes;
-      for (var i = 0; i < processes.Length; ++i)
-        if (processes[i].Pid == pid) {
-          order.Add(processes[i].Key);
-          break;
-        }
-
-      for (var i = 0; i < processes.Length; ++i)
-        if (processes[i].ParentPid == pid && processes[i].Pid != pid)
-          Collect(processes[i].Pid);
-    }
+    this.Say(
+      $"sent SIGTERM to {killed} of {order.Count} processes",
+      killed == order.Count ? Attributes.Good : Attributes.Warn
+    );
   }
 
   /// <summary>
@@ -364,10 +390,28 @@ public sealed class TerminalUi {
 
   private void Compose() {
     this._screen.BeginFrame();
+    if (this._mode == InputMode.Detail) {
+      this.DrawDetail();
+      return;
+    }
+
     var y = this.DrawMeters();
     this.DrawColumnHeader(y);
     this.DrawRows(y + 1);
     this.DrawStatus();
+  }
+
+  private void DrawDetail() {
+    if (this._sampler.Current.TryGetProcess(this._selectedKey, out var process))
+      this._detail.Draw(this._screen, in process);
+    else {
+      this._screen.Fill(0, 0, this._screen.Width, ' ', Attributes.Header);
+      this._screen.Write(0, 0, " the process has ended ", Attributes.Header);
+    }
+
+    var y = this._screen.Height - 1;
+    this._screen.Fill(0, y, this._screen.Width, ' ', Attributes.Header);
+    this._screen.Write(0, y, "Tab/→ next page  ← previous  ↑↓ scroll  Esc back", Attributes.Header);
   }
 
   private int DrawMeters() {
@@ -539,7 +583,7 @@ public sealed class TerminalUi {
       }
     }
 
-    var keys = "F5 tree  F6 sort  F9 kill  / search  u user  h handles  C cpu%  q quit";
+    var keys = "F5 tree  F6 sort  F9 kill  Enter details  / search  u user  h handles  C cpu%  q quit";
     this._screen.Write(0, y, keys, Attributes.Header);
 
     var right = this._message.Length > 0 ? this._message : string.Empty;
