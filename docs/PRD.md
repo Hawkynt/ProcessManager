@@ -316,7 +316,7 @@ Filled in as probes land; `n/a` means the platform has no such concept, not that
 | Private/PSS memory | `[x]` RssAnon, PSS opt-in | `[x]` commit charge | `n/a` |
 | Per-process I/O bytes | `[x]` owner only | `[x]` | `n/a` |
 | Command line (other users) | `[x]` | `[x]` | `n/a` |
-| Environment block | `[x]` owner, or helper | `[ ]` needs the PEB walk | `n/a` |
+| Environment block | `[x]` owner, or helper | `[x]` PEB walk, 119 read | `n/a` |
 | Open files / handles | `[x]` owner, or helper | `[x]` 95 seen, 41 named | `n/a` |
 | Modules / mappings | `[x]` | `[x]` 47 seen | `n/a` |
 | Threads | `[x]` | `[x]` from the bulk buffer | `n/a` |
@@ -571,7 +571,7 @@ without the OS under it.
 | **M2** | Linux probe | §5.1 main-loop fields, fixture replay | **done** — reads a real machine and a recorded one |
 | **M3** | TUI v1 | Process list, sort, tree, kill, per-core meters | **done** — golden frame is a CI gate |
 | **M4** | Desktop v1 | §7.1 layout, §7.2 plot controls, process properties | **mostly done** — docked layout, plots, per-core meters, process tree, the six detail tabs, menus and a context menu, verified headlessly under Xvfb on every push. Row colours, click-to-sort and per-process property windows remain (§7.1) |
-| **M5** | Windows probe | §5.2 including the `NtQueryObject` timeout worker | **done bar the environment block** — bulk query, per-core times, memory, I/O, owners, command lines, threads, modules, handles (with the timeout worker) and sockets. Executed and checked against the kernel under Wine: 21 of 21 self-test checks, 47 modules, 95 handles. Not yet run on a genuine Windows kernel (§9.4) |
+| **M5** | Windows probe | §5.2 including the `NtQueryObject` timeout worker | **done** — bulk query, per-core times, memory, I/O, owners, command lines, threads, modules, handles (with the timeout worker), sockets and the environment block. Executed and checked against the kernel under Wine: 21 of 21 self-test checks, 47 modules, 95 handles, 119 environment variables. Not yet run on a genuine Windows kernel (§9.4) |
 | **M6** | Details & search | §6.2 views, §6.5 search in both front-ends | **done** — six detail pages (overview, threads, modules, handles, environment, network) in both front-ends; `--find` searches names, command lines, open files and mappings. In-UI search is the terminal's filter; the window has no search box yet |
 | **M7** | Privilege helper | §8 end to end, both platforms | **done on Linux** — protocol, helper, client channel, polkit policy, probe and action wiring, and both halves of §9.8. **Not on Windows**: elevation there needs a named pipe rather than redirected stdio (§8.1) |
 | **M8** | Polish & budget | §4 met and enforced, dark mode, persisted layout | **partial** — the harness gates on CPU time and allocation and both pass (§4); dark mode follows the theme; nothing is persisted yet (open question 5) |
@@ -581,8 +581,7 @@ without the OS under it.
 structures and agrees on all 21 checks, but Wine is not Windows and the CI job that would settle it
 has been sitting in GitHub's queue. Then the three `TreeListView` gaps (row colours, click-to-sort,
 in-cell sparklines), which are one upstream change rather than three. Then Windows elevation, which
-needs a named pipe (§8.1), and the Windows environment block, which needs the PEB walk. macOS (M9)
-after that.
+needs a named pipe (§8.1). macOS (M9) after that.
 
 ---
 
@@ -633,7 +632,7 @@ which implements the same structures and is not the same thing as Windows.
 | Threads | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
 | Modules / mappings | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
 | Open files / handles | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
-| Environment block | ✔ | ✔ | ✔ | ✔ | ✔ | — | ✔ |
+| Environment block | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
 | Sockets | ✔ | — | ✔ | ✔ | ✔ | ✔ | ✔ |
 | End process / tree | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
 | Suspend / resume | ✔ | ✔ | ✔ | — | ✔ | ✔ | ✔ |

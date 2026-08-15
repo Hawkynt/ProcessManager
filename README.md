@@ -176,9 +176,6 @@ These are consequences of the design, not a to-do list; the to-do list is the PR
   same structures, and every field the runtime can cross-check agrees — but Wine is not Windows, and
   two counters it leaves at zero (private bytes among them) are therefore untested. `procman
   --self-test` is what settles it on any machine, and it runs on the Windows CI leg.
-- **The Windows environment block is not readable.** It needs a walk of the target's PEB across its
-  address space; the command line comes from `NtQueryInformationProcess` instead, which needs far
-  less access. Linux reads both.
 - **Sampling costs a third more than the budget says.** 33 ms of CPU per 1000 processes against a
   target of 25 — three files are read per process, and syscalls are the entire cost. Closing it means
   dropping `status` and with it the private-memory column and the owner id, which is a worse trade

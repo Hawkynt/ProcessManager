@@ -514,6 +514,135 @@ public sealed class WindowsProbe : ISystemProbe {
     _ => "UNKNOWN",
   };
 
-  public IReadOnlyList<KeyValuePair<string, string>> GetEnvironment(ProcessKey key) => [];
+  /// <summary>
+  /// The environment block, read out of the target's own address space.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// There is no query for this: the block lives in the process's memory, reachable only by walking
+  /// its PEB. <c>NtQueryInformationProcess(ProcessBasicInformation)</c> gives the PEB's address, the
+  /// PEB holds a pointer to its <c>RTL_USER_PROCESS_PARAMETERS</c>, and those hold the block and its
+  /// length. Three <c>ReadProcessMemory</c> calls, and it needs <c>PROCESS_VM_READ</c> — which is why
+  /// the command line does <em>not</em> come this way (PRD §5.2).
+  /// </para>
+  /// <para>
+  /// The offsets are for 64-bit Windows and are the one genuinely fragile thing in this probe: they
+  /// are structure layout, not API. They have been stable across every 64-bit Windows release, and a
+  /// bad read is bounds-checked into an empty list rather than a crash — but if this ever returns
+  /// nonsense on a new release, this is the paragraph to come back to.
+  /// </para>
+  /// </remarks>
+  public IReadOnlyList<KeyValuePair<string, string>> GetEnvironment(ProcessKey key) {
+    const int PebProcessParametersOffset = 0x20;
+    const int ParametersEnvironmentOffset = 0x80;
+    const int ParametersEnvironmentSizeOffset = 0x3F0;
+
+    var process = Native.OpenProcess(
+      Native.PROCESS_QUERY_LIMITED_INFORMATION | Native.PROCESS_VM_READ,
+      false,
+      key.Pid
+    );
+
+    if (process == 0)
+      return [];
+
+    try {
+      var basicInformation = Marshal.AllocHGlobal(48);
+      try {
+        if (Native.NtQueryInformationProcess(process, Native.ProcessBasicInformation, basicInformation, 48, out _)
+            != NtStructures.STATUS_SUCCESS)
+          return [];
+
+        // PROCESS_BASIC_INFORMATION: ExitStatus (pointer-sized), then PebBaseAddress.
+        var peb = Marshal.ReadIntPtr(basicInformation, nint.Size);
+        if (peb == 0)
+          return [];
+
+        if (!TryReadPointer(process, peb + PebProcessParametersOffset, out var parameters) || parameters == 0)
+          return [];
+        if (!TryReadPointer(process, parameters + ParametersEnvironmentOffset, out var environment) || environment == 0)
+          return [];
+        if (!TryReadUInt32(process, parameters + ParametersEnvironmentSizeOffset, out var size))
+          return [];
+
+        // A length the target controls, so it is bounded before anything is allocated.
+        if (size is 0 or > 1024 * 1024)
+          return [];
+
+        var buffer = Marshal.AllocHGlobal((int)size);
+        try {
+          if (!Native.ReadProcessMemory(process, environment, buffer, size, out var read) || read == 0)
+            return [];
+
+          return ParseEnvironmentBlock(buffer, (int)Math.Min(read, size));
+        } finally {
+          Marshal.FreeHGlobal(buffer);
+        }
+      } finally {
+        Marshal.FreeHGlobal(basicInformation);
+      }
+    } finally {
+      Native.CloseHandle(process);
+    }
+  }
+
+  private static bool TryReadPointer(nint process, nint address, out nint value) {
+    var buffer = Marshal.AllocHGlobal(nint.Size);
+    try {
+      if (!Native.ReadProcessMemory(process, address, buffer, (nuint)nint.Size, out _)) {
+        value = 0;
+        return false;
+      }
+
+      value = Marshal.ReadIntPtr(buffer);
+      return true;
+    } finally {
+      Marshal.FreeHGlobal(buffer);
+    }
+  }
+
+  private static bool TryReadUInt32(nint process, nint address, out uint value) {
+    var buffer = Marshal.AllocHGlobal(sizeof(uint));
+    try {
+      if (!Native.ReadProcessMemory(process, address, buffer, sizeof(uint), out _)) {
+        value = 0;
+        return false;
+      }
+
+      value = (uint)Marshal.ReadInt32(buffer);
+      return true;
+    } finally {
+      Marshal.FreeHGlobal(buffer);
+    }
+  }
+
+  /// <summary>
+  /// The block is UTF-16 <c>NAME=VALUE</c> strings, each NUL-terminated, the run ending with an empty
+  /// one. A name beginning with <c>=</c> is a per-drive working directory that Windows keeps in here;
+  /// it is skipped, because it is not an environment variable anybody set.
+  /// </summary>
+  private static List<KeyValuePair<string, string>> ParseEnvironmentBlock(nint buffer, int bytes) {
+    var result = new List<KeyValuePair<string, string>>();
+    var characters = bytes / sizeof(char);
+    var start = 0;
+    for (var i = 0; i < characters; ++i) {
+      if (Marshal.ReadInt16(buffer, i * sizeof(char)) != 0)
+        continue;
+
+      if (i == start)
+        break;
+
+      var entry = Marshal.PtrToStringUni(buffer + start * sizeof(char), i - start);
+      start = i + 1;
+      if (string.IsNullOrEmpty(entry) || entry[0] == '=')
+        continue;
+
+      var equals = entry.IndexOf('=', StringComparison.Ordinal);
+      if (equals > 0)
+        result.Add(new(entry[..equals], entry[(equals + 1)..]));
+    }
+
+    return result;
+  }
 
 }

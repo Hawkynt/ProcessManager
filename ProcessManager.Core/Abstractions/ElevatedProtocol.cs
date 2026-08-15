@@ -108,8 +108,13 @@ public static class ElevatedProtocol {
 
     // Anything beyond the fields this version knows is skipped rather than trusted, so a newer
     // client talking to an older helper degrades instead of desynchronising the stream.
+    //
+    // The buffer is allocated once, outside the loop. Inside it, a frame claiming the maximum length
+    // would stack-allocate 256 bytes on each of 256 iterations — sixty-four kilobytes of stack, in a
+    // parser running as root, at the request of whoever sent the frame. The analyzer caught it
+    // (CA2014) and it is exactly the class of thing this component must not contain.
+    Span<byte> discard = stackalloc byte[256];
     for (var remaining = length - 25; remaining > 0;) {
-      Span<byte> discard = stackalloc byte[256];
       var take = Math.Min(discard.Length, remaining);
       if (!ReadExactly(stream, discard[..take])) {
         problem = ElevatedStatus.Malformed;
