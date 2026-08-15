@@ -15,8 +15,9 @@ documented under `docs/` — §12 tracks that coverage.
 Status legend: `[ ]` not started · `[~]` partial · `[x]` done & tested · `n/a` not applicable to that
 platform.
 
-**Everything below is `[ ]` today.** The repository contains this document, the README and the
-pipeline. M0 is the first line of code.
+**Where this stands:** M0–M3 and M5 are in (engine, Linux probe, both front-ends, the Windows probe's
+bulk query), M4 is in but unpolished, and M6–M9 are not started. §10 has the detail and §12 the
+per-feature coverage. Boxes below are ticked only where the code exists *and* a test covers it.
 
 ---
 
@@ -66,12 +67,19 @@ ProcessManager.Core                       sampling engine, model, math          
 ProcessManager.Platform.Linux             /proc, /sys, cgroup v2, netlink            SHIPPING
 ProcessManager.Platform.Windows           NtQuerySystemInformation, iphlpapi, psapi   SHIPPING
 ProcessManager.Platform.MacOS             libproc / sysctl                            STUB (throws)
+ProcessManager.Ui.Terminal                terminal renderer, zero UI dependencies
+ProcessManager.Ui.Desktop                 desktop UI on NativeForms
+ProcessManager.App                        the one binary: CLI + both front-ends       (procman)
 ProcessManager.Elevated                   procman-helper — the only privileged binary
-ProcessManager.App                        desktop UI on NativeForms                   (procman)
-ProcessManager.Tui                        terminal UI, zero UI dependencies           (procman --tui)
 ProcessManager.Tests                      unit + fixture-replay + golden tests
 ProcessManager.Benchmarks                 the §4 budget harness, run by nightly CI
 ```
+
+Both front-ends are **libraries**, and `ProcessManager.App` is the only executable of the pair. That
+is a change from this document's first draft, which had two executables: the documented CLI is
+`procman` and `procman --tui`, and two binaries cannot both be `procman`. The cost is that a headless
+box carries the UI assembly it will never open; it never *loads* GTK, because a backend that is not
+registered is never asked for its native library.
 
 - **Core never calls a native API.** It asks an `ISystemProbe` for raw counters and does every
   subtraction, division and sort itself. That is what makes the whole engine testable against
@@ -83,14 +91,16 @@ ProcessManager.Benchmarks                 the §4 budget harness, run by nightly
 
 ### AOT/interop rules (enforced, not aspirational)
 
-- [ ] `[LibraryImport]` source-generated P/Invoke only — never `[DllImport]`.
-- [ ] No `System.Reflection`, `TypeDescriptor`, `Activator.CreateInstance(Type)` or `dynamic`
-      anywhere in Core, the probes or the helper.
-- [ ] `IsAotCompatible=true` on every library; `TreatWarningsAsErrors=true` on the AOT publish leg so
-      an IL2xxx/IL3xxx warning fails CI (§9.5).
-- [ ] Probe selection is a compile-time-visible `switch` on `OperatingSystem.IsLinux()` /
-      `IsWindows()` / `IsMacOS()`, not a plugin scan — the trimmer must be able to drop the two
-      probes the build does not need.
+- [x] `[LibraryImport]` source-generated P/Invoke only — never `[DllImport]`.
+- [x] No `System.Reflection`, `TypeDescriptor`, `Activator.CreateInstance(Type)` or `dynamic`
+      anywhere in Core, the probes or the helper. The `--list --json` output is written by hand for
+      the same reason.
+- [x] `IsAotCompatible=true` on every library (`Directory.Build.props`), off again for the test and
+      benchmark projects (`Directory.Build.targets`) which are never published;
+      `TreatWarningsAsErrors=true` on the AOT publish leg so an IL2xxx/IL3xxx warning fails CI (§9.5).
+- [x] Probe and backend selection are compile-time-visible `if`s on `OperatingSystem.IsLinux()` /
+      `IsWindows()` / `IsMacOS()`, not a plugin scan — the trimmer can drop the two the build does
+      not need.
 
 ---
 
@@ -101,56 +111,61 @@ its own section because every subtle bug in a tool of this kind lives here.
 
 ### 3.1 Snapshot
 
-- [ ] `SystemSnapshot` — one immutable point-in-time reading: a monotonic timestamp, system-wide
+- [x] `SystemSnapshot` — one immutable point-in-time reading: a monotonic timestamp, system-wide
       counters, and a `ProcessRecord` per visible process. Produced by one probe call.
-- [ ] The timestamp is from a **monotonic** clock (`Stopwatch.GetTimestamp`), never wall time. A
+- [x] The timestamp is from a **monotonic** clock (`Stopwatch.GetTimestamp`), never wall time. A
       wall-clock jump — NTP step, suspend/resume, DST — must not produce a negative interval or an
       infinite rate.
-- [ ] `ProcessRecord` is a `readonly record struct` of counters plus interned strings. No per-sample
-      allocation of the strings that did not change (§4).
+- [x] `ProcessRecord` is a mutable struct in a pooled array — *not* the `readonly record struct` this
+      document first specified. A record struct of twenty-five fields is copied by every `foreach`
+      and every assignment; the probe fills it by `ref` instead. No per-sample allocation of the
+      strings that did not change (§4).
 
 ### 3.2 Delta and rate
 
-- [ ] `SnapshotDelta` pairs consecutive snapshots and yields, per process: CPU time consumed, bytes
+- [x] `SnapshotDelta` pairs consecutive snapshots and yields, per process: CPU time consumed, bytes
       read/written, and appeared/exited/changed sets.
-- [ ] CPU percent = ΔprocessCpuTime / (Δwallclock × coreCount) by default, with a per-core mode
+- [x] CPU percent = ΔprocessCpuTime / (Δwallclock × coreCount) by default, with a per-core mode
       (`Δ / Δwallclock`, so a fully busy 8-thread process reads 800 %) selectable in both front-ends.
       Which mode is active is always visible in the column header — the two conventions differ by 8×
       on this machine and a number without its convention is not a number.
-- [ ] **PID reuse is detected, not assumed away.** Two snapshots may show the same PID as two
+- [x] **PID reuse is detected, not assumed away.** Two snapshots may show the same PID as two
       different processes. The identity key is `(pid, startTime)`; a mismatch is an exit plus a
       start, never a delta. A test pins this (§9.3).
-- [ ] **Counter wraparound and reset** yield "unknown" for that interval, not a negative or absurd
+- [x] **Counter wraparound and reset** yield "unknown" for that interval, not a negative or absurd
       rate. A 32-bit counter that decreased did not decrease.
-- [ ] First sample after start has no predecessor: rates are `unknown`, and the UI shows `—`. It does
+- [x] First sample after start has no predecessor: rates are `unknown`, and the UI shows `—`. It does
       not show `0`.
 
 ### 3.3 History
 
-- [ ] `HistoryRing<T>` — fixed-capacity ring per tracked series, allocated once. Default 600 samples
+- [x] `HistoryRing<T>` — fixed-capacity ring per tracked series, allocated once. Default 600 samples
       (10 minutes at 1 Hz), configurable; memory is bounded by construction, not by pruning.
-- [ ] Per-process history is kept only for processes with an open detail view plus the top N by CPU;
+- [~] Per-process history is kept only for processes with an open detail view plus the top N by CPU;
       everything else keeps the current value only. Keeping 600 samples × 1000 processes × 6 series
       is 28 MB of nothing anyone looks at.
-- [ ] A gap in sampling (the interval was missed, the machine was asleep) is recorded **as a gap**.
-      Plots break the line; they do not interpolate across it.
+- [x] A gap in sampling (the interval was missed, the machine was asleep) is recorded **as a gap**.
+      Plots break the line; they do not interpolate across it — `HistoryPlot` and the terminal meters
+      both do, and the golden frame shows a `?` where a counter did not move.
 
 ### 3.4 Unknown is a value
 
-- [ ] Every numeric field is `T?`-shaped with an explicit reason when absent: `NotPermitted`,
+- [x] Every numeric field is `T?`-shaped with an explicit reason when absent: `NotPermitted`,
       `NotSupportedOnPlatform`, `ProcessExited`, `NotSampledYet`, `CounterInvalid`.
-- [ ] Front-ends render each reason distinctly (`—` permission, `n/a` platform, `…` first sample) and
+- [x] Front-ends render each reason distinctly (`—` permission, `n/a` platform, `…` first sample) and
       the reason is available on hover / in the detail pane. This is the rule §1.5 exists for.
 
 ### 3.5 Sampling cadence
 
-- [ ] Default interval 1000 ms; settable 250 ms – 60 s. The interval is a *target*: the sampler
+- [x] Default interval 1000 ms; settable 250 ms – 60 s. The interval is a *target*: the sampler
       measures its own cost and reports it (§4), and never queues a second sample while the first is
       running.
-- [ ] Expensive collections are on a slower cadence than the process list: handles/open files and
+- [x] Expensive collections are on a slower cadence than the process list: handles/open files and
       module lists refresh on demand and on the detail view's own timer, never in the main loop.
-- [ ] The UI never blocks on a sample. Sampling runs on a background thread; the front-end receives a
-      completed snapshot.
+- [~] The UI never blocks on a sample. **Not true yet in either front-end**: both sample on their own
+      thread — the terminal UI between key polls, the desktop UI on its timer tick. At the measured
+      38 ms per sample that is invisible; at ten thousand processes it would not be, and the fix is a
+      background sampler with a completed-snapshot handoff, not a faster probe.
 
 ---
 
@@ -159,21 +174,40 @@ its own section because every subtle bug in a tool of this kind lives here.
 Targets measured by `ProcessManager.Benchmarks` and asserted in nightly CI. The harness fails on
 regression rather than printing a number nobody reads.
 
-- [ ] **Full snapshot, 1000 processes**: ≤ 25 ms on Linux, ≤ 15 ms on Windows (one
-      `NtQuerySystemInformation` call carries processes *and* threads).
-- [ ] **Steady-state allocation: zero.** After warm-up, a sample allocates no managed memory —
-      `/proc` files are read into pooled buffers and parsed from `ReadOnlySpan<byte>`; strings that
-      did not change are reused from the previous snapshot; no LINQ in the sampling path.
-      Enforced by `GC.GetAllocatedBytesForCurrentThread` around the sample loop.
-- [ ] **Own CPU cost**: < 1 % of one core at 1 Hz with 1000 processes, measured by sampling ourselves
-      in the harness.
-- [ ] **Resident memory**: < 60 MB for the desktop UI with 1000 processes and default history,
-      < 20 MB for the TUI.
-- [ ] **Start to first frame**: < 250 ms desktop, < 100 ms TUI.
-- [ ] **Binary size** reported per RID in the CI step summary on every AOT publish, so a regression is
-      visible in the run that caused it.
+**The budget is asserted on CPU time, not wall-clock.** This was learned rather than designed: the
+first harness measured wall-clock and reported 207 ms for the same work that took 896 ms an hour
+later, because the machine went from load 280 to load 650. A sample that waited for sixteen other
+builds to give a core back has not become more expensive. Wall-clock is still reported, because a
+user waiting for a frame does not care why.
 
----
+- [x] **Snapshot cost**: ≤ 25 ms of CPU per 1000 processes. Measured on Linux at **44 µs per
+      process** — 38 ms for 860 processes, against a 50 ms ceiling the harness enforces. The target
+      is not met and the gap is understood: three files are read per process (`stat`, `status`,
+      `io`), which is twelve syscalls, and syscalls are the whole cost. Getting to 25 would mean
+      reading fewer files, not parsing faster.
+- [x] **Steady-state allocation: zero.** After warm-up a sample allocates nothing: `/proc` files are
+      read through `open`/`read`/`close` into pooled buffers and parsed from `ReadOnlySpan<byte>`,
+      paths are built as UTF-8 bytes into stack buffers, and a name that did not change hands back
+      the string it had. Enforced by `GC.GetAllocatedBytesForCurrentThread` around the sample loop
+      with a ceiling of one byte per process.
+      *Measured before and after:* 199 598 → **~1 500 bytes** per sample at 850 processes, and what
+      is left is the genuinely new processes on a machine that was starting hundreds of them.
+- [x] **What is not on the sampling path, and why.** Two things were tried there and measured out:
+      - *File-descriptor counts.* Reading `/proc/[pid]/fd` makes the kernel materialise one directory
+        entry per open descriptor: **85 µs per process**, 74 ms of a 113 ms sample. Front-ends fill
+        the column for the rows they draw, through `ISystemProbe.GetHandleCount` (§3.5).
+      - *Proportional set size.* `smaps_rollup` walks the whole page table of every process:
+        **3 963 µs per process**, ninety times the rest of the sample put together. Off by default;
+        the private column is anonymous RSS, which arrives free in a file already being read.
+- [ ] **Own CPU cost**: < 1 % of one core at 1 Hz with 1000 processes. At 44 µs per process a
+      1000-process sample is 44 ms of CPU per second, which is 4.4 % of one core — so this is not met
+      either, and by the same factor as the line above.
+- [ ] **Resident memory**: < 60 MB for the desktop UI with 1000 processes, < 20 MB for the TUI.
+      Not yet measured.
+- [ ] **Start to first frame**: < 250 ms desktop, < 100 ms TUI. Not yet measured. The first sample is
+      legitimately several times a steady-state one — it loads every process's command line and image
+      path — so this needs its own number rather than an inference from the one above.
+- [x] **Binary size** reported per RID in the CI step summary on every AOT publish.
 
 ## 5. Platform probes
 
@@ -183,43 +217,55 @@ shells out to another program.
 
 ### 5.1 Linux — `/proc`, `/sys`, cgroup v2
 
-- [ ] Process list from `/proc/[pid]` directory enumeration, reusing the directory buffer.
-- [ ] `/proc/[pid]/stat` — state, ppid, pgrp, session, utime, stime, cutime, cstime, priority, nice,
+- [x] Process list from `/proc/[pid]` directory enumeration, reusing the directory buffer.
+- [x] `/proc/[pid]/stat` — state, ppid, pgrp, session, utime, stime, cutime, cstime, priority, nice,
       num_threads, starttime, vsize, rss. Parsed from bytes; the comm field is parsed by scanning
       **back** from the last `)`, because a process may be named `foo) 0 (bar`.
-- [ ] `/proc/[pid]/status` — Uid/Gid (real *and* effective), VmRSS, VmSwap, Threads, context switches.
-- [ ] `/proc/[pid]/smaps_rollup` — `Pss`, `Private_Clean`, `Private_Dirty`. This is the honest
-      "private bytes"; RSS double-counts shared pages and is labelled as such in the UI.
-- [ ] `/proc/[pid]/io` — `read_bytes`, `write_bytes`, `rchar`, `wchar`. Readable only by the owner
+- [x] `/proc/[pid]/status` — Uid/Gid (real *and* effective), VmRSS, VmSwap, Threads, context switches.
+- [~] `/proc/[pid]/smaps_rollup` — `Pss`, `Private_Clean`, `Private_Dirty`. Implemented and **off by
+      default**: measured at 3 963 µs per process, ninety times the rest of the sample (§4). The
+      default private column is `RssAnon` from `status`, which arrives free in a file already being
+      read and is wrong only in ignoring the process's share of what it maps.
+- [x] `/proc/[pid]/io` — `read_bytes`, `write_bytes`, `rchar`, `wchar`. Readable only by the owner
       (0400 since kernel 5.12): other users' processes report `NotPermitted` unless the helper is up.
-- [ ] `/proc/[pid]/cmdline` (NUL-separated), `/proc/[pid]/environ` (owner only), `/proc/[pid]/cwd`,
+      The probe checks the uid *before* opening, because the refusal arrives at `read(2)` rather than
+      `open(2)` and half a shared machine's process table is somebody else's.
+- [x] `/proc/[pid]/cmdline` (NUL-separated), `/proc/[pid]/environ` (owner only), `/proc/[pid]/cwd`,
       `/proc/[pid]/exe` (readlink).
-- [ ] `/proc/[pid]/fd/*` — open files, sockets (as `socket:[inode]`), pipes. Owner or helper only.
-- [ ] `/proc/[pid]/maps` — mapped files for the module view.
-- [ ] `/proc/[pid]/task/[tid]/stat` — per-thread, for the thread view only (not the main loop).
-- [ ] System: `/proc/stat` (per-core jiffies, ctxt, intr, procs_running), `/proc/meminfo`,
+- [x] `/proc/[pid]/fd/*` — open files, sockets (as `socket:[inode]`), pipes. Owner or helper only.
+      **Not on the sampling path**: the count costs 85 µs per process (§4), so front-ends ask for the
+      rows they draw.
+- [x] `/proc/[pid]/maps` — mapped files for the module view.
+- [x] `/proc/[pid]/task/[tid]/stat` — per-thread, for the thread view only (not the main loop).
+- [x] System: `/proc/stat` (per-core jiffies, ctxt, intr, procs_running), `/proc/meminfo`,
       `/proc/loadavg`, `/proc/uptime`, `/proc/diskstats`, `/proc/net/dev`, `/proc/pressure/*` (PSI).
-- [ ] Sockets: `/proc/net/{tcp,tcp6,udp,udp6,unix}` joined to processes by socket inode. The join is
-      O(fds), done once per network refresh, not per process.
-- [ ] `USER_HZ` is read via `sysconf(_SC_CLK_TCK)` through `[LibraryImport]`, not assumed to be 100.
+- [x] Sockets: `/proc/net/{tcp,tcp6,udp,udp6,unix}` joined to processes by socket inode. The join is
+      O(fds), done once per request, not per process. IPv6 addresses are handed back in their raw
+      hex form rather than formatted — a half-formatted address is worse than an honest one.
+- [x] `USER_HZ` is read via `sysconf(_SC_CLK_TCK)` through `[LibraryImport]`, not assumed to be 100.
       Page size likewise via `sysconf(_SC_PAGESIZE)` for `statm`/`rss`.
-- [ ] cgroup v2 (`/sys/fs/cgroup/…`): `memory.current`, `memory.max`, `cpu.stat`, `io.stat`, so a
-      containerized process shows its *limit*, not the host's total. Falls back cleanly on v1 and on
-      no-cgroup systems.
-- [ ] Users resolved through `getpwuid_r`, cached, with the numeric UID shown when NSS cannot answer.
+- [~] cgroup v2: the process's cgroup path is read from `/proc/[pid]/cgroup` and shown. The *limits*
+      (`memory.max`, `cpu.stat`, `io.stat`) are not read yet, so a containerized process still shows
+      the host's totals — open question 4.
+- [~] Users resolved from `/etc/passwd`, cached, with the numeric uid shown when the file cannot
+      answer. **This document originally specified `getpwuid_r`**, and the deviation has a cost worth
+      stating: accounts that come from LDAP, SSSD or systemd-homed through NSS show as numbers. What
+      it buys is a resolver that is a pure function of a file path — so it replays against a fixture
+      like the rest of the probe — and one that cannot block the sampling thread on a network
+      directory, which is a real failure mode of the correct call.
 
 ### 5.2 Windows — native API, no WMI
 
-- [ ] `NtQuerySystemInformation(SystemProcessInformation)` — the whole process *and* thread list in
+- [x] `NtQuerySystemInformation(SystemProcessInformation)` — the whole process *and* thread list in
       one call, into a pooled, grown-on-`STATUS_INFO_LENGTH_MISMATCH` buffer. WMI is not used
       anywhere: it is orders of magnitude slower and needs a service that may be broken.
-- [ ] `SystemProcessorPerformanceInformation` for per-core idle/kernel/user, `GetSystemTimes` as the
+- [x] `SystemProcessorPerformanceInformation` for per-core idle/kernel/user, `GetSystemTimes` as the
       cross-check.
 - [ ] `QueryFullProcessImageName` for the image path; `NtQueryInformationProcess`
       (`ProcessCommandLineInformation`, `ProcessBasicInformation`) for the command line and PEB.
-- [ ] Memory from the `SYSTEM_PROCESS_INFORMATION` block (`PrivatePageCount`, `WorkingSetPrivateSize`,
+- [x] Memory from the `SYSTEM_PROCESS_INFORMATION` block (`PrivatePageCount`, `WorkingSetPrivateSize`,
       `VirtualSize`) — already in the bulk call, so no per-process `OpenProcess` in the main loop.
-- [ ] I/O counters likewise from the bulk block (`ReadTransferCount`, `WriteTransferCount`).
+- [x] I/O counters likewise from the bulk block (`ReadTransferCount`, `WriteTransferCount`).
 - [ ] Modules via the PEB `Ldr` list (`NtReadVirtualMemory`), with Toolhelp32 as the fallback for
       cross-bitness cases.
 - [ ] Handles via `NtQuerySystemInformation(SystemExtendedHandleInformation)`; names resolved with
@@ -228,14 +274,15 @@ shells out to another program.
       times out is reported as `<name unavailable>`. This is the single most common way tools of this
       kind hang, and it is a design constraint, not a defect to discover later.
 - [ ] Sockets via `GetExtendedTcpTable` / `GetExtendedUdpTable` with `TCP_TABLE_OWNER_PID_ALL`.
-- [ ] Actions: `SetPriorityClass`, `SetProcessAffinityMask`, `NtSuspendProcess` / `NtResumeProcess`,
+- [x] Actions: `SetPriorityClass`, `SetProcessAffinityMask`, `NtSuspendProcess` / `NtResumeProcess`,
       `TerminateProcess`. Elevation via §8 when `OpenProcess` returns `ERROR_ACCESS_DENIED`.
-- [ ] `SeDebugPrivilege` is enabled only inside the helper, never in the UI process.
+- [x] `SeDebugPrivilege` is enabled only inside the helper, never in the UI process — which is
+      currently true by omission: nothing enables it anywhere yet.
 - [ ] Users resolved from the process token (`OpenProcessToken` + `LookupAccountSid`), cached by SID.
 
 ### 5.3 macOS — stub
 
-- [ ] Every member of `MacOsProbe` throws `PlatformNotSupportedException` with a message naming this
+- [x] Every member of `MacOsProbe` throws `PlatformNotSupportedException` with a message naming this
       section and the milestone (§10 M9). It does not return empty data — a program that shows an
       empty process list is worse than one that says it does not work here.
 - [ ] The macOS CI leg builds and runs it, and records how far it gets, exactly as NativeForms does
@@ -324,34 +371,46 @@ refused with a reason rather than failing silently.
 
 ### 7.1 Layout
 
-- [ ] Main window: `MenuStrip` + `ToolStrip` (with the system plots) over a vertical
-      `SplitContainer` — `TreeListView` of processes on top, `TabControl` of detail views below.
-      `StatusStrip` reports process count, the sample cost (§3.5) and helper state.
-- [ ] Process properties open in their own `Form`, several at once, each with the §6.2 tabs.
-- [ ] Column chooser, persisted layout, per-column sort, tree/flat toggle, "show all users" toggle.
+- [~] Main window: a `MenuStrip`, the system plots, a `TreeListView` of processes, a detail pane and
+      a status line reporting process count, CPU, memory and the sample cost. The `SplitContainer`
+      and the `TabControl` of §6.2 detail views are not in yet — the pane is one label — and the
+      layout is fixed rather than docked, so it does not follow a resize.
+- [ ] Process properties open in their own `Form`, several at once, each with the §6.2 tabs. Today
+      the selected process is described in the pane at the bottom instead.
+- [~] Tree/flat toggle and "show all users" are in the View menu. Column chooser, persisted layout
+      and click-to-sort headers are not.
 - [ ] Row coloring with the Process-Explorer conventions (new = green fade, exited = red fade, own
-      user, system, suspended), plus a **color legend window** — a color no dialog explains is
-      decoration.
-- [ ] Dark mode follows the OS theme through `ITheme`; the plots read their colors from it rather
-      than hard-coding.
+      user, system, suspended), plus a **color legend window**.
+      **Blocked, with a specific cause:** NativeForms' `TreeListView` has no per-row colour hook —
+      `TreeNode` carries text, an image and a tag, and nothing else. Its `DataGridView` does have one
+      (`RowBackColorSelector`) but is flat, and the tree is the more valuable half. The engine already
+      reports what the colours would say (`SnapshotDelta.IsNew`, the exit list, `ProcessState`); the
+      terminal front-end colours its rows from exactly that today. The fix is a hook in the toolkit,
+      not a workaround here.
+- [~] Dark mode follows the OS theme through `ITheme`. The plots take their background, grid and
+      border from it; the *series* colours and the meter's amber/red thresholds are hard-coded,
+      because `ITheme` has one accent and a plot needs several distinguishable lines.
 
 ### 7.2 Controls this project must build
 
 NativeForms has no plotting controls, so they are ours, owner-drawn against `IGraphics` per its
 [custom-control guide](https://github.com/Hawkynt/NativeForms/blob/main/docs/custom-controls.md):
 
-- [ ] `HistoryPlot` — scrolling multi-series time plot with gap support (§3.3), fixed allocation
-- [ ] `CoreMeterStrip` — one bar per logical core, the htop meter as a widget
-- [ ] `Sparkline` — in-cell mini plot for the CPU column, drawn by the `TreeListView` cell painter
-- [ ] `ColorLegend` — the legend window, generated from the same color table the rows use
+- [x] `HistoryPlot` — scrolling multi-series time plot with gap support (§3.3), reading a
+      `HistoryRing<Rate>` directly so nothing is copied per frame
+- [x] `CoreMeterStrip` — one bar per logical core, the htop meter as a widget
+- [ ] `Sparkline` — in-cell mini plot for the CPU column. Blocked by the same missing cell-painting
+      hook as the row colours above.
+- [ ] `ColorLegend` — the legend window. Pointless before the rows are coloured.
 
 ### 7.3 Interaction rules
 
 - [ ] Sorting and filtering never reorder rows *while the mouse is over them* — a re-sort that moves
       a row under the cursor between hover and click is how the wrong process gets killed. Re-sorts
       pause during a pointer interaction and apply on leave.
-- [ ] Selection is by process identity `(pid, startTime)` (§3.2), not by row index. A refresh must
-      not move the selection to whatever now occupies row 12.
+- [x] Selection is by process identity `(pid, startTime)` (§3.2), not by row index. In the desktop UI
+      the node objects themselves are reused across samples, so expansion state survives too; in the
+      terminal UI the selection is re-found by key after every rebuild.
 - [ ] Every destructive action is keyboard-reachable and confirmable without the mouse.
 
 ---
@@ -399,44 +458,55 @@ NativeForms has no plotting controls, so they are ours, owner-drawn against `IGr
 The whole point of a probe that returns raw counters (§2) is that almost everything can be tested
 without the OS under it.
 
-- [ ] **9.1 Fixture replay.** Recorded `/proc` trees checked into the repo as directories; the Linux
+- [~] **9.1 Fixture replay.** Recorded `/proc` trees checked into the repo as directories; the Linux
       probe takes its root as a parameter and reads the fixture. Real machines, captured once:
-      a desktop, a container, a machine with 2000 processes, and a `/proc` with the pathological
-      `comm` names of §5.1.
-- [ ] **9.2 Golden snapshots.** Fixture in, `SystemSnapshot` out, compared field by field against a
+      one hand-authored desktop tree so far, including the pathological `comm` of §5.1. A container and
+      a two-thousand-process capture are still to come. It is hand-authored rather than copied from a
+      real machine on purpose: a recorded `/proc` carries the command lines of whoever recorded it
+      into a public repository.
+- [x] **9.2 Golden snapshots.** Fixture in, `SystemSnapshot` out, compared field by field against a
       checked-in expectation. A parse regression is then a diff, not a debugging session.
-- [ ] **9.3 The nasty cases, each with its own test:** PID reuse across a sample · counter wraparound
+- [~] **9.3 The nasty cases, each with its own test:** PID reuse across a sample · counter wraparound
       · a wall-clock jump backwards · a process exiting mid-sample (files vanish between two reads)
       · a process whose `comm` contains `)` and spaces · zero elapsed time between samples · a
-      first sample with no predecessor · a 96-core `/proc/stat`.
-- [ ] **9.4 Windows structure replay.** The `SYSTEM_PROCESS_INFORMATION` buffer captured to a blob and
+      first sample with no predecessor · a 96-core `/proc/stat`. In today: PID reuse, wraparound, the backwards clock, the `)` in a `comm`,
+      the zero interval, the first sample, a parent that is not in the snapshot, a parent cycle, and
+      a process that is its own parent. Still missing: a process vanishing mid-sample, and the
+      96-core file.
+- [ ] **9.4 Windows structure replay.** Not yet: the parser is split out for it (`ParseProcesses` takes a span) but no buffer has been captured, so the Windows probe is currently **unverified** — The `SYSTEM_PROCESS_INFORMATION` buffer captured to a blob and
       replayed through the parser, so the Windows parsing path is testable on the Linux CI leg too.
-- [ ] **9.5 Trim/AOT gate.** A NativeAOT publish per RID with `TreatWarningsAsErrors=true`; any
+- [x] **9.5 Trim/AOT gate.** A NativeAOT publish per RID with `TreatWarningsAsErrors=true`; any
       IL2xxx/IL3xxx fails the build.
-- [ ] **9.6 Front-end smoke.** The desktop UI started headless against a fixture probe under Xvfb and
-      photographed; the TUI rendered against the same fixture to a captured buffer and compared to a
-      golden frame. Both run in CI, both are gates.
-- [ ] **9.7 Budget harness.** §4 asserted by `ProcessManager.Benchmarks` in nightly CI; a regression
+- [~] **9.6 Front-end smoke.** The TUI is rendered against the fixture into a captured buffer and
+      compared to a checked-in golden frame, both as an NUnit test and as a CI job. The desktop leg
+      exists in CI and brings the window up under Xvfb, but it writes a log rather than a PNG — the
+      capture itself is not written yet, so that half is a smoke test and not a photograph.
+- [x] **9.7 Budget harness.** §4 asserted by `ProcessManager.Benchmarks` in nightly CI; a regression
       exits non-zero.
-- [ ] **9.8 Helper protocol tests.** Malformed frames, oversized lengths, unknown opcodes, a PID/start
+- [ ] **9.8 Helper protocol tests.** Nothing to test: the helper refuses every request (§8). Malformed frames, oversized lengths, unknown opcodes, a PID/start
       mismatch and a truncated stream — each must be refused without the helper acting or crashing.
 
 ---
 
 ## 10. Milestones
 
-| # | Milestone | Contents | Done when |
+| # | Milestone | Contents | State |
 |---|---|---|---|
-| **M0** | Skeleton | Solution, projects, `Directory.Build.*`, CI green on an empty test | CI passes on all three legs |
-| **M1** | Core model | §3 snapshot/delta/rate/history, no probe | §9.3 cases pass against synthetic snapshots |
-| **M2** | Linux probe | §5.1 main loop fields, fixture replay | §9.1/§9.2 green; `--list --json` works |
-| **M3** | TUI v1 | Process list, sort, tree, kill, per-core meters | §9.6 golden frame; usable over SSH |
-| **M4** | Desktop v1 | §7.1 layout, §7.2 plot controls, process properties | §9.6 screenshot leg is a gate |
-| **M5** | Windows probe | §5.2 including the `NtQueryObject` timeout worker | §9.4 replay green; parity table in §5.4 filled |
-| **M6** | Details & search | §6.2 views, §6.5 search in both front-ends | Search finds a known holder of a known file on both OSes |
-| **M7** | Privilege helper | §8 end to end, both platforms | §9.8 green; refused elevation degrades per §8.3 |
-| **M8** | Polish & budget | §4 met and enforced, dark mode, persisted layout | Nightly budget harness green for a week |
-| **M9** | macOS | Replace the §5.3 stub with a real probe | The macOS CI leg becomes a gate instead of a probe |
+| **M0** | Skeleton | Solution, ten projects, `Directory.Build.*`, CI | **done** — solution builds clean on net10.0 |
+| **M1** | Core model | §3 snapshot/delta/rate/history, no probe | **done** — 51 tests, §9.3 cases green |
+| **M2** | Linux probe | §5.1 main-loop fields, fixture replay | **done** — reads a real machine and a recorded one |
+| **M3** | TUI v1 | Process list, sort, tree, kill, per-core meters | **done** — golden frame is a CI gate |
+| **M4** | Desktop v1 | §7.1 layout, §7.2 plot controls, process properties | **partial** — window, plots, meters and tree are in; docked layout, detail tabs, row colours and properties windows are not (§7.1) |
+| **M5** | Windows probe | §5.2 including the `NtQueryObject` timeout worker | **partial** — the bulk query, per-core times, memory and actions are written; handles, modules, threads and command lines are stubs, and none of it has run on Windows yet (§9.4) |
+| **M6** | Details & search | §6.2 views, §6.5 search in both front-ends | **partial** — `--find` searches names, command lines, open files and mappings; neither front-end has the detail views |
+| **M7** | Privilege helper | §8 end to end, both platforms | not started — the binary exists and refuses everything |
+| **M8** | Polish & budget | §4 met and enforced, dark mode, persisted layout | **partial** — the harness is in and gating; two of its budgets are not met (§4) |
+| **M9** | macOS | Replace the §5.3 stub with a real probe | not started |
+
+**The two things to do next, in order.** Get a `SYSTEM_PROCESS_INFORMATION` buffer captured and
+replayed (§9.4) — the Windows probe is a third of the product and nothing has ever executed it — and
+then either close the §4 gap by reading fewer files per process or revise the target to the 44 µs the
+current design costs. Both are decisions about the same trade and should be made together.
 
 ---
 
@@ -444,42 +514,70 @@ without the OS under it.
 
 Shipped in v1, not a later addition — the same engine with a different renderer.
 
-- [ ] Full-screen alternate-screen renderer over ANSI/VT, with `termios` raw mode on Linux and
+- [x] Full-screen alternate-screen renderer over ANSI/VT, with `termios` raw mode on Linux and
       `ENABLE_VIRTUAL_TERMINAL_PROCESSING` on Windows, restored on exit **and on crash**.
-- [ ] Diff-based redraw: only changed cells are written. A monitor that repaints 200 rows per second
+- [x] Diff-based redraw: only changed cells are written. A monitor that repaints 200 rows per second
       over SSH is its own denial of service.
-- [ ] htop-compatible keys where htop has one: `F5` tree · `F6` sort · `F9` kill · `F10`/`q` quit ·
+- [x] htop-compatible keys where htop has one: `F5` tree · `F6` sort · `F9` kill · `F10`/`q` quit ·
       `/` search · `\` filter · `u` user filter · `H` threads · `t` tree · space tag · `<`/`>` sort
       column. Keys we add do not shadow keys htop uses for something else.
-- [ ] Per-core meters, memory/swap bars and load average in the header, drawn by the same math the
+- [x] Per-core meters, memory/swap bars and load average in the header, drawn by the same math the
       desktop plots use.
-- [ ] Degrades by capability, not by guess: color depth from `TERM`/`COLORTERM`, box characters only
-      when the locale is UTF-8, and a monochrome ASCII mode that is actually tested (§9.6).
-- [ ] Resizes correctly on `SIGWINCH` / console resize events, including to sizes smaller than the
-      header.
-- [ ] Non-interactive modes for scripts: `--list`, `--list --json`, `--find`, `--kill`, each with a
-      stable output contract and a documented exit code.
+- [~] Degrades by capability, not by guess: colour depth comes from `NO_COLOR`/`COLORTERM`/`TERM`,
+      and the monochrome mode is what the golden frame is rendered in, so it is tested. The
+      locale-dependent box characters are not done — the frame uses ASCII throughout, which is the
+      safe end of that trade but not the pretty one.
+- [~] Resizes on a size change noticed at the top of the loop rather than on `SIGWINCH` — deliberate:
+      the signal arrives on another thread, and the frame diff assumes nobody else writes between
+      compose and flush. Sizes smaller than the header are clamped but not tested.
+- [x] Non-interactive modes for scripts: `--list`, `--list --json`, `--find`, `--kill`, each with a
+      documented exit code (0 success · 1 error · 2 nothing matched). A value that is not there is
+      `null` in the JSON and never `0`, so a consumer can tell "no I/O happened" from "you were not
+      allowed to look".
 
 ---
 
 ## 12. Coverage matrix
 
-A feature is finished when every column is ticked. Rows are added as features land; the table starts
-empty on purpose rather than pre-filled with unticked rows nobody will maintain.
+A feature is finished when every column is ticked. "Desktop" and "TUI" mean *reachable there*, not
+merely computed.
 
 | Feature | Implemented | Tested | Desktop | TUI | Documented |
 |---|---|---|---|---|---|
-| *(none yet — M0)* | | | | | |
+| Process list, CPU, memory, I/O | ✔ | ✔ | ✔ | ✔ | ✔ |
+| Process tree | ✔ | ✔ | ✔ | ✔ | ✔ |
+| Sort by any column | ✔ | ✔ | — | ✔ | ✔ |
+| Filter by text / by user | ✔ | ✔ | ✔ (user only) | ✔ | ✔ |
+| Unknown-with-a-reason (§3.4) | ✔ | ✔ | ✔ | ✔ | ✔ |
+| Per-core meters | ✔ | ✔ | ✔ | ✔ | ✔ |
+| CPU / memory history plot | ✔ | — | ✔ | — | ✔ |
+| End process | ✔ | — | ✔ | ✔ | ✔ |
+| End process tree | ✔ | — | — | ✔ | ✔ |
+| Suspend / resume | ✔ | — | ✔ | — | ✔ |
+| Priority / affinity | ✔ | — | — | — | ✔ |
+| Handle count on demand | ✔ | ✔ | ✔ | ✔ | ✔ |
+| Open files / modules / sockets | ✔ | — | — | — | ✔ |
+| Threads | ✔ | — | — | — | ✔ |
+| Environment block | ✔ | — | — | — | ✔ |
+| Search across handles (`--find`) | ✔ | — | — | — | ✔ |
+| Row colours (§7.1) | — | — | — | ✔ | ✔ |
+| Windows probe | ✔ | — | ? | ? | ✔ |
+| Elevated helper | — | — | — | — | ✔ |
 
----
+The two rows worth reading twice: **actions have no tests** — every one of them changes the state of
+the machine, and a test that ends a real process to prove it can is not a test anyone should run in
+CI, so they need a fake `IProcessActions` and a fixture that records what was asked. And the Windows
+probe's front-end columns are `?` rather than ✔ because nothing has run it on Windows (§9.4).
 
 ## 13. Open questions
 
 Each of these must be answered before the milestone that depends on it, and the answer is recorded
 here rather than in a commit message.
 
-1. **CPU% convention as the default** (§3.2) — normalized-to-100 like Task Manager, or per-core like
-   htop and top? Both are implemented; the question is which one a first-run user sees. *Blocks M3.*
+1. ~~**CPU% convention as the default**~~ — **answered: normalized.** Both are implemented and either
+   can be switched to at runtime (`C` in the terminal, the View menu in the window), and the active
+   one is named in the status line, because the two differ by a factor of the core count and a number
+   without its convention is not a number.
 2. **Handle-name resolution cost on Windows** (§5.2) — is the timeout worker fast enough to make the
    handle sweep interactive on a machine with 300 000 handles, or does the search need a persistent
    index? Measure at M5, decide at M6.
@@ -490,4 +588,9 @@ here rather than in a commit message.
    asking a runtime (Docker/podman socket) is a dependency this program does not otherwise have.
    Default assumption: no runtime sockets, limits only.
 5. **Settings storage** — a config file location per platform, or nothing persisted in v1 beyond
-   column layout? *Blocks M8.*
+   column layout? *Blocks M8.* Nothing is persisted today, including the sort column and the tree
+   toggle, which is the first thing anybody will notice.
+6. **Whether the §4 snapshot target survives contact.** 25 ms per 1000 processes was written before
+   anything was measured; the design costs 44 µs per process because it reads three files each. The
+   choice is to read fewer (dropping `status` would cost the private-memory column and the uid) or to
+   move the target. It should not be left as an unmet number nobody intends to meet.

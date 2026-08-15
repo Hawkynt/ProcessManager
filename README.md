@@ -23,10 +23,12 @@
 > Windows and real GTK windows on Linux without a second UI codebase.
 
 > [!IMPORTANT]
-> **Nothing is implemented yet.** This repository currently contains the specification
-> ([`docs/PRD.md`](docs/PRD.md)), this README, and the build/release pipeline. Every feature below is
-> a stated requirement, not a shipped one. The PRD tracks implementation box by box; when a box is
-> unticked there, the feature does not exist. Milestone **M0** is the first code.
+> **Early, and honest about it.** The engine, the Linux probe and the terminal UI work and are
+> tested; the desktop window comes up and shows the tree and the plots but is not finished; the
+> Windows probe is written and **has never been run on Windows**; macOS throws; the privileged helper
+> refuses everything. [`docs/PRD.md`](docs/PRD.md) tracks all of it box by box — when a box is
+> unticked there, the feature does not exist. §12 is the per-feature coverage matrix and §10 the
+> milestone state.
 
 ## ✨ What it is
 
@@ -52,10 +54,15 @@ ProcessManager.Core                Sampling engine: snapshots, deltas, rates, hi
 ProcessManager.Platform.Linux      /proc, /sys, cgroup v2, netlink                       — shipping
 ProcessManager.Platform.Windows    NtQuerySystemInformation, ToolHelp32, PDH             — shipping
 ProcessManager.Platform.MacOS      libproc / sysctl                                      — stub, throws
+ProcessManager.Ui.Terminal         Terminal renderer, no toolkit dependency
+ProcessManager.Ui.Desktop          Desktop UI on NativeForms
+ProcessManager.App                 The one binary: CLI plus both front-ends           — procman
 ProcessManager.Elevated            procman-helper: the only component that ever runs as root/admin
-ProcessManager.App                 Desktop UI on NativeForms (procman)
-ProcessManager.Tui                 Terminal UI, no toolkit dependency (procman --tui)
 ```
+
+One executable carries both front-ends, so `procman` and `procman --tui` are the same program. A
+headless machine still never loads GTK: a NativeForms backend that is not registered is never asked
+for its native library.
 
 Core never calls a native API; it asks an `ISystemProbe` for a `SystemSnapshot` and does the
 arithmetic. That is what makes the whole engine testable against recorded `/proc` trees and captured
@@ -91,8 +98,8 @@ detail pane below, a system graph in the toolbar, double-click for process prope
 | **System overview**     | Per-core CPU history, load average, memory and swap with cache breakdown, I/O throughput, network per-interface throughput, disk per-device throughput, uptime, context switches, interrupts                              |
 | **Search**              | One query across process names, command lines, open files, mapped modules and listening ports — the "who is holding this file" question, answered in one place                                                            |
 
-Rows are colored the way Process Explorer colors them: new processes flash green, exited processes
-flash red, and a legend explains every color rather than assuming you know it.
+Rows are coloured the way Process Explorer colours them — new green, exited red — in the terminal UI.
+The window does not colour them yet; see the limitations below for why.
 
 ## 🔐 Privileged operations
 
@@ -113,8 +120,13 @@ See [PRD §8](docs/PRD.md#8-privilege-model) for the protocol and its threat mod
 ```sh
 dotnet build ProcessManager.slnx -c Release
 dotnet test  ProcessManager.slnx -c Release
-dotnet run --project ProcessManager.App           # desktop UI; needs GTK 3 on Linux
-dotnet run --project ProcessManager.Tui           # terminal UI
+dotnet run --project ProcessManager.App -- --tui              # terminal UI
+dotnet run --project ProcessManager.App                       # desktop UI; needs GTK 3 on Linux
+dotnet run --project ProcessManager.Benchmarks                # the PRD §4 budget harness
+
+# Everything replays against a recorded /proc tree, on any OS:
+dotnet run --project ProcessManager.App -- --list --tree \
+  --probe-root ProcessManager.Tests/Fixtures/proc-desktop
 ```
 
 Publishing produces a single self-contained binary per platform, NativeAOT where the platform allows
@@ -147,7 +159,17 @@ project's own `<Version>X.Y.Z</Version>` to `X.Y.Z.<commit count of that folder>
 
 These are consequences of the design, not a to-do list; the to-do list is the PRD.
 
-- **macOS does not work.** The probe is a stub. Nothing samples, nothing renders.
+- **macOS does not work.** The probe is a stub whose every member throws. Nothing samples, nothing
+  renders.
+- **The Windows probe is unverified.** It is written — one `NtQuerySystemInformation` call for the
+  whole process and thread list, per-core times, memory, I/O, and the actions — and it has never
+  executed on Windows. Its structure-replay test (PRD §9.4) is the next thing to write.
+- **Sampling costs more than it should.** 44 µs of CPU per process on Linux, where the budget says
+  25 — three files are read per process and syscalls are the whole cost. Measured, tracked, and the
+  trade is written down in PRD §4 rather than left as a number nobody intends to meet.
+- **The desktop rows are not coloured.** The green-for-new, red-for-exited convention is in the
+  terminal UI and not in the window, because NativeForms' `TreeListView` has no per-row colour hook.
+  The engine already reports what the colours would say; the fix belongs in the toolkit.
 - **Per-process network capture needs the helper.** Linux attributes sockets to processes through
   `/proc/net` plus inode matching, which is unprivileged but coarse; anything finer needs root.
 - **No kernel driver, ever.** Everything Process Explorer does through its driver — real thread
