@@ -23,11 +23,15 @@ public sealed class MainWindow : Form {
   private readonly HistoryPlot _cpuPlot = new();
   private readonly HistoryPlot _memoryPlot = new();
   private readonly CoreMeterStrip _cores = new();
-  private readonly Label _details = new();
+  private readonly DetailPane _details;
+  private readonly SplitContainer _split = new();
+  private readonly Panel _plots = new();
   private readonly Label _status = new();
   private readonly NativeForms.Timer _timer = new();
   private readonly HistoryRing<Rate> _cpuHistory = new(600);
   private readonly HistoryRing<Rate> _memoryHistory = new(600);
+  private bool _splitPlaced;
+  private int _laidOutWidth = -1;
 
   public MainWindow(Sampler sampler, ISystemProbe probe, IProcessActions? actions) {
     ArgumentNullException.ThrowIfNull(sampler);
@@ -37,18 +41,39 @@ public sealed class MainWindow : Form {
     this._probe = probe;
     this._actions = actions;
     this._binder = new(this._tree);
+    this._details = new(probe);
 
     this.Text = "Process Manager";
-    this.Bounds = new(0, 0, 1180, 760);
+    this.Bounds = new(0, 0, 1240, 820);
 
-    this.BuildPlots();
-    this.BuildTree();
-    this.BuildDetails();
+    // Docked, in the order the layout is stacked: the menu on top, the plots under it, the status
+    // line at the bottom, and the splitter taking everything that is left. Fixed bounds were the
+    // first version and did not survive a resize.
     this.BuildStatus();
     this.BuildMenu();
+    this.BuildPlots();
+    this.BuildSplit();
 
     this._timer.Interval = 1000;
     this._timer.Tick += (_, _) => this.Refresh();
+  }
+
+
+  /// <summary>
+  /// What the window looks like right now, in text — the CI smoke leg's only evidence (PRD §9.6).
+  /// </summary>
+  public string DescribeForCapture() {
+    var builder = new System.Text.StringBuilder();
+    builder.AppendLine($"title:        {this.Text}");
+    builder.AppendLine($"bounds:       {this.Bounds}");
+    builder.AppendLine($"client size:  {this.ClientSize}");
+    builder.AppendLine($"controls:     {this.Controls.Count}");
+    builder.AppendLine($"process rows: {this._tree.Nodes.Count} roots, {this._tree.VisibleNodeCount} visible");
+    builder.AppendLine($"columns:      {this._tree.Columns.Count}");
+    builder.AppendLine($"split at:     {this._split.SplitterDistance}");
+    builder.AppendLine($"plots:        cpu {this._cpuPlot.Bounds}, memory {this._memoryPlot.Bounds}, cores {this._cores.Bounds}");
+    builder.AppendLine($"status:       {this._status.Text}");
+    return builder.ToString();
   }
 
   /// <summary>The refresh interval in milliseconds.</summary>
@@ -65,23 +90,66 @@ public sealed class MainWindow : Form {
   #region layout
 
   private void BuildPlots() {
+    this._plots.Dock = DockStyle.Top;
+    this._plots.Height = 104;
+
     this._cpuPlot.Caption = "CPU";
-    this._cpuPlot.Bounds = new(8, 8, 380, 90);
     this._cpuPlot.AddSeries(this._cpuHistory, Color.FromArgb(0x2E, 0x8B, 0x57), "CPU");
 
     this._memoryPlot.Caption = "Memory";
-    this._memoryPlot.Bounds = new(396, 8, 380, 90);
     this._memoryPlot.AddSeries(this._memoryHistory, Color.FromArgb(0x46, 0x82, 0xB4), "Memory");
 
-    this._cores.Bounds = new(784, 8, 380, 90);
+    this._plots.Controls.Add(this._cpuPlot);
+    this._plots.Controls.Add(this._memoryPlot);
+    this._plots.Controls.Add(this._cores);
 
-    this.Controls.Add(this._cpuPlot);
-    this.Controls.Add(this._memoryPlot);
-    this.Controls.Add(this._cores);
+    // Laid out by hand rather than with Anchor. Anchoring a child inside a docked container makes
+    // the toolkit's layout feed the resolved width back into the parent, and the form then grows
+    // without bound — measured at eleven million pixels wide after two seconds, with the anchored
+    // control's width tracking it exactly.
+    //
+    // There is no resize event to hook either: Control.OnBoundsChanged is private protected, so a
+    // control outside the toolkit's own assembly cannot observe its own resize. The layout therefore
+    // runs on the sample tick, which means a resize is followed a fraction of a second later by the
+    // strip catching up. Visible, and the alternative was a window that grows until it wraps.
+    this.Controls.Add(this._plots);
+    this.LayOutPlots();
+  }
+
+  private void LayOutPlots() {
+    const int Gap = 6;
+    var width = Math.Max(360, this._plots.Width);
+    // Two fixed-width plots and a meter strip that takes what is left, with a floor so that a narrow
+    // window clips the strip rather than inverting its width.
+    var plotWidth = Math.Min(392, (width - Gap * 4) / 3);
+    var height = this._plots.Height - Gap * 2;
+
+    this._cpuPlot.Bounds = new(Gap, Gap, plotWidth, height);
+    this._memoryPlot.Bounds = new(Gap * 2 + plotWidth, Gap, plotWidth, height);
+
+    var coresLeft = Gap * 3 + plotWidth * 2;
+    this._cores.Bounds = new(coresLeft, Gap, Math.Max(120, width - coresLeft - Gap), height);
+  }
+
+  private void BuildSplit() {
+    this._split.Dock = DockStyle.Fill;
+    this._split.Orientation = Orientation.Horizontal;
+    this._split.Panel1MinSize = 120;
+    this._split.Panel2MinSize = 120;
+
+    // The distance is clamped against the container's current size, and a control that has not been
+    // laid out yet has no size — so setting it here would silently collapse to Panel1MinSize, which
+    // is exactly what it did. It is applied from the sample tick instead, once the splitter has a
+    // height to divide.
+
+    this.BuildTree();
+    this._split.Panel1.Controls.Add(this._tree);
+    this._split.Panel2.Controls.Add(this._details.Control);
+    this.Controls.Add(this._split);
   }
 
   private void BuildTree() {
-    this._tree.Bounds = new(8, 106, 1156, 430);
+    this._tree.Dock = DockStyle.Fill;
     this._tree.ShowColumnHeaders = true;
 
     // The columns Process Explorer opens with, in its order. Everything is a selector over the
@@ -100,7 +168,6 @@ public sealed class MainWindow : Form {
 
     this._tree.AfterSelect += (_, _) => this.UpdateDetails();
     this._tree.ContextMenuStrip = this.BuildContextMenu();
-    this.Controls.Add(this._tree);
   }
 
   private ContextMenuStrip BuildContextMenu() {
@@ -112,6 +179,7 @@ public sealed class MainWindow : Form {
     menu.Items.Add(Item("Resume", () => this.Act("resume", key => this._actions!.Resume(key))));
     menu.Items.Add(new ToolStripSeparator());
     menu.Items.Add(Item("Read handle count", this.FillHandleCounts));
+    menu.Items.Add(Item("Refresh details", () => this._details.Invalidate()));
     return menu;
   }
 
@@ -121,14 +189,9 @@ public sealed class MainWindow : Form {
     return item;
   }
 
-  private void BuildDetails() {
-    this._details.Bounds = new(8, 544, 1156, 150);
-    this._details.Text = "Select a process.";
-    this.Controls.Add(this._details);
-  }
-
   private void BuildStatus() {
-    this._status.Bounds = new(8, 700, 1156, 22);
+    this._status.Dock = DockStyle.Bottom;
+    this._status.Height = 22;
     this.Controls.Add(this._status);
   }
 
@@ -163,6 +226,7 @@ public sealed class MainWindow : Form {
   #region refresh
 
   private new void Refresh() {
+    this.ApplyLayout();
     this._sampler.Sample();
     var snapshot = this._sampler.Current;
     var delta = this._sampler.Delta;
@@ -178,6 +242,23 @@ public sealed class MainWindow : Form {
 
     this.UpdateStatus(snapshot, delta);
     this.UpdateDetails();
+  }
+
+  /// <summary>
+  /// The layout the toolkit cannot do for us: the plot strip's widths, and the splitter's first
+  /// placement. Both are no-ops once they have settled, so running this every tick costs nothing.
+  /// </summary>
+  private void ApplyLayout() {
+    if (this._plots.Width != this._laidOutWidth) {
+      this._laidOutWidth = this._plots.Width;
+      this.LayOutPlots();
+    }
+
+    if (this._splitPlaced || this._split.Height <= 240)
+      return;
+
+    this._splitPlaced = true;
+    this._split.SplitterDistance = this._split.Height * 55 / 100;
   }
 
   private static Rate MemoryPercent(in SystemCounters system) {
@@ -200,23 +281,14 @@ public sealed class MainWindow : Form {
 
   private void UpdateDetails() {
     var row = this._binder.SelectedRow;
-    if (row is null) {
-      this._details.Text = "Select a process.";
+    if (row is null)
       return;
-    }
 
-    if (!this._sampler.Current.TryGetProcess(row.Key, out var process)) {
-      this._details.Text = $"{row.Label} — this process has ended.";
-      return;
-    }
+    this._details.Select(row.Key);
+    if (this._sampler.Current.TryGetProcess(row.Key, out var process))
+      this._details.UpdateOverview(in process, row);
 
-    this._details.Text =
-      $"{process.Name} ({process.Pid})   parent {process.ParentPid}   user {row.User}   session {process.SessionId}\n"
-      + $"CPU {row.Cpu} %   private {row.Private}   working set {row.WorkingSet}   virtual {Humanize.Bytes(process.VirtualBytes)}   swap {Humanize.Bytes(process.SwapBytes)}\n"
-      + $"threads {row.Threads}   handles {row.Handles}   priority {process.Priority}   nice {process.Nice}   started {row.Started}\n"
-      + $"image {process.ImagePath ?? "—"}\n"
-      + $"cgroup {process.ContainerPath ?? "—"}\n"
-      + $"command line {(row.CommandLine.Length > 0 ? row.CommandLine : "—")}";
+    this._details.Refresh();
   }
 
   private void FillHandleCounts() {

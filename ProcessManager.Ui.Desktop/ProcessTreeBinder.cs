@@ -24,6 +24,12 @@ public sealed class ProcessTreeBinder {
 
   private readonly TreeListView _tree;
   private readonly Dictionary<ProcessKey, TreeNode> _nodes = [];
+  // Where each node currently hangs: absent means "not in the tree at all", present with a null
+  // value means "a root". Without this the reparenting pass below cannot tell a brand-new root node
+  // (Parent null, wanted null) from one already attached at the root — and skipping it left the
+  // whole window showing an empty list while the status line counted the processes it was not
+  // showing.
+  private readonly Dictionary<ProcessKey, TreeNode?> _attachedTo = [];
   private readonly Dictionary<ProcessKey, ProcessRow> _rows = [];
   private readonly Dictionary<int, ProcessKey> _byPid = [];
   private readonly List<ProcessKey> _stale = [];
@@ -86,11 +92,13 @@ public sealed class ProcessTreeBinder {
         ? found
         : null;
 
-      if (ReferenceEquals(node.Parent, desiredParent))
+      if (this._attachedTo.TryGetValue(process.Key, out var currentParent)
+          && ReferenceEquals(currentParent, desiredParent))
         continue;
 
-      node.Parent?.Nodes.Remove(node);
-      if (this._tree.Nodes.Contains(node))
+      if (currentParent is not null)
+        currentParent.Nodes.Remove(node);
+      else if (this._attachedTo.ContainsKey(process.Key))
         this._tree.Nodes.Remove(node);
 
       if (desiredParent is null)
@@ -102,6 +110,8 @@ public sealed class ProcessTreeBinder {
         if (!desiredParent.IsExpanded)
           desiredParent.Expand();
       }
+
+      this._attachedTo[process.Key] = desiredParent;
     }
 
     this.RemoveStale();
@@ -122,13 +132,22 @@ public sealed class ProcessTreeBinder {
           var child = node.Nodes[0];
           node.Nodes.Remove(child);
           this._tree.Nodes.Add(child);
+          foreach (var (childKey, childNode) in this._nodes)
+            if (ReferenceEquals(childNode, child)) {
+              this._attachedTo[childKey] = null;
+              break;
+            }
         }
 
-        node.Parent?.Nodes.Remove(node);
-        if (this._tree.Nodes.Contains(node))
-          this._tree.Nodes.Remove(node);
+        if (this._attachedTo.TryGetValue(key, out var parent)) {
+          if (parent is not null)
+            parent.Nodes.Remove(node);
+          else
+            this._tree.Nodes.Remove(node);
+        }
       }
 
+      this._attachedTo.Remove(key);
       this._rows.Remove(key);
       this.HandleCounts.Remove(key);
     }

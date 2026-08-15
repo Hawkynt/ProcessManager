@@ -1,0 +1,158 @@
+using Hawkynt.NativeForms;
+using Hawkynt.ProcessManager.Model;
+using Hawkynt.ProcessManager.Query;
+using Hawkynt.ProcessManager.Sampling;
+using Hawkynt.ProcessManager.Ui.Desktop;
+
+namespace Hawkynt.ProcessManager.Tests;
+
+/// <summary>
+/// The desktop tree binder, without a display.
+/// </summary>
+/// <remarks>
+/// Written after the window shipped showing an empty list while its status line counted the
+/// processes it was not showing. The cause was one line: a brand-new root node has a null parent and
+/// wants a null parent, so the "has its parent changed?" check said no and never attached it. Every
+/// test here would have failed on that.
+/// </remarks>
+[TestFixture]
+public sealed class ProcessTreeBinderTests {
+
+  [Test]
+  public void EveryProcessGetsANode() {
+    var tree = new TreeListView();
+    var binder = new ProcessTreeBinder(tree);
+    var (snapshot, delta, view) = Build((1, 0), (2, 1), (3, 1));
+
+    binder.Sync(snapshot, delta, view);
+
+    Assert.That(tree.Nodes.Count, Is.EqualTo(1), "one root");
+    Assert.That(CountNodes(tree), Is.EqualTo(3), "every process is in the tree exactly once");
+  }
+
+  [Test]
+  public void AFlatViewPutsEveryProcessAtTheRoot() {
+    var tree = new TreeListView();
+    var binder = new ProcessTreeBinder(tree);
+    var (snapshot, delta, view) = Build((1, 0), (2, 1), (3, 1));
+    view.TreeMode = false;
+    view.Rebuild(snapshot, delta);
+
+    binder.Sync(snapshot, delta, view);
+
+    Assert.That(tree.Nodes.Count, Is.EqualTo(3));
+  }
+
+  [Test]
+  public void SyncingTwiceDoesNotDuplicateAnything() {
+    // The binder is incremental; the second call must be a no-op rather than a second tree.
+    var tree = new TreeListView();
+    var binder = new ProcessTreeBinder(tree);
+    var (snapshot, delta, view) = Build((1, 0), (2, 1));
+
+    binder.Sync(snapshot, delta, view);
+    binder.Sync(snapshot, delta, view);
+
+    Assert.That(CountNodes(tree), Is.EqualTo(2));
+  }
+
+  [Test]
+  public void TheSameNodeObjectSurvivesASample() {
+    // Node identity is what carries expansion state and selection across a refresh (PRD §7.3).
+    var tree = new TreeListView();
+    var binder = new ProcessTreeBinder(tree);
+    var (snapshot, delta, view) = Build((1, 0), (2, 1));
+
+    binder.Sync(snapshot, delta, view);
+    var before = tree.Nodes[0];
+    binder.Sync(snapshot, delta, view);
+
+    Assert.That(tree.Nodes[0], Is.SameAs(before));
+  }
+
+  [Test]
+  public void AProcessThatExitedLosesItsNode() {
+    var tree = new TreeListView();
+    var binder = new ProcessTreeBinder(tree);
+    var (first, firstDelta, firstView) = Build((1, 0), (2, 1));
+    binder.Sync(first, firstDelta, firstView);
+    Assert.That(CountNodes(tree), Is.EqualTo(2));
+
+    var (second, secondDelta, secondView) = Build((1, 0));
+    binder.Sync(second, secondDelta, secondView);
+
+    Assert.That(CountNodes(tree), Is.EqualTo(1));
+  }
+
+  [Test]
+  public void ChildrenOfAnExitedProcessAreKeptAtTheRoot() {
+    // They are still running — reparented to init — so deleting them with their parent would remove
+    // rows for processes that are very much alive.
+    var tree = new TreeListView();
+    var binder = new ProcessTreeBinder(tree);
+    var (first, firstDelta, firstView) = Build((1, 0), (2, 1), (3, 2));
+    binder.Sync(first, firstDelta, firstView);
+
+    // 2 exits; 3 remains and now reports 1 as its parent.
+    var (second, secondDelta, secondView) = Build((1, 0), (3, 1));
+    binder.Sync(second, secondDelta, secondView);
+
+    Assert.That(CountNodes(tree), Is.EqualTo(2));
+  }
+
+  [Test]
+  public void SwitchingToFlatModeMovesChildrenToTheRoot() {
+    var tree = new TreeListView();
+    var binder = new ProcessTreeBinder(tree);
+    var (snapshot, delta, view) = Build((1, 0), (2, 1));
+    binder.Sync(snapshot, delta, view);
+    Assert.That(tree.Nodes.Count, Is.EqualTo(1));
+
+    view.TreeMode = false;
+    view.Rebuild(snapshot, delta);
+    binder.Sync(snapshot, delta, view);
+
+    Assert.That(tree.Nodes.Count, Is.EqualTo(2), "both are roots now");
+    Assert.That(CountNodes(tree), Is.EqualTo(2), "and neither was duplicated");
+  }
+
+  private static int CountNodes(TreeListView tree) {
+    var count = 0;
+    foreach (TreeNode node in tree.Nodes)
+      count += Count(node);
+
+    return count;
+
+    static int Count(TreeNode node) {
+      var total = 1;
+      foreach (TreeNode child in node.Nodes)
+        total += Count(child);
+
+      return total;
+    }
+  }
+
+  private static (SystemSnapshot Snapshot, SnapshotDelta Delta, ProcessView View) Build(
+    params (int Pid, int ParentPid)[] processes
+  ) {
+    var snapshot = new SystemSnapshot { TimestampTicks = 0 };
+    snapshot.System.CoreCount = 1;
+    var buffer = snapshot.PrepareProcesses(processes.Length);
+    for (var i = 0; i < processes.Length; ++i) {
+      buffer[i] = default;
+      buffer[i].Key = new(processes[i].Pid, 1000ul);
+      buffer[i].ParentPid = processes[i].ParentPid;
+      buffer[i].Name = $"p{processes[i].Pid}";
+      buffer[i].UserId = 1000;
+      buffer[i].CpuTimeNs = Counter.Of(0ul);
+    }
+
+    var delta = new SnapshotDelta();
+    delta.Update(null, snapshot, CpuPercentMode.Normalized);
+
+    var view = new ProcessView { TreeMode = true, SortColumn = ProcessColumn.Pid, SortDescending = false };
+    view.Rebuild(snapshot, delta);
+    return (snapshot, delta, view);
+  }
+
+}

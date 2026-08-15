@@ -60,7 +60,10 @@ public static class DesktopApp {
       var closer = new NativeForms.Timer { Interval = 2500 };
       closer.Tick += (_, _) => {
         closer.Stop();
-        File.WriteAllText(log, $"window up: {window.Text}, {window.Width}x{window.Height}\n");
+        // Everything a reader needs to tell "the window came up empty" from "the window came up":
+        // a windowed process on a runner has no console, so this file is the only witness
+        // (PRD §9.6).
+        File.WriteAllText(log, window.DescribeForCapture());
         Application.Exit();
       };
 

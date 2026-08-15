@@ -25,6 +25,10 @@
     <ProjectReference Include="..\ProcessManager.Platform.MacOS\ProcessManager.Platform.MacOS.csproj" />
     <ProjectReference Include="..\ProcessManager.Platform.Windows\ProcessManager.Platform.Windows.csproj" />
     <ProjectReference Include="..\ProcessManager.Ui.Terminal\ProcessManager.Ui.Terminal.csproj" />
+    <!-- The desktop binder is testable without a display: the tree control is owner-drawn and its
+         node collection works unrealized, which is what makes the "the window showed nothing"
+         regression catchable in a unit test rather than only in the CI screenshot leg. -->
+    <ProjectReference Include="..\ProcessManager.Ui.Desktop\ProcessManager.Ui.Desktop.csproj" />
   </ItemGroup>
 
 </Project>
