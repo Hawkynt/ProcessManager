@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD polkit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/software/polkit/policyconfig-1.dtd">
+
+<!--
+  The polkit action that lets procman start its helper as root.
+
+  Install to /usr/share/polkit-1/actions/org.hawkynt.procman.policy and the helper to
+  /usr/lib/procman/procman-helper. Both need root to install, which is the point: the path polkit
+  will elevate is fixed by an administrator, not chosen by the program at run time.
+
+  auth_admin_keep rather than auth_admin: one authentication covers a session's worth of actions, so
+  ending three processes does not mean typing a password three times. It is deliberately not "yes" —
+  reading another user's environment block and ending another user's process are things a person
+  should have to agree to.
+-->
+<policyconfig>
+
+  <vendor>Hawkynt</vendor>
+  <vendor_url>https://github.com/Hawkynt/ProcessManager</vendor_url>
+
+  <action id="org.hawkynt.procman.helper">
+    <description>Inspect and control processes belonging to other users</description>
+    <message>Authentication is required to inspect and control other users' processes</message>
+    <icon_name>utilities-system-monitor</icon_name>
+    <defaults>
+      <allow_any>auth_admin_keep</allow_any>
+      <allow_inactive>auth_admin_keep</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/lib/procman/procman-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.allow_gui">true</annotate>
+  </action>
+
+</policyconfig>

@@ -5,6 +5,7 @@
     <AssemblyName>procman-helper</AssemblyName>
     <RootNamespace>Hawkynt.ProcessManager.Elevated</RootNamespace>
     <Version>0.1.0</Version>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>

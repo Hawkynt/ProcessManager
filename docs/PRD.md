@@ -430,36 +430,52 @@ NativeForms has no plotting controls, so they are ours, owner-drawn against `IGr
 
 ### 8.1 Shape
 
-- [ ] The UI process **never** runs elevated and never asks to. `procman-helper` is a separate
-      executable, started on demand, exiting with its parent.
-- [ ] Linux: launched through `pkexec` with a shipped polkit policy naming the actions; the policy
-      file is part of the package and is reviewable.
-- [ ] Windows: launched with `runas`/UAC via a manifested helper; `SeDebugPrivilege` is enabled in
-      the helper only, and only while a request needs it.
+- [x] The UI process **never** runs elevated and never asks to. `procman-helper` is a separate
+      executable, started on demand, exiting with its parent — its input closes when the parent goes,
+      its read returns end-of-stream, and it stops. It has no loop of its own to be stuck in.
+- [x] Linux: launched through `pkexec` with a shipped polkit policy naming the action
+      (`packaging/org.hawkynt.procman.policy`, `auth_admin_keep`). The policy pins the executable
+      path, so an administrator decides what gets elevated rather than the caller.
+- [ ] Windows: **not implemented, and the reason is structural.** Windows cannot both elevate a child
+      and redirect its standard handles in one call — the `runas` verb that raises the UAC prompt
+      refuses redirection — so the pipe of §8.2 has to become a named pipe the elevated child
+      connects back to. The channel reports this plainly rather than silently starting the helper
+      unelevated, which would produce exactly the refusals it was started to avoid.
 - [ ] The helper is started **lazily** — the first time an action or column needs it — and the prompt
       says which operation asked for it.
 
 ### 8.2 Protocol
 
-- [ ] A private pipe pair (`AF_UNIX` socketpair on Linux, an anonymous named pipe on Windows) handed
-      to the child at spawn. No path in `/tmp`, no world-readable FIFO, no port.
-- [ ] Length-prefixed binary frames with a fixed opcode set. The helper **parses**; it never
-      evaluates, never accepts a command string, and never accepts a path it did not validate.
-- [ ] Opcodes are the entire privileged surface, enumerated here and nowhere else: `ReadProcIo`,
-      `ReadCmdline`, `ReadEnviron`, `ListFds`, `Terminate`, `Suspend`, `Resume`, `SetPriority`,
-      `SetAffinity`, `StartCapture`, `StopCapture`. Adding one is a PRD change.
-- [ ] Every request carries `(pid, startTime)` and the helper re-validates the pair before acting, so
-      a PID reused between the click and the syscall is refused rather than acted on. This is the
-      whole reason the identity key exists.
-- [ ] The helper has no timers, no polling loop and no state beyond its open capture handles; it does
-      strictly what it is asked, one request at a time.
+- [x] A private pipe pair handed to the child at spawn: its **standard input and output**, redirected.
+      No path in `/tmp`, no world-readable FIFO, no port — nothing on the machine can connect to it
+      but the process that started it. This is a simplification of the draft's "`AF_UNIX` socketpair
+      on Linux, anonymous named pipe on Windows": redirected stdio *is* an anonymous pipe pair on
+      both platforms, `pkexec` passes it through, and one mechanism is one thing to get right.
+- [x] Length-prefixed binary frames with a fixed opcode set. The helper **parses**; it never
+      evaluates, never accepts a command string, and never accepts a path — it builds every path
+      itself from a pid it has validated. A length prefix is attacker-controlled, so it is bounds-
+      checked before anything is allocated, and a malformed frame ends the conversation rather than
+      being resynchronised past.
+- [x] Opcodes are the entire privileged surface: `ReadProcIo`, `ReadCmdline`, `ReadEnviron`,
+      `ListFds`, `Terminate`, `Suspend`, `Resume`, `SetPriority`, `SetAffinity`. `StartCapture` and
+      `StopCapture` were in the draft and are **not implemented** — per-process packet capture is
+      open question 3, and an opcode that exists but does nothing is a privileged surface for no
+      benefit. Adding one back is a PRD change.
+- [x] Every request carries `(pid, startTime)` and the helper re-reads the start time from `/proc`
+      itself before acting — it does not trust the caller's copy. A pid reused between the click and
+      the syscall is refused. This is the whole reason the identity key exists, and it is checked
+      end to end by `procman --helper-check`.
+- [x] The helper has no timers, no polling loop and no state at all; it does strictly what it is
+      asked, one request at a time.
 
 ### 8.3 Degradation
 
-- [ ] Refused elevation is a normal outcome. The affected columns show `NotPermitted` (§3.4), the
-      affected actions grey out with the reason in the tooltip, and nothing retries the prompt in a
-      loop.
-- [ ] A dead or crashed helper is noticed at the next request and reported once; the program keeps
+- [~] Refused elevation is a normal outcome: the channel records why, answers `NotPermitted`, and
+      never retries. What is **not** wired yet is the last step — the probes do not consult the
+      channel, so a column that reads `—` today would still read `—` with the helper running. The
+      channel, the helper and the protocol are done and tested; joining them to `LinuxProbe` is the
+      remainder of M7.
+- [x] A dead or crashed helper is noticed at the next request and reported once; the program keeps
       running unprivileged.
 
 ---
@@ -517,7 +533,16 @@ without the OS under it.
       capture itself is not written yet, so that half is a smoke test and not a photograph.
 - [x] **9.7 Budget harness.** §4 asserted by `ProcessManager.Benchmarks` in nightly CI; a regression
       exits non-zero.
-- [ ] **9.8 Helper protocol tests.** Nothing to test: the helper refuses every request (§8). Malformed frames, oversized lengths, unknown opcodes, a PID/start
+- [x] **9.8 Helper protocol tests.** Nineteen of them, and every one is an attempt to make the parser
+      that runs as root do something it should not: a length larger than the ceiling (refused without
+      allocating), a negative length, a length too small to hold a request, a stream that ends
+      mid-frame, an unknown opcode, opcode zero, a pid of zero or negative or beyond `int`, and every
+      truncation of a valid frame plus a run of garbage — none of which may throw, because a crash in
+      a process holding root is a denial of service on everything the user wanted to do. A longer
+      frame from a newer client is skipped rather than desynchronising the stream.
+      The other half is `procman --helper-check`, which starts the real binary **unelevated** over a
+      real pipe and checks it answers, reads the files it is asked for, and refuses an identity
+      mismatch, a missing process and an empty affinity mask. It runs in CI on the Linux leg. Malformed frames, oversized lengths, unknown opcodes, a PID/start
       mismatch and a truncated stream — each must be refused without the helper acting or crashing.
 
 ---
@@ -533,7 +558,7 @@ without the OS under it.
 | **M4** | Desktop v1 | §7.1 layout, §7.2 plot controls, process properties | **partial** — window, plots, meters and tree are in; docked layout, detail tabs, row colours and properties windows are not (§7.1) |
 | **M5** | Windows probe | §5.2 including the `NtQueryObject` timeout worker | **partial** — the bulk query, per-core times, memory and actions are written; handles, modules, threads and command lines are stubs, and none of it has run on Windows yet (§9.4) |
 | **M6** | Details & search | §6.2 views, §6.5 search in both front-ends | **partial** — `--find` searches names, command lines, open files and mappings; neither front-end has the detail views |
-| **M7** | Privilege helper | §8 end to end, both platforms | not started — the binary exists and refuses everything |
+| **M7** | Privilege helper | §8 end to end, both platforms | **partial** — protocol, helper, client channel, polkit policy and both halves of §9.8 are done and green on Linux; the probes do not consult the channel yet, and Windows elevation needs a named pipe (§8.1) |
 | **M8** | Polish & budget | §4 met and enforced, dark mode, persisted layout | **partial** — the harness is in and gating; two of its budgets are not met (§4) |
 | **M9** | macOS | Replace the §5.3 stub with a real probe | not started |
 

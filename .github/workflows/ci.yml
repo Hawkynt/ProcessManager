@@ -97,6 +97,14 @@ jobs:
       - name: Ask the probe about itself and check the runtime agrees
         run: dotnet run --project ProcessManager.App --configuration Release --no-build -- --self-test
 
+      # The other half of the helper's tests. The protocol tests (PRD §9.8) drive the parser with
+      # malformed frames; this drives the real binary over a real pipe and checks that it answers,
+      # reads what it is asked for, and refuses a request whose identity does not match. Unelevated,
+      # so it needs no password and CI can run it at all.
+      - name: Talk to the privileged helper over its pipe
+        if: runner.os == 'Linux'
+        run: dotnet run --project ProcessManager.App --configuration Release --no-build -- --helper-check
+
   wine:
     name: self-test (win-x64 under wine)
     runs-on: ubuntu-latest
