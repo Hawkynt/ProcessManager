@@ -1,3 +1,4 @@
+using Hawkynt.ProcessManager.Abstractions;
 using System.Globalization;
 using Hawkynt.ProcessManager.Model;
 using Hawkynt.ProcessManager.Query;
@@ -29,7 +30,10 @@ namespace Hawkynt.ProcessManager.App;
 /// </remarks>
 internal static class SelfTest {
 
-  public static int Run(Sampler sampler, string probeDescription) {
+  public static int Run(Sampler sampler, string probeDescription)
+    => Run(sampler, probeDescription, null);
+
+  public static int Run(Sampler sampler, string probeDescription, ISystemProbe? probe) {
     var failures = new List<string>();
     var notes = new List<string>();
 
@@ -128,6 +132,9 @@ internal static class SelfTest {
       self.UserName is not null || self.UserId >= 0,
       "every process has an owner, and a row that cannot name it says so");
 
+    if (probe is not null)
+      CheckDetailQueries(failures, notes, probe, self.Key, expected);
+
     Console.WriteLine();
     foreach (var note in notes)
       Console.WriteLine($"note {note}");
@@ -141,6 +148,57 @@ internal static class SelfTest {
       : $"{failures.Count} check(s) disagree with the runtime.");
 
     return failures.Count == 0 ? 0 : 1;
+  }
+
+  /// <summary>
+  /// The on-demand queries behind the detail views (PRD §6.2).
+  /// </summary>
+  /// <remarks>
+  /// These are the parts of a probe that the process list never exercises, and on Windows they are
+  /// the newest code in the product — the Toolhelp module walk, the handle table filtered by owner
+  /// and duplicated into this process, and the thread list read back out of the sampling buffer.
+  /// Asking them about the process we are running in is the cheapest way to find out they work at
+  /// all, and it is the only check that ever has.
+  /// </remarks>
+  private static void CheckDetailQueries(
+    List<string> failures,
+    List<string> notes,
+    ISystemProbe probe,
+    ProcessKey key,
+    System.Diagnostics.Process expected
+  ) {
+    var threads = probe.GetThreads(key);
+    Check(failures, notes, "threads listed", $"{threads.Count}  (BCL: {expected.Threads.Count})",
+      threads.Count > 0 && WithinFactor(threads.Count, expected.Threads.Count, 3),
+      "a running process has threads, and the detail view has to be able to name them");
+
+    var modules = probe.GetModules(key);
+    Check(failures, notes, "modules listed", $"{modules.Count}",
+      modules.Count > 0,
+      "a .NET process has loaded libraries; an empty list means the walk found nothing it should have");
+
+    // Handles and the environment are permission-dependent even for one's own process on some
+    // platforms, so an empty list is reported rather than failed — but a *throw* is not acceptable,
+    // and neither is a handle with no type at all.
+    var handles = probe.GetHandles(key);
+    var named = 0;
+    foreach (var handle in handles)
+      if (handle.Name is not null)
+        ++named;
+
+    Check(failures, notes, "handles listed", $"{handles.Count} ({named} named)",
+      true,
+      "reported rather than asserted: a platform may refuse this even for one's own process");
+
+    var environment = probe.GetEnvironment(key);
+    Check(failures, notes, "environment listed", $"{environment.Count} variables",
+      true,
+      "reported rather than asserted");
+
+    var connections = probe.GetConnections(key);
+    Check(failures, notes, "sockets listed", $"{connections.Count}",
+      true,
+      "reported rather than asserted; a process with no sockets is normal");
   }
 
   /// <summary>

@@ -50,7 +50,7 @@ internal static class Program {
         RunMode.List => RunList(sampler, options),
         RunMode.Find => RunFind(sampler, probe, options),
         RunMode.Kill => RunKill(sampler, actions, options),
-        RunMode.SelfTest => SelfTest.Run(sampler, probe.Description),
+        RunMode.SelfTest => SelfTest.Run(sampler, probe.Description, probe),
         RunMode.HelperCheck => HelperCheck.Run(),
         RunMode.Terminal => RunTerminal(sampler, probe, actions, options),
         _ => RunDesktop(sampler, probe, actions, options),

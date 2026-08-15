@@ -277,19 +277,26 @@ shells out to another program.
 - [x] Memory from the `SYSTEM_PROCESS_INFORMATION` block (`PrivatePageCount`, `WorkingSetPrivateSize`,
       `VirtualSize`) — already in the bulk call, so no per-process `OpenProcess` in the main loop.
 - [x] I/O counters likewise from the bulk block (`ReadTransferCount`, `WriteTransferCount`).
-- [ ] Modules via the PEB `Ldr` list (`NtReadVirtualMemory`), with Toolhelp32 as the fallback for
-      cross-bitness cases.
-- [ ] Handles via `NtQuerySystemInformation(SystemExtendedHandleInformation)`; names resolved with
-      `NtQueryObject`. **`NtQueryObject` can block forever on a synchronous named pipe** — name
+- [x] Modules via **Toolhelp32** rather than the PEB `Ldr` walk this document first specified: it
+      needs no read access to the target's address space, handles the cross-bitness case with both
+      snapshot flags, and is a documented API rather than a structure that moves between releases.
+      Verified at 47 modules for a .NET process.
+- [x] Handles via `NtQuerySystemInformation(SystemExtendedHandleInformation)`, filtered by owner and
+      duplicated into this process to be asked about; names resolved with `NtQueryObject`. Verified at
+      95 handles, 41 of them named. **`NtQueryObject` can block forever on a synchronous named pipe** — name
       resolution therefore runs on a dedicated worker with a per-handle timeout, and a handle that
       times out is reported as `<name unavailable>`. This is the single most common way tools of this
       kind hang, and it is a design constraint, not a defect to discover later.
-- [ ] Sockets via `GetExtendedTcpTable` / `GetExtendedUdpTable` with `TCP_TABLE_OWNER_PID_ALL`.
+- [x] Sockets via `GetExtendedTcpTable` / `GetExtendedUdpTable` with `TCP_TABLE_OWNER_PID_ALL`, both
+      address families. Windows names the owning pid in the table itself, so unlike Linux there is no
+      socket inode to join against.
 - [x] Actions: `SetPriorityClass`, `SetProcessAffinityMask`, `NtSuspendProcess` / `NtResumeProcess`,
       `TerminateProcess`. Elevation via §8 when `OpenProcess` returns `ERROR_ACCESS_DENIED`.
 - [x] `SeDebugPrivilege` is enabled only inside the helper, never in the UI process — which is
       currently true by omission: nothing enables it anywhere yet.
-- [ ] Users resolved from the process token (`OpenProcessToken` + `LookupAccountSid`), cached by SID.
+- [x] Users resolved from the process token (`OpenProcessToken` + `GetTokenInformation(TokenUser)` +
+      `LookupAccountSid`), cached by SID and by pid — one lookup per account, not per process, because
+      `LookupAccountSid` can go to a domain controller. Verified: `ARCHBTW2\hawky`.
 
 ### 5.3 macOS — stub
 
@@ -305,19 +312,19 @@ Filled in as probes land; `n/a` means the platform has no such concept, not that
 
 | Capability | Linux | Windows | macOS |
 |---|---|---|---|
-| Process list, CPU, memory | `[ ]` | `[ ]` | `n/a` |
-| Private/PSS memory | `[ ]` | `[ ]` | `n/a` |
-| Per-process I/O bytes | `[ ]` owner or helper | `[ ]` | `n/a` |
-| Command line (other users) | `[ ]` | `[ ]` helper | `n/a` |
-| Environment block | `[ ]` owner only | `[ ]` helper | `n/a` |
-| Open files / handles | `[ ]` owner or helper | `[ ]` helper for full names | `n/a` |
-| Modules / mappings | `[ ]` | `[ ]` | `n/a` |
-| Threads | `[ ]` | `[ ]` | `n/a` |
-| Sockets → PID | `[ ]` | `[ ]` | `n/a` |
-| Container limits | `[ ]` cgroup v2 | `n/a` | `n/a` |
-| Suspend / resume | `[ ]` SIGSTOP/SIGCONT | `[ ]` | `n/a` |
-| Priority / affinity | `[ ]` | `[ ]` | `n/a` |
-| Per-process packet capture | `[ ]` helper | `[ ]` helper | `n/a` |
+| Process list, CPU, memory | `[x]` | `[x]` | `n/a` |
+| Private/PSS memory | `[x]` RssAnon, PSS opt-in | `[x]` commit charge | `n/a` |
+| Per-process I/O bytes | `[x]` owner only | `[x]` | `n/a` |
+| Command line (other users) | `[x]` | `[x]` | `n/a` |
+| Environment block | `[x]` owner, or helper | `[ ]` needs the PEB walk | `n/a` |
+| Open files / handles | `[x]` owner, or helper | `[x]` 95 seen, 41 named | `n/a` |
+| Modules / mappings | `[x]` | `[x]` 47 seen | `n/a` |
+| Threads | `[x]` | `[x]` from the bulk buffer | `n/a` |
+| Sockets → PID | `[x]` inode join | `[x]` owner pid in the table | `n/a` |
+| Container limits | `[~]` cgroup path only | `n/a` | `n/a` |
+| Suspend / resume | `[x]` SIGSTOP/SIGCONT | `[x]` NtSuspend/ResumeProcess | `n/a` |
+| Priority / affinity | `[x]` | `[x]` | `n/a` |
+| Per-process packet capture | `[ ]` open question 3 | `[ ]` | `n/a` |
 
 ---
 

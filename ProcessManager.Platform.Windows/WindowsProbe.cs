@@ -382,7 +382,137 @@ public sealed class WindowsProbe : ISystemProbe {
     _ => HandleKind.Unknown,
   };
 
-  public IReadOnlyList<ConnectionRecord> GetConnections(ProcessKey key) => [];
+  /// <summary>
+  /// The sockets this process owns, from the TCP and UDP tables.
+  /// </summary>
+  /// <remarks>
+  /// Windows reports the owning pid in the table itself, so unlike Linux there is no inode to join
+  /// against — the whole machine's table comes back and is filtered. Both address families are asked
+  /// for separately, because the call takes one at a time.
+  /// </remarks>
+  public IReadOnlyList<ConnectionRecord> GetConnections(ProcessKey key) {
+    var result = new List<ConnectionRecord>();
+    ReadTcp(key.Pid, Native.AF_INET, ConnectionProtocol.Tcp, result);
+    ReadTcp(key.Pid, Native.AF_INET6, ConnectionProtocol.Tcp6, result);
+    ReadUdp(key.Pid, Native.AF_INET, ConnectionProtocol.Udp, result);
+    ReadUdp(key.Pid, Native.AF_INET6, ConnectionProtocol.Udp6, result);
+    return result;
+  }
+
+  private static void ReadTcp(int pid, uint family, ConnectionProtocol protocol, List<ConnectionRecord> result) {
+    // MIB_TCPROW_OWNER_PID for IPv4 is state, local addr, local port, remote addr, remote port,
+    // owning pid — six 32-bit fields. The IPv6 row carries 16-byte addresses and scope ids instead.
+    var rowSize = family == Native.AF_INET ? 24 : 56;
+    Walk(
+      (nint table, ref uint size) => Native.GetExtendedTcpTable(table, ref size, false, family, Native.TCP_TABLE_OWNER_PID_ALL, 0),
+      rowSize,
+      (row, entry) => {
+        if (family == Native.AF_INET) {
+          var owner = Marshal.ReadInt32(entry, 20);
+          if (owner != pid)
+            return;
+
+          result.Add(new(
+            protocol,
+            FormatIPv4((uint)Marshal.ReadInt32(entry, 4)),
+            NetworkPort(Marshal.ReadInt32(entry, 8)),
+            FormatIPv4((uint)Marshal.ReadInt32(entry, 12)),
+            NetworkPort(Marshal.ReadInt32(entry, 16)),
+            TcpStateName(Marshal.ReadInt32(entry, 0)),
+            0
+          ));
+        } else {
+          var owner = Marshal.ReadInt32(entry, 52);
+          if (owner != pid)
+            return;
+
+          result.Add(new(
+            protocol,
+            FormatIPv6(entry, 0),
+            NetworkPort(Marshal.ReadInt32(entry, 20)),
+            FormatIPv6(entry, 24),
+            NetworkPort(Marshal.ReadInt32(entry, 44)),
+            TcpStateName(Marshal.ReadInt32(entry, 48)),
+            0
+          ));
+        }
+      }
+    );
+  }
+
+  private static void ReadUdp(int pid, uint family, ConnectionProtocol protocol, List<ConnectionRecord> result) {
+    var rowSize = family == Native.AF_INET ? 12 : 28;
+    Walk(
+      (nint table, ref uint size) => Native.GetExtendedUdpTable(table, ref size, false, family, Native.UDP_TABLE_OWNER_PID, 0),
+      rowSize,
+      (row, entry) => {
+        if (family == Native.AF_INET) {
+          if (Marshal.ReadInt32(entry, 8) != pid)
+            return;
+
+          result.Add(new(protocol, FormatIPv4((uint)Marshal.ReadInt32(entry, 0)), NetworkPort(Marshal.ReadInt32(entry, 4)), "*", 0, "LISTEN", 0));
+        } else {
+          if (Marshal.ReadInt32(entry, 24) != pid)
+            return;
+
+          result.Add(new(protocol, FormatIPv6(entry, 0), NetworkPort(Marshal.ReadInt32(entry, 20)), "*", 0, "LISTEN", 0));
+        }
+      }
+    );
+  }
+
+  private delegate uint TableQuery(nint table, ref uint size);
+
+  private static void Walk(TableQuery query, int rowSize, Action<int, nint> row) {
+    uint size = 0;
+    if (query(0, ref size) != Native.ERROR_INSUFFICIENT_BUFFER || size == 0)
+      return;
+
+    var buffer = Marshal.AllocHGlobal((int)size);
+    try {
+      if (query(buffer, ref size) != 0)
+        return;
+
+      var count = Marshal.ReadInt32(buffer);
+      // The row array begins after the DWORD count, and the table is capped at what the buffer can
+      // actually hold — a count larger than that is a corrupt table, not a reason to walk off it.
+      var maximum = ((int)size - 4) / rowSize;
+      for (var i = 0; i < Math.Min(count, maximum); ++i)
+        row(i, buffer + 4 + i * rowSize);
+    } finally {
+      Marshal.FreeHGlobal(buffer);
+    }
+  }
+
+  /// <summary>Ports come back in network byte order in the low two bytes.</summary>
+  private static int NetworkPort(int value) => ((value & 0xFF) << 8) | ((value >> 8) & 0xFF);
+
+  private static string FormatIPv4(uint address)
+    => $"{address & 0xFF}.{(address >> 8) & 0xFF}.{(address >> 16) & 0xFF}.{(address >> 24) & 0xFF}";
+
+  private static string FormatIPv6(nint entry, int offset) {
+    Span<byte> bytes = stackalloc byte[16];
+    for (var i = 0; i < 16; ++i)
+      bytes[i] = Marshal.ReadByte(entry, offset + i);
+
+    return new System.Net.IPAddress(bytes).ToString();
+  }
+
+  private static string TcpStateName(int state) => state switch {
+    1 => "CLOSED",
+    2 => "LISTEN",
+    3 => "SYN_SENT",
+    4 => "SYN_RCVD",
+    5 => "ESTABLISHED",
+    6 => "FIN_WAIT1",
+    7 => "FIN_WAIT2",
+    8 => "CLOSE_WAIT",
+    9 => "CLOSING",
+    10 => "LAST_ACK",
+    11 => "TIME_WAIT",
+    12 => "DELETE_TCB",
+    _ => "UNKNOWN",
+  };
 
   public IReadOnlyList<KeyValuePair<string, string>> GetEnvironment(ProcessKey key) => [];
 

@@ -137,6 +137,42 @@ internal static partial class Native {
   [return: MarshalAs(UnmanagedType.Bool)]
   internal static partial bool Module32NextW(nint snapshot, ref NtStructures.ModuleEntry32 entry);
 
+  [LibraryImport("iphlpapi.dll", EntryPoint = "GetExtendedTcpTable", SetLastError = true)]
+  internal static partial uint GetExtendedTcpTable(
+    nint table,
+    ref uint size,
+    [MarshalAs(UnmanagedType.Bool)] bool order,
+    uint addressFamily,
+    int tableClass,
+    uint reserved
+  );
+
+  [LibraryImport("iphlpapi.dll", EntryPoint = "GetExtendedUdpTable", SetLastError = true)]
+  internal static partial uint GetExtendedUdpTable(
+    nint table,
+    ref uint size,
+    [MarshalAs(UnmanagedType.Bool)] bool order,
+    uint addressFamily,
+    int tableClass,
+    uint reserved
+  );
+
+  [LibraryImport("kernel32.dll", SetLastError = true)]
+  [return: MarshalAs(UnmanagedType.Bool)]
+  internal static partial bool ReadProcessMemory(nint process, nint address, nint buffer, nuint size, out nuint read);
+
+  public const uint AF_INET = 2;
+  public const uint AF_INET6 = 23;
+
+  /// <summary><c>TCP_TABLE_OWNER_PID_ALL</c> / <c>UDP_TABLE_OWNER_PID</c>.</summary>
+  public const int TCP_TABLE_OWNER_PID_ALL = 5;
+  public const int UDP_TABLE_OWNER_PID = 1;
+
+  public const uint ERROR_INSUFFICIENT_BUFFER = 122;
+  public const uint PROCESS_VM_READ = 0x0010;
+  public const uint PROCESS_QUERY_INFORMATION = 0x0400;
+  public const int ProcessBasicInformation = 0;
+
   public const int ObjectNameInformation = 1;
   public const int ObjectTypeInformation = 2;
 
