@@ -1,0 +1,12 @@
+# Default: let git normalise line endings for source and docs.
+* text=auto
+
+# The recorded /proc trees are DATA, not text. A checkout on Windows with autocrlf on rewrites every
+# LF in them to CRLF, and the probe then reads a cgroup path with a trailing carriage return that
+# /proc could never have produced — which is exactly how the Windows CI leg failed. The fixture has
+# to arrive byte for byte as it was recorded, on every platform.
+ProcessManager.Tests/Fixtures/** -text
+
+# Same reasoning for the golden frame: it is compared against what the renderer composed, and the
+# renderer does not emit carriage returns.
+ProcessManager.Tests/Golden/** -text
