@@ -225,8 +225,9 @@ public sealed class WindowsProcessInformationReplayTests {
   private static int Align(int value) => (value + 7) & ~7;
 
   private static void InvokeParse(byte[] buffer, nint baseAddress, SystemSnapshot snapshot) {
-    // The parser is internal to the platform assembly, which grants InternalsVisibleTo here.
-    WindowsProbe.ParseProcesses(buffer, baseAddress, snapshot);
+    // The parser is internal to the platform assembly, which grants InternalsVisibleTo here. It is
+    // not the probe: the probe is Windows-only, the walk is not, which is the whole point.
+    SystemProcessInformationReader.Parse(buffer, baseAddress, snapshot);
   }
 
   private static ProcessRecord Find(SystemSnapshot snapshot, int pid) {
