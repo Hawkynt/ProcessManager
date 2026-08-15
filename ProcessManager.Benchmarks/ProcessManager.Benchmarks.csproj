@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>Hawkynt.ProcessManager.Benchmarks</AssemblyName>
+    <RootNamespace>Hawkynt.ProcessManager.Benchmarks</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <IsBenchmarkProject>true</IsBenchmarkProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ProcessManager.Core\ProcessManager.Core.csproj" />
+    <ProjectReference Include="..\ProcessManager.Platform.Linux\ProcessManager.Platform.Linux.csproj" />
+    <ProjectReference Include="..\ProcessManager.Platform.Windows\ProcessManager.Platform.Windows.csproj" />
+  </ItemGroup>
+
+</Project>

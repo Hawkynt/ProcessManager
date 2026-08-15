@@ -1,0 +1,57 @@
+using Hawkynt.ProcessManager.Model;
+
+namespace Hawkynt.ProcessManager.Abstractions;
+
+/// <summary>
+/// The one seam between the engine and an operating system.
+/// </summary>
+/// <remarks>
+/// <para>
+/// A probe returns <em>raw counters</em> and nothing else: no rates, no percentages, no deltas, no
+/// sorting. Everything derived is computed above this line, identically on every platform, which is
+/// what lets the whole engine be tested against recorded fixtures instead of against the machine
+/// running the tests (PRD §2, §9.1).
+/// </para>
+/// <para>
+/// A probe never guesses. Anything it cannot read is a <see cref="Counter"/> carrying the reason
+/// (PRD §3.4), never a zero.
+/// </para>
+/// </remarks>
+public interface ISystemProbe : IDisposable {
+
+  /// <summary>A short name for the UI and the logs, e.g. <c>linux:/proc</c>.</summary>
+  string Description { get; }
+
+  /// <summary>
+  /// Fills <paramref name="snapshot"/> with the current state of the machine. Called on a background
+  /// thread; never called re-entrantly for the same probe.
+  /// </summary>
+  void Sample(SystemSnapshot snapshot);
+
+  /// <summary>
+  /// Open handles / descriptors of one process, counted now.
+  /// </summary>
+  /// <remarks>
+  /// Deliberately not part of <see cref="Sample"/>. On Linux the kernel materialises one directory
+  /// entry per descriptor when <c>/proc/[pid]/fd</c> is read, which measured at 85 µs per process —
+  /// twice the cost of everything else in a sample put together, for a column that is only legible
+  /// on the rows actually on screen. Front-ends call this for the rows they draw (PRD §3.5).
+  /// </remarks>
+  Counter GetHandleCount(ProcessKey key);
+
+  /// <summary>Threads of one process, for the detail view. Empty when they cannot be read.</summary>
+  IReadOnlyList<ThreadRecord> GetThreads(ProcessKey key);
+
+  /// <summary>Mapped files of one process.</summary>
+  IReadOnlyList<ModuleRecord> GetModules(ProcessKey key);
+
+  /// <summary>Open handles / descriptors of one process.</summary>
+  IReadOnlyList<HandleRecord> GetHandles(ProcessKey key);
+
+  /// <summary>Sockets owned by one process.</summary>
+  IReadOnlyList<ConnectionRecord> GetConnections(ProcessKey key);
+
+  /// <summary>The process's environment block, or an empty list when it may not be read.</summary>
+  IReadOnlyList<KeyValuePair<string, string>> GetEnvironment(ProcessKey key);
+
+}

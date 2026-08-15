@@ -26,3 +26,6 @@ package-lock.json
 
 # Claude Code / agent local state
 .claude
+
+# Local build temp (redirected off a tmpfs that ran out of inodes)
+.tmp/

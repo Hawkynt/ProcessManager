@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <AssemblyName>Hawkynt.ProcessManager.Ui.Desktop</AssemblyName>
+    <RootNamespace>Hawkynt.ProcessManager.Ui.Desktop</RootNamespace>
+    <Version>0.1.0</Version>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ProcessManager.Core\ProcessManager.Core.csproj" />
+  </ItemGroup>
+
+  <!-- Both backends are referenced unconditionally and registered by OS at runtime. A backend that
+       is never registered is dropped again by the trimmer, and its native library is never dlopen'd
+       either - which is what lets one binary carry GTK without a headless box ever loading it. -->
+  <ItemGroup>
+    <PackageReference Include="Hawkynt.NativeForms" Version="1.0.0.227" />
+    <PackageReference Include="Hawkynt.NativeForms.Backends.Gtk" Version="1.0.0.73" />
+    <PackageReference Include="Hawkynt.NativeForms.Backends.Windows" Version="1.0.0.63" />
+  </ItemGroup>
+
+</Project>

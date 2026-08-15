@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <AssemblyName>Hawkynt.ProcessManager.Platform.Linux</AssemblyName>
+    <RootNamespace>Hawkynt.ProcessManager.Platform.Linux</RootNamespace>
+    <Version>0.1.0</Version>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ProcessManager.Core\ProcessManager.Core.csproj" />
+  </ItemGroup>
+
+</Project>

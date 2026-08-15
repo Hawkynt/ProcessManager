@@ -1,0 +1,25 @@
+<Solution>
+  <Configurations>
+    <Platform Name="Any CPU" />
+  </Configurations>
+  <Folder Name="/Engine/">
+    <Project Path="ProcessManager.Core/ProcessManager.Core.csproj" />
+  </Folder>
+  <Folder Name="/Probes/">
+    <Project Path="ProcessManager.Platform.Linux/ProcessManager.Platform.Linux.csproj" />
+    <Project Path="ProcessManager.Platform.MacOS/ProcessManager.Platform.MacOS.csproj" />
+    <Project Path="ProcessManager.Platform.Windows/ProcessManager.Platform.Windows.csproj" />
+  </Folder>
+  <Folder Name="/UI/">
+    <Project Path="ProcessManager.Ui.Desktop/ProcessManager.Ui.Desktop.csproj" />
+    <Project Path="ProcessManager.Ui.Terminal/ProcessManager.Ui.Terminal.csproj" />
+  </Folder>
+  <Folder Name="/Apps/">
+    <Project Path="ProcessManager.App/ProcessManager.App.csproj" />
+    <Project Path="ProcessManager.Elevated/ProcessManager.Elevated.csproj" />
+  </Folder>
+  <Folder Name="/Tests/">
+    <Project Path="ProcessManager.Benchmarks/ProcessManager.Benchmarks.csproj" />
+    <Project Path="ProcessManager.Tests/ProcessManager.Tests.csproj" />
+  </Folder>
+</Solution>

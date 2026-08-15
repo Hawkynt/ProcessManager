@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>procman</AssemblyName>
+    <RootNamespace>Hawkynt.ProcessManager.App</RootNamespace>
+    <Version>0.1.0</Version>
+    <!-- One binary carrying both front-ends, so the documented CLI works as written: plain `procman`
+         opens the window, `procman` with the tui switch takes over the terminal. A console subsystem
+         is required either way, because the list and find modes have to be pipeable. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ProcessManager.Core\ProcessManager.Core.csproj" />
+    <ProjectReference Include="..\ProcessManager.Platform.Linux\ProcessManager.Platform.Linux.csproj" />
+    <ProjectReference Include="..\ProcessManager.Platform.MacOS\ProcessManager.Platform.MacOS.csproj" />
+    <ProjectReference Include="..\ProcessManager.Platform.Windows\ProcessManager.Platform.Windows.csproj" />
+    <ProjectReference Include="..\ProcessManager.Ui.Desktop\ProcessManager.Ui.Desktop.csproj" />
+    <ProjectReference Include="..\ProcessManager.Ui.Terminal\ProcessManager.Ui.Terminal.csproj" />
+  </ItemGroup>
+
+</Project>

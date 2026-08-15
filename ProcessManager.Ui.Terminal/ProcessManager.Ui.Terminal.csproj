@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <AssemblyName>Hawkynt.ProcessManager.Ui.Terminal</AssemblyName>
+    <RootNamespace>Hawkynt.ProcessManager.Ui.Terminal</RootNamespace>
+    <Version>0.1.0</Version>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ProcessManager.Core\ProcessManager.Core.csproj" />
+  </ItemGroup>
+
+</Project>

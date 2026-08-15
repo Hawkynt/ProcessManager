@@ -1,0 +1,743 @@
+using System.Text;
+using Hawkynt.ProcessManager.Abstractions;
+using Hawkynt.ProcessManager.Model;
+
+namespace Hawkynt.ProcessManager.Platform.Linux;
+
+/// <summary>
+/// Reads the machine through <c>/proc</c>.
+/// </summary>
+/// <remarks>
+/// Everything is relative to <see cref="LinuxProbeOptions.ProcRoot"/>, never to a hard-coded
+/// <c>/proc</c>, which is what lets the whole probe run against a recorded tree in the tests
+/// (PRD §9.1). Nothing here computes a rate or a percentage: the probe reports counters, and
+/// <see cref="Sampling.SnapshotDelta"/> does the arithmetic (PRD §2).
+/// </remarks>
+public sealed class LinuxProbe : ISystemProbe {
+
+  private static ReadOnlySpan<byte> _cpuPrefix => "cpu"u8;
+  private static ReadOnlySpan<byte> _btimePrefix => "btime "u8;
+  private static ReadOnlySpan<byte> _ctxtPrefix => "ctxt "u8;
+  private static ReadOnlySpan<byte> _intrPrefix => "intr "u8;
+  private static ReadOnlySpan<byte> _procsPrefix => "processes "u8;
+  private static ReadOnlySpan<byte> _procsRunningPrefix => "procs_running "u8;
+
+  private readonly LinuxProbeOptions _options;
+  private readonly ProcFileReader _reader = new();
+  private readonly UserNameResolver _users;
+  private readonly Dictionary<ProcessKey, ProcessCache> _cache = [];
+  private readonly List<ProcessKey> _stale = [];
+  private readonly List<int> _pids = [];
+  // One buffer for every getdents64 call. 32 KiB holds about a thousand short names, so a process
+  // with a few hundred descriptors is one syscall rather than one per entry.
+  private readonly byte[] _directoryScratch = new byte[32 * 1024];
+  // A second buffer, because GetHandleCount is called from the UI thread while a sample may be
+  // running on the background one, and they must not share a scratch.
+  private readonly byte[] _onDemandScratch = new byte[32 * 1024];
+  private readonly double _nanosecondsPerTick;
+  private readonly string _procRoot;
+  private readonly byte[] _procRootUtf8;
+  private readonly int _effectiveUserId;
+
+  private long _bootTimeUtcTicks;
+  private int _generation;
+
+  public LinuxProbe() : this(new LinuxProbeOptions()) { }
+
+  public LinuxProbe(LinuxProbeOptions options) {
+    ArgumentNullException.ThrowIfNull(options);
+    this._options = options;
+    this._procRoot = options.ProcRoot.TrimEnd('/');
+    this._procRootUtf8 = System.Text.Encoding.UTF8.GetBytes(this._procRoot);
+    this._users = new(options.PasswdPath);
+    this._nanosecondsPerTick = 1_000_000_000d / Math.Max(1, options.ClockTicksPerSecond);
+    this._effectiveUserId = options.EffectiveUserId;
+  }
+
+  public string Description => $"linux:{this._procRoot}";
+
+  public void Dispose() { }
+
+  public void Sample(SystemSnapshot snapshot) {
+    ArgumentNullException.ThrowIfNull(snapshot);
+
+    ++this._generation;
+    this.ReadSystem(snapshot);
+    this.ReadProcesses(snapshot);
+    this.PruneCache();
+  }
+
+  #region system-wide
+
+  private void ReadSystem(SystemSnapshot snapshot) {
+    ref var system = ref snapshot.System;
+    system.CoreCount = Environment.ProcessorCount;
+
+    this.ReadStat(snapshot, ref system);
+    this.ReadMemInfo(ref system);
+    this.ReadLoadAverage(ref system);
+    this.ReadUptime(ref system);
+  }
+
+  private void ReadStat(SystemSnapshot snapshot, ref SystemCounters system) {
+    Span<byte> pathBuffer = stackalloc byte[ProcPath.MaxLength];
+    if (!this._reader.TryRead(ProcPath.Build(pathBuffer, this._procRootUtf8, "stat"u8), out var content, out _))
+      return;
+
+    // Two passes would mean reading the file twice; instead the per-core lines are counted on the
+    // fly and the buffer is grown once, because /proc/stat lists cpu0..cpuN before anything else.
+    var cores = 0;
+    var scanner = new AsciiScanner(content);
+    while (!scanner.IsEmpty) {
+      var line = scanner.NextLine();
+      if (!AsciiScanner.StartsWith(line, _cpuPrefix))
+        break;
+      if (line.Length > 3 && line[3] != (byte)' ')
+        ++cores;
+    }
+
+    var perCore = snapshot.PrepareCores(cores);
+    var index = 0;
+    scanner = new AsciiScanner(content);
+    while (!scanner.IsEmpty) {
+      var line = scanner.NextLine();
+      if (line.IsEmpty)
+        continue;
+
+      if (AsciiScanner.StartsWith(line, _cpuPrefix)) {
+        var isAggregate = line.Length > 3 && line[3] == (byte)' ';
+        var times = ParseCpuLine(line, this._nanosecondsPerTick);
+        if (isAggregate)
+          system.Cpu = times;
+        else if (index < perCore.Length)
+          perCore[index++] = times;
+
+        continue;
+      }
+
+      if (AsciiScanner.StartsWith(line, _btimePrefix)) {
+        var seconds = (long)AsciiScanner.ParseUInt64(line[_btimePrefix.Length..]);
+        this._bootTimeUtcTicks = DateTime.UnixEpoch.Ticks + seconds * TimeSpan.TicksPerSecond;
+      } else if (AsciiScanner.StartsWith(line, _ctxtPrefix))
+        system.ContextSwitches = Counter.Of(AsciiScanner.ParseUInt64(line[_ctxtPrefix.Length..]));
+      else if (AsciiScanner.StartsWith(line, _intrPrefix))
+        system.Interrupts = Counter.Of(AsciiScanner.ParseUInt64(line[_intrPrefix.Length..]));
+      else if (AsciiScanner.StartsWith(line, _procsPrefix))
+        system.ProcessesCreated = Counter.Of(AsciiScanner.ParseUInt64(line[_procsPrefix.Length..]));
+      else if (AsciiScanner.StartsWith(line, _procsRunningPrefix))
+        system.RunningProcesses = (int)AsciiScanner.ParseUInt64(line[_procsRunningPrefix.Length..]);
+    }
+
+    if (cores > 0)
+      system.CoreCount = cores;
+  }
+
+  private static CpuTimes ParseCpuLine(ReadOnlySpan<byte> line, double nanosecondsPerTick) {
+    var scanner = new AsciiScanner(line);
+    scanner.NextField();                                   // "cpu" / "cpuN"
+    return new() {
+      UserNs = Scale(scanner.NextUInt64(), nanosecondsPerTick),
+      NiceNs = Scale(scanner.NextUInt64(), nanosecondsPerTick),
+      KernelNs = Scale(scanner.NextUInt64(), nanosecondsPerTick),
+      IdleNs = Scale(scanner.NextUInt64(), nanosecondsPerTick),
+      IoWaitNs = Scale(scanner.NextUInt64(), nanosecondsPerTick),
+      IrqNs = Scale(scanner.NextUInt64(), nanosecondsPerTick),
+      SoftIrqNs = Scale(scanner.NextUInt64(), nanosecondsPerTick),
+      StealNs = Scale(scanner.NextUInt64(), nanosecondsPerTick),
+    };
+  }
+
+  private static ulong Scale(ulong ticks, double nanosecondsPerTick) => (ulong)(ticks * nanosecondsPerTick);
+
+  private void ReadMemInfo(ref SystemCounters system) {
+    Span<byte> pathBuffer = stackalloc byte[ProcPath.MaxLength];
+    if (!this._reader.TryRead(ProcPath.Build(pathBuffer, this._procRootUtf8, "meminfo"u8), out var content, out _))
+      return;
+
+    var scanner = new AsciiScanner(content);
+    while (!scanner.IsEmpty) {
+      var line = scanner.NextLine();
+      if (line.IsEmpty)
+        continue;
+
+      // Every value in meminfo is in kB, whatever the unit column says.
+      if (TryValue(line, "MemTotal:"u8, out var value))
+        system.TotalMemoryBytes = Counter.Of(value * 1024);
+      else if (TryValue(line, "MemAvailable:"u8, out value))
+        system.AvailableMemoryBytes = Counter.Of(value * 1024);
+      else if (TryValue(line, "Cached:"u8, out value))
+        system.CachedMemoryBytes = Counter.Of(value * 1024);
+      else if (TryValue(line, "SwapTotal:"u8, out value))
+        system.TotalSwapBytes = Counter.Of(value * 1024);
+      else if (TryValue(line, "SwapFree:"u8, out value)) {
+        var total = system.TotalSwapBytes.GetValueOrDefault();
+        var free = value * 1024;
+        system.UsedSwapBytes = Counter.Of(total >= free ? total - free : 0);
+      }
+    }
+  }
+
+  private static bool TryValue(ReadOnlySpan<byte> line, ReadOnlySpan<byte> key, out ulong value) {
+    value = 0;
+    if (!AsciiScanner.StartsWith(line, key))
+      return false;
+
+    var scanner = new AsciiScanner(line[key.Length..]);
+    value = scanner.NextUInt64();
+    return true;
+  }
+
+  private void ReadLoadAverage(ref SystemCounters system) {
+    Span<byte> pathBuffer = stackalloc byte[ProcPath.MaxLength];
+    if (!this._reader.TryRead(ProcPath.Build(pathBuffer, this._procRootUtf8, "loadavg"u8), out var content, out _))
+      return;
+
+    var scanner = new AsciiScanner(content);
+    system.LoadAverage1 = ParseDouble(scanner.NextField());
+    system.LoadAverage5 = ParseDouble(scanner.NextField());
+    system.LoadAverage15 = ParseDouble(scanner.NextField());
+  }
+
+  private void ReadUptime(ref SystemCounters system) {
+    Span<byte> pathBuffer = stackalloc byte[ProcPath.MaxLength];
+    if (!this._reader.TryRead(ProcPath.Build(pathBuffer, this._procRootUtf8, "uptime"u8), out var content, out _))
+      return;
+
+    var scanner = new AsciiScanner(content);
+    system.UptimeSeconds = ParseDouble(scanner.NextField());
+  }
+
+  /// <summary>A fixed-point decimal with no exponent, which is all /proc ever writes.</summary>
+  private static double ParseDouble(ReadOnlySpan<byte> field) {
+    var dot = field.IndexOf((byte)'.');
+    if (dot < 0)
+      return AsciiScanner.ParseUInt64(field);
+
+    var whole = AsciiScanner.ParseUInt64(field[..dot]);
+    var fractionSpan = field[(dot + 1)..];
+    var fraction = AsciiScanner.ParseUInt64(fractionSpan);
+    var scale = Math.Pow(10, fractionSpan.Length);
+    return whole + fraction / scale;
+  }
+
+  #endregion
+
+  #region processes
+
+  private void ReadProcesses(SystemSnapshot snapshot) {
+    this._pids.Clear();
+    Span<byte> rootPath = stackalloc byte[ProcPath.MaxLength];
+    this._procRootUtf8.CopyTo(rootPath);
+    rootPath[this._procRootUtf8.Length] = 0;
+    Native.ListNumericEntries(rootPath[..(this._procRootUtf8.Length + 1)], this._directoryScratch, this._pids);
+
+    var buffer = snapshot.PrepareProcesses(this._pids.Count);
+    var written = 0;
+    foreach (var pid in this._pids)
+      if (this.ReadProcess(pid, ref buffer[written]))
+        ++written;
+
+    // Processes that exited between the listing and their own stat file leave a hole; the snapshot
+    // is shortened rather than carrying a half-filled record.
+    snapshot.PrepareProcesses(written);
+  }
+
+  private bool ReadProcess(int pid, ref ProcessRecord record) {
+    Span<byte> pathBuffer = stackalloc byte[ProcPath.MaxLength];
+    var statPath = ProcPath.Build(pathBuffer, this._procRootUtf8, pid, "stat"u8);
+    if (!this._reader.TryRead(statPath, out var content, out _))
+      return false;
+
+    record = default;
+    if (!ParseStat(content, this._nanosecondsPerTick, this._options.PageSize, ref record))
+      return false;
+
+    record.Key = new(pid, record.Key.StartTicks);
+    record.StartTimeUtcTicks = this._bootTimeUtcTicks
+      + (long)(record.Key.StartTicks * this._nanosecondsPerTick / 100);          // ns → 100 ns ticks
+
+    var cache = this.GetCache(record.Key, pid);
+    cache.Generation = this._generation;
+    record.Name = cache.UpdateName(content);
+
+    this.ReadStatus(cache, ref record);
+    this.ReadIo(cache, ref record);
+    this.ReadFileDescriptorCount(cache, ref record);
+    cache.EnsureStatics(this._reader, this._options, this._procRootUtf8, this._procRoot);
+
+    record.CommandLine = cache.CommandLine;
+    record.ImagePath = cache.ImagePath;
+    record.ContainerPath = cache.ContainerPath;
+    record.UserName = this._users.Resolve(record.UserId);
+    return true;
+  }
+
+  /// <summary>
+  /// Parses <c>/proc/[pid]/stat</c>. Everything after the command name is positional, and the
+  /// command name itself is the reason this cannot be a plain split: it is wrapped in parentheses,
+  /// it may contain spaces, and it may contain <c>)</c> — a process named <c>foo) 0 (bar</c> is
+  /// legal and has been used to confuse exactly this parser. Scanning back from the *last* <c>)</c>
+  /// is the only correct reading (PRD §5.1, §9.3).
+  /// </summary>
+  internal static bool ParseStat(
+    ReadOnlySpan<byte> content,
+    double nanosecondsPerTick,
+    long pageSize,
+    ref ProcessRecord record
+  ) {
+    var open = content.IndexOf((byte)'(');
+    var close = content.LastIndexOf((byte)')');
+    if (open < 0 || close < open)
+      return false;
+
+    var scanner = new AsciiScanner(content[(close + 1)..]);
+    var state = scanner.NextField();
+    record.State = state.IsEmpty ? ProcessState.Unknown : MapState(state[0]);
+    record.ParentPid = scanner.NextInt32();                // 4 ppid
+    scanner.Skip(1);                                       // 5 pgrp
+    record.SessionId = scanner.NextInt32();                // 6 session
+    scanner.Skip(6);                                       // 7..12 tty..cmajflt (tty, tpgid, flags, minflt, cminflt, majflt)
+    scanner.Skip(1);                                       // 13 cmajflt
+    var utime = scanner.NextUInt64();                      // 14
+    var stime = scanner.NextUInt64();                      // 15
+    scanner.Skip(2);                                       // 16 cutime, 17 cstime
+    record.Priority = scanner.NextInt32();                 // 18
+    record.Nice = scanner.NextInt32();                     // 19
+    record.ThreadCount = scanner.NextInt32();              // 20
+    scanner.Skip(1);                                       // 21 itrealvalue
+    var startTicks = scanner.NextUInt64();                 // 22
+    var virtualBytes = scanner.NextUInt64();               // 23
+    var rssPages = scanner.NextUInt64();                   // 24
+
+    record.Key = new(0, startTicks);
+    record.UserTimeNs = Counter.Of((ulong)(utime * nanosecondsPerTick));
+    record.KernelTimeNs = Counter.Of((ulong)(stime * nanosecondsPerTick));
+    record.CpuTimeNs = Counter.Of((ulong)((utime + stime) * nanosecondsPerTick));
+    record.VirtualBytes = Counter.Of(virtualBytes);
+    record.WorkingSetBytes = Counter.Of(rssPages * (ulong)pageSize);
+    record.IsSuspended = record.State == ProcessState.Stopped;
+    record.UserId = -1;
+    record.PrivateBytes = Counter.NotSupported;
+    record.SwapBytes = Counter.NotSupported;
+    record.ReadBytes = Counter.NotSupported;
+    record.WriteBytes = Counter.NotSupported;
+    record.HandleCount = Counter.NotSupported;
+    record.ContextSwitches = Counter.NotSupported;
+    record.MemoryLimitBytes = Counter.NotSupported;
+    record.Name = string.Empty;
+    return true;
+  }
+
+  private static ProcessState MapState(byte c) => c switch {
+    (byte)'R' => ProcessState.Running,
+    (byte)'S' => ProcessState.Sleeping,
+    (byte)'D' => ProcessState.DiskSleep,
+    (byte)'T' => ProcessState.Stopped,
+    (byte)'t' => ProcessState.Traced,
+    (byte)'Z' => ProcessState.Zombie,
+    (byte)'I' => ProcessState.Idle,
+    (byte)'X' or (byte)'x' => ProcessState.Dead,
+    _ => ProcessState.Unknown,
+  };
+
+  private void ReadStatus(ProcessCache cache, ref ProcessRecord record) {
+    if (!this._reader.TryRead(cache.StatusPath, out var content, out var errno)) {
+      if (errno is Native.EACCES or Native.EPERM) {
+        record.PrivateBytes = Counter.NotPermitted;
+        record.ContextSwitches = Counter.NotPermitted;
+      }
+
+      return;
+    }
+
+    ulong rssAnon = 0, swap = 0, voluntary = 0, involuntary = 0;
+    var haveRssAnon = false;
+    var scanner = new AsciiScanner(content);
+    while (!scanner.IsEmpty) {
+      var line = scanner.NextLine();
+      if (line.IsEmpty)
+        continue;
+
+      if (AsciiScanner.StartsWith(line, "Uid:"u8)) {
+        var uids = new AsciiScanner(line["Uid:"u8.Length..]);
+        record.UserId = uids.NextInt32();                  // real uid; effective is the next field
+      } else if (TryValue(line, "RssAnon:"u8, out var value)) {
+        rssAnon = value * 1024;
+        haveRssAnon = true;
+      } else if (TryValue(line, "VmSwap:"u8, out value))
+        swap = value * 1024;
+      else if (TryValue(line, "voluntary_ctxt_switches:"u8, out value))
+        voluntary = value;
+      else if (TryValue(line, "nonvoluntary_ctxt_switches:"u8, out value))
+        involuntary = value;
+    }
+
+    record.SwapBytes = Counter.Of(swap);
+    record.ContextSwitches = Counter.Of(voluntary + involuntary);
+    if (haveRssAnon)
+      record.PrivateBytes = Counter.Of(rssAnon);
+
+    if (this._options.UseProportionalSetSize && this.MayRead(record))
+      this.ReadProportionalSetSize(cache, ref record);
+  }
+
+  private void ReadProportionalSetSize(ProcessCache cache, ref ProcessRecord record) {
+    if (!this._reader.TryRead(cache.SmapsRollupPath, out var content, out var errno)) {
+      if (errno is Native.EACCES or Native.EPERM)
+        record.PrivateBytes = Counter.NotPermitted;
+
+      return;
+    }
+
+    var scanner = new AsciiScanner(content);
+    while (!scanner.IsEmpty) {
+      var line = scanner.NextLine();
+      if (!TryValue(line, "Pss:"u8, out var value))
+        continue;
+
+      record.PrivateBytes = Counter.Of(value * 1024);
+      return;
+    }
+  }
+
+  /// <summary>
+  /// Whether this process is worth opening privileged files of.
+  /// </summary>
+  /// <remarks>
+  /// Not a permission model — the kernel is still the authority, and a denied read is still handled.
+  /// This is an optimisation with a measured reason: opening another user's <c>io</c> or <c>fd</c>
+  /// raises a managed exception, and on a machine where half the process table belongs to somebody
+  /// else that is several hundred exceptions per sample. Asking first is free (PRD §4).
+  /// </remarks>
+  private bool MayRead(in ProcessRecord record)
+    => this._effectiveUserId == 0 || record.UserId < 0 || record.UserId == this._effectiveUserId;
+
+  private void ReadIo(ProcessCache cache, ref ProcessRecord record) {
+    if (!this.MayRead(record)) {
+      record.ReadBytes = Counter.NotPermitted;
+      record.WriteBytes = Counter.NotPermitted;
+      return;
+    }
+
+    if (!this._reader.TryRead(cache.IoPath, out var content, out var errno)) {
+      // Since kernel 5.12 this file is 0400, so another user's I/O is not a failure to report — it
+      // is the normal answer without the elevated helper (PRD §5.1, §8.3).
+      record.ReadBytes = errno is Native.EACCES or Native.EPERM
+        ? Counter.NotPermitted
+        : Counter.Unknown(UnknownReason.ProcessExited);
+      record.WriteBytes = record.ReadBytes;
+      return;
+    }
+
+    var scanner = new AsciiScanner(content);
+    while (!scanner.IsEmpty) {
+      var line = scanner.NextLine();
+      if (TryValue(line, "read_bytes:"u8, out var value))
+        record.ReadBytes = Counter.Of(value);
+      else if (TryValue(line, "write_bytes:"u8, out value))
+        record.WriteBytes = Counter.Of(value);
+    }
+  }
+
+  private void ReadFileDescriptorCount(ProcessCache cache, ref ProcessRecord record) {
+    if (!this._options.CountFileDescriptors) {
+      record.HandleCount = Counter.NotSampledYet;
+      return;
+    }
+
+    if (!this.MayRead(record)) {
+      record.HandleCount = Counter.NotPermitted;
+      return;
+    }
+
+    record.HandleCount = CountDescriptors(cache.FdPath, this._directoryScratch);
+  }
+
+  private static Counter CountDescriptors(ReadOnlySpan<byte> fdPath, Span<byte> scratch) {
+    var count = Native.CountDirectoryEntries(fdPath, scratch, out var errno);
+    return count >= 0
+      ? Counter.Of((ulong)count)
+      : errno switch {
+        Native.EACCES or Native.EPERM => Counter.NotPermitted,
+        _ => Counter.Unknown(UnknownReason.ProcessExited),
+      };
+  }
+
+  /// <inheritdoc />
+  public Counter GetHandleCount(ProcessKey key) {
+    Span<byte> path = stackalloc byte[ProcPath.MaxLength];
+    return CountDescriptors(
+      ProcPath.Build(path, this._procRootUtf8, key.Pid, "fd"u8),
+      this._onDemandScratch
+    );
+  }
+
+  private ProcessCache GetCache(ProcessKey key, int pid) {
+    if (this._cache.TryGetValue(key, out var cache))
+      return cache;
+
+    cache = new(this._procRootUtf8, pid);
+    this._cache[key] = cache;
+    return cache;
+  }
+
+  private void PruneCache() {
+    this._stale.Clear();
+    foreach (var (key, cache) in this._cache)
+      if (cache.Generation != this._generation)
+        this._stale.Add(key);
+
+    foreach (var key in this._stale)
+      this._cache.Remove(key);
+  }
+
+  #endregion
+
+  #region details
+
+  public IReadOnlyList<ThreadRecord> GetThreads(ProcessKey key) {
+    var result = new List<ThreadRecord>();
+    var taskRoot = $"{this._procRoot}/{key.Pid}/task";
+    if (!Directory.Exists(taskRoot))
+      return result;
+
+    foreach (var directory in Directory.EnumerateDirectories(taskRoot)) {
+      var name = Path.GetFileName(directory);
+      if (!int.TryParse(name, out var tid))
+        continue;
+
+      if (!this._reader.TryRead(directory + "/stat", out var content, out _))
+        continue;
+
+      var record = new ProcessRecord();
+      if (!ParseStat(content, this._nanosecondsPerTick, this._options.PageSize, ref record))
+        continue;
+
+      result.Add(new(
+        tid,
+        record.State,
+        record.CpuTimeNs,
+        this._bootTimeUtcTicks + (long)(record.Key.StartTicks * this._nanosecondsPerTick / 100),
+        0,
+        null,
+        record.Priority
+      ));
+    }
+
+    return result;
+  }
+
+  public IReadOnlyList<ModuleRecord> GetModules(ProcessKey key) {
+    var result = new List<ModuleRecord>();
+    if (!this._reader.TryRead($"{this._procRoot}/{key.Pid}/maps", out var content, out _))
+      return result;
+
+    // One entry per distinct backing file rather than per mapping: a shared library shows up as four
+    // consecutive lines (text, rodata, data, bss) and listing it four times helps nobody.
+    var seen = new HashSet<string>(StringComparer.Ordinal);
+    var scanner = new AsciiScanner(content);
+    while (!scanner.IsEmpty) {
+      var line = scanner.NextLine();
+      if (line.IsEmpty)
+        continue;
+
+      var lineScanner = new AsciiScanner(line);
+      var range = lineScanner.NextField();
+      var permissions = lineScanner.NextField();
+      lineScanner.Skip(3);                                 // offset, dev, inode
+      var pathBytes = lineScanner.NextField();
+      if (pathBytes.IsEmpty || pathBytes[0] != (byte)'/')
+        continue;
+
+      var path = Encoding.UTF8.GetString(pathBytes);
+      if (!seen.Add(path))
+        continue;
+
+      var dash = range.IndexOf((byte)'-');
+      var start = dash > 0 ? ParseHex(range[..dash]) : 0;
+      var end = dash > 0 ? ParseHex(range[(dash + 1)..]) : 0;
+      result.Add(new(path, start, end > start ? end - start : 0, Encoding.ASCII.GetString(permissions)));
+    }
+
+    return result;
+  }
+
+  public IReadOnlyList<HandleRecord> GetHandles(ProcessKey key) {
+    var result = new List<HandleRecord>();
+    var fdRoot = $"{this._procRoot}/{key.Pid}/fd";
+    string[] entries;
+    try {
+      entries = Directory.GetFiles(fdRoot);
+    } catch (UnauthorizedAccessException) {
+      return result;
+    } catch (IOException) {
+      return result;
+    }
+
+    foreach (var entry in entries) {
+      if (!int.TryParse(Path.GetFileName(entry), out var fd))
+        continue;
+
+      var target = ProcFileReader.TryReadLink(entry);
+      result.Add(new((ulong)fd, ClassifyFd(target), target, null));
+    }
+
+    return result;
+  }
+
+  private static HandleKind ClassifyFd(string? target) => target switch {
+    null => HandleKind.Unknown,
+    _ when target.StartsWith("socket:", StringComparison.Ordinal) => HandleKind.Socket,
+    _ when target.StartsWith("pipe:", StringComparison.Ordinal) => HandleKind.Pipe,
+    _ when target.StartsWith("anon_inode:", StringComparison.Ordinal) => HandleKind.AnonInode,
+    _ when Directory.Exists(target) => HandleKind.Directory,
+    _ when target.StartsWith("/dev/", StringComparison.Ordinal) => HandleKind.Device,
+    _ => HandleKind.File,
+  };
+
+  public IReadOnlyList<ConnectionRecord> GetConnections(ProcessKey key) {
+    // The socket inodes this process holds, joined against the four network tables. The join runs
+    // once per request rather than once per process, which is what keeps it off the sampling path
+    // (PRD §5.1).
+    var inodes = new HashSet<ulong>();
+    foreach (var handle in this.GetHandles(key)) {
+      if (handle.Kind != HandleKind.Socket || handle.Name is null)
+        continue;
+
+      var open = handle.Name.IndexOf('[', StringComparison.Ordinal);
+      var close = handle.Name.IndexOf(']', StringComparison.Ordinal);
+      if (open >= 0 && close > open && ulong.TryParse(handle.Name.AsSpan(open + 1, close - open - 1), out var inode))
+        inodes.Add(inode);
+    }
+
+    var result = new List<ConnectionRecord>();
+    if (inodes.Count == 0)
+      return result;
+
+    this.CollectSockets("/net/tcp", ConnectionProtocol.Tcp, inodes, result);
+    this.CollectSockets("/net/tcp6", ConnectionProtocol.Tcp6, inodes, result);
+    this.CollectSockets("/net/udp", ConnectionProtocol.Udp, inodes, result);
+    this.CollectSockets("/net/udp6", ConnectionProtocol.Udp6, inodes, result);
+    return result;
+  }
+
+  private void CollectSockets(
+    string relativePath,
+    ConnectionProtocol protocol,
+    HashSet<ulong> inodes,
+    List<ConnectionRecord> result
+  ) {
+    if (!this._reader.TryRead(this._procRoot + relativePath, out var content, out _))
+      return;
+
+    var scanner = new AsciiScanner(content);
+    scanner.NextLine();                                    // header
+    while (!scanner.IsEmpty) {
+      var line = scanner.NextLine();
+      if (line.IsEmpty)
+        continue;
+
+      var lineScanner = new AsciiScanner(line);
+      lineScanner.NextField();                             // slot
+      var local = lineScanner.NextField();
+      var remote = lineScanner.NextField();
+      var state = lineScanner.NextField();
+      lineScanner.Skip(4);                                 // tx/rx queue, tr/when, retransmits, uid
+      lineScanner.Skip(1);                                 // timeout
+      var inode = lineScanner.NextUInt64();
+      if (!inodes.Contains(inode))
+        continue;
+
+      var (localAddress, localPort) = SplitEndpoint(local);
+      var (remoteAddress, remotePort) = SplitEndpoint(remote);
+      result.Add(new(
+        protocol,
+        localAddress,
+        localPort,
+        remoteAddress,
+        remotePort,
+        TcpStateName((int)ParseHex(state)),
+        inode
+      ));
+    }
+  }
+
+  private static (string Address, int Port) SplitEndpoint(ReadOnlySpan<byte> field) {
+    var colon = field.LastIndexOf((byte)':');
+    if (colon < 0)
+      return (string.Empty, 0);
+
+    var address = field[..colon];
+    var port = (int)ParseHex(field[(colon + 1)..]);
+    return (FormatHexAddress(address), port);
+  }
+
+  private static string FormatHexAddress(ReadOnlySpan<byte> hex) {
+    // IPv4 arrives as eight hex digits in host byte order, IPv6 as thirty-two in four host-order
+    // words. Anything else is not ours to guess at, so it is handed back as written.
+    if (hex.Length == 8) {
+      var value = ParseHex(hex);
+      return $"{value & 0xFF}.{(value >> 8) & 0xFF}.{(value >> 16) & 0xFF}.{(value >> 24) & 0xFF}";
+    }
+
+    return Encoding.ASCII.GetString(hex);
+  }
+
+  private static string TcpStateName(int state) => state switch {
+    1 => "ESTABLISHED",
+    2 => "SYN_SENT",
+    3 => "SYN_RECV",
+    4 => "FIN_WAIT1",
+    5 => "FIN_WAIT2",
+    6 => "TIME_WAIT",
+    7 => "CLOSE",
+    8 => "CLOSE_WAIT",
+    9 => "LAST_ACK",
+    10 => "LISTEN",
+    11 => "CLOSING",
+    _ => "UNKNOWN",
+  };
+
+  private static ulong ParseHex(ReadOnlySpan<byte> field) {
+    ulong value = 0;
+    for (var i = 0; i < field.Length; ++i) {
+      var c = field[i];
+      var digit = c switch {
+        >= (byte)'0' and <= (byte)'9' => c - (byte)'0',
+        >= (byte)'a' and <= (byte)'f' => c - (byte)'a' + 10,
+        >= (byte)'A' and <= (byte)'F' => c - (byte)'A' + 10,
+        _ => -1,
+      };
+
+      if (digit < 0)
+        break;
+
+      value = value * 16 + (ulong)digit;
+    }
+
+    return value;
+  }
+
+  public IReadOnlyList<KeyValuePair<string, string>> GetEnvironment(ProcessKey key) {
+    var result = new List<KeyValuePair<string, string>>();
+    if (!this._reader.TryRead($"{this._procRoot}/{key.Pid}/environ", out var content, out _))
+      return result;
+
+    foreach (var range in content.Split((byte)0)) {
+      var entry = content[range];
+      if (entry.IsEmpty)
+        continue;
+
+      var equals = entry.IndexOf((byte)'=');
+      if (equals < 0)
+        continue;
+
+      result.Add(new(Encoding.UTF8.GetString(entry[..equals]), Encoding.UTF8.GetString(entry[(equals + 1)..])));
+    }
+
+    return result;
+  }
+
+  #endregion
+
+}

@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <AssemblyName>Hawkynt.ProcessManager.Platform.MacOS</AssemblyName>
+    <RootNamespace>Hawkynt.ProcessManager.Platform.MacOS</RootNamespace>
+    <Version>0.1.0</Version>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ProcessManager.Core\ProcessManager.Core.csproj" />
+  </ItemGroup>
+
+</Project>

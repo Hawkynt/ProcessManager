@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <AssemblyName>Hawkynt.ProcessManager.Core</AssemblyName>
+    <RootNamespace>Hawkynt.ProcessManager</RootNamespace>
+    <Version>0.1.0</Version>
+    <Description>Platform-agnostic sampling engine: snapshots, deltas, rates, history, process tree, sort/filter/search.</Description>
+  </PropertyGroup>
+
+  <!-- The probes and the front-ends are one product with one team; a seam that exists only to be
+       testable does not need to be public API. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Hawkynt.ProcessManager.Tests" />
+    <InternalsVisibleTo Include="Hawkynt.ProcessManager.Platform.Linux" />
+    <InternalsVisibleTo Include="Hawkynt.ProcessManager.Platform.Windows" />
+    <InternalsVisibleTo Include="Hawkynt.ProcessManager.Platform.MacOS" />
+  </ItemGroup>
+
+</Project>
