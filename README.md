@@ -172,10 +172,9 @@ These are consequences of the design, not a to-do list; the to-do list is the PR
 - **Elevation is Linux-only.** The helper, its framed protocol and its polkit policy work and are
   tested; Windows elevation needs a named pipe the elevated child connects back to, which is not
   written. See [`packaging/`](packaging/README.md).
-- **The Windows probe has run against Wine, not against Windows.** Wine's `ntdll` implements the
-  same structures, and every field the runtime can cross-check agrees — but Wine is not Windows, and
-  two counters it leaves at zero (private bytes among them) are therefore untested. `procman
-  --self-test` is what settles it on any machine, and it runs on the Windows CI leg.
+- **macOS is the only platform with no probe at all.** Windows and Linux are both verified against
+  their own kernels on every push by `procman --self-test`, which asks the probe about the process it
+  is running in and has the runtime check every answer.
 - **Sampling costs a third more than the budget says.** 33 ms of CPU per 1000 processes against a
   target of 25 — three files are read per process, and syscalls are the entire cost. Closing it means
   dropping `status` and with it the private-memory column and the owner id, which is a worse trade

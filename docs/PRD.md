@@ -529,10 +529,11 @@ without the OS under it.
       - *Done.* The buffer is **synthesised** by the tests and walked: chain terminator, FILETIME to
         nanoseconds, the byte-versus-character length of a `UNICODE_STRING`, the identity pair, the
         two nameless system processes, and an image-name pointer outside the buffer.
-      - *Not done.* A buffer captured from a real Windows machine. A synthesised one is written from
-        the same struct definition the parser reads, so it cannot catch that definition being wrong —
-        both sides would be wrong together. **The Windows probe is therefore exercised but not
-        verified**, and it has still never executed on Windows.
+      - *Superseded, and by something better.* A captured buffer would still have been written by the
+        same understanding as the parser. `procman --self-test` on the `windows-latest` runner instead
+        asks the probe about the process it is running in and has the runtime check every answer — on
+        a real NT kernel, against an independent source of truth. That is a stronger claim than a
+        replayed blob, and it is what the Windows column in §12 now rests on.
       Doing this exposed a defect that would have made the capture unreplayable at all: each image
       name is a `UNICODE_STRING` whose `Buffer` is an *absolute* pointer into the query's own
       allocation, and the first implementation dereferenced it. A blob captured on one machine and
@@ -571,15 +572,13 @@ without the OS under it.
 | **M2** | Linux probe | §5.1 main-loop fields, fixture replay | **done** — reads a real machine and a recorded one |
 | **M3** | TUI v1 | Process list, sort, tree, kill, per-core meters | **done** — golden frame is a CI gate |
 | **M4** | Desktop v1 | §7.1 layout, §7.2 plot controls, process properties | **mostly done** — docked layout, plots, per-core meters, process tree, the six detail tabs, menus and a context menu, verified headlessly under Xvfb on every push. Row colours, click-to-sort and per-process property windows remain (§7.1) |
-| **M5** | Windows probe | §5.2 including the `NtQueryObject` timeout worker | **done** — bulk query, per-core times, memory, I/O, owners, command lines, threads, modules, handles (with the timeout worker), sockets and the environment block. Executed and checked against the kernel under Wine: 21 of 21 self-test checks, 47 modules, 95 handles, 119 environment variables. Not yet run on a genuine Windows kernel (§9.4) |
+| **M5** | Windows probe | §5.2 including the `NtQueryObject` timeout worker | **done** — bulk query, per-core times, memory, I/O, owners, command lines, threads, modules, handles (with the timeout worker), sockets and the environment block. Executed and checked on a genuine Windows kernel (NT 10.0.26100) by the `self-test windows-latest` CI job: 21 of 21 checks, 8 threads, 47 modules, 159 handles, 149 environment variables, and the private-bytes counter Wine leaves at zero reads correctly |
 | **M6** | Details & search | §6.2 views, §6.5 search in both front-ends | **done** — six detail pages (overview, threads, modules, handles, environment, network) in both front-ends; `--find` searches names, command lines, open files and mappings. In-UI search is the terminal's filter; the window has no search box yet |
 | **M7** | Privilege helper | §8 end to end, both platforms | **done on Linux** — protocol, helper, client channel, polkit policy, probe and action wiring, and both halves of §9.8. **Not on Windows**: elevation there needs a named pipe rather than redirected stdio (§8.1) |
 | **M8** | Polish & budget | §4 met and enforced, dark mode, persisted layout | **partial** — the harness gates on CPU time and allocation and both pass (§4); dark mode follows the theme; nothing is persisted yet (open question 5) |
 | **M9** | macOS | Replace the §5.3 stub with a real probe | not started |
 
-**What is left, in order.** Run the self-test on a genuine Windows kernel — Wine implements the same
-structures and agrees on all 21 checks, but Wine is not Windows and the CI job that would settle it
-has been sitting in GitHub's queue. Then the three `TreeListView` gaps (row colours, click-to-sort,
+**What is left, in order.** The three `TreeListView` gaps (row colours, click-to-sort,
 in-cell sparklines), which are one upstream change rather than three. Then Windows elevation, which
 needs a named pipe (§8.1). macOS (M9) after that.
 

@@ -108,6 +108,12 @@ jobs:
   wine:
     name: self-test (win-x64 under wine)
     runs-on: ubuntu-latest
+    # Advisory, and the reason is not squeamishness: the authoritative Windows check is the
+    # `self-test windows-latest` job above, which runs the probe against a genuine NT kernel. This one
+    # runs it against Wine's reimplementation on a runner whose Wine version is Ubuntu's, not ours —
+    # useful as a fast signal and as the thing that first caught the missing owner resolution, but not
+    # something whose age should redden a pipeline. It reports; it does not gate.
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -119,9 +125,12 @@ jobs:
       # that survives a Windows runner queue, and it caught the missing owner resolution.
       - name: Install wine
         run: |
-          sudo dpkg --add-architecture i386
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends wine64 || sudo apt-get install -y --no-install-recommends wine
+          # `wine64` was folded into `wine` in Ubuntu 24.04, and --no-install-recommends leaves the
+          # metapackage without the binary it is supposed to provide — which is how the first version
+          # of this step ended at "wine: command not found" with a green install.
+          sudo apt-get install -y wine || sudo apt-get install -y wine-stable
+          wine --version
       - name: Publish win-x64
         run: >
           dotnet publish ProcessManager.App/ProcessManager.App.csproj --configuration Release
