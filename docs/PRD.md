@@ -458,8 +458,17 @@ NativeForms has no plotting controls, so they are ours, owner-drawn against `IGr
 The whole point of a probe that returns raw counters (§2) is that almost everything can be tested
 without the OS under it.
 
-- [~] **9.1 Fixture replay.** Recorded `/proc` trees checked into the repo as directories; the Linux
-      probe takes its root as a parameter and reads the fixture. Real machines, captured once:
+- [x] **9.1 Fixture replay.** Recorded `/proc` trees checked into the repo as directories; the Linux
+      probe takes its root as a parameter and reads the fixture.
+      **This promise was broken once and is worth the paragraph.** The probe was optimised down to
+      raw `open`/`read`/`close`/`getdents64` for §4, and those do not exist on Windows and only
+      partly on macOS — so the fixture tests, whose entire purpose is to run on every leg, failed on
+      two of three with `DllNotFoundException`. The fix is a file-access seam (`ProcIo`): syscalls on
+      Linux where the speed is the point, the BCL everywhere else where only correctness is. The
+      switch is also exposed as `UsePortableFileAccess`, and the fixture suite runs **twice on every
+      leg** — once down each path — so the portable one is not code that only ever executes where
+      nobody can debug it.
+      Recorded machines, captured once:
       one hand-authored desktop tree so far, including the pathological `comm` of §5.1. A container and
       a two-thousand-process capture are still to come. It is hand-authored rather than copied from a
       real machine on purpose: a recorded `/proc` carries the command lines of whoever recorded it
@@ -473,8 +482,10 @@ without the OS under it.
       the zero interval, the first sample, a parent that is not in the snapshot, a parent cycle, and
       a process that is its own parent. Still missing: a process vanishing mid-sample, and the
       96-core file.
-- [ ] **9.4 Windows structure replay.** Not yet: the parser is split out for it (`ParseProcesses` takes a span) but no buffer has been captured, so the Windows probe is currently **unverified** — The `SYSTEM_PROCESS_INFORMATION` buffer captured to a blob and
-      replayed through the parser, so the Windows parsing path is testable on the Linux CI leg too.
+- [ ] **9.4 Windows structure replay.** The `SYSTEM_PROCESS_INFORMATION` buffer captured to a blob
+      and replayed through the parser, so the Windows parsing path is testable on the Linux CI leg
+      too. Not done: the parser is already split out for it (`ParseProcesses` takes a span), but no
+      buffer has been captured, so **the Windows probe is unverified** — it has never executed.
 - [x] **9.5 Trim/AOT gate.** A NativeAOT publish per RID with `TreatWarningsAsErrors=true`; any
       IL2xxx/IL3xxx fails the build.
 - [~] **9.6 Front-end smoke.** The TUI is rendered against the fixture into a captured buffer and

@@ -93,7 +93,7 @@ internal sealed class ProcessCache {
     if (reader.TryRead(cmdlinePath, out var cmdline, out _) && !cmdline.IsEmpty)
       this.CommandLine = DecodeCommandLine(cmdline);
 
-    this.ImagePath = ProcFileReader.TryReadLink($"{procRootText}/{this.Pid}/exe");
+    this.ImagePath = reader.TryReadLink($"{procRootText}/{this.Pid}/exe");
 
     if (!options.ReadCgroups)
       return;

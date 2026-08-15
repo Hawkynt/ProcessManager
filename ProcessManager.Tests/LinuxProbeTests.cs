@@ -13,13 +13,18 @@ namespace Hawkynt.ProcessManager.Tests;
 /// That is the whole reason <see cref="LinuxProbeOptions.ProcRoot"/> exists — a parser tested only on
 /// the platform it parses for is a parser tested on one CI leg out of three.
 /// </remarks>
-[TestFixture]
-public sealed class LinuxProbeFixtureTests {
+[TestFixture(false, TestName = "LinuxProbeFixtureTests (syscalls)")]
+[TestFixture(true, TestName = "LinuxProbeFixtureTests (portable file access)")]
+public sealed class LinuxProbeFixtureTests(bool portable) {
 
   private static string FixtureRoot
     => Path.Combine(TestContext.CurrentContext.TestDirectory, "Fixtures", "proc-desktop");
 
-  private static LinuxProbeOptions Options => new() {
+  private LinuxProbeOptions Options => new() {
+    // Run twice: once down the syscall path this machine would use, once down the portable one the
+    // Windows and macOS legs are forced onto. They must agree field for field, which is the only way
+    // to find out here that the other legs are broken rather than on somebody else's runner.
+    UsePortableFileAccess = portable,
     ProcRoot = FixtureRoot,
     PasswdPath = Path.Combine(FixtureRoot, "passwd"),
     // Stated, not inherited: the fixture was written with USER_HZ 100, and reading the running

@@ -69,8 +69,17 @@ internal static partial class Native {
   /// <c>USER_HZ</c>: the unit <c>/proc/[pid]/stat</c> counts CPU time in. It is 100 nearly everywhere
   /// and is not guaranteed to be, so it is asked for rather than assumed (PRD §5.1).
   /// </summary>
+  /// <remarks>
+  /// Guarded on the platform, because <see cref="LinuxProbeOptions"/> reads it in a property
+  /// initializer — which runs on Windows and macOS too, where the test suite replays a recorded
+  /// tree and there is no libc to ask. Off Linux the constant is what a fixture was recorded with
+  /// anyway, and a fixture that was not says so explicitly.
+  /// </remarks>
   public static long ClockTicksPerSecond {
     get {
+      if (!OperatingSystem.IsLinux())
+        return 100;
+
       var value = SysConf(_SC_CLK_TCK);
       return value > 0 ? value : 100;
     }
@@ -78,6 +87,9 @@ internal static partial class Native {
 
   public static long PageSize {
     get {
+      if (!OperatingSystem.IsLinux())
+        return 4096;
+
       var value = SysConf(_SC_PAGESIZE);
       return value > 0 ? value : 4096;
     }
@@ -88,7 +100,12 @@ internal static partial class Native {
   /// another user's <c>io</c> or <c>fd</c> costs a failed syscall per process per sample, and on a
   /// shared machine that is most of them.
   /// </summary>
-  public static int EffectiveUserId { get; } = (int)GetEuid();
+  /// <summary>
+  /// Off Linux this is 0 — "root" — which is exactly right for a fixture replay: the recorded tree
+  /// belongs to whoever recorded it, and refusing to read it because of a uid mismatch would make
+  /// every cross-platform test fail for a reason that has nothing to do with parsing.
+  /// </summary>
+  public static int EffectiveUserId { get; } = OperatingSystem.IsLinux() ? (int)GetEuid() : 0;
 
   /// <summary>Opens a NUL-terminated path read-only. Returns -1 and sets <paramref name="errno"/>.</summary>
   public static int OpenReadOnly(ReadOnlySpan<byte> nulTerminatedPath, out int errno) {

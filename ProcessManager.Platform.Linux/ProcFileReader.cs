@@ -22,8 +22,9 @@ namespace Hawkynt.ProcessManager.Platform.Linux;
 /// One instance per sampling thread, reused across every file and every sample.
 /// </para>
 /// </remarks>
-internal sealed class ProcFileReader {
+internal sealed class ProcFileReader(ProcIo? io = null) {
 
+  private readonly ProcIo _io = io ?? ProcIo.ForCurrentPlatform;
   private byte[] _buffer = new byte[16 * 1024];
 
   /// <summary>
@@ -38,7 +39,7 @@ internal sealed class ProcFileReader {
   /// </param>
   public bool TryRead(scoped ReadOnlySpan<byte> path, out ReadOnlySpan<byte> content, out int errno) {
     content = default;
-    var fd = Native.OpenReadOnly(path, out errno);
+    var fd = this._io.OpenReadOnly(path, out errno);
     if (fd < 0)
       return false;
 
@@ -49,7 +50,7 @@ internal sealed class ProcFileReader {
           Array.Resize(ref this._buffer, this._buffer.Length * 2);
 
         var room = this._buffer.Length - written;
-        var read = Native.Read(fd, this._buffer.AsSpan(written, room), out errno);
+        var read = this._io.Read(fd, this._buffer.AsSpan(written, room), out errno);
         if (read < 0)
           // The permission check on several /proc files happens at read(2), not at open(2): the
           // kernel only runs ptrace_may_access when it generates the content. /proc/[pid]/io of
@@ -73,7 +74,7 @@ internal sealed class ProcFileReader {
       content = this._buffer.AsSpan(0, written);
       return true;
     } finally {
-      Native.Close(fd);
+      this._io.Close(fd);
     }
   }
 
@@ -84,6 +85,6 @@ internal sealed class ProcFileReader {
   }
 
   /// <summary>Reads the target of a symlink, or null. Used for <c>exe</c>, <c>cwd</c> and each fd.</summary>
-  public static string? TryReadLink(string path) => Native.ReadLink(path);
+  public string? TryReadLink(string path) => this._io.ReadLink(path);
 
 }

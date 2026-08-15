@@ -23,7 +23,8 @@ public sealed class LinuxProbe : ISystemProbe {
   private static ReadOnlySpan<byte> _procsRunningPrefix => "procs_running "u8;
 
   private readonly LinuxProbeOptions _options;
-  private readonly ProcFileReader _reader = new();
+  private readonly ProcIo _io;
+  private readonly ProcFileReader _reader;
   private readonly UserNameResolver _users;
   private readonly Dictionary<ProcessKey, ProcessCache> _cache = [];
   private readonly List<ProcessKey> _stale = [];
@@ -47,6 +48,8 @@ public sealed class LinuxProbe : ISystemProbe {
   public LinuxProbe(LinuxProbeOptions options) {
     ArgumentNullException.ThrowIfNull(options);
     this._options = options;
+    this._io = options.UsePortableFileAccess ? new ManagedProcIo() : ProcIo.ForCurrentPlatform;
+    this._reader = new(this._io);
     this._procRoot = options.ProcRoot.TrimEnd('/');
     this._procRootUtf8 = System.Text.Encoding.UTF8.GetBytes(this._procRoot);
     this._users = new(options.PasswdPath);
@@ -229,7 +232,7 @@ public sealed class LinuxProbe : ISystemProbe {
     Span<byte> rootPath = stackalloc byte[ProcPath.MaxLength];
     this._procRootUtf8.CopyTo(rootPath);
     rootPath[this._procRootUtf8.Length] = 0;
-    Native.ListNumericEntries(rootPath[..(this._procRootUtf8.Length + 1)], this._directoryScratch, this._pids);
+    this._io.ListNumericEntries(rootPath[..(this._procRootUtf8.Length + 1)], this._directoryScratch, this._pids);
 
     var buffer = snapshot.PrepareProcesses(this._pids.Count);
     var written = 0;
@@ -450,11 +453,11 @@ public sealed class LinuxProbe : ISystemProbe {
       return;
     }
 
-    record.HandleCount = CountDescriptors(cache.FdPath, this._directoryScratch);
+    record.HandleCount = this.CountDescriptors(cache.FdPath, this._directoryScratch);
   }
 
-  private static Counter CountDescriptors(ReadOnlySpan<byte> fdPath, Span<byte> scratch) {
-    var count = Native.CountDirectoryEntries(fdPath, scratch, out var errno);
+  private Counter CountDescriptors(scoped ReadOnlySpan<byte> fdPath, Span<byte> scratch) {
+    var count = this._io.CountDirectoryEntries(fdPath, scratch, out var errno);
     return count >= 0
       ? Counter.Of((ulong)count)
       : errno switch {
@@ -466,7 +469,7 @@ public sealed class LinuxProbe : ISystemProbe {
   /// <inheritdoc />
   public Counter GetHandleCount(ProcessKey key) {
     Span<byte> path = stackalloc byte[ProcPath.MaxLength];
-    return CountDescriptors(
+    return this.CountDescriptors(
       ProcPath.Build(path, this._procRootUtf8, key.Pid, "fd"u8),
       this._onDemandScratch
     );
@@ -578,7 +581,7 @@ public sealed class LinuxProbe : ISystemProbe {
       if (!int.TryParse(Path.GetFileName(entry), out var fd))
         continue;
 
-      var target = ProcFileReader.TryReadLink(entry);
+      var target = this._reader.TryReadLink(entry);
       result.Add(new((ulong)fd, ClassifyFd(target), target, null));
     }
 

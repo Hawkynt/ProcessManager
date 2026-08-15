@@ -48,6 +48,17 @@ public sealed record LinuxProbeOptions {
   public bool ReadCgroups { get; init; } = true;
 
   /// <summary>
+  /// Read files through the BCL rather than through syscalls, even on Linux.
+  /// </summary>
+  /// <remarks>
+  /// Off Linux this is what happens anyway — there is no <c>getdents64</c> on macOS and no libc on
+  /// Windows, and the fixture tests run on all three legs (PRD §9.1). The switch exists so that the
+  /// portable path can be exercised <em>on</em> Linux too: otherwise it is code that only ever runs
+  /// where nobody can debug it, and the first time it breaks is on somebody else's CI.
+  /// </remarks>
+  public bool UsePortableFileAccess { get; init; }
+
+  /// <summary>
   /// Whose processes the probe can expect to read privileged files of. Defaults to the running
   /// user; a fixture replay sets 0 so that every recorded file is attempted regardless of who
   /// recorded it.

@@ -15,7 +15,9 @@ namespace Hawkynt.ProcessManager.Platform.Linux;
 public sealed class LinuxProcessActions(LinuxProbeOptions? options = null) : IProcessActions {
 
   private readonly LinuxProbeOptions _options = options ?? new();
-  private readonly ProcFileReader _reader = new();
+  private readonly ProcFileReader _reader = new(
+    (options ?? new()).UsePortableFileAccess ? new ManagedProcIo() : ProcIo.ForCurrentPlatform
+  );
 
   public ActionResult Terminate(ProcessKey key) => this.Signal(key, Native.SIGTERM);
 
