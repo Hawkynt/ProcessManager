@@ -171,6 +171,21 @@ public sealed class TerminalScreen {
     this.NeedsFullRepaint = false;
   }
 
+  /// <summary>
+  /// The composed frame's attributes, one byte per cell, row-major.
+  /// </summary>
+  /// <remarks>
+  /// For the screenshot writer, which needs the colours as well as the characters. The golden test
+  /// deliberately compares only <see cref="Capture"/> — a frame's *text* is the thing whose change is
+  /// worth failing a build over, and pinning its colours too would make every palette tweak a golden
+  /// update.
+  /// </remarks>
+  public byte[] CaptureAttributes() {
+    var result = new byte[this.Width * this.Height];
+    Array.Copy(this._backAttribute, result, result.Length);
+    return result;
+  }
+
   /// <summary>The composed frame as text, for the golden-frame test (PRD §9.6).</summary>
   public string Capture() {
     var builder = new StringBuilder((this.Width + 1) * this.Height);

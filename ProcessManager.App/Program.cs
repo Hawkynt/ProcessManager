@@ -61,7 +61,7 @@ internal static class Program {
   #region interactive
 
   private static int RunTerminal(Sampler sampler, ISystemProbe probe, IProcessActions? actions, CommandLineOptions options) {
-    if (options.CaptureFramePath is null) {
+    if (options.CaptureFramePath is null && options.CaptureSvgPath is null) {
       using var host = new TerminalHost();
       host.Run(sampler, probe, actions, options.Interval);
       return _ExitOk;
@@ -73,11 +73,26 @@ internal static class Program {
     ui.View.TreeMode = options.TreeMode;
     ui.View.SortColumn = options.SortColumn;
     ui.View.SortDescending = options.SortDescending;
-    ui.Update();
-    ui.Update();
+    for (var i = 0; i < options.CaptureSamples; ++i) {
+      ui.Update();
+      // Only between samples, and only when more than the minimum were asked for: a golden frame is
+      // taken with two and must not pay a second of wall-clock for it.
+      if (options.CaptureSamples > 2 && i < options.CaptureSamples - 1)
+        Thread.Sleep(options.Interval);
+    }
 
     var frame = ui.Screen.Capture();
-    File.WriteAllText(options.CaptureFramePath, frame);
+    if (options.CaptureFramePath is not null)
+      File.WriteAllText(options.CaptureFramePath, frame);
+
+    if (options.CaptureSvgPath is not null) {
+      Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(options.CaptureSvgPath))!);
+      File.WriteAllText(
+        options.CaptureSvgPath,
+        FrameSvg.Render(frame, "procman --tui", ui.Screen.CaptureAttributes(), ui.Screen.Width)
+      );
+    }
+
     if (options.GoldenFramePath is null)
       return _ExitOk;
 
@@ -92,7 +107,14 @@ internal static class Program {
   }
 
   private static int RunDesktop(Sampler sampler, ISystemProbe probe, IProcessActions? actions, CommandLineOptions options) {
-    var result = DesktopLauncher.TryRun(sampler, probe, actions, options.ShootPath);
+    var result = DesktopLauncher.TryRun(
+      sampler,
+      probe,
+      actions,
+      options.ShootPath,
+      options.ShootHoldSeconds,
+      options.FlatRequested
+    );
     if (result is null)
       return _ExitOk;
 

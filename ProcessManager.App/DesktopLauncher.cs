@@ -13,7 +13,13 @@ namespace Hawkynt.ProcessManager.App;
 internal static class DesktopLauncher {
 
   /// <summary>Null on a clean exit; otherwise the reason, for the caller to show before falling back.</summary>
-  public static string? TryRun(Sampler sampler, ISystemProbe probe, IProcessActions? actions, string? shootPath)
-    => Ui.Desktop.DesktopApp.Run(sampler, probe, actions, shootPath);
+  public static string? TryRun(
+    Sampler sampler,
+    ISystemProbe probe,
+    IProcessActions? actions,
+    string? shootPath,
+    double holdSeconds = 0,
+    bool flat = false
+  ) => Ui.Desktop.DesktopApp.Run(sampler, probe, actions, shootPath, holdSeconds, flat);
 
 }

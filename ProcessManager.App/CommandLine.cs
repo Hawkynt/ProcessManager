@@ -19,6 +19,9 @@ internal sealed record CommandLineOptions {
   public ProcessColumn SortColumn { get; init; } = ProcessColumn.CpuPercent;
   public bool SortDescending { get; init; } = true;
   public bool TreeMode { get; init; }
+
+  /// <summary>True when --flat was given, so the desktop's tree default can be overridden.</summary>
+  public bool FlatRequested { get; init; }
   public bool Json { get; init; }
   public bool AllUsers { get; init; } = true;
   public bool KillTree { get; init; }
@@ -35,8 +38,23 @@ internal sealed record CommandLineOptions {
   /// <summary>Compare the captured frame against this file and exit non-zero on a difference.</summary>
   public string? GoldenFramePath { get; init; }
 
+  /// <summary>
+  /// How many samples to take before capturing. Two is the minimum for any rate to exist at all; a
+  /// screenshot wants a dozen so the in-row plots have a shape rather than a single mark.
+  /// </summary>
+  public int CaptureSamples { get; init; } = 2;
+
   /// <summary>Bring the window up, photograph it and exit — the CI desktop smoke leg.</summary>
   public string? ShootPath { get; init; }
+
+  /// <summary>
+  /// Hold the window open this many seconds before exiting, so something outside can photograph it.
+  /// Zero keeps the smoke run's behaviour: up, described, gone.
+  /// </summary>
+  public double ShootHoldSeconds { get; init; }
+
+  /// <summary>Also write the captured terminal frame as an SVG picture of itself.</summary>
+  public string? CaptureSvgPath { get; init; }
 
   /// <summary>
   /// Whether the privileged helper may be started at all. It is never started without a request that
@@ -82,6 +100,12 @@ internal sealed record CommandLineOptions {
         case "--tree":
           options = options with { TreeMode = true, KillTree = true };
           break;
+        case "--flat":
+          // The desktop opens as a tree, which is what the reference tools do. This starts it flat
+          // and sorted, which is what somebody looking for the busiest process wants — and what a
+          // screenshot of a process manager should show.
+          options = options with { TreeMode = false, FlatRequested = true };
+          break;
         case "--json":
           options = options with { Json = true };
           break;
@@ -119,6 +143,28 @@ internal sealed record CommandLineOptions {
             return options with { Error = "--capture-frame needs a file" };
 
           options = options with { Mode = RunMode.Terminal, CaptureFramePath = path };
+          explicitMode = true;
+          break;
+        }
+        case "--capture-samples": {
+          if (!TryValue(args, ref i, inlineValue, out var text) || !int.TryParse(text, out var samples) || samples < 2)
+            return options with { Error = "--capture-samples needs a number of at least 2" };
+
+          options = options with { CaptureSamples = samples };
+          break;
+        }
+        case "--shoot-hold": {
+          if (!TryValue(args, ref i, inlineValue, out var text) || !double.TryParse(text, out var seconds) || seconds < 0)
+            return options with { Error = "--shoot-hold needs a number of seconds" };
+
+          options = options with { ShootHoldSeconds = seconds };
+          break;
+        }
+        case "--capture-svg": {
+          if (!TryValue(args, ref i, inlineValue, out var path))
+            return options with { Error = "--capture-svg needs a file" };
+
+          options = options with { Mode = RunMode.Terminal, CaptureSvgPath = path };
           explicitMode = true;
           break;
         }
@@ -200,6 +246,7 @@ internal sealed record CommandLineOptions {
     Options:
       --sort <column>    cpu, mem, pid, name, user, threads, read, write, start, handles
       --tree             show the process tree (with --kill: the whole subtree)
+      --flat             start with a flat list sorted by CPU rather than a tree
       --user             only this user's processes
       --interval <s>     seconds between samples (default 1)
       --json             machine-readable output for --list and --find

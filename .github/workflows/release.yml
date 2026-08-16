@@ -30,8 +30,14 @@ jobs:
   ci:
     uses: ./.github/workflows/ci.yml
 
-  build:
+  # So that what ships is never illustrated by a picture older than itself. Runs before the build,
+  # because it may commit and the release tags whatever HEAD is by then.
+  screenshots:
     needs: ci
+    uses: ./.github/workflows/screenshots.yml
+
+  build:
+    needs: [ci, screenshots]
     uses: ./.github/workflows/_build.yml
 
   release:

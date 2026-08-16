@@ -19,7 +19,14 @@ public static class DesktopApp {
   /// Runs the window. Returns null on a clean exit, or a sentence explaining why it could not start —
   /// which the caller shows before falling back to the terminal.
   /// </summary>
-  public static string? Run(Sampler sampler, ISystemProbe probe, IProcessActions? actions, string? shootPath = null) {
+  public static string? Run(
+    Sampler sampler,
+    ISystemProbe probe,
+    IProcessActions? actions,
+    string? shootPath = null,
+    double holdSeconds = 0,
+    bool flat = false
+  ) {
     try {
       if (OperatingSystem.IsWindows())
         BackendRegistry.Register(new NativeForms.Backends.Windows.Win32Backend());
@@ -28,11 +35,11 @@ public static class DesktopApp {
       else
         return $"there is no UI backend for {Environment.OSVersion.Platform}";
 
-      var window = new MainWindow(sampler, probe, actions);
+      var window = new MainWindow(sampler, probe, actions) { FlatMode = flat };
       window.Start();
 
       if (shootPath is not null)
-        return Shoot(window, shootPath);
+        return Shoot(window, shootPath, holdSeconds);
 
       Application.Run(window);
       return null;
@@ -49,7 +56,7 @@ public static class DesktopApp {
   /// The CI smoke path (PRD §9.6): bring the window up, prove it painted, write a log, and exit
   /// without an event loop nobody is there to end.
   /// </summary>
-  private static string? Shoot(MainWindow window, string directory) {
+  private static string? Shoot(MainWindow window, string directory, double holdSeconds) {
     Directory.CreateDirectory(directory);
     var log = Path.Combine(directory, "shoot.log");
     try {
@@ -57,13 +64,29 @@ public static class DesktopApp {
       // A timer scheduled before Run therefore closes the window from inside the loop, two sample
       // intervals in — long enough that what is photographed has rates in it rather than a table of
       // ellipses.
-      var closer = new NativeForms.Timer { Interval = 2500 };
+      // Held open when asked, so something outside can photograph the window. The smoke run passes
+      // zero and keeps its old behaviour: up, described, gone.
+      var closer = new NativeForms.Timer { Interval = Math.Max(2500, (int)(holdSeconds * 1000)) };
       closer.Tick += (_, _) => {
         closer.Stop();
+
+        // The picture, taken on the UI thread because that is the only thread allowed to ask a
+        // widget to draw itself.
+        window.SelectFirstRow();
+        var description = window.DescribeForCapture();
+        if (OperatingSystem.IsLinux()) {
+          var png = Path.Combine(directory, "desktop.png");
+          var size = GtkCapture.Window(png, out var failure);
+          description += size is { } taken
+            ? $"capture:      {taken.Width}x{taken.Height} -> {png}\n"
+            : $"capture:      none — {failure}\n";
+        } else
+          description += "capture:      not implemented on this platform\n";
+
         // Everything a reader needs to tell "the window came up empty" from "the window came up":
         // a windowed process on a runner has no console, so this file is the only witness
         // (PRD §9.6).
-        File.WriteAllText(log, window.DescribeForCapture());
+        File.WriteAllText(log, description);
         Application.Exit();
       };
 

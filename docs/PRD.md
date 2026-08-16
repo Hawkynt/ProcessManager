@@ -75,6 +75,14 @@ ProcessManager.Tests                      unit + fixture-replay + golden tests
 ProcessManager.Benchmarks                 the §4 budget harness, run by nightly CI
 ```
 
+**The NativeForms dependency is source, not a package, and temporarily.** The process list needs
+`TreeListView`'s `RowBackColorSelector`, `CellPaint` and `ColumnClick` — added upstream by
+Hawkynt/NativeForms#8 for exactly this and not yet in a published build — so `ProcessManager.Ui.Desktop`
+references the sibling repository's projects, the way PNGCrushCS references CompressionWorkbench. The
+CI checks the sibling out beside this repo. When a package carrying the seams ships, this reverts to
+three `PackageReference`s and the extra checkout goes away; a build without the sibling fails with one
+sentence saying so rather than two hundred lines of CS0246.
+
 Both front-ends are **libraries**, and `ProcessManager.App` is the only executable of the pair. That
 is a change from this document's first draft, which had two executables: the documented CLI is
 `procman` and `procman --tui`, and two binaries cannot both be `procman`. The cost is that a headless
@@ -141,7 +149,7 @@ its own section because every subtle bug in a tool of this kind lives here.
 
 - [x] `HistoryRing<T>` — fixed-capacity ring per tracked series, allocated once. Default 600 samples
       (10 minutes at 1 Hz), configurable; memory is bounded by construction, not by pruning.
-- [~] Per-process history is kept only for processes with an open detail view plus the top N by CPU;
+- [x] Per-process history is kept only for processes with an open detail view plus the top N by CPU;
       everything else keeps the current value only. Keeping 600 samples × 1000 processes × 6 series
       is 28 MB of nothing anyone looks at.
 - [x] A gap in sampling (the interval was missed, the machine was asleep) is recorded **as a gap**.
@@ -397,21 +405,25 @@ refused with a reason rather than failing silently.
       own windows at once is not done — it is what makes Process Explorer good at comparing two
       processes, and it needs the pane extracted into a `Form`, which is a small job on top of what
       is there.
-- [~] Tree/flat toggle, "show all users" and the CPU% convention are in the View menu; sorting is in
-      a Sort menu. **Click-to-sort headers are not possible today**: NativeForms' `TreeListView` has
-      no `ColumnClick` — its `ListView` does, and is flat. The menu is a stand-in for a hook that has
-      to come from the toolkit. Column chooser and persisted layout are not done (open question 5).
-- [ ] Row coloring with the Process-Explorer conventions (new = green fade, exited = red fade, own
-      user, system, suspended), plus a **color legend window**.
-      **Blocked, with a specific cause:** NativeForms' `TreeListView` has no per-row colour hook —
-      `TreeNode` carries text, an image and a tag, and nothing else. Its `DataGridView` does have one
-      (`RowBackColorSelector`) but is flat, and the tree is the more valuable half. The engine already
-      reports what the colours would say (`SnapshotDelta.IsNew`, the exit list, `ProcessState`); the
-      terminal front-end colours its rows from exactly that today. The fix is a hook in the toolkit,
-      not a workaround here.
-- [~] Dark mode follows the OS theme through `ITheme`. The plots take their background, grid and
-      border from it; the *series* colours and the meter's amber/red thresholds are hard-coded,
-      because `ITheme` has one accent and a plot needs several distinguishable lines.
+- [x] Tree/flat toggle, "show all users" and the CPU% convention are in the View menu; sorting is in
+      a Sort menu **and on the headers** — click to sort, click again to reverse, with the direction
+      in the caption. A column chooser picks from the sixteen in `ColumnSet`. `--flat` starts as a
+      sorted list rather than a tree. Persisted layout is still not done (open question 5).
+- [x] Row colouring with the Process-Explorer conventions, plus a **colour legend window** — because
+      a colour no dialog explains is decoration.
+      This was blocked and is not any more: `TreeListView` had no per-row colour hook, so the fix went
+      where the problem was (Hawkynt/NativeForms#8 adds `RowBackColorSelector`, `RowForeColorSelector`,
+      `CellPaint` and `ColumnClick`, with ten tests). `ProcessCategories.Classify` sorts a row into
+      one of eight categories and `RowPalette` gives each a colour, in a light and a dark variant
+      chosen from the theme's own background.
+      **What is deliberately not claimed:** packed, .NET, elevated and store processes. Process Hacker
+      colours those; telling them apart needs information neither probe collects, and a colour that is
+      sometimes right is worse than none. The legend says so out loud.
+- [~] Dark mode follows the OS theme through `ITheme`, and the row palette has a light and a dark
+      variant picked from `FieldBackground`'s perceptual luminance. The *plots* deliberately do not
+      follow it: they are instruments, and an instrument that changes contrast with the desktop is
+      harder to read at a glance than one that always looks the same. Series colours and the meter's
+      amber/red thresholds are fixed for the same reason.
 
 ### 7.2 Controls this project must build
 
@@ -419,13 +431,17 @@ NativeForms has no plotting controls, so they are ours, owner-drawn against `IGr
 [custom-control guide](https://github.com/Hawkynt/NativeForms/blob/main/docs/custom-controls.md):
 
 - [x] `HistoryPlot` — scrolling multi-series time plot with gap support (§3.3), reading a
-      `HistoryRing<Rate>` directly so nothing is copied per frame
+      `HistoryRing<Rate>` directly so nothing is copied per frame. Filled area on a black ground with
+      a green graticule, and a brighter line along the top edge so stacked series stay separable
 - [x] `CoreMeterStrip` — one bar per logical core, the htop meter as a widget
-- [ ] `Sparkline` — in-cell mini plot for the CPU column. Blocked by the same missing cell-painting
-      hook as the row colours above. Along with row colours and click-to-sort, this makes three
-      things the desktop UI wants that all need the same thing from `TreeListView`: a way to
-      participate in how a row is drawn and clicked. That is one upstream change, not three.
-- [ ] `ColorLegend` — the legend window. Pointless before the rows are coloured.
+- [x] `Sparkline` — in-cell plots for **CPU, memory and I/O history**, drawn through the toolkit's
+      new `CellPaint` seam. One pixel per sample, newest at the right, gaps left blank.
+      The scales are **shared across rows and decayed, with a floor** (`ProcessHistory`): a plot
+      scaled to its own row's maximum makes an idle process look exactly as busy as a saturated one,
+      a scale that snapped to each sample's peak would make every plot jump when one process spiked,
+      and on an idle machine the peak is noise that a floor keeps from being amplified.
+- [x] `ColorLegend` — the legend window, one swatch and one sentence per category, generated from the
+      same palette the rows use.
 
 ### 7.3 Interaction rules
 
@@ -543,10 +559,16 @@ without the OS under it.
       the call and the parse on a live machine too.
 - [x] **9.5 Trim/AOT gate.** A NativeAOT publish per RID with `TreatWarningsAsErrors=true`; any
       IL2xxx/IL3xxx fails the build.
-- [~] **9.6 Front-end smoke.** The TUI is rendered against the fixture into a captured buffer and
+- [x] **9.6 Front-end smoke.** The TUI is rendered against the fixture into a captured buffer and
       compared to a checked-in golden frame, both as an NUnit test and as a CI job. The desktop leg
-      exists in CI and brings the window up under Xvfb, but it writes a log rather than a PNG — the
-      capture itself is not written yet, so that half is a smoke test and not a photograph.
+      brings the window up under Xvfb and now **photographs it**, in-process: `GtkCapture` asks the
+      widget to paint into a Cairo surface and writes the PNG from there.
+      Three things had to be got right, each of which produced a picture that looked like a bug
+      elsewhere. `import`/`xwd` see nothing — there is no compositor on a runner, and an ImageMagick
+      without its X11 delegate exits zero having written nothing. Once the capture was in-process it
+      needed `gtk_test_widget_wait_for_draw`, or it photographed the frame before the pending
+      relayout: a rectangle of black. And the log has to carry the window's whole state, because a
+      windowed process on a runner has no console to explain an empty shot with.
 - [x] **9.7 Budget harness.** §4 asserted by `ProcessManager.Benchmarks` in nightly CI; a regression
       exits non-zero.
 - [x] **9.8 Helper protocol tests.** Nineteen of them, and every one is an attempt to make the parser
@@ -571,16 +593,18 @@ without the OS under it.
 | **M1** | Core model | §3 snapshot/delta/rate/history, no probe | **done** — 51 tests, §9.3 cases green |
 | **M2** | Linux probe | §5.1 main-loop fields, fixture replay | **done** — reads a real machine and a recorded one |
 | **M3** | TUI v1 | Process list, sort, tree, kill, per-core meters | **done** — golden frame is a CI gate |
-| **M4** | Desktop v1 | §7.1 layout, §7.2 plot controls, process properties | **mostly done** — docked layout, plots, per-core meters, process tree, the six detail tabs, menus and a context menu, verified headlessly under Xvfb on every push. Row colours, click-to-sort and per-process property windows remain (§7.1) |
+| **M4** | Desktop v1 | §7.1 layout, §7.2 plot controls, process properties | **done** — docked layout, filled-area plots on a graticule, per-core meters, the process tree with rows coloured by category, three in-row history columns, a column chooser, click-to-sort headers, a colour legend, six detail tabs, menus and a context menu. Photographed under Xvfb on every push. Per-process property windows and a persisted layout remain |
 | **M5** | Windows probe | §5.2 including the `NtQueryObject` timeout worker | **done** — bulk query, per-core times, memory, I/O, owners, command lines, threads, modules, handles (with the timeout worker), sockets and the environment block. Executed and checked on a genuine Windows kernel (NT 10.0.26100) by the `self-test windows-latest` CI job: 21 of 21 checks, 8 threads, 47 modules, 159 handles, 149 environment variables, and the private-bytes counter Wine leaves at zero reads correctly |
 | **M6** | Details & search | §6.2 views, §6.5 search in both front-ends | **done** — six detail pages (overview, threads, modules, handles, environment, network) in both front-ends; `--find` searches names, command lines, open files and mappings. In-UI search is the terminal's filter; the window has no search box yet |
 | **M7** | Privilege helper | §8 end to end, both platforms | **done on Linux** — protocol, helper, client channel, polkit policy, probe and action wiring, and both halves of §9.8. **Not on Windows**: elevation there needs a named pipe rather than redirected stdio (§8.1) |
 | **M8** | Polish & budget | §4 met and enforced, dark mode, persisted layout | **partial** — the harness gates on CPU time and allocation and both pass (§4); dark mode follows the theme; nothing is persisted yet (open question 5) |
 | **M9** | macOS | Replace the §5.3 stub with a real probe | not started |
 
-**What is left, in order.** The three `TreeListView` gaps (row colours, click-to-sort,
-in-cell sparklines), which are one upstream change rather than three. Then Windows elevation, which
-needs a named pipe (§8.1). macOS (M9) after that.
+**What is left, in order.** Windows elevation, which needs a named pipe rather than redirected stdio
+(§8.1). Then the two desktop conveniences — per-process property windows, and persisting the column
+choice and sort (open question 5). Then macOS (M9).
+The `TreeListView` gaps that blocked three of §7.1's features are gone: they were one upstream change,
+and it is merged (Hawkynt/NativeForms#8).
 
 ---
 
@@ -597,10 +621,16 @@ Shipped in v1, not a later addition — the same engine with a different rendere
       column. Keys we add do not shadow keys htop uses for something else.
 - [x] Per-core meters, memory/swap bars and load average in the header, drawn by the same math the
       desktop plots use.
-- [~] Degrades by capability, not by guess: colour depth comes from `NO_COLOR`/`COLORTERM`/`TERM`,
-      and the monochrome mode is what the golden frame is rendered in, so it is tested. The
-      locale-dependent box characters are not done — the frame uses ASCII throughout, which is the
-      safe end of that trade but not the pretty one.
+- [x] **Three in-row history columns** — CPU, memory and I/O — drawn with the eighth-block characters
+      U+2581 to U+2588, sharing the same `ProcessHistory` and the same scales the window's sparklines
+      use. Twelve characters wide is twelve samples at eight levels: coarse next to a pixel-per-sample
+      plot, and enough to tell a process that is busy now from one that was busy a moment ago.
+      A reading above zero always gets at least the smallest mark, or half a percent would look
+      exactly like none.
+- [x] Degrades by capability, not by guess: colour depth comes from `NO_COLOR`/`COLORTERM`/`TERM`,
+      and the monochrome mode is what the golden frame is rendered in, so it is tested. The block
+      characters are used only when `TERM` is not `dumb` **and** the locale says UTF-8; anything else
+      gets an ASCII ramp, because a column of replacement boxes is worse than no plot at all.
 - [~] Resizes on a size change noticed at the top of the loop rather than on `SIGWINCH` — deliberate:
       the signal arrives on another thread, and the frame diff assumes nobody else writes between
       compose and flush. Sizes smaller than the header are clamped but not tested.
@@ -639,16 +669,22 @@ which implements the same structures and is not the same thing as Windows.
 | Handle count on demand | ✔ | ✔ | ✔ | ✔ | ✔ | n/a | ✔ |
 | Search across handles (`--find`) | ✔ | — | — | — | ✔ | ✔ | ✔ |
 | Privileged helper | ✔ | ✔ | ✔ | ✔ | ✔ | — | ✔ |
-| Row colours (§7.1) | — | — | — | ✔ | — | — | ✔ |
-| In-cell sparkline | — | — | — | — | — | — | ✔ |
+| Row colours (§7.1) | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
+| CPU / memory / I/O history columns | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
+| Column selection | ✔ | — | ✔ | fixed set | ✔ | ✔ | ✔ |
+| Click-to-sort headers | ✔ | ✔ (upstream) | ✔ | n/a | ✔ | ✔ | ✔ |
+| Colour legend | ✔ | ✔ | ✔ | — | ✔ | ✔ | ✔ |
+| Published screenshots | ✔ | CI | ✔ | ✔ | ✔ | — | ✔ |
 | Persisted layout | — | — | — | — | — | — | ✔ |
+| Per-process property windows | — | — | — | — | — | — | ✔ |
 
 The rows worth reading twice. **The action tests test the refusals, not the actions** — every check
 that a wrong identity, a missing process, a bad pid or an empty affinity mask is refused, and none
 that a process is actually ended, because a test that terminates something to prove it can is not one
 to run in CI. **Sockets and `--find` have no automated test**: both need a machine with a known open
-socket or a known open file, which the fixture cannot record. **The Windows column is Wine**, and the
-distinction is in the header for a reason.
+socket or a known open file, which the fixture cannot record. **The screenshots are Linux only** —
+the window is photographed through GTK and Cairo, and the Windows equivalent would be a second
+capture route nobody has needed yet.
 
 ## 13. Open questions
 

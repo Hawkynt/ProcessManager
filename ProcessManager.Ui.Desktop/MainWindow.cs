@@ -1,6 +1,7 @@
 using System.Drawing;
 using System.Globalization;
 using Hawkynt.NativeForms;
+using Hawkynt.NativeForms.Drawing;
 using Hawkynt.ProcessManager.Abstractions;
 using Hawkynt.ProcessManager.Model;
 using Hawkynt.ProcessManager.Query;
@@ -30,7 +31,10 @@ public sealed class MainWindow : Form {
   private readonly NativeForms.Timer _timer = new();
   private readonly HistoryRing<Rate> _cpuHistory = new(600);
   private readonly HistoryRing<Rate> _memoryHistory = new(600);
+  private readonly ProcessHistory _rowHistory = new();
+  private readonly List<DesktopColumn> _columns = [.. ColumnSet.Default];
   private bool _splitPlaced;
+  private ITheme _theme = DefaultTheme.Instance;
   private int _laidOutWidth = -1;
 
   public MainWindow(Sampler sampler, ISystemProbe probe, IProcessActions? actions) {
@@ -49,6 +53,8 @@ public sealed class MainWindow : Form {
     // Docked, in the order the layout is stacked: the menu on top, the plots under it, the status
     // line at the bottom, and the splitter taking everything that is left. Fixed bounds were the
     // first version and did not survive a resize.
+    // Added outermost-first: the docking walk gives each control the edge of what is left, so the
+    // menu has to come before the plot strip or the strip takes the top of the window.
     this.BuildStatus();
     this.BuildMenu();
     this.BuildPlots();
@@ -76,6 +82,12 @@ public sealed class MainWindow : Form {
     return builder.ToString();
   }
 
+  /// <summary>Start with a flat sorted list rather than the tree. Set before <see cref="Start"/>.</summary>
+  public bool FlatMode {
+    get => !this._view.TreeMode;
+    set => this._view.TreeMode = !value;
+  }
+
   /// <summary>The refresh interval in milliseconds.</summary>
   public int Interval {
     get => this._timer.Interval;
@@ -83,8 +95,45 @@ public sealed class MainWindow : Form {
   }
 
   public void Start() {
+    this._binder.CurrentUserId = CurrentUserId();
     this.Refresh();
     this._timer.Start();
+  }
+
+  /// <summary>
+  /// Selects the first row, so a screenshot shows the detail pane doing its job rather than an empty
+  /// box. A person opening the window picks a row within a second; a capture has nobody to do it.
+  /// </summary>
+  public void SelectFirstRow() {
+    if (this._tree.Nodes.Count == 0)
+      return;
+
+    this._tree.SelectedNode = this._tree.Nodes[0];
+    this.UpdateDetails();
+  }
+
+  /// <summary>
+  /// The uid of whoever is running this, so "my processes" can be a colour. -1 on a platform where it
+  /// cannot be read, which simply means no row is coloured as one's own.
+  /// </summary>
+  private static int CurrentUserId() {
+    if (!OperatingSystem.IsLinux())
+      return -1;
+
+    try {
+      foreach (var line in File.ReadLines("/proc/self/status")) {
+        if (!line.StartsWith("Uid:", StringComparison.Ordinal))
+          continue;
+
+        var fields = line[4..].Split('\t', StringSplitOptions.RemoveEmptyEntries);
+        if (fields.Length > 0 && int.TryParse(fields[0].Trim(), out var uid))
+          return uid;
+      }
+    } catch (IOException) {
+      // Falls through to the sentinel, which colours nothing as one's own.
+    }
+
+    return -1;
   }
 
   #region layout
@@ -152,22 +201,81 @@ public sealed class MainWindow : Form {
     this._tree.Dock = DockStyle.Fill;
     this._tree.ShowColumnHeaders = true;
 
-    // The columns Process Explorer opens with, in its order. Everything is a selector over the
-    // pre-formatted row, so painting never formats a number (PRD §7.2).
-    this._tree.Columns.Add(new("Process", 300, static node => ((ProcessRow)node.Tag!).Label));
-    this._tree.Columns.Add(new("User", 130, static node => ((ProcessRow)node.Tag!).User));
-    this._tree.Columns.Add(new("State", 70, static node => ((ProcessRow)node.Tag!).State));
-    this._tree.Columns.Add(new("CPU %", 70, static node => ((ProcessRow)node.Tag!).Cpu));
-    this._tree.Columns.Add(new("Private", 85, static node => ((ProcessRow)node.Tag!).Private));
-    this._tree.Columns.Add(new("Working set", 95, static node => ((ProcessRow)node.Tag!).WorkingSet));
-    this._tree.Columns.Add(new("Read/s", 80, static node => ((ProcessRow)node.Tag!).Read));
-    this._tree.Columns.Add(new("Write/s", 80, static node => ((ProcessRow)node.Tag!).Write));
-    this._tree.Columns.Add(new("Threads", 65, static node => ((ProcessRow)node.Tag!).Threads));
-    this._tree.Columns.Add(new("Handles", 70, static node => ((ProcessRow)node.Tag!).Handles));
-    this._tree.Columns.Add(new("Started", 150, static node => ((ProcessRow)node.Tag!).Started));
+    this.RebuildColumns();
 
+    // What makes the list readable before a word of it is read: the row's colour says what kind of
+    // process it is, and the legend window says what the colours mean (PRD §7.1).
+    //
+    // The theme comes from the cell-paint args rather than from the control: OwnerDrawnControl.Theme
+    // is protected, so a caller cannot read the theme of a control it does not own. The row selector
+    // runs just before the cells of the same row, so it is one frame behind on start-up — and the
+    // first frame is drawn in the toolkit's default palette, which nobody sees at a 1 Hz refresh.
+    this._tree.RowBackColorSelector = node =>
+      node.Tag is ProcessRow row ? RowPalette.BackColorOf(row.Category, this._theme) : null;
+
+    // The three history columns are drawn, not written.
+    this._tree.CellPaint += this.OnCellPaint;
+    this._tree.ColumnClick += this.OnColumnClick;
     this._tree.AfterSelect += (_, _) => this.UpdateDetails();
     this._tree.ContextMenuStrip = this.BuildContextMenu();
+  }
+
+  /// <summary>Recreates the header from the chosen column set.</summary>
+  private void RebuildColumns() {
+    this._tree.Columns.Clear();
+    foreach (var column in this._columns) {
+      var info = ColumnSet.Info(column);
+      var header = info.Header;
+      if (info.SortBy == this._view.SortColumn)
+        header = this._view.SortDescending ? header + " ▾" : header + " ▴";
+
+      var which = column;
+      this._tree.Columns.Add(new(header, info.Width, node => ((ProcessRow)node.Tag!).TextOf(which)) {
+        TextAlign = info.RightAligned ? ContentAlignment.MiddleRight : ContentAlignment.MiddleLeft,
+      });
+    }
+  }
+
+  private void OnCellPaint(object? sender, TreeListViewCellPaintEventArgs e) {
+    this._theme = e.Theme;
+    if ((uint)e.ColumnIndex >= (uint)this._columns.Count)
+      return;
+
+    var info = ColumnSet.Info(this._columns[e.ColumnIndex]);
+    if (info.Series is not { } series || e.Node.Tag is not ProcessRow row)
+      return;
+
+    var colour = series switch {
+      HistorySeries.Cpu => RowPalette.Cpu,
+      HistorySeries.Memory => RowPalette.Memory,
+      _ => RowPalette.Io,
+    };
+
+    Sparkline.Draw(e.Graphics, e.Bounds, this._rowHistory.Get(row.Key, series), this._rowHistory.ScaleOf(series), colour);
+    // Handled: the cell has no text, and letting the control draw an empty string over the plot
+    // would only cost a measure.
+    e.Handled = true;
+  }
+
+  private void OnColumnClick(object? sender, ColumnClickEventArgs e) {
+    if ((uint)e.Column >= (uint)this._columns.Count)
+      return;
+
+    if (ColumnSet.Info(this._columns[e.Column]).SortBy is not { } sortBy)
+      // A history column has no text to sort by, and sorting by "the shape of a graph" is not a
+      // thing. Clicking one does nothing rather than doing something arbitrary.
+      return;
+
+    // Clicking the current column reverses it, the way every list does.
+    if (this._view.SortColumn == sortBy)
+      this._view.SortDescending = !this._view.SortDescending;
+    else {
+      this._view.SortColumn = sortBy;
+      this._view.SortDescending = sortBy.PrefersDescending();
+    }
+
+    this.RebuildColumns();
+    this.Refresh();
   }
 
   private ContextMenuStrip BuildContextMenu() {
@@ -196,7 +304,10 @@ public sealed class MainWindow : Form {
   }
 
   private void BuildMenu() {
-    var menu = new MenuStrip();
+    // Docked *and* given a height. A MenuStrip has no intrinsic one — the toolkit's own demo assigns
+    // its bounds by hand — so docking it Top without a height produces a menu that is present,
+    // mapped and nought pixels tall, which photographs exactly like a menu that was never added.
+    var menu = new MenuStrip { Dock = DockStyle.Top, Height = 26 };
 
     var view = new ToolStripMenuItem("View");
     view.DropDownItems.Add(Item("Tree", () => {
@@ -246,10 +357,15 @@ public sealed class MainWindow : Form {
     sort.DropDownItems.Add(new ToolStripSeparator());
     sort.DropDownItems.Add(Item("Reverse", () => {
       this._view.SortDescending = !this._view.SortDescending;
+      this.RebuildColumns();
       this.Refresh();
     }));
 
     menu.Items.Add(sort);
+
+    view.DropDownItems.Add(new ToolStripSeparator());
+    view.DropDownItems.Add(Item("Select columns…", this.ChooseColumns));
+    view.DropDownItems.Add(Item("Colour legend…", () => new LegendWindow().ShowDialog()));
 
     var process = new ToolStripMenuItem("Process");
     process.DropDownItems.Add(Item("End process", () => this.Act("end", key => this._actions!.Terminate(key))));
@@ -277,6 +393,10 @@ public sealed class MainWindow : Form {
     this._memoryHistory.Add(MemoryPercent(snapshot.System));
 
     this._view.Rebuild(snapshot, delta);
+
+    // History only for the rows on screen (PRD §3.3). TopIndex and the visible count come from the
+    // control, so scrolling changes which processes are tracked rather than tracking all of them.
+    this._rowHistory.Update(snapshot, delta, this._view, this._tree.TopIndex, this._tree.VisibleNodeCount + 8);
     this._binder.Sync(snapshot, delta, this._view);
     this._cores.Bind(delta);
     this._cpuPlot.Invalidate();
@@ -331,6 +451,18 @@ public sealed class MainWindow : Form {
       this._details.UpdateOverview(in process, row);
 
     this._details.Refresh();
+  }
+
+  private void ChooseColumns() {
+    var chooser = new ColumnChooser(this._columns);
+    chooser.ShowDialog();
+    if (!chooser.Accepted)
+      return;
+
+    this._columns.Clear();
+    this._columns.AddRange(chooser.Selection);
+    this.RebuildColumns();
+    this.Refresh();
   }
 
   private void FillHandleCounts() {

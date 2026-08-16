@@ -1,0 +1,90 @@
+name: Screenshots
+
+# Regenerates docs/screenshots and commits them when they changed.
+#
+# Deliberately NOT on every push. What the pictures show is a live machine, so a fresh capture
+# differs from the last one every single time — pixel for pixel in the window's plots, line for line
+# in the terminal's. A per-push job would therefore commit a "screenshots changed" commit on
+# essentially every push, and a history where every second commit is a bot updating a PNG is a
+# history nobody reads. So: by hand when the UI has changed enough to be worth re-photographing, and
+# once more at each release so what ships is never illustrated by something older than itself.
+on:
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: 'Why re-photograph? (optional, for the audit log)'
+        required: false
+  workflow_call: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: screenshots
+  cancel-in-progress: true
+
+# Force JavaScript-based actions to run on Node 24 instead of the deprecated Node 20 ahead of
+# the 2026-06-16 hard cutover, until we bump each action to a Node-24-native major version.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+defaults:
+  run:
+    working-directory: ProcessManager
+
+jobs:
+  shoot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: ProcessManager
+      - uses: actions/checkout@v4
+        with:
+          repository: Hawkynt/NativeForms
+          path: NativeForms
+          fetch-depth: 1
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # GTK for the window, Xvfb for it to open on. No screenshot tool: the window is photographed
+      # from inside the process by asking the widget to paint itself into a Cairo surface, because
+      # nothing outside can see it — there is no compositor on a runner, and an ImageMagick built
+      # without its X11 delegate exits zero having written nothing. See GtkCapture.
+      - name: Install GTK and a virtual display
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libgtk-3-0 xvfb fonts-dejavu-core
+
+      - name: Build
+        run: dotnet build ProcessManager.slnx --configuration Release
+
+      - name: Photograph both front-ends
+        run: ./tools/shoot-screenshots.sh
+
+      # Only when something actually changed. A capture of a live machine always differs in its
+      # pixels, so this is mostly a formality on a manual run — but it keeps a release that changed
+      # nothing visible from carrying an empty commit.
+      - name: Commit the pictures
+        run: |
+          if git diff --quiet -- docs/screenshots; then
+            echo "::notice::the screenshots are unchanged"
+            exit 0
+          fi
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/screenshots
+          git commit -m "* refresh the screenshots [skip ci]"
+          git push
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screenshots
+          path: |
+            ProcessManager/docs/screenshots/*.png
+            ProcessManager/docs/screenshots/*.svg
+            ProcessManager/docs/screenshots/*.log
+          if-no-files-found: warn
