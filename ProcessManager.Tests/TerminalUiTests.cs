@@ -118,7 +118,13 @@ public sealed class GoldenFrameTests {
     });
 
     using var sampler = new Sampler(probe);
-    var ui = new TerminalUi(sampler, probe, null, 120, 40, ColorDepth.None) { ShowTiming = false };
+    // Both pinned. The frame is compared byte for byte, so nothing about it may come from the
+    // machine: the sample cost would differ every run, and the block characters would differ between
+    // a UTF-8 desktop and a CI runner whose LANG is C — which is exactly how this first broke.
+    var ui = new TerminalUi(sampler, probe, null, 120, 40, ColorDepth.None) {
+      ShowTiming = false,
+      UseBlockCharacters = true,
+    };
     ui.View.TreeMode = true;
     ui.View.SortColumn = ProcessColumn.Pid;
     ui.View.SortDescending = false;
@@ -218,6 +224,41 @@ public sealed class DetailViewTests {
       view.Draw(screen, in process);
 
       Assert.That(screen.Capture(), Does.Contain("nothing to show"));
+    }
+  }
+
+  [Test]
+  public void TheFrameDoesNotDependOnTheMachinesLocale() {
+    // The regression that took three CI legs down: the golden was generated on a UTF-8 desktop and
+    // compared on runners whose LANG is C, where the renderer had quietly fallen back to ASCII.
+    var fixtures = Path.Combine(TestContext.CurrentContext.TestDirectory, "Fixtures", "proc-desktop");
+    using var probe = new LinuxProbe(new() {
+      ProcRoot = fixtures,
+      PasswdPath = Path.Combine(fixtures, "passwd"),
+      ClockTicksPerSecond = 100,
+      PageSize = 4096,
+      EffectiveUserId = 0,
+    });
+
+    using var sampler = new Sampler(probe);
+    var blocks = Compose(sampler, probe, true);
+    var ascii = Compose(sampler, probe, false);
+
+    Assert.That(blocks, Is.Not.EqualTo(ascii), "the two ramps really do render differently");
+    Assert.That(Compose(sampler, probe, true), Is.EqualTo(blocks), "and each is stable");
+
+    static string Compose(Sampler sampler, LinuxProbe probe, bool unicode) {
+      var ui = new TerminalUi(sampler, probe, null, 120, 40, ColorDepth.None) {
+        ShowTiming = false,
+        UseBlockCharacters = unicode,
+      };
+
+      ui.View.TreeMode = true;
+      ui.View.SortColumn = ProcessColumn.Pid;
+      ui.View.SortDescending = false;
+      ui.Update();
+      ui.Update();
+      return ui.Screen.Capture();
     }
   }
 

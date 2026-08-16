@@ -22,6 +22,12 @@ internal sealed record CommandLineOptions {
 
   /// <summary>True when --flat was given, so the desktop's tree default can be overridden.</summary>
   public bool FlatRequested { get; init; }
+
+  /// <summary>
+  /// Draw the terminal's in-row history with the ASCII ramp rather than the eighth-block characters.
+  /// Detected from the locale otherwise; this is for a terminal the detection gets wrong.
+  /// </summary>
+  public bool AsciiOnly { get; init; }
   public bool Json { get; init; }
   public bool AllUsers { get; init; } = true;
   public bool KillTree { get; init; }
@@ -127,6 +133,9 @@ internal sealed record CommandLineOptions {
         }
         case "--user":
           options = options with { AllUsers = false };
+          break;
+        case "--ascii":
+          options = options with { AsciiOnly = true };
           break;
         case "--no-helper":
           options = options with { UseHelper = false };
@@ -251,6 +260,7 @@ internal sealed record CommandLineOptions {
       --interval <s>     seconds between samples (default 1)
       --json             machine-readable output for --list and --find
       --probe-root <d>   read a recorded /proc tree instead of the live one
+      --ascii            draw the terminal's history columns with ASCII rather than block characters
       --no-helper        never start the privileged helper, even for an action that needs it
       --self-test        check the probe against the runtime's own view of this process
       --helper-check     talk to the privileged helper over its pipe, unelevated, and check it

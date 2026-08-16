@@ -21,7 +21,6 @@ public sealed class TerminalUi {
   private readonly Dictionary<ProcessKey, Counter> _handleCounts = [];
   private readonly DetailView _detail;
   private readonly ProcessHistory _rowHistory = new();
-  private readonly bool _unicodeBlocks = BlockSparkline.TerminalHasBlocks;
 
   private int _selectedRow;
   private ProcessKey _selectedKey;
@@ -54,6 +53,17 @@ public sealed class TerminalUi {
 
   /// <summary>True once the user has asked to leave.</summary>
   public bool ShouldQuit { get; private set; }
+
+  /// <summary>
+  /// Whether the in-row history uses the eighth-block characters or the ASCII ramp.
+  /// </summary>
+  /// <remarks>
+  /// Detected from the locale by default, and settable because detection is not something a golden
+  /// frame may depend on: the frame is compared byte for byte against a checked-in file, and a test
+  /// whose expected output changes with the machine's <c>LANG</c> is a test that fails on somebody
+  /// else's CI for a reason that has nothing to do with the code. The capture path pins it.
+  /// </remarks>
+  public bool UseBlockCharacters { get; set; } = BlockSparkline.TerminalHasBlocks;
 
   /// <summary>
   /// Whether the status bar carries the sample cost. On for a person watching, off for a captured
@@ -553,7 +563,7 @@ public sealed class TerminalUi {
             width,
             this._rowHistory.Get(process.Key, series),
             this._rowHistory.ScaleOf(series),
-            this._unicodeBlocks
+            this.UseBlockCharacters
           );
 
           this._screen.Write(x, top + line, plot, selected ? Attributes.Selected : GraphAttribute(series));

@@ -176,6 +176,9 @@ jobs:
         env:
           WINEPREFIX: ${{ runner.temp }}/wineprefix
           WINEDEBUG: -all
+          # Ubuntu's wine builds a 32-bit prefix unless told otherwise, and reported
+          # "Platform: x86_64 (guest: i386)" while failing to run a win-x64 binary at all.
+          WINEARCH: win64
         run: |
           mkdir -p "$WINEPREFIX"
           # First run initialises the prefix and is noisy; the exit code of the second is the answer.

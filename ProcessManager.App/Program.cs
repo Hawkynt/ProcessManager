@@ -69,7 +69,13 @@ internal static class Program {
 
     // Headless: compose two frames (the second is the one with rates in it) and write the text.
     // This is the CI gate for the renderer — see PRD §9.6.
-    var ui = new TerminalUi(sampler, probe, actions, 120, 40, ColorDepth.None) { ShowTiming = false };
+    // Pinned, both of them: a captured frame is compared byte for byte, so neither the colour depth
+    // nor the block characters may come from whatever the capturing machine's environment happens to
+    // say. --ascii overrides for a picture of the fallback.
+    var ui = new TerminalUi(sampler, probe, actions, 120, 40, ColorDepth.None) {
+      ShowTiming = false,
+      UseBlockCharacters = !options.AsciiOnly,
+    };
     ui.View.TreeMode = options.TreeMode;
     ui.View.SortColumn = options.SortColumn;
     ui.View.SortDescending = options.SortDescending;
