@@ -33,14 +33,30 @@ internal sealed class HandleNameResolver : IDisposable {
 
   private const int _MaxAbandoned = 16;
 
+  /// <summary>
+  /// One worker and the handshake that belongs to it.
+  /// </summary>
+  /// <remarks>
+  /// Per worker, not per resolver, and that distinction is the whole correctness of this class. When
+  /// a query times out the thread is abandoned still inside the kernel call — and it comes back
+  /// eventually, and releases the semaphore it was handed. With one shared pair that release lands on
+  /// the <em>next</em> worker's handshake, the count goes past its maximum, and
+  /// <c>SemaphoreFullException</c> is thrown on a background thread with nobody to catch it: the
+  /// whole program dies because one handle was slow. Giving each worker its own pair means a late
+  /// release touches only a handshake nothing is listening to any more.
+  /// </remarks>
+  private sealed class Worker {
+    public readonly SemaphoreSlim RequestReady = new(0, 1);
+    public readonly SemaphoreSlim ResultReady = new(0, 1);
+    public nint Pending;
+    public string? Result;
+    public volatile bool Abandoned;
+  }
+
   private readonly TimeSpan _timeout;
-  private readonly SemaphoreSlim _requestReady = new(0, 1);
-  private readonly SemaphoreSlim _resultReady = new(0, 1);
   private readonly Lock _gate = new();
 
-  private Thread? _worker;
-  private nint _pending;
-  private string? _result;
+  private Worker? _worker;
   private int _abandoned;
   private bool _disposed;
 
@@ -61,48 +77,60 @@ internal sealed class HandleNameResolver : IDisposable {
       return null;
 
     lock (this._gate) {
-      this.EnsureWorker();
-      this._pending = handle;
-      this._result = null;
-      this._requestReady.Release();
+      var worker = this.EnsureWorker();
+      worker.Pending = handle;
+      worker.Result = null;
+      worker.RequestReady.Release();
 
-      if (this._resultReady.Wait(this._timeout))
-        return this._result;
+      if (worker.ResultReady.Wait(this._timeout))
+        return worker.Result;
 
-      // The worker is inside a kernel call that will not return. Let it go and build a new one; the
-      // semaphores go with it, because the abandoned thread still owns one side of the handshake.
+      // The worker is inside a kernel call that will not return. Let it go — it is a background
+      // thread, so it cannot keep the process alive — and build a new one. Its handshake goes with
+      // it, which is what makes the release it will eventually perform harmless.
       ++this.TimedOut;
       ++this._abandoned;
+      worker.Abandoned = true;
       this._worker = null;
       return null;
     }
   }
 
-  private void EnsureWorker() {
-    if (this._worker is { IsAlive: true })
-      return;
+  private Worker EnsureWorker() {
+    if (this._worker is { } existing)
+      return existing;
 
-    this._worker = new(this.Pump) {
+    var worker = new Worker();
+    this._worker = worker;
+    var thread = new Thread(() => this.Pump(worker)) {
       IsBackground = true,
       Name = "procman handle-name query",
     };
 
-    this._worker.Start();
+    thread.Start();
+    return worker;
   }
 
-  private void Pump() {
-    while (!this._disposed) {
-      this._requestReady.Wait();
-      var handle = this._pending;
+  private void Pump(Worker worker) {
+    while (!this._disposed && !worker.Abandoned) {
+      worker.RequestReady.Wait();
+      if (this._disposed || worker.Abandoned)
+        return;
+
       string? name = null;
       try {
-        name = QueryName(handle);
+        name = QueryName(worker.Pending);
       } catch (Exception) {
         // A handle that faults the query is a handle without a name, as far as anyone above cares.
       }
 
-      this._result = name;
-      this._resultReady.Release();
+      worker.Result = name;
+      try {
+        worker.ResultReady.Release();
+      } catch (SemaphoreFullException) {
+        // Belt to the braces above: whatever happens, a slow handle must not end the program.
+        return;
+      }
     }
   }
 
@@ -155,7 +183,13 @@ internal sealed class HandleNameResolver : IDisposable {
 
   public void Dispose() {
     this._disposed = true;
-    this._requestReady.Release();
+    var worker = this._worker;
+    this._worker = null;
+    try {
+      worker?.RequestReady.Release();
+    } catch (SemaphoreFullException) {
+      // Already signalled; the worker will see _disposed and stop.
+    }
   }
 
 }
