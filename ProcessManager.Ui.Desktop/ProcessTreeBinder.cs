@@ -33,6 +33,9 @@ public sealed class ProcessTreeBinder {
   private readonly Dictionary<ProcessKey, ProcessRow> _rows = [];
   private readonly Dictionary<int, ProcessKey> _byPid = [];
   private readonly List<ProcessKey> _stale = [];
+  // Roots kept apart from children rather than under a null key: a Dictionary will not take one.
+  private readonly List<TreeNode> _desiredRoots = [];
+  private readonly Dictionary<TreeNode, List<TreeNode>> _desiredChildren = [];
   private int _generation;
 
   public ProcessTreeBinder(TreeListView tree) {
@@ -45,6 +48,9 @@ public sealed class ProcessTreeBinder {
 
   /// <summary>The row behind the selected node, or null.</summary>
   public ProcessRow? SelectedRow => this._tree.SelectedNode?.Tag as ProcessRow;
+
+  /// <summary>The uid of whoever is running this, so rows can be coloured "mine" (PRD §7.1).</summary>
+  public int CurrentUserId { get; set; } = -1;
 
   public void Sync(SystemSnapshot snapshot, SnapshotDelta delta, ProcessView view) {
     ArgumentNullException.ThrowIfNull(snapshot);
@@ -70,7 +76,7 @@ public sealed class ProcessTreeBinder {
       }
 
       this.HandleCounts.TryGetValue(key, out var handles);
-      row.Update(in process, delta, index, handles);
+      row.Update(in process, delta, index, handles, this.CurrentUserId);
       row.Generation = this._generation;
 
       if (!this._nodes.TryGetValue(key, out var node)) {
@@ -115,6 +121,74 @@ public sealed class ProcessTreeBinder {
     }
 
     this.RemoveStale();
+    this.ReorderToMatch(processes, rows, view);
+  }
+
+  /// <summary>
+  /// Puts each sibling group into the order the view says.
+  /// </summary>
+  /// <remarks>
+  /// Without this the window's sort does nothing after the first frame. Nodes are reused across
+  /// samples — which is what makes expansion and selection survive — so a node added on the first
+  /// sample keeps its position in its parent's collection for as long as the process lives, whatever
+  /// the sort says. The list came up ordered by whatever the very first sample happened to produce
+  /// and stayed that way: clicking a header changed the arrow in the caption and nothing else.
+  /// <para>
+  /// The reorder is skipped entirely when the order already matches, which is the common case — a
+  /// sort by name or pid barely moves between samples, and even a sort by CPU only swaps neighbours.
+  /// Only the groups that actually changed are rewritten.
+  /// </para>
+  /// </remarks>
+  private void ReorderToMatch(ReadOnlySpan<ProcessRecord> processes, ReadOnlySpan<ViewRow> rows, ProcessView view) {
+    // The view is a depth-first walk, so a parent is always followed by its own children: collecting
+    // by parent in one pass yields each sibling group already in the right order.
+    this._desiredRoots.Clear();
+    this._desiredChildren.Clear();
+    for (var i = 0; i < rows.Length; ++i) {
+      var key = processes[rows[i].Index].Key;
+      if (!this._nodes.TryGetValue(key, out var node))
+        continue;
+
+      if (this._attachedTo.GetValueOrDefault(key) is not { } parent) {
+        this._desiredRoots.Add(node);
+        continue;
+      }
+
+      if (!this._desiredChildren.TryGetValue(parent, out var siblings)) {
+        siblings = [];
+        this._desiredChildren[parent] = siblings;
+      }
+
+      siblings.Add(node);
+    }
+
+    Apply(this._tree.Nodes, this._desiredRoots);
+    foreach (var (parent, siblings) in this._desiredChildren)
+      Apply(parent.Nodes, siblings);
+
+    static void Apply(TreeNodeCollection collection, List<TreeNode> desired) {
+      if (AlreadyInOrder(collection, desired))
+        return;
+
+      // Removed and re-added rather than sorted in place: the collection has no sort, and the node
+      // objects are the same ones either way, so expansion state and the selected node survive.
+      foreach (var node in desired)
+        collection.Remove(node);
+
+      foreach (var node in desired)
+        collection.Add(node);
+    }
+  }
+
+  private static bool AlreadyInOrder(TreeNodeCollection collection, List<TreeNode> desired) {
+    if (collection.Count != desired.Count)
+      return false;
+
+    for (var i = 0; i < desired.Count; ++i)
+      if (!ReferenceEquals(collection[i], desired[i]))
+        return false;
+
+    return true;
   }
 
   private void RemoveStale() {

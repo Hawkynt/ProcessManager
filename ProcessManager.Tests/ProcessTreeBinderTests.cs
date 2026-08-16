@@ -116,6 +116,77 @@ public sealed class ProcessTreeBinderTests {
     Assert.That(CountNodes(tree), Is.EqualTo(2), "and neither was duplicated");
   }
 
+  [Test]
+  public void TheTreeIsReorderedToMatchTheSort() {
+    // The bug this pins: nodes are reused across samples so that expansion and selection survive,
+    // and a node added on the first sample kept its position for the life of the process. Clicking a
+    // header changed the arrow in the caption and nothing else — the window's sort did nothing at
+    // all after the first frame.
+    var tree = new TreeListView();
+    var binder = new ProcessTreeBinder(tree);
+    var (snapshot, delta, view) = Build((10, 0), (20, 0), (30, 0));
+
+    view.SortColumn = ProcessColumn.Pid;
+    view.SortDescending = false;
+    view.Rebuild(snapshot, delta);
+    binder.Sync(snapshot, delta, view);
+    Assert.That(Pids(tree), Is.EqualTo(new[] { 10, 20, 30 }));
+
+    view.SortDescending = true;
+    view.Rebuild(snapshot, delta);
+    binder.Sync(snapshot, delta, view);
+
+    Assert.That(Pids(tree), Is.EqualTo(new[] { 30, 20, 10 }), "the same nodes, in the new order");
+  }
+
+  [Test]
+  public void ReorderingKeepsTheSameNodeObjects() {
+    // Which is what carries expansion state and the selection across the reorder.
+    var tree = new TreeListView();
+    var binder = new ProcessTreeBinder(tree);
+    var (snapshot, delta, view) = Build((10, 0), (20, 0));
+    view.SortColumn = ProcessColumn.Pid;
+    view.SortDescending = false;
+    view.Rebuild(snapshot, delta);
+    binder.Sync(snapshot, delta, view);
+
+    var first = tree.Nodes[0];
+    var second = tree.Nodes[1];
+
+    view.SortDescending = true;
+    view.Rebuild(snapshot, delta);
+    binder.Sync(snapshot, delta, view);
+
+    Assert.That(tree.Nodes[0], Is.SameAs(second));
+    Assert.That(tree.Nodes[1], Is.SameAs(first));
+  }
+
+  [Test]
+  public void ChildrenAreOrderedWithinTheirParent() {
+    var tree = new TreeListView();
+    var binder = new ProcessTreeBinder(tree);
+    var (snapshot, delta, view) = Build((1, 0), (10, 1), (20, 1), (30, 1));
+    view.SortColumn = ProcessColumn.Pid;
+    view.SortDescending = true;
+    view.Rebuild(snapshot, delta);
+    binder.Sync(snapshot, delta, view);
+
+    var root = tree.Nodes[0];
+    var children = new List<int>();
+    foreach (TreeNode child in root.Nodes)
+      children.Add(((ProcessRow)child.Tag!).Pid);
+
+    Assert.That(children, Is.EqualTo(new[] { 30, 20, 10 }));
+  }
+
+  private static int[] Pids(TreeListView tree) {
+    var result = new List<int>();
+    foreach (TreeNode node in tree.Nodes)
+      result.Add(((ProcessRow)node.Tag!).Pid);
+
+    return [.. result];
+  }
+
   private static int CountNodes(TreeListView tree) {
     var count = 0;
     foreach (TreeNode node in tree.Nodes)
