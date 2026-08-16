@@ -2,9 +2,9 @@ title:        Process Manager
 bounds:       {X=0,Y=0,Width=1240,Height=820}
 client size:  {Width=1240, Height=820}
 controls:     4
-process rows: 653 roots, 653 visible
+process rows: 169 roots, 169 visible
 columns:      9
 split at:     367
 plots:        cpu {X=6,Y=6,Width=392,Height=92}, memory {X=404,Y=6,Width=392,Height=92}, cores {X=802,Y=6,Width=432,Height=92}
-status:       653 of 653 processes  ·  CPU 23.6% (normalized)  ·  memory 125G total, 88.2G free  ·  sample 15.3 ms
+status:       169 of 169 processes  ·  CPU 75.6% (normalized)  ·  memory 15.6G total, 13.8G free  ·  sample 6.2 ms
 capture:      1240x820 -> docs/screenshots/desktop.png
