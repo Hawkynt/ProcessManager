@@ -36,10 +36,13 @@ public sealed class ProcessRow(ProcessKey key) {
   /// <summary>True for one sample after the process appeared — the Process Explorer green flash.</summary>
   public bool IsNew { get; private set; }
 
+  /// <summary>What kind of process this is, which is what its row colour means (PRD §7.1).</summary>
+  public ProcessCategory Category { get; private set; }
+
   /// <summary>The sample this row was last seen in; older rows are removed from the tree.</summary>
   public int Generation { get; set; }
 
-  public void Update(in ProcessRecord process, SnapshotDelta delta, int index, Counter handles) {
+  public void Update(in ProcessRecord process, SnapshotDelta delta, int index, Counter handles, int currentUserId) {
     this.Name = process.Name;
     this.User = process.UserName ?? (process.UserId >= 0 ? process.UserId.ToString(CultureInfo.InvariantCulture) : "?");
     this.Cpu = Humanize.Percent(delta.CpuPercent(index));
@@ -56,7 +59,26 @@ public sealed class ProcessRow(ProcessKey key) {
 
     this.CommandLine = process.CommandLine ?? string.Empty;
     this.IsNew = delta.IsNew(index);
+    this.Category = ProcessCategories.Classify(in process, currentUserId, this.IsNew);
   }
+
+  /// <summary>The text for one column, or empty for the ones that are drawn rather than written.</summary>
+  public string TextOf(DesktopColumn column) => column switch {
+    DesktopColumn.Name => this.Label,
+    DesktopColumn.Pid => this.Pid.ToString(CultureInfo.InvariantCulture),
+    DesktopColumn.User => this.User,
+    DesktopColumn.State => this.State,
+    DesktopColumn.CpuPercent => this.Cpu,
+    DesktopColumn.PrivateBytes => this.Private,
+    DesktopColumn.WorkingSet => this.WorkingSet,
+    DesktopColumn.ReadRate => this.Read,
+    DesktopColumn.WriteRate => this.Write,
+    DesktopColumn.Threads => this.Threads,
+    DesktopColumn.Handles => this.Handles,
+    DesktopColumn.Started => this.Started,
+    DesktopColumn.CommandLine => this.CommandLine,
+    _ => string.Empty,
+  };
 
   /// <summary>The text the tree column shows in the name column, with the pid appended.</summary>
   public string Label => $"{this.Name} ({this.Pid})";

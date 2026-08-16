@@ -20,6 +20,8 @@ public sealed class TerminalUi {
   private readonly HistoryRing<Rate> _cpuHistory = new(240);
   private readonly Dictionary<ProcessKey, Counter> _handleCounts = [];
   private readonly DetailView _detail;
+  private readonly ProcessHistory _rowHistory = new();
+  private readonly bool _unicodeBlocks = BlockSparkline.TerminalHasBlocks;
 
   private int _selectedRow;
   private ProcessKey _selectedKey;
@@ -69,6 +71,16 @@ public sealed class TerminalUi {
     this._cpuHistory.Add(this._sampler.Delta.SystemCpuPercent);
     this._view.Rebuild(this._sampler.Current, this._sampler.Delta);
     this.RestoreSelection();
+    // History for the rows on screen only, plus a little either side so a small scroll does not
+    // start every plot from nothing (PRD §3.3).
+    this._rowHistory.Update(
+      this._sampler.Current,
+      this._sampler.Delta,
+      this._view,
+      Math.Max(0, this._scrollOffset - 4),
+      this.ListHeight + 8
+    );
+
     this.Compose();
   }
 
@@ -330,7 +342,7 @@ public sealed class TerminalUi {
   private void PreviousSortColumn() => this.SetSortColumn(-1);
 
   private void SetSortColumn(int direction) {
-    var columns = Layout.Columns;
+    var columns = Layout.Sortable;
     var index = Array.IndexOf(columns, this._view.SortColumn);
     index = ((index < 0 ? 0 : index) + direction + columns.Length) % columns.Length;
     this._view.SortColumn = columns[index];
@@ -489,9 +501,9 @@ public sealed class TerminalUi {
     this._screen.Fill(0, y, this._screen.Width, ' ', Attributes.Header);
     var x = 0;
     foreach (var column in Layout.Columns) {
-      var width = Layout.WidthOf(column);
-      var header = column.ToHeader();
-      if (column == this._view.SortColumn)
+      var width = column.Width;
+      var header = column.Header;
+      if (column.Sortable is { } sortable && sortable == this._view.SortColumn)
         header = this._view.SortDescending ? header + "▾" : header + "▴";
 
       // A header that does not fit loses its tail, not its head: "Working set" clipped to "ing set"
@@ -500,10 +512,10 @@ public sealed class TerminalUi {
       if (header.Length > width)
         header = header[..width];
 
-      if (Layout.IsRightAligned(column))
+      if (Layout.IsRightAligned(in column))
         this._screen.WriteRight(x, y, width, header, Attributes.Header);
       else
-        this._screen.Write(x, y, header.Length > width ? header[..width] : header, Attributes.Header);
+        this._screen.Write(x, y, header, Attributes.Header);
 
       x += width + 1;
       if (x >= this._screen.Width)
@@ -534,9 +546,26 @@ public sealed class TerminalUi {
 
       var x = 0;
       foreach (var column in Layout.Columns) {
-        var width = Layout.WidthOf(column);
-        var text = this.CellText(column, row, in process, delta);
-        if (Layout.IsRightAligned(column))
+        var width = column.Width;
+        if (column.Series is { } series) {
+          // Drawn, not written: the eighth-block ramp turns a column of text into a plot (PRD §11).
+          var plot = BlockSparkline.Render(
+            width,
+            this._rowHistory.Get(process.Key, series),
+            this._rowHistory.ScaleOf(series),
+            this._unicodeBlocks
+          );
+
+          this._screen.Write(x, top + line, plot, selected ? Attributes.Selected : GraphAttribute(series));
+          x += width + 1;
+          if (x >= this._screen.Width)
+            break;
+
+          continue;
+        }
+
+        var text = this.CellText(in column, row, in process, delta);
+        if (Layout.IsRightAligned(in column))
           this._screen.WriteRight(x, top + line, width, text, baseAttribute);
         else
           this._screen.Write(x, top + line, text.Length > width ? text[..width] : text, baseAttribute);
@@ -548,8 +577,15 @@ public sealed class TerminalUi {
     }
   }
 
-  private string CellText(ProcessColumn column, ViewRow row, in ProcessRecord process, SnapshotDelta delta)
-    => column switch {
+  /// <summary>Each series keeps its own colour, matching the window's plots.</summary>
+  private static byte GraphAttribute(HistorySeries series) => series switch {
+    HistorySeries.Cpu => Attributes.Good,
+    HistorySeries.Memory => Attributes.Accent,
+    _ => Attributes.Warn,
+  };
+
+  private string CellText(in Layout.TerminalColumn column, ViewRow row, in ProcessRecord process, SnapshotDelta delta)
+    => column.Sortable switch {
       ProcessColumn.Pid => process.Pid.ToString(CultureInfo.InvariantCulture),
       ProcessColumn.UserName => process.UserName ?? (process.UserId >= 0 ? process.UserId.ToString(CultureInfo.InvariantCulture) : "?"),
       ProcessColumn.PrivateBytes => Humanize.Bytes(process.PrivateBytes),

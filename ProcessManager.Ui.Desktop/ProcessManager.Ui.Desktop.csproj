@@ -4,6 +4,8 @@
     <AssemblyName>Hawkynt.ProcessManager.Ui.Desktop</AssemblyName>
     <RootNamespace>Hawkynt.ProcessManager.Ui.Desktop</RootNamespace>
     <Version>0.1.0</Version>
+    <!-- LibraryImport's generated marshalling for the GTK/Cairo capture. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>
@@ -12,11 +14,23 @@
 
   <!-- Both backends are referenced unconditionally and registered by OS at runtime. A backend that
        is never registered is dropped again by the trimmer, and its native library is never dlopen'd
-       either - which is what lets one binary carry GTK without a headless box ever loading it. -->
-  <ItemGroup>
-    <PackageReference Include="Hawkynt.NativeForms" Version="1.0.0.227" />
-    <PackageReference Include="Hawkynt.NativeForms.Backends.Gtk" Version="1.0.0.73" />
-    <PackageReference Include="Hawkynt.NativeForms.Backends.Windows" Version="1.0.0.63" />
+       either - which is what lets one binary carry GTK without a headless box ever loading it.
+
+       Sibling source rather than the published packages, and only until Hawkynt/NativeForms#8 lands:
+       the row-colour, cell-paint and column-click seams the process list needs are on that branch and
+       not in 1.0.0.227. Clone NativeForms next to this repo (the CI checks it out the same way, the
+       way PNGCrushCS does with CompressionWorkbench). When the PR merges and a package ships, this
+       goes back to three PackageReferences and the CI checkout step goes away. -->
+  <ItemGroup Condition="Exists('$(MSBuildThisFileDirectory)..\..\NativeForms\NativeForms.Core\NativeForms.Core.csproj')">
+    <ProjectReference Include="..\..\NativeForms\NativeForms.Core\NativeForms.Core.csproj" />
+    <ProjectReference Include="..\..\NativeForms\NativeForms.Backends.Gtk\NativeForms.Backends.Gtk.csproj" />
+    <ProjectReference Include="..\..\NativeForms\NativeForms.Backends.Windows\NativeForms.Backends.Windows.csproj" />
   </ItemGroup>
+
+  <!-- No sibling: fail with a sentence instead of two hundred lines of CS0246. -->
+  <Target Name="_RequireNativeFormsSibling" BeforeTargets="BeforeBuild"
+          Condition="!Exists('$(MSBuildThisFileDirectory)..\..\NativeForms\NativeForms.Core\NativeForms.Core.csproj')">
+    <Error Text="ProcessManager currently builds against the NativeForms sibling repository. Clone https://github.com/Hawkynt/NativeForms next to this one (see README, Build). This is temporary - it goes back to the NuGet packages once Hawkynt/NativeForms#8 ships." />
+  </Target>
 
 </Project>

@@ -26,7 +26,7 @@ public sealed class CoreMeterStrip : OwnerDrawnControl {
   protected override void OnPaint(PaintEventArgs e) {
     var g = e.Graphics;
     var theme = this.Theme;
-    g.FillRectangle(theme.ControlBackground, new(0, 0, this.Width, this.Height));
+    g.FillRectangle(RowPalette.PlotBackground, new(0, 0, this.Width, this.Height));
 
     var delta = this._delta;
     var cores = delta?.PerCoreCount ?? 0;
@@ -45,19 +45,20 @@ public sealed class CoreMeterStrip : OwnerDrawnControl {
       var value = delta!.PerCoreBusyPercent(core);
       var height = this.Height - 2;
       var slot = new Rectangle(x, 1, barWidth, height);
-      g.FillRectangle(theme.FieldBackground, slot);
+      g.FillRectangle(RowPalette.PlotBackground, slot);
+      g.DrawLine(RowPalette.PlotGrid, slot.Left, slot.Top + height / 2, slot.Right - 1, slot.Top + height / 2);
 
       if (value.HasValue) {
         var percent = Math.Clamp(value.Value, 0, 100);
         var filled = (int)Math.Round(percent * height / 100);
-        var color = percent >= 90 ? Color.FromArgb(0xD0, 0x40, 0x40)
-          : percent >= 60 ? Color.FromArgb(0xD0, 0xA0, 0x30)
-          : theme.Accent;
+        var color = percent >= 90 ? Color.FromArgb(0xFF, 0xD0, 0x40, 0x40)
+          : percent >= 60 ? Color.FromArgb(0xFF, 0xD0, 0xA0, 0x30)
+          : RowPalette.Cpu;
 
         g.FillRectangle(color, new(x, 1 + height - filled, barWidth, filled));
       }
 
-      g.DrawRectangle(theme.Border, slot);
+      g.DrawRectangle(RowPalette.PlotGrid, slot);
       x += barWidth + 1;
     }
   }

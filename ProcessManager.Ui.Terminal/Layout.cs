@@ -1,4 +1,5 @@
 using Hawkynt.ProcessManager.Query;
+using Hawkynt.ProcessManager.Sampling;
 
 namespace Hawkynt.ProcessManager.Ui.Terminal;
 
@@ -12,37 +13,46 @@ namespace Hawkynt.ProcessManager.Ui.Terminal;
 /// </remarks>
 internal static class Layout {
 
-  public static readonly ProcessColumn[] Columns = [
-    ProcessColumn.Pid,
-    ProcessColumn.UserName,
-    ProcessColumn.State,
-    ProcessColumn.CpuPercent,
-    ProcessColumn.PrivateBytes,
-    ProcessColumn.WorkingSetBytes,
-    ProcessColumn.ReadBytesPerSecond,
-    ProcessColumn.WriteBytesPerSecond,
-    ProcessColumn.ThreadCount,
-    ProcessColumn.HandleCount,
-    ProcessColumn.Name,
+  /// <summary>
+  /// A terminal column: either one of the engine's sortable columns, or one of the three drawn
+  /// histories, which have no text and no sort order.
+  /// </summary>
+  public readonly record struct TerminalColumn(string Header, int Width, ProcessColumn? Sortable, HistorySeries? Series) {
+    public bool IsGraph => this.Series is not null;
+  }
+
+  public static readonly TerminalColumn[] Columns = [
+    new("PID", 7, ProcessColumn.Pid, null),
+    new("User", 10, ProcessColumn.UserName, null),
+    new("S", 5, ProcessColumn.State, null),
+    new("CPU%", 5, ProcessColumn.CpuPercent, null),
+    new("CPU hist", 12, null, HistorySeries.Cpu),
+    new("Private", 7, ProcessColumn.PrivateBytes, null),
+    new("Mem hist", 12, null, HistorySeries.Memory),
+    new("Read/s", 8, ProcessColumn.ReadBytesPerSecond, null),
+    new("Write/s", 8, ProcessColumn.WriteBytesPerSecond, null),
+    new("I/O hist", 12, null, HistorySeries.Io),
+    new("Thr", 4, ProcessColumn.ThreadCount, null),
+    new("Hnd", 5, ProcessColumn.HandleCount, null),
+    new("Process", 120, ProcessColumn.Name, null),
   ];
 
-  public static int WidthOf(ProcessColumn column) => column switch {
-    ProcessColumn.Pid => 7,
-    ProcessColumn.UserName => 10,
-    ProcessColumn.State => 6,
-    ProcessColumn.CpuPercent => 5,
-    ProcessColumn.PrivateBytes or ProcessColumn.WorkingSetBytes => 7,
-    ProcessColumn.ReadBytesPerSecond or ProcessColumn.WriteBytesPerSecond => 8,
-    ProcessColumn.ThreadCount => 4,
-    ProcessColumn.HandleCount => 5,
-    // The last column takes what is left; the screen clips it.
-    ProcessColumn.Name => 120,
-    _ => 8,
-  };
+  /// <summary>The columns a user can cycle the sort through — the graphs are not among them.</summary>
+  public static ProcessColumn[] Sortable {
+    get {
+      var result = new List<ProcessColumn>();
+      foreach (var column in Columns)
+        if (column.Sortable is { } sortable)
+          result.Add(sortable);
+
+      return [.. result];
+    }
+  }
 
   /// <summary>Numbers right, text left — so the digits of a column line up under each other.</summary>
-  public static bool IsRightAligned(ProcessColumn column) => column switch {
+  public static bool IsRightAligned(in TerminalColumn column) => column.Sortable switch {
     ProcessColumn.Name or ProcessColumn.UserName or ProcessColumn.CommandLine or ProcessColumn.State => false,
+    null => false,
     _ => true,
   };
 
