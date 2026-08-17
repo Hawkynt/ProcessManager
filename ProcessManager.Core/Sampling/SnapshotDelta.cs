@@ -16,8 +16,14 @@ public sealed class SnapshotDelta {
   private readonly Dictionary<ProcessKey, int> _previousIndex = [];
   private readonly List<ProcessKey> _exited = [];
   private Rate[] _cpuPercent = [];
+  private Rate[] _cpuPercentPerCore = [];
   private Rate[] _readBytesPerSecond = [];
   private Rate[] _writeBytesPerSecond = [];
+  private Rate[] _otherBytesPerSecond = [];
+  private Rate[] _pageFaultsPerSecond = [];
+  private Rate[] _contextSwitchesPerSecond = [];
+  private Rate[] _cyclesPerSecond = [];
+  private Rate[] _privateBytesDelta = [];
   private bool[] _isNew = [];
   private Rate[] _perCoreBusy = [];
 
@@ -39,6 +45,44 @@ public sealed class SnapshotDelta {
   public int StartedCount { get; private set; }
 
   public Rate CpuPercent(int index) => this._cpuPercent[index];
+
+  /// <summary>
+  /// The same CPU figure in the other convention, so both columns can be shown at once.
+  /// </summary>
+  /// <remarks>
+  /// Process Explorer shows one and System Informer both; the two differ by the core count and a
+  /// reader who has to remember which is on screen is a reader who will misread one of them (§3.2).
+  /// </remarks>
+  public Rate CpuPercentPerCore(int index) => this._cpuPercentPerCore[index];
+
+  /// <summary>Bytes read, written and neither, per second.</summary>
+  public Rate OtherBytesPerSecond(int index) => this._otherBytesPerSecond[index];
+
+  /// <summary>Read + write + other, which is the column Process Explorer calls "I/O total rate".</summary>
+  public Rate IoTotalBytesPerSecond(int index) {
+    var read = this._readBytesPerSecond[index];
+    var write = this._writeBytesPerSecond[index];
+    var other = this._otherBytesPerSecond[index];
+    if (!read.HasValue && !write.HasValue && !other.HasValue)
+      return read;
+
+    return Rate.Of(read.GetValueOrDefault() + write.GetValueOrDefault() + other.GetValueOrDefault());
+  }
+
+  public Rate PageFaultsPerSecond(int index) => this._pageFaultsPerSecond[index];
+
+  public Rate ContextSwitchesPerSecond(int index) => this._contextSwitchesPerSecond[index];
+
+  public Rate CyclesPerSecond(int index) => this._cyclesPerSecond[index];
+
+  /// <summary>
+  /// How much the committed private bytes moved since the last sample, in bytes per second.
+  /// </summary>
+  /// <remarks>
+  /// Signed, unlike every other rate here, because the interesting reading is the negative one: a
+  /// process whose private bytes only ever climb is the one leaking.
+  /// </remarks>
+  public Rate PrivateBytesDelta(int index) => this._privateBytesDelta[index];
 
   public Rate ReadBytesPerSecond(int index) => this._readBytesPerSecond[index];
 
@@ -64,8 +108,14 @@ public sealed class SnapshotDelta {
 
     var count = current.ProcessCount;
     EnsureLength(ref this._cpuPercent, count);
+    EnsureLength(ref this._cpuPercentPerCore, count);
     EnsureLength(ref this._readBytesPerSecond, count);
     EnsureLength(ref this._writeBytesPerSecond, count);
+    EnsureLength(ref this._otherBytesPerSecond, count);
+    EnsureLength(ref this._pageFaultsPerSecond, count);
+    EnsureLength(ref this._contextSwitchesPerSecond, count);
+    EnsureLength(ref this._cyclesPerSecond, count);
+    EnsureLength(ref this._privateBytesDelta, count);
     EnsureLength(ref this._isNew, count);
 
     this._exited.Clear();
@@ -79,8 +129,14 @@ public sealed class SnapshotDelta {
       var processes = current.Processes;
       for (var i = 0; i < processes.Length; ++i) {
         this._cpuPercent[i] = Rate.NotSampledYet;
+        this._cpuPercentPerCore[i] = Rate.NotSampledYet;
         this._readBytesPerSecond[i] = Rate.NotSampledYet;
         this._writeBytesPerSecond[i] = Rate.NotSampledYet;
+        this._otherBytesPerSecond[i] = Rate.NotSampledYet;
+        this._pageFaultsPerSecond[i] = Rate.NotSampledYet;
+        this._contextSwitchesPerSecond[i] = Rate.NotSampledYet;
+        this._cyclesPerSecond[i] = Rate.NotSampledYet;
+        this._privateBytesDelta[i] = Rate.NotSampledYet;
         // Nothing is "new" against no previous sample; everything would flash green on start-up.
         this._isNew[i] = false;
       }
@@ -102,8 +158,14 @@ public sealed class SnapshotDelta {
       ref readonly var process = ref currentProcesses[i];
       if (!this._previousIndex.Remove(process.Key, out var previousPosition)) {
         this._cpuPercent[i] = Rate.NotSampledYet;
+        this._cpuPercentPerCore[i] = Rate.NotSampledYet;
         this._readBytesPerSecond[i] = Rate.NotSampledYet;
         this._writeBytesPerSecond[i] = Rate.NotSampledYet;
+        this._otherBytesPerSecond[i] = Rate.NotSampledYet;
+        this._pageFaultsPerSecond[i] = Rate.NotSampledYet;
+        this._contextSwitchesPerSecond[i] = Rate.NotSampledYet;
+        this._cyclesPerSecond[i] = Rate.NotSampledYet;
+        this._privateBytesDelta[i] = Rate.NotSampledYet;
         this._isNew[i] = true;
         ++this.StartedCount;
         continue;
@@ -111,8 +173,17 @@ public sealed class SnapshotDelta {
 
       ref readonly var before = ref previousProcesses[previousPosition];
       this._cpuPercent[i] = RateCalculator.CpuPercent(before.CpuTimeNs, process.CpuTimeNs, elapsed, cores, mode);
+      this._cpuPercentPerCore[i] = RateCalculator.CpuPercent(
+        before.CpuTimeNs, process.CpuTimeNs, elapsed, cores, CpuPercentMode.PerCore
+      );
+
       this._readBytesPerSecond[i] = RateCalculator.PerSecond(before.ReadBytes, process.ReadBytes, elapsed);
       this._writeBytesPerSecond[i] = RateCalculator.PerSecond(before.WriteBytes, process.WriteBytes, elapsed);
+      this._otherBytesPerSecond[i] = RateCalculator.PerSecond(before.OtherBytes, process.OtherBytes, elapsed);
+      this._pageFaultsPerSecond[i] = RateCalculator.PerSecond(before.PageFaults, process.PageFaults, elapsed);
+      this._contextSwitchesPerSecond[i] = RateCalculator.PerSecond(before.ContextSwitches, process.ContextSwitches, elapsed);
+      this._cyclesPerSecond[i] = RateCalculator.PerSecond(before.Cycles, process.Cycles, elapsed);
+      this._privateBytesDelta[i] = RateCalculator.SignedPerSecond(before.PrivateBytes, process.PrivateBytes, elapsed);
       this._isNew[i] = false;
     }
 

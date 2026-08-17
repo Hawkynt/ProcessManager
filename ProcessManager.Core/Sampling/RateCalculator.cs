@@ -45,6 +45,27 @@ public static class RateCalculator {
   }
 
   /// <summary>
+  /// A per-second figure from a counter that may move in either direction.
+  /// </summary>
+  /// <remarks>
+  /// <see cref="PerSecond"/> refuses a counter that went backwards, because a monotonic counter that
+  /// decreased has wrapped or been reused and its difference means nothing. Committed memory is not
+  /// monotonic — it falls when a process frees — and the fall is the interesting half: a process
+  /// whose private bytes only ever climb is the one leaking. So this one keeps the sign.
+  /// </remarks>
+  public static Rate SignedPerSecond(Counter previous, Counter current, double elapsedNs) {
+    if (!previous.HasValue)
+      return previous.Reason == UnknownReason.None ? Rate.NotSampledYet : Rate.Unknown(previous.Reason);
+    if (!current.HasValue)
+      return Rate.Unknown(current.Reason);
+    if (!double.IsFinite(elapsedNs) || elapsedNs <= 0)
+      return Rate.Unknown(UnknownReason.CounterInvalid);
+
+    var difference = (double)current.Value - previous.Value;
+    return Rate.Of(difference * 1_000_000_000d / elapsedNs);
+  }
+
+  /// <summary>
   /// CPU percent from the growth of a process's CPU-time counter.
   /// </summary>
   /// <remarks>

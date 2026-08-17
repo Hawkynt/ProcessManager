@@ -62,6 +62,41 @@ public static class Humanize {
     return value < 1 ? "0" : Bytes((ulong)value) + "/s";
   }
 
+  /// <summary>A plain per-second count — page faults, context switches, cycles.</summary>
+  public static string Rate(Rate rate) {
+    if (!rate.HasValue)
+      return Placeholder(rate.Reason);
+
+    var value = rate.Value;
+    if (value < 1000)
+      return value.ToString("0", CultureInfo.InvariantCulture);
+
+    // Counts, not bytes, so the steps are thousands rather than 1024s — a cycles-per-second figure
+    // in kibicycles would be nobody's idea of a reading.
+    foreach (var (limit, suffix) in (ReadOnlySpan<(double, string)>)[
+      (1e12, "T"), (1e9, "G"), (1e6, "M"), (1e3, "k"),
+    ])
+      if (value >= limit)
+        return (value / limit).ToString(value / limit >= 100 ? "0" : "0.0", CultureInfo.InvariantCulture) + suffix;
+
+    return value.ToString("0", CultureInfo.InvariantCulture);
+  }
+
+  /// <summary>
+  /// A byte rate that may be negative, for the columns whose fall is the interesting half.
+  /// </summary>
+  public static string SignedBytesPerSecond(Rate rate) {
+    if (!rate.HasValue)
+      return Placeholder(rate.Reason);
+
+    var value = rate.Value;
+    if (Math.Abs(value) < 1)
+      return "0";
+
+    var magnitude = Bytes((ulong)Math.Abs(value));
+    return (value < 0 ? "−" : "+") + magnitude + "/s";
+  }
+
   /// <summary>A percentage with one decimal, or the placeholder.</summary>
   public static string Percent(Rate rate) => rate.HasValue
     ? rate.Value.ToString(rate.Value >= 100 ? "0" : "0.0", CultureInfo.InvariantCulture)
