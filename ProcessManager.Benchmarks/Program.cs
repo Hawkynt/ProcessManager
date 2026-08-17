@@ -128,7 +128,7 @@ internal static class Program {
       );
 
     // The view is rebuilt once per sample by both front-ends, so its cost is part of the frame.
-    var view = new ProcessView { TreeMode = true, SortColumn = ProcessColumn.CpuPercent };
+    var view = new ProcessView { TreeMode = true, SortColumn = ProcessField.CpuPercent };
     view.Rebuild(sampler.Current, sampler.Delta);
     var viewStart = Stopwatch.GetTimestamp();
     for (var i = 0; i < 50; ++i)

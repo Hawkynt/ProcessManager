@@ -31,8 +31,8 @@ shorthand:
 it is not known*. An unticked box must never become a zero on screen. This is restated here because
 it is the single requirement most likely to be broken while filling the tables in.
 
-**Counting, as of the last update:** **374 of 1249 boxes are ticked** — 55 of 189 in the field
-registry (§14–22), 319 of 1060 across the capabilities. A further 116 are marked 🟡, meaning some of
+**Counting, as of the last update:** **382 of 1250 boxes are ticked** — 55 of 189 in the field
+registry (§14–22), 327 of 1061 across the capabilities. A further 114 are marked 🟡, meaning some of
 the work behind them is already done. §100 tracks the phases; §101 defines when this may be called
 finished.
 
@@ -182,34 +182,36 @@ reasoning, and the reasoning recorded in a comment.
 
 There must not be separate "GUI fields" and "TUI fields".
 
-- [ ] Every field is registered in a central field catalogue. **This does not exist yet**, and it is
-      the highest-priority piece of internal work in the document: today `ProcessColumn` is a sort-key
-      enum in Core, the desktop keeps its own `ColumnSet`, and the TUI keeps a third list. Three
-      places to add a field is three places to forget one. §103 cannot be enforced until this lands.
+- [x] Every field is registered in a central field catalogue — `FieldRegistry` in
+      `ProcessManager.Core/Query`. There were three lists before it (a sort-key enum in Core, the
+      window's own `ColumnSet`, and a third in the terminal), and three places to add a field is
+      three places to forget one.
 
-The ticks below therefore describe what a field *can* express today through the existing types
-(`Counter`, `Rate`, `UnknownReason`), not a catalogue that holds the metadata in one place.
+`FieldAccessor` reads a field three ways from that one declaration: as text to display, as a number
+to compare and filter, and as an ordering. The window and the terminal both render through it, and
+the view sorts through it — so sorting by a column cannot disagree with what the column shows, and a
+value reads identically in both front-ends because it is the same code producing it.
 
 Each registry entry declares:
 
-- [x] Stable field ID
+- [x] Stable field ID — the `Key`, which is what `--sort`, a saved layout and a search term all use
 - [x] Human-readable name
-- [ ] Short TUI label
-- [ ] Description
+- [x] Short TUI label
+- [x] Description
 - [x] Data type
-- [ ] 🟡 Units
+- [x] Units
 - [ ] Precision
 - [x] Whether it is instantaneous, cumulative, delta, rate, state, enumeration or derived
-- [ ] 🟡 Supported platforms
+- [x] Supported platforms
 - [ ] Required privilege
-- [ ] Collection cost
+- [x] Collection cost
 - [x] Default visibility
 - [x] Sort semantics
-- [ ] Filter semantics
+- [ ] 🟡 Filter semantics — `Number` and `RawText` are there; the query language of §56 is not
 - [x] Formatting function
 - [x] Null/unavailable semantics
 - [ ] Export serialisation
-- [ ] Historical-storage eligibility
+- [ ] 🟡 Historical-storage eligibility — the graph fields declare their series
 
 Worked example — `process.cpu.usage`: display "CPU", TUI "CPU%", percentage, normalised
 instantaneous utilisation, 0–100 in default mode and 0–N×100 in raw logical-CPU mode, all platforms,
@@ -341,7 +343,7 @@ Platform backends → Core collector → Snapshot engine → Field registry → 
 | Core collector | `ProcessManager.Core` | ✅ |
 | Platform backends | `ProcessManager.Platform.{Windows,Linux,MacOS}` | 🟡 macOS stub |
 | Snapshot engine | `ProcessManager.Core/Sampling` | ✅ |
-| Field registry | *not yet built* — see §5.1 | ⬜ |
+| Field registry | `ProcessManager.Core/Query` | ✅ |
 | Query engine | `ProcessManager.Core/Query` | 🟡 |
 | Action broker | `ProcessManager.Core/Actions` | 🟡 |
 | Privileged helper | `ProcessManager.Elevated` | ✅ |
@@ -1543,6 +1545,9 @@ Substring matching over name, PID, user and command line works in both front-end
 language does not exist.
 
 - [x] Plain substring search
+- [x] Every field is addressable by a stable key, which is the half of the query language the
+      registry supplies — `--sort=private.ws` and `--sort=faults.delta` work without either having
+      been written down anywhere as a sort key
 - [ ] `field:value`
 - [ ] `field=value`
 - [ ] Comparison operators
@@ -2296,7 +2301,7 @@ a naive parser hands the attacker the parse.
 - [x] Delta handling
 - [x] Unit formatting
 - [x] PID reuse
-- [ ] 🟡 Field registry
+- [x] Field registry — 14 tests, including the one that enforces §103
 - [x] Filters
 - [x] Sorting
 - [ ] Export schemas
@@ -2498,7 +2503,9 @@ To add an **action**:
 11. Add the audit event
 12. Add tests
 
-- [ ] 🟡 A CI check enforces this — today it is a convention, and a convention is not a rule
+- [ ] 🟡 A CI check enforces this. Half of it is real: `EveryFieldInTheEnumIsRegistered` fails the
+      build when a field is added to the enum without a descriptor, so steps 1–8 cannot be skipped.
+      Steps 9–13 — GUI, TUI, CLI, export schema, tests — are still on the author to remember.
 
 # 104. Internal object model
 

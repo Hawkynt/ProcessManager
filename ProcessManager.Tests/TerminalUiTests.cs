@@ -126,7 +126,7 @@ public sealed class GoldenFrameTests {
       UseBlockCharacters = true,
     };
     ui.View.TreeMode = true;
-    ui.View.SortColumn = ProcessColumn.Pid;
+    ui.View.SortColumn = ProcessField.Pid;
     ui.View.SortDescending = false;
     ui.Update();
     ui.Update();
@@ -254,7 +254,7 @@ public sealed class DetailViewTests {
       };
 
       ui.View.TreeMode = true;
-      ui.View.SortColumn = ProcessColumn.Pid;
+      ui.View.SortColumn = ProcessField.Pid;
       ui.View.SortDescending = false;
       ui.Update();
       ui.Update();

@@ -194,7 +194,7 @@ public sealed class LinuxProbeFixtureTests(bool portable) {
     using var sampler = new Sampler(probe);
     sampler.Sample();
 
-    var view = new ProcessView { TreeMode = true, SortColumn = ProcessColumn.Pid, SortDescending = false };
+    var view = new ProcessView { TreeMode = true, SortColumn = ProcessField.Pid, SortDescending = false };
     view.Rebuild(sampler.Current, sampler.Delta);
 
     var lines = new List<string>();

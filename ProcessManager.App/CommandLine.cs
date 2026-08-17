@@ -16,7 +16,7 @@ internal enum RunMode : byte { Desktop, Terminal, List, Find, Kill, SelfTest, He
 internal sealed record CommandLineOptions {
 
   public RunMode Mode { get; init; } = RunMode.Desktop;
-  public ProcessColumn SortColumn { get; init; } = ProcessColumn.CpuPercent;
+  public ProcessField SortColumn { get; init; } = ProcessField.CpuPercent;
   public bool SortDescending { get; init; } = true;
   public bool TreeMode { get; init; }
 
@@ -118,7 +118,7 @@ internal sealed record CommandLineOptions {
         case "--sort": {
           if (!TryValue(args, ref i, inlineValue, out var column))
             return options with { Error = "--sort needs a column" };
-          if (!ProcessColumnExtensions.TryParse(column, out var parsed))
+          if (!FieldRegistry.TryParse(column, out var parsed))
             return options with { Error = $"unknown sort column '{column}'" };
 
           options = options with { SortColumn = parsed, SortDescending = parsed.PrefersDescending() };

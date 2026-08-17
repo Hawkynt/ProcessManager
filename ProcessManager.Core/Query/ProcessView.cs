@@ -31,7 +31,7 @@ public sealed class ProcessView {
 
   public ProcessView() => this._comparer = Comparer<int>.Create(this.Compare);
 
-  public ProcessColumn SortColumn { get; set; } = ProcessColumn.CpuPercent;
+  public ProcessField SortColumn { get; set; } = ProcessField.CpuPercent;
 
   public bool SortDescending { get; set; } = true;
 
@@ -249,48 +249,11 @@ public sealed class ProcessView {
 
   private int CompareAscending(int left, int right) {
     var processes = this._snapshot!.Processes;
-    ref readonly var a = ref processes[left];
-    ref readonly var b = ref processes[right];
 
-    return this.SortColumn switch {
-      ProcessColumn.Name => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase),
-      ProcessColumn.Pid => a.Pid.CompareTo(b.Pid),
-      ProcessColumn.ParentPid => a.ParentPid.CompareTo(b.ParentPid),
-      ProcessColumn.UserName => string.Compare(a.UserName, b.UserName, StringComparison.OrdinalIgnoreCase),
-      ProcessColumn.State => ((byte)a.State).CompareTo((byte)b.State),
-      ProcessColumn.CpuPercent => CompareRate(this._delta!.CpuPercent(left), this._delta.CpuPercent(right)),
-      ProcessColumn.PrivateBytes => CompareCounter(a.PrivateBytes, b.PrivateBytes),
-      ProcessColumn.WorkingSetBytes => CompareCounter(a.WorkingSetBytes, b.WorkingSetBytes),
-      ProcessColumn.VirtualBytes => CompareCounter(a.VirtualBytes, b.VirtualBytes),
-      ProcessColumn.ReadBytesPerSecond
-        => CompareRate(this._delta!.ReadBytesPerSecond(left), this._delta.ReadBytesPerSecond(right)),
-      ProcessColumn.WriteBytesPerSecond
-        => CompareRate(this._delta!.WriteBytesPerSecond(left), this._delta.WriteBytesPerSecond(right)),
-      ProcessColumn.HandleCount => CompareCounter(a.HandleCount, b.HandleCount),
-      ProcessColumn.ThreadCount => a.ThreadCount.CompareTo(b.ThreadCount),
-      ProcessColumn.StartTime => a.StartTimeUtcTicks.CompareTo(b.StartTimeUtcTicks),
-      ProcessColumn.Priority => a.Priority.CompareTo(b.Priority),
-      ProcessColumn.SessionId => a.SessionId.CompareTo(b.SessionId),
-      ProcessColumn.CommandLine => string.Compare(a.CommandLine, b.CommandLine, StringComparison.OrdinalIgnoreCase),
-      _ => 0,
-    };
+    // Every field, in one place, shared with both front-ends: sorting by a column and the text that
+    // column shows are now read out of the same accessor, so they cannot drift apart (PRD §5.1).
+    return FieldAccessor.Compare(this.SortColumn, in processes[left], left, in processes[right], right, this._delta);
   }
-
-  // A value that is not there sorts below every value that is, in ascending order — so reversing the
-  // sort puts the readable rows on top either way, instead of a block of dashes.
-  private static int CompareCounter(Counter left, Counter right) => (left.HasValue, right.HasValue) switch {
-    (true, true) => left.Value.CompareTo(right.Value),
-    (true, false) => 1,
-    (false, true) => -1,
-    _ => 0,
-  };
-
-  private static int CompareRate(Rate left, Rate right) => (left.HasValue, right.HasValue) switch {
-    (true, true) => left.Value.CompareTo(right.Value),
-    (true, false) => 1,
-    (false, true) => -1,
-    _ => 0,
-  };
 
   private static void EnsureLength<T>(ref T[] array, int length) {
     if (array.Length < length)

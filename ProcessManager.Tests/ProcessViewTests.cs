@@ -14,7 +14,7 @@ public sealed class ProcessViewTests {
   [Test]
   public void AFlatViewShowsEveryProcessOnce() {
     var (snapshot, delta) = Build((1, 0), (2, 1), (3, 2));
-    var view = new ProcessView { TreeMode = false, SortColumn = ProcessColumn.Pid, SortDescending = false };
+    var view = new ProcessView { TreeMode = false, SortColumn = ProcessField.Pid, SortDescending = false };
     view.Rebuild(snapshot, delta);
 
     Assert.That(view.RowCount, Is.EqualTo(3));
@@ -24,7 +24,7 @@ public sealed class ProcessViewTests {
   [Test]
   public void ATreeNestsChildrenUnderParents() {
     var (snapshot, delta) = Build((1, 0), (2, 1), (3, 2), (4, 1));
-    var view = new ProcessView { TreeMode = true, SortColumn = ProcessColumn.Pid, SortDescending = false };
+    var view = new ProcessView { TreeMode = true, SortColumn = ProcessField.Pid, SortDescending = false };
     view.Rebuild(snapshot, delta);
 
     Assert.That(Pids(snapshot, view), Is.EqualTo(new[] { 1, 2, 3, 4 }));
@@ -38,7 +38,7 @@ public sealed class ProcessViewTests {
     // Its parent exited and it was reparented, or it lives in another pid namespace. Either way it
     // is still running and must still be listed.
     var (snapshot, delta) = Build((1, 0), (5, 999));
-    var view = new ProcessView { TreeMode = true, SortColumn = ProcessColumn.Pid, SortDescending = false };
+    var view = new ProcessView { TreeMode = true, SortColumn = ProcessField.Pid, SortDescending = false };
     view.Rebuild(snapshot, delta);
 
     Assert.That(view.RowCount, Is.EqualTo(2));
@@ -50,7 +50,7 @@ public sealed class ProcessViewTests {
     // Should be impossible; observed anyway across namespace boundaries. The link that closes the
     // cycle is cut, and every process still appears exactly once.
     var (snapshot, delta) = Build((10, 11), (11, 10));
-    var view = new ProcessView { TreeMode = true, SortColumn = ProcessColumn.Pid, SortDescending = false };
+    var view = new ProcessView { TreeMode = true, SortColumn = ProcessField.Pid, SortDescending = false };
 
     Assert.That(() => view.Rebuild(snapshot, delta), Throws.Nothing);
     Assert.That(view.RowCount, Is.EqualTo(2));
@@ -72,7 +72,7 @@ public sealed class ProcessViewTests {
     var (snapshot, delta) = Build((1, 0), (2, 1), (3, 2));
     Rename(snapshot, 3, "needle");
 
-    var view = new ProcessView { TreeMode = true, TextFilter = "needle", SortColumn = ProcessColumn.Pid, SortDescending = false };
+    var view = new ProcessView { TreeMode = true, TextFilter = "needle", SortColumn = ProcessField.Pid, SortDescending = false };
     view.Rebuild(snapshot, delta);
 
     Assert.That(Pids(snapshot, view), Is.EqualTo(new[] { 1, 2, 3 }));
@@ -96,7 +96,7 @@ public sealed class ProcessViewTests {
     // Everything below has the same sort key. If the order were not pinned, a re-sort could move a
     // row under the pointer between hover and click — which is how the wrong process gets killed.
     var (snapshot, delta) = Build((30, 0), (10, 0), (20, 0));
-    var view = new ProcessView { SortColumn = ProcessColumn.ThreadCount, SortDescending = true };
+    var view = new ProcessView { SortColumn = ProcessField.ThreadCount, SortDescending = true };
     view.Rebuild(snapshot, delta);
 
     Assert.That(Pids(snapshot, view), Is.EqualTo(new[] { 10, 20, 30 }));
@@ -109,7 +109,7 @@ public sealed class ProcessViewTests {
     SetPrivate(snapshot, 2, Counter.NotPermitted);
     SetPrivate(snapshot, 3, Counter.Of(500ul));
 
-    var view = new ProcessView { SortColumn = ProcessColumn.PrivateBytes, SortDescending = true };
+    var view = new ProcessView { SortColumn = ProcessField.PrivateBytes, SortDescending = true };
     view.Rebuild(snapshot, delta);
 
     Assert.That(Pids(snapshot, view), Is.EqualTo(new[] { 3, 1, 2 }));
@@ -118,7 +118,7 @@ public sealed class ProcessViewTests {
   [Test]
   public void FindRowLocatesAProcessByIdentityRatherThanByPosition() {
     var (snapshot, delta) = Build((1, 0), (2, 1), (3, 1));
-    var view = new ProcessView { SortColumn = ProcessColumn.Pid, SortDescending = false };
+    var view = new ProcessView { SortColumn = ProcessField.Pid, SortDescending = false };
     view.Rebuild(snapshot, delta);
 
     var key = snapshot.Processes[1].Key;
