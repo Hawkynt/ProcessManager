@@ -299,7 +299,10 @@ public sealed class LinuxProbe : ISystemProbe {
     record.ParentPid = scanner.NextInt32();                // 4 ppid
     scanner.Skip(1);                                       // 5 pgrp
     record.SessionId = scanner.NextInt32();                // 6 session
-    scanner.Skip(6);                                       // 7..12 tty..cmajflt (tty, tpgid, flags, minflt, cminflt, majflt)
+    scanner.Skip(3);                                       // 7 tty_nr, 8 tpgid, 9 flags
+    var minorFaults = scanner.NextUInt64();                // 10 minflt
+    scanner.Skip(1);                                       // 11 cminflt
+    var majorFaults = scanner.NextUInt64();                // 12 majflt
     scanner.Skip(1);                                       // 13 cmajflt
     var utime = scanner.NextUInt64();                      // 14
     var stime = scanner.NextUInt64();                      // 15
@@ -318,9 +321,21 @@ public sealed class LinuxProbe : ISystemProbe {
     record.CpuTimeNs = Counter.Of((ulong)((utime + stime) * nanosecondsPerTick));
     record.VirtualBytes = Counter.Of(virtualBytes);
     record.WorkingSetBytes = Counter.Of(rssPages * (ulong)pageSize);
+    // Minor and major together: the column asks how much this process is faulting, not which kind.
+    record.PageFaults = Counter.Of(minorFaults + majorFaults);
     record.IsSuspended = record.State == ProcessState.Stopped;
     record.UserId = -1;
     record.PrivateBytes = Counter.NotSupported;
+    record.PrivateWorkingSetBytes = Counter.NotSupported;
+    record.PeakWorkingSetBytes = Counter.NotSupported;
+    record.PeakVirtualBytes = Counter.NotSupported;
+    record.PagedPoolBytes = Counter.NotSupported;
+    record.PeakPagedPoolBytes = Counter.NotSupported;
+    record.NonPagedPoolBytes = Counter.NotSupported;
+    record.PeakNonPagedPoolBytes = Counter.NotSupported;
+    // Linux does not count cycles per process. Saying so beats a zero (PRD §3.4).
+    record.Cycles = Counter.NotSupported;
+    record.OtherBytes = Counter.NotSupported;
     record.SwapBytes = Counter.NotSupported;
     record.ReadBytes = Counter.NotSupported;
     record.WriteBytes = Counter.NotSupported;
@@ -353,8 +368,9 @@ public sealed class LinuxProbe : ISystemProbe {
       return;
     }
 
-    ulong rssAnon = 0, swap = 0, voluntary = 0, involuntary = 0;
+    ulong rssAnon = 0, swap = 0, voluntary = 0, involuntary = 0, data = 0, peakVirtual = 0, peakRss = 0;
     var haveRssAnon = false;
+    var haveData = false;
     var scanner = new AsciiScanner(content);
     while (!scanner.IsEmpty) {
       var line = scanner.NextLine();
@@ -367,7 +383,16 @@ public sealed class LinuxProbe : ISystemProbe {
       } else if (TryValue(line, "RssAnon:"u8, out var value)) {
         rssAnon = value * 1024;
         haveRssAnon = true;
-      } else if (TryValue(line, "VmSwap:"u8, out value))
+      } else if (TryValue(line, "VmData:"u8, out value)) {
+        // The closest thing Linux has to Windows' commit charge: private, writable, and counted
+        // whether or not it is resident. .NET reports the same figure for PrivateMemorySize64.
+        data = value * 1024;
+        haveData = true;
+      } else if (TryValue(line, "VmPeak:"u8, out value))
+        peakVirtual = value * 1024;
+      else if (TryValue(line, "VmHWM:"u8, out value))
+        peakRss = value * 1024;
+      else if (TryValue(line, "VmSwap:"u8, out value))
         swap = value * 1024;
       else if (TryValue(line, "voluntary_ctxt_switches:"u8, out value))
         voluntary = value;
@@ -377,8 +402,17 @@ public sealed class LinuxProbe : ISystemProbe {
 
     record.SwapBytes = Counter.Of(swap);
     record.ContextSwitches = Counter.Of(voluntary + involuntary);
+    if (peakVirtual > 0)
+      record.PeakVirtualBytes = Counter.Of(peakVirtual);
+
+    if (peakRss > 0)
+      record.PeakWorkingSetBytes = Counter.Of(peakRss);
+
+    if (haveData)
+      record.PrivateBytes = Counter.Of(data);
+
     if (haveRssAnon)
-      record.PrivateBytes = Counter.Of(rssAnon);
+      record.PrivateWorkingSetBytes = Counter.Of(rssAnon);
 
     if (this._options.UseProportionalSetSize && this.MayRead(record))
       this.ReadProportionalSetSize(cache, ref record);
@@ -387,7 +421,7 @@ public sealed class LinuxProbe : ISystemProbe {
   private void ReadProportionalSetSize(ProcessCache cache, ref ProcessRecord record) {
     if (!this._reader.TryRead(cache.SmapsRollupPath, out var content, out var errno)) {
       if (errno is Native.EACCES or Native.EPERM)
-        record.PrivateBytes = Counter.NotPermitted;
+        record.PrivateWorkingSetBytes = Counter.NotPermitted;
 
       return;
     }
@@ -398,7 +432,9 @@ public sealed class LinuxProbe : ISystemProbe {
       if (!TryValue(line, "Pss:"u8, out var value))
         continue;
 
-      record.PrivateBytes = Counter.Of(value * 1024);
+      // PSS is resident by definition, so it refines the working-set figure rather than the commit
+      // one — a process's share of what it maps, which is the honest "would I get this back".
+      record.PrivateWorkingSetBytes = Counter.Of(value * 1024);
       return;
     }
   }

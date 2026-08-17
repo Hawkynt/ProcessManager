@@ -68,16 +68,65 @@ public struct ProcessRecord {
   public long StartTimeUtcTicks;
 
   /// <summary>
-  /// Memory this process would give back if it exited — PSS on Linux, private bytes on Windows.
-  /// This is the column to sort by; working set double-counts everything shared.
+  /// Private memory the process has committed — <c>PrivatePageCount</c> on Windows, <c>VmData</c> on
+  /// Linux. What Process Explorer calls "Private Bytes", and the column to sort by when the question
+  /// is which process is costing the machine memory.
   /// </summary>
+  /// <remarks>
+  /// Committed, not resident: it counts memory the process has asked for and may not be touching.
+  /// <see cref="PrivateWorkingSetBytes"/> is the resident part of the same thing, and
+  /// <see cref="WorkingSetBytes"/> the resident total including everything shared.
+  /// </remarks>
   public Counter PrivateBytes;
+
+  /// <summary>
+  /// The resident part of <see cref="PrivateBytes"/> — <c>WorkingSetPrivateSize</c> on Windows,
+  /// <c>RssAnon</c> on Linux, or the proportional set size when that is switched on.
+  /// </summary>
+  /// <remarks>
+  /// The honest answer to "how much would I get back if this exited": working set double-counts
+  /// every shared page, and private bytes counts memory that was never touched.
+  /// </remarks>
+  public Counter PrivateWorkingSetBytes;
 
   /// <summary>Resident set / working set, shared pages included.</summary>
   public Counter WorkingSetBytes;
 
+  /// <summary>The largest working set this process has ever held.</summary>
+  public Counter PeakWorkingSetBytes;
+
   public Counter VirtualBytes;
+
+  /// <summary>The largest virtual size this process has ever held.</summary>
+  public Counter PeakVirtualBytes;
+
   public Counter SwapBytes;
+
+  /// <summary>Kernel memory charged to this process from the paged pool, and its peak.</summary>
+  public Counter PagedPoolBytes;
+  public Counter PeakPagedPoolBytes;
+
+  /// <summary>Kernel memory charged to this process from the non-paged pool, and its peak.</summary>
+  public Counter NonPagedPoolBytes;
+  public Counter PeakNonPagedPoolBytes;
+
+  /// <summary>
+  /// Page faults since the process started. The interesting figure is its rate, which the delta
+  /// computes — a process faulting steadily is one the machine is paging for.
+  /// </summary>
+  public Counter PageFaults;
+
+  /// <summary>
+  /// CPU cycles consumed, where the platform counts them.
+  /// </summary>
+  /// <remarks>
+  /// Windows only. Unlike CPU <em>time</em> it does not flatter a process that ran while the clock
+  /// was throttled, which is why Process Explorer grew a column for it.
+  /// </remarks>
+  public Counter Cycles;
+
+  /// <summary>Bytes transferred that were neither reads nor writes — ioctls, mostly.</summary>
+  public Counter OtherBytes;
 
   /// <summary>Bytes this process caused to be read, cumulative.</summary>
   public Counter ReadBytes;

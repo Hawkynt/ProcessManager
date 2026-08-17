@@ -6,10 +6,13 @@ Ngid:	0
 Pid:	1
 Uid:	1000	1000	1000	1000
 Gid:	1000	1000	1000	1000
+VmPeak:	  100000 kB
 VmSize:	  100000 kB
+VmHWM:	  6048 kB
 VmRSS:	  5048 kB
 RssAnon:	  3000 kB
 RssFile:	  2048 kB
+VmData:	  12000 kB
 RssShmem:	  0 kB
 VmSwap:	  128 kB
 Threads:	1

@@ -63,12 +63,24 @@ internal static class SystemProcessInformationReader {
       // part of it. The private column is the commit charge, because that is what the process would
       // give back, which is the question the column exists to answer (PRD §6.1).
       record.PrivateBytes = Counter.Of((ulong)entry.PrivatePageCount);
+      record.PrivateWorkingSetBytes = Counter.Of((ulong)Math.Max(0, entry.WorkingSetPrivateSize));
       record.WorkingSetBytes = Counter.Of((ulong)entry.WorkingSetSize);
+      record.PeakWorkingSetBytes = Counter.Of((ulong)entry.PeakWorkingSetSize);
       record.VirtualBytes = Counter.Of((ulong)entry.VirtualSize);
+      record.PeakVirtualBytes = Counter.Of((ulong)entry.PeakVirtualSize);
       record.SwapBytes = Counter.Of((ulong)entry.PagefileUsage);
+      record.PagedPoolBytes = Counter.Of((ulong)entry.QuotaPagedPoolUsage);
+      record.PeakPagedPoolBytes = Counter.Of((ulong)entry.QuotaPeakPagedPoolUsage);
+      record.NonPagedPoolBytes = Counter.Of((ulong)entry.QuotaNonPagedPoolUsage);
+      record.PeakNonPagedPoolBytes = Counter.Of((ulong)entry.QuotaPeakNonPagedPoolUsage);
+      record.PageFaults = Counter.Of(entry.PageFaultCount);
+      record.Cycles = Counter.Of(entry.CycleTime);
       record.ReadBytes = Counter.Of((ulong)Math.Max(0, entry.ReadTransferCount));
       record.WriteBytes = Counter.Of((ulong)Math.Max(0, entry.WriteTransferCount));
+      record.OtherBytes = Counter.Of((ulong)Math.Max(0, entry.OtherTransferCount));
       record.HandleCount = Counter.Of(entry.HandleCount);
+      // Per-process context switches are per *thread* in this structure; summing every thread of
+      // every process on every sample is not worth a column nobody sorts by. The threads carry it.
       record.ContextSwitches = Counter.NotSupported;
       record.MemoryLimitBytes = Counter.NotSupported;
       record.State = entry.NumberOfThreads == 0 ? ProcessState.Dead : ProcessState.Running;

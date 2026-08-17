@@ -98,6 +98,14 @@ internal static class SelfTest {
     CheckPrivateBytes(failures, notes, in self, expected);
     CheckCounter(failures, notes, "virtual bytes", self.VirtualBytes, (ulong)expected.VirtualMemorySize64, 8);
 
+    // The peaks are not comparable against anything the runtime exposes, so they are checked for the
+    // relationship that must hold: a peak is never smaller than the current value.
+    CheckPeak(failures, notes, "peak working set", self.PeakWorkingSetBytes, self.WorkingSetBytes);
+    CheckPeak(failures, notes, "peak virtual", self.PeakVirtualBytes, self.VirtualBytes);
+    Check(failures, notes, "page faults", Humanize.Count(self.PageFaults),
+      !self.PageFaults.HasValue || self.PageFaults.Value > 0,
+      "a process that has run has faulted at least once");
+
     // CPU time only grows, and the probe read it first, so it must not exceed the later reading by
     // more than the interval could account for.
     var expectedCpuNs = (ulong)(expected.TotalProcessorTime.TotalSeconds * 1_000_000_000);
@@ -202,17 +210,14 @@ internal static class SelfTest {
   }
 
   /// <summary>
-  /// The private-memory column, checked against whatever the platform means by "private".
+  /// The two private-memory columns, checked against what the runtime reports.
   /// </summary>
   /// <remarks>
-  /// The two platforms do not mean the same thing, and pretending they do was this check's first
-  /// bug rather than the probe's. On Windows both sides are the commit charge, so they are directly
-  /// comparable. On Linux .NET reports <c>VmData</c> — <em>virtual</em> private data — while the
-  /// probe reports <c>RssAnon</c>, the <em>resident</em> part of it (PRD §5.1). Measured on this
-  /// machine: VmData 65 600 kB against RssAnon 2 824 kB, a factor of twenty-three, and neither is
-  /// wrong. So on Linux the assertion is the relationship that must hold — resident cannot exceed
-  /// virtual, and cannot exceed the working set it is part of — which still catches a field read at
-  /// the wrong offset or a kB-versus-byte slip.
+  /// This check used to be platform-special-cased, because the probe reported <c>RssAnon</c> on Linux
+  /// against a runtime figure of <c>VmData</c> — resident against virtual, a factor of twenty-three
+  /// apart on this machine and neither of them wrong. The columns were split instead: private bytes
+  /// is the committed figure on both platforms and compares directly, and the resident part became
+  /// <see cref="ProcessRecord.PrivateWorkingSetBytes"/>, which must be a subset of it.
   /// </remarks>
   private static void CheckPrivateBytes(
     List<string> failures,
@@ -220,33 +225,33 @@ internal static class SelfTest {
     in ProcessRecord self,
     System.Diagnostics.Process expected
   ) {
-    if (!self.PrivateBytes.HasValue) {
-      Console.WriteLine($"  ok   {"private bytes",-20} {Humanize.Placeholder(self.PrivateBytes.Reason)} ({self.PrivateBytes.Reason})");
-      notes.Add($"private bytes: not available on this platform ({self.PrivateBytes.Reason})");
+    CheckCounter(failures, notes, "private bytes", self.PrivateBytes, (ulong)expected.PrivateMemorySize64, 4);
+
+    if (!self.PrivateWorkingSetBytes.HasValue) {
+      Console.WriteLine($"  ok   {"private WS",-20} {Humanize.Placeholder(self.PrivateWorkingSetBytes.Reason)}");
+      notes.Add($"private WS: not available ({self.PrivateWorkingSetBytes.Reason})");
       return;
     }
 
-    var actual = self.PrivateBytes.Value;
-    var runtime = (ulong)expected.PrivateMemorySize64;
-
-    if (OperatingSystem.IsWindows()) {
-      CheckCounter(failures, notes, "private bytes", self.PrivateBytes, runtime, 8);
-      return;
-    }
-
+    // Resident private cannot exceed either committed private or the whole working set. Two
+    // relationships that must hold on any platform, and that a field read at the wrong offset or a
+    // kB-versus-byte slip breaks immediately.
+    var resident = self.PrivateWorkingSetBytes.Value;
+    var committed = self.PrivateBytes.GetValueOrDefault(ulong.MaxValue);
     var workingSet = self.WorkingSetBytes.GetValueOrDefault(ulong.MaxValue);
-    var ok = actual > 0 && actual <= workingSet && (runtime == 0 || actual <= runtime);
+    var ok = resident > 0 && resident <= committed && resident <= workingSet;
+
     Console.WriteLine(
-      $"  {(ok ? "ok  " : "FAIL")} {"private bytes",-20} {Humanize.Bytes(self.PrivateBytes)} resident anonymous"
-      + $"  (runtime reports {Humanize.Bytes(Counter.Of(runtime))} of virtual private data)"
+      $"  {(ok ? "ok  " : "FAIL")} {"private WS",-20} {Humanize.Bytes(self.PrivateWorkingSetBytes)}"
+      + $"  (of {Humanize.Bytes(self.PrivateBytes)} committed, {Humanize.Bytes(self.WorkingSetBytes)} working set)"
     );
 
     if (ok)
-      notes.Add($"private bytes: {Humanize.Bytes(self.PrivateBytes)} (RssAnon; the runtime's figure is VmData and measures something else)");
+      notes.Add($"private WS: {Humanize.Bytes(self.PrivateWorkingSetBytes)}");
     else
       failures.Add(
-        $"private bytes: {Humanize.Bytes(self.PrivateBytes)} is not a resident subset of the working set "
-        + $"({Humanize.Bytes(self.WorkingSetBytes)}) or of the runtime's virtual figure ({Humanize.Bytes(Counter.Of(runtime))})"
+        $"private WS {Humanize.Bytes(self.PrivateWorkingSetBytes)} is not a subset of the committed "
+        + $"private bytes ({Humanize.Bytes(self.PrivateBytes)}) and the working set ({Humanize.Bytes(self.WorkingSetBytes)})"
       );
   }
 
@@ -273,6 +278,22 @@ internal static class SelfTest {
         return false;
 
     return true;
+  }
+
+  /// <summary>A peak that is below the current reading is a peak read from the wrong offset.</summary>
+  private static void CheckPeak(List<string> failures, List<string> notes, string name, Counter peak, Counter current) {
+    if (!peak.HasValue) {
+      Console.WriteLine($"  ok   {name,-20} {Humanize.Placeholder(peak.Reason)}");
+      notes.Add($"{name}: not available ({peak.Reason})");
+      return;
+    }
+
+    var ok = !current.HasValue || peak.Value >= current.Value;
+    Console.WriteLine($"  {(ok ? "ok  " : "FAIL")} {name,-20} {Humanize.Bytes(peak)}  (current {Humanize.Bytes(current)})");
+    if (ok)
+      notes.Add($"{name}: {Humanize.Bytes(peak)}");
+    else
+      failures.Add($"{name} {Humanize.Bytes(peak)} is below the current {Humanize.Bytes(current)}");
   }
 
   private static void Check(List<string> failures, List<string> notes, string name, string value, bool ok, string why) {

@@ -43,12 +43,12 @@ public sealed class LinuxProbeFixtureTests(bool portable) {
     var snapshot = new SystemSnapshot();
     probe.Sample(snapshot);
 
-    Assert.That(snapshot.ProcessCount, Is.EqualTo(4));
+    Assert.That(snapshot.ProcessCount, Is.EqualTo(5));
     var pids = new List<int>();
     foreach (var process in snapshot.Processes)
       pids.Add(process.Pid);
 
-    Assert.That(pids, Is.EquivalentTo(new[] { 1, 1000, 1001, 1002 }));
+    Assert.That(pids, Is.EquivalentTo(new[] { 1, 2, 1000, 1001, 1002 }));
   }
 
   [Test]
@@ -89,9 +89,29 @@ public sealed class LinuxProbeFixtureTests(bool portable) {
     probe.Sample(snapshot);
 
     var process = Find(snapshot, 1001);
-    Assert.That(process.PrivateBytes.Value, Is.EqualTo(90000ul * 1024), "RssAnon");
+    // Committed, not resident: VmData is what Windows calls private bytes, and using RssAnon here
+    // made the same column mean two different things on the two platforms.
+    Assert.That(process.PrivateBytes.Value, Is.EqualTo(95000ul * 1024), "VmData");
+    Assert.That(process.PrivateWorkingSetBytes.Value, Is.EqualTo(90000ul * 1024), "RssAnon");
     Assert.That(process.WorkingSetBytes.Value, Is.EqualTo(25000ul * 4096), "rss pages from stat");
     Assert.That(process.VirtualBytes.Value, Is.EqualTo(99000000ul));
+    Assert.That(process.PeakWorkingSetBytes.Value, Is.EqualTo(95048ul * 1024), "VmHWM");
+    Assert.That(process.PeakVirtualBytes.Value, Is.EqualTo(150000ul * 1024), "VmPeak");
+  }
+
+  /// <summary>
+  /// A kernel thread has no address space, so its status carries no VmData line at all. The
+  /// committed figure must then read as "does not apply" rather than as zero committed bytes.
+  /// </summary>
+  [Test]
+  public void AProcessWithoutAnAddressSpaceReportsUnknownRatherThanZero() {
+    using var probe = new LinuxProbe(Options);
+    var snapshot = new SystemSnapshot();
+    probe.Sample(snapshot);
+
+    var process = Find(snapshot, 2);
+    Assert.That(process.PrivateBytes.HasValue, Is.False);
+    Assert.That(process.PrivateBytes.Reason, Is.EqualTo(UnknownReason.NotSupportedOnPlatform));
   }
 
   [Test]
@@ -183,7 +203,9 @@ public sealed class LinuxProbeFixtureTests(bool portable) {
       lines.Add(new string(' ', row.Depth * 2) + process.Name);
     }
 
-    Assert.That(lines, Is.EqualTo(new[] { "systemd", "  bash", "    foo) 0 (bar", "    sleep" }));
+    // kthreadd is pid 2 and its own root, so sorting by pid puts the whole systemd subtree first
+    // and the second root after it — not pid 2 in between pid 1 and pid 1000.
+    Assert.That(lines, Is.EqualTo(new[] { "systemd", "  bash", "    foo) 0 (bar", "    sleep", "kthreadd" }));
   }
 
   [Test]
