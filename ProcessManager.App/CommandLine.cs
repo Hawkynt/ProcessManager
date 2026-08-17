@@ -3,7 +3,7 @@ using Hawkynt.ProcessManager.Query;
 namespace Hawkynt.ProcessManager.App;
 
 /// <summary>Which face of the program the arguments asked for.</summary>
-internal enum RunMode : byte { Desktop, Terminal, List, Find, Kill, SelfTest, HelperCheck, Help, Version }
+internal enum RunMode : byte { Desktop, Terminal, List, Find, Kill, SelfTest, HelperCheck, Help, HelpFields, Version }
 
 /// <summary>
 /// The whole command line, parsed once into a value.
@@ -33,6 +33,41 @@ internal sealed record CommandLineOptions {
   public bool KillTree { get; init; }
   public int TargetPid { get; init; }
   public string? Pattern { get; init; }
+
+  /// <summary>A filter in the query language of PRD §56, applied to --list and the two UIs.</summary>
+  public string? Filter { get; init; }
+
+  /// <summary>
+  /// Every field, printed from the registry rather than from a list kept alongside it — which is how
+  /// the old help text came to name ten sort keys when there were seventeen (PRD §5.1).
+  /// </summary>
+  public static string FieldHelpText {
+    get {
+      var text = new System.Text.StringBuilder();
+      text.AppendLine("Fields. Any of these can be used with --sort, --filter and --find,");
+      text.AppendLine("by the key or by any of its aliases.");
+      text.AppendLine();
+      text.AppendLine($"  {"KEY",-20} {"ALIASES",-24} DESCRIPTION");
+      foreach (var descriptor in FieldRegistry.All) {
+        var aliases = descriptor.Aliases?.Replace(' ', ',') ?? "";
+        var note = descriptor.Platforms == FieldPlatforms.All
+          ? string.Empty
+          : $" [{descriptor.Platforms.ToString().Replace(", ", "/", StringComparison.Ordinal)} only]";
+
+        text.AppendLine($"  {descriptor.Key,-20} {aliases,-24} {descriptor.Description}{note}");
+      }
+
+      text.AppendLine();
+      text.AppendLine("Filters: field:value  field=value  field>value  field>=value  field<value");
+      text.AppendLine("""         field!=value  field:/regex/  "quoted text"  /regex/""");
+      text.AppendLine("         AND OR NOT  &&  ||  !  ( )   — terms side by side mean AND");
+      text.AppendLine("Sizes:   1024  1K  1KiB  1kB  1MiB  1GB      Times: 500ms  1.5s  2h");
+      text.AppendLine();
+      text.AppendLine("  procman --filter 'cpu:>50 AND user:alice'");
+      text.AppendLine("  procman --filter 'memory:>1GiB NOT name:chrome'");
+      return text.ToString();
+    }
+  }
   public TimeSpan Interval { get; init; } = TimeSpan.FromSeconds(1);
 
   /// <summary>Read a recorded /proc tree instead of the live one (PRD §9.1).</summary>
@@ -87,6 +122,19 @@ internal sealed record CommandLineOptions {
           options = options with { Mode = RunMode.List };
           explicitMode = true;
           break;
+        case "--filter": {
+          if (!TryValue(args, ref i, inlineValue, out var query))
+            return options with { Error = "--filter needs a query" };
+
+          // Parsed here rather than at first use so a typo is reported before the screen clears,
+          // and reported with the reason rather than as an empty list.
+          if (!ProcessQuery.TryParse(query, out _, out var problem))
+            return options with { Error = $"--filter: {problem}" };
+
+          options = options with { Filter = query };
+          break;
+        }
+
         case "--find" or "-f": {
           if (!TryValue(args, ref i, inlineValue, out var pattern))
             return options with { Error = "--find needs a pattern" };
@@ -200,6 +248,9 @@ internal sealed record CommandLineOptions {
           options = options with { Mode = RunMode.HelperCheck };
           explicitMode = true;
           break;
+        case "--help-fields":
+          return options with { Mode = RunMode.HelpFields };
+
         case "--help" or "-h" or "-?":
           return options with { Mode = RunMode.Help };
         case "--version" or "-V":
@@ -250,10 +301,12 @@ internal sealed record CommandLineOptions {
       procman --tui                  the terminal UI
       procman --list [--json]        one snapshot to stdout, then exit
       procman --find <pattern>       which processes match, by name, command line or open file
+      procman --help-fields          every field that can be sorted, filtered or shown
       procman --kill <pid> [--tree]  end a process, optionally with its descendants
 
     Options:
-      --sort <column>    cpu, mem, pid, name, user, threads, read, write, start, handles
+      --sort <field>     any field key; see --help-fields for the list
+      --filter <query>   show only matching processes: 'cpu:>50', 'user:alice AND memory:>1GiB'
       --tree             show the process tree (with --kill: the whole subtree)
       --flat             start with a flat list sorted by CPU rather than a tree
       --user             only this user's processes

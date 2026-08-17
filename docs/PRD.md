@@ -31,8 +31,8 @@ shorthand:
 it is not known*. An unticked box must never become a zero on screen. This is restated here because
 it is the single requirement most likely to be broken while filling the tables in.
 
-**Counting, as of the last update:** **382 of 1250 boxes are ticked** — 55 of 189 in the field
-registry (§14–22), 327 of 1061 across the capabilities. A further 114 are marked 🟡, meaning some of
+**Counting, as of the last update:** **398 of 1250 boxes are ticked** — 55 of 189 in the field
+registry (§14–22), 343 of 1061 across the capabilities. A further 112 are marked 🟡, meaning some of
 the work behind them is already done. §100 tracks the phases; §101 defines when this may be called
 finished.
 
@@ -207,7 +207,7 @@ Each registry entry declares:
 - [x] Collection cost
 - [x] Default visibility
 - [x] Sort semantics
-- [ ] 🟡 Filter semantics — `Number` and `RawText` are there; the query language of §56 is not
+- [x] Filter semantics — `Number` for comparisons, `RawText` for substring and regex
 - [x] Formatting function
 - [x] Null/unavailable semantics
 - [ ] Export serialisation
@@ -481,11 +481,11 @@ Every table:
 - [ ] Copy selected rows / columns
 - [ ] Export table
 - [x] Text filter
-- [ ] Advanced filter
-- [ ] Regular-expression filter
-- [ ] Numeric comparison filters
-- [ ] Unit-aware comparison
-- [ ] Case-sensitive toggle
+- [x] Advanced filter
+- [x] Regular-expression filter
+- [x] Numeric comparison filters
+- [x] Unit-aware comparison
+- [ ] Case-sensitive toggle — everything matches case-insensitively today
 - [ ] Highlight matched text
 - [ ] Multi-selection
 - [ ] Select all / invert selection
@@ -1545,17 +1545,15 @@ Substring matching over name, PID, user and command line works in both front-end
 language does not exist.
 
 - [x] Plain substring search
-- [x] Every field is addressable by a stable key, which is the half of the query language the
-      registry supplies — `--sort=private.ws` and `--sort=faults.delta` work without either having
-      been written down anywhere as a sort key
-- [ ] `field:value`
-- [ ] `field=value`
-- [ ] Comparison operators
-- [ ] Quoted strings
-- [ ] Boolean AND / OR / NOT
-- [ ] Regex form
-- [ ] Unit-aware quantities
-- [ ] Search over hidden as well as visible fields
+- [x] Every field is addressable by a stable key
+- [x] `field:value`
+- [x] `field=value`
+- [x] Comparison operators — `>` `>=` `<` `<=` `!=`, with or without the colon, spaced or not
+- [x] Quoted strings — always literal, so a search for `name:chrome` as *text* is possible
+- [x] Boolean AND / OR / NOT — words or `&&` `||` `!`, with `(` `)`, and AND binding tighter than OR
+- [x] Regex form — `/pattern/` over the usual fields, `field:/pattern/` over one
+- [x] Unit-aware quantities — `1GiB` `500MB` `1K` `50%` `500ms` `1.5s`
+- [x] Search over hidden as well as visible fields — every registered field, shown or not
 
 Examples that must parse:
 
@@ -1565,10 +1563,21 @@ memory:>1GiB      port:443         remote:10.0.0.5   unsigned:true
 path:/opt/myapp   service:sshd     state:suspended   runtime:dotnet
 ```
 
-- [ ] **The same query syntax works in GUI, TUI and CLI.** This is a constraint on where the parser
-      lives: in `ProcessManager.Core`, over the canonical field IDs of §14–22, with no front-end
-      permitted its own dialect. It is also why the registry is a data structure rather than a switch
-      statement — every field added to it becomes searchable for free.
+- [x] **The same query syntax works in GUI, TUI and CLI.** `ProcessQuery` lives in
+      `ProcessManager.Core` and every front-end filters through `ProcessView.TextFilter`, so no
+      front-end has its own dialect. Every field added to the registry becomes filterable for free.
+
+Two decisions worth recording, because both could reasonably have gone the other way:
+
+- **A half-typed query degrades to a substring search rather than matching nothing.** Somebody typing
+  `chrome:` is midway through a working query, and blanking the list at every keystroke makes an
+  interactive box unusable. `--filter` is the opposite: it refuses the query and names the problem,
+  because a script that silently matched nothing would be worse than one that stopped.
+- **An unknown value matches no comparison at all** — not `> 0`, not `== 0`, and not `!= 5`. Saying
+  a process's memory is "not equal to 5" is a claim about a number we do not have (§72.3).
+
+The unit is taken from the field, which is why `1G` is 1073741824 against a byte field and
+1000000000 against a count. Spelling it `GiB` or `GB` overrides the guess.
 
 ---
 
@@ -1672,7 +1681,8 @@ drag and drop.
 - [x] `procman ps`
 - [x] `procman ps --tree`
 - [ ] 🟡 `procman ps --columns pid,name,cpu,memory`
-- [ ] `procman ps --filter 'cpu > 50'`
+- [x] `procman ps --filter 'cpu > 50'` — as `--filter`, plus `--help-fields` listing every
+      field, its aliases and the filter grammar, generated from the registry so it cannot drift
 - [ ] `procman process 1234`
 - [ ] `procman process 1234 threads`
 - [ ] `procman process 1234 modules`
@@ -2455,7 +2465,7 @@ v1 does not ship unless every one of these is true:
 - [ ] The user can inspect logged-in sessions
 - [ ] 🟡 The user can view CPU, memory, disk and network performance
 - [ ] The user can create and restore column presets
-- [ ] 🟡 The user can search and filter by any registered visible field
+- [x] The user can search and filter by any registered field, visible or not
 - [ ] 🟡 Tables remain usable with thousands of changing rows
 - [x] Privileged actions work through the privilege broker
 - [x] Lack of privileges does not crash or freeze views
