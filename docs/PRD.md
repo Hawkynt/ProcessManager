@@ -1,716 +1,2551 @@
 # ProcessManager — Product Requirements & Implementation Checklist
 
-> A cross-platform process manager in C#: a Process-Explorer-shaped desktop UI and an htop-shaped
-> terminal UI over one sampling engine. The desktop UI is built on
-> [NativeForms](https://github.com/Hawkynt/NativeForms). Shipping platforms are Windows and Linux —
-> macOS is a stated future direction (§10 M9), not a shipped feature.
-
-This document is the **authoritative, living checklist**. Every feature is tracked here with `[ ]` /
-`[x]` boxes. When code and this document disagree, this document wins unless it is being revised in
-the same change. Keep boxes honest: a box is `[x]` only when implemented **and** covered by a test
-(and, for anything platform-specific, verified on that platform). Beyond the box, a feature counts as
-**finished** only when it is reachable in both front-ends where §7 and §11 say it should be, and
-documented under `docs/` — §12 tracks that coverage.
-
-Status legend: `[ ]` not started · `[~]` partial · `[x]` done & tested · `n/a` not applicable to that
-platform.
-
-**Where this stands:** M0–M3 and M5 are in (engine, Linux probe, both front-ends, the Windows probe's
-bulk query), M4 is in but unpolished, and M6–M9 are not started. §10 has the detail and §12 the
-per-feature coverage. Boxes below are ticked only where the code exists *and* a test covers it.
+**Status:** living document — the specification and the progress board are the same file
+**Platforms:** Windows, Linux, macOS
+**Replaces:** Windows Task Manager · Sysinternals Process Explorer · System Informer / Process Hacker · DBC Task Manager
+**Licence:** LGPL-3.0-or-later
 
 ---
 
-## 1. Vision & goals
+## How to read this document
 
-1. **One engine, two faces.** A metric is implemented once in `ProcessManager.Core` and read by both
-   the desktop UI and the terminal UI. Neither front-end may reach past Core to the platform, and
-   neither may show a number the other physically cannot.
-2. **Answers, not dumps.** The program exists for four questions: *what is using the machine*,
-   *what is this process doing*, *who has this file/port open*, and *make it stop*. A feature that
-   does not serve one of them is decoration.
-3. **Cheaper than what it measures.** A monitor that shows up in its own top ten has failed. §4 sets
-   the budget and CI enforces it.
-4. **Unprivileged by default.** The program runs as you. Root/admin is a separate short-lived helper
-   process for the few operations that genuinely need it (§8), never a prerequisite for starting.
-5. **Honest about gaps.** Where a platform cannot supply a metric, or supplies it only to root, the
-   UI says so in place of the value. No zero-instead-of-unknown, ever — §3.4.
-6. **Trim & NativeAOT compatible.** No reflection, no runtime code-gen, no `TypeDescriptor`.
-   `IsAotCompatible=true` everywhere; trim/AOT analyzer warnings are build errors.
-7. **Terminal-first is not terminal-only.** `--tui` is a first-class front-end, shipped in v1, usable
-   over SSH with no toolkit, no display and no fonts (§11).
-
-### Non-goals
-
-- **A kernel driver.** No signed driver, no LKM. Everything Process Explorer reaches only through its
-  driver — symbolized thread stacks, kernel object internals, protected-process access, true
-  per-process packet capture — is out of scope and stays out. This is the single largest honest gap
-  against the tools in the README's inspiration list.
-- **Replacing the OS task manager.** No `taskmgr.exe` replacement registry key, no session-critical
-  role, no "run at boot".
-- **Remote/agent monitoring.** One machine, the local one. No collection server, no fleet view.
-- **A profiler.** Sampling at 1 Hz answers "which process", never "which function".
-- **Editing the running system beyond §6.4.** No writing to arbitrary process memory, no DLL/`.so`
-  injection, no handle closing in another process.
-- **macOS in v1.** The probe is a stub that throws (§5.3).
-
----
-
-## 2. Architecture layers
+Every requirement is a checkbox. Tick it when it is **implemented and covered by a test or the
+self-test** — not when the code is written, and not when it works on one machine.
 
 ```
-ProcessManager.Core                       sampling engine, model, math          [platform-agnostic]
- ├─ .Model                                snapshots, records, counters (structs, no behavior)
- ├─ .Sampling                             Sampler, RateCalculator, HistoryRing<T>, TreeBuilder
- ├─ .Query                                sort, filter, search across the snapshot
- └─ .Abstractions                         ISystemProbe, IProcessActions, IElevatedChannel
-ProcessManager.Platform.Linux             /proc, /sys, cgroup v2, netlink            SHIPPING
-ProcessManager.Platform.Windows           NtQuerySystemInformation, iphlpapi, psapi   SHIPPING
-ProcessManager.Platform.MacOS             libproc / sysctl                            STUB (throws)
-ProcessManager.Ui.Terminal                terminal renderer, zero UI dependencies
-ProcessManager.Ui.Desktop                 desktop UI on NativeForms
-ProcessManager.App                        the one binary: CLI + both front-ends       (procman)
-ProcessManager.Elevated                   procman-helper — the only privileged binary
-ProcessManager.Tests                      unit + fixture-replay + golden tests
-ProcessManager.Benchmarks                 the §4 budget harness, run by nightly CI
+- [x] done, and proven
+- [ ] not done
+- [ ] 🟡 partly done — the note says which part is missing
+- ∅  deliberately out of scope (not a checkbox; see §4)
 ```
 
-**The NativeForms dependency is source, not a package, and temporarily.** The process list needs
-`TreeListView`'s `RowBackColorSelector`, `CellPaint` and `ColumnClick` — added upstream by
-Hawkynt/NativeForms#8 for exactly this and not yet in a published build — so `ProcessManager.Ui.Desktop`
-references the sibling repository's projects, the way PNGCrushCS references CompressionWorkbench. The
-CI checks the sibling out beside this repo. When a package carrying the seams ships, this reverts to
-three `PackageReference`s and the extra checkout goes away; a build without the sibling fails with one
-sentence saying so rather than two hundred lines of CS0246.
+Two marks appear inside field notes, and they are what the UI actually renders — not documentation
+shorthand:
 
-Both front-ends are **libraries**, and `ProcessManager.App` is the only executable of the pair. That
-is a change from this document's first draft, which had two executables: the documented CLI is
-`procman` and `procman --tui`, and two binaries cannot both be `procman`. The cost is that a headless
-box carries the UI assembly it will never open; it never *loads* GTK, because a backend that is not
-registered is never asked for its native library.
+| Mark | Meaning |
+|:---:|---|
+| `n/a` | The platform has no such concept; the UI shows this, never a zero |
+| `—` | Readable in principle, but not with the privilege we currently hold |
 
-- **Core never calls a native API.** It asks an `ISystemProbe` for raw counters and does every
-  subtraction, division and sort itself. That is what makes the whole engine testable against
-  recorded fixture trees rather than against the machine running the tests (§9).
-- **A probe returns counters, not rates.** Rates, percentages, deltas and history are Core's job,
-  computed identically on every platform. A probe that pre-divides has a bug.
-- **Front-ends are read models.** They receive an immutable `SystemSnapshot` and a `SnapshotDelta`
-  and render. They never poll the probe, never keep their own history, and never mutate the model.
+**The rule that governs the whole document (§72.3):** a value that is not known renders *the reason
+it is not known*. An unticked box must never become a zero on screen. This is restated here because
+it is the single requirement most likely to be broken while filling the tables in.
 
-### AOT/interop rules (enforced, not aspirational)
-
-- [x] `[LibraryImport]` source-generated P/Invoke only — never `[DllImport]`.
-- [x] No `System.Reflection`, `TypeDescriptor`, `Activator.CreateInstance(Type)` or `dynamic`
-      anywhere in Core, the probes or the helper. The `--list --json` output is written by hand for
-      the same reason.
-- [x] `IsAotCompatible=true` on every library (`Directory.Build.props`), off again for the test and
-      benchmark projects (`Directory.Build.targets`) which are never published;
-      `TreatWarningsAsErrors=true` on the AOT publish leg so an IL2xxx/IL3xxx warning fails CI (§9.5).
-- [x] Probe and backend selection are compile-time-visible `if`s on `OperatingSystem.IsLinux()` /
-      `IsWindows()` / `IsMacOS()`, not a plugin scan — the trimmer can drop the two the build does
-      not need.
+**Counting, as of the last update:** **374 of 1249 boxes are ticked** — 55 of 189 in the field
+registry (§14–22), 319 of 1060 across the capabilities. A further 116 are marked 🟡, meaning some of
+the work behind them is already done. §100 tracks the phases; §101 defines when this may be called
+finished.
 
 ---
 
-## 3. The sampling model
+# 1. Executive summary
 
-The core of the program is three hundred lines of arithmetic that everything else displays. It gets
-its own section because every subtle bug in a tool of this kind lives here.
+ProcessManager is a cross-platform system-monitoring and process-management application intended to
+functionally replace Windows Task Manager, Process Explorer, System Informer/Process Hacker and DBC
+Task Manager with one coherent product.
 
-### 3.1 Snapshot
+The application shall provide:
 
-- [x] `SystemSnapshot` — one immutable point-in-time reading: a monotonic timestamp, system-wide
-      counters, and a `ProcessRecord` per visible process. Produced by one probe call.
-- [x] The timestamp is from a **monotonic** clock (`Stopwatch.GetTimestamp`), never wall time. A
-      wall-clock jump — NTP step, suspend/resume, DST — must not produce a negative interval or an
-      infinite rate.
-- [x] `ProcessRecord` is a mutable struct in a pooled array — *not* the `readonly record struct` this
-      document first specified. A record struct of twenty-five fields is copied by every `foreach`
-      and every assignment; the probe fills it by `ref` instead. No per-sample allocation of the
-      strings that did not change (§4).
+- [x] A modern graphical desktop application
+- [x] A terminal user interface
+- [x] A shared system-information and process-inspection engine
+- [ ] 🟡 A stable CLI and machine-readable API — the CLI exists; the JSON schema and API do not
+- [x] Basic task-management workflows suitable for ordinary users
+- [ ] 🟡 Advanced process, thread, module, handle, memory, network, security, service and resource
+      inspection — the engine reads most of it; the views for it are largely unbuilt
+- [ ] Platform-specific advanced capabilities wherever the OS exposes them
+- [x] Predictable fallbacks when a capability does not exist on a platform
+- [x] An information architecture familiar to users of the named tools without copying their
+      branding, icons, trademarks or protected visual assets
 
-### 3.2 Delta and rate
+Windows Task Manager covers process/resource inspection, startup applications, active user sessions,
+services, performance graphs, process dumps, wait-chain analysis and administrative controls. Process
+Explorer adds process-tree-oriented inspection and a lower pane for handles or loaded DLLs and memory
+mappings. System Informer adds substantially deeper process, thread, stack, service, network, disk,
+security, module and handle inspection. DBC Task Manager's contribution is the simplified Windows
+8-era presentation with resource pages and graph-oriented performance views.
 
-- [x] `SnapshotDelta` pairs consecutive snapshots and yields, per process: CPU time consumed, bytes
-      read/written, and appeared/exited/changed sets.
-- [x] CPU percent = ΔprocessCpuTime / (Δwallclock × coreCount) by default, with a per-core mode
-      (`Δ / Δwallclock`, so a fully busy 8-thread process reads 800 %) selectable in both front-ends.
-      Which mode is active is always visible in the column header — the two conventions differ by 8×
-      on this machine and a number without its convention is not a number.
-- [x] **PID reuse is detected, not assumed away.** Two snapshots may show the same PID as two
-      different processes. The identity key is `(pid, startTime)`; a mismatch is an exit plus a
-      start, never a delta. A test pins this (§9.3).
-- [x] **Counter wraparound and reset** yield "unknown" for that interval, not a negative or absurd
-      rate. A 32-bit counter that decreased did not decrease.
-- [x] First sample after start has no predecessor: rates are `unknown`, and the UI shows `—`. It does
-      not show `0`.
-
-### 3.3 History
-
-- [x] `HistoryRing<T>` — fixed-capacity ring per tracked series, allocated once. Default 600 samples
-      (10 minutes at 1 Hz), configurable; memory is bounded by construction, not by pruning.
-- [x] Per-process history is kept only for processes with an open detail view plus the top N by CPU;
-      everything else keeps the current value only. Keeping 600 samples × 1000 processes × 6 series
-      is 28 MB of nothing anyone looks at.
-- [x] A gap in sampling (the interval was missed, the machine was asleep) is recorded **as a gap**.
-      Plots break the line; they do not interpolate across it — `HistoryPlot` and the terminal meters
-      both do, and the golden frame shows a `?` where a counter did not move.
-
-### 3.4 Unknown is a value
-
-- [x] Every numeric field is `T?`-shaped with an explicit reason when absent: `NotPermitted`,
-      `NotSupportedOnPlatform`, `ProcessExited`, `NotSampledYet`, `CounterInvalid`.
-- [x] Front-ends render each reason distinctly (`—` permission, `n/a` platform, `…` first sample) and
-      the reason is available on hover / in the detail pane. This is the rule §1.5 exists for.
-
-### 3.5 Sampling cadence
-
-- [x] Default interval 1000 ms; settable 250 ms – 60 s. The interval is a *target*: the sampler
-      measures its own cost and reports it (§4), and never queues a second sample while the first is
-      running.
-- [x] Expensive collections are on a slower cadence than the process list: handles/open files and
-      module lists refresh on demand and on the detail view's own timer, never in the main loop.
-- [~] The UI never blocks on a sample. **Not true yet in either front-end**: both sample on their own
-      thread — the terminal UI between key polls, the desktop UI on its timer tick. At the measured
-      38 ms per sample that is invisible; at ten thousand processes it would not be, and the fix is a
-      background sampler with a completed-snapshot handoff, not a faster probe.
+This product is therefore designed as a **superset**, not a clone of any one of them.
 
 ---
 
-## 4. Performance & footprint budget
+# 2. Product vision
 
-Targets measured by `ProcessManager.Benchmarks` and asserted in nightly CI. The harness fails on
-regression rather than printing a number nobody reads.
+ProcessManager should answer, from one application:
 
-**The budget is asserted on CPU time, not wall-clock.** This was learned rather than designed: the
-first harness measured wall-clock and reported 207 ms for the same work that took 896 ms an hour
-later, because the machine went from load 280 to load 650. A sample that waited for sixteen other
-builds to give a core back has not become more expensive. Wall-clock is still reported, because a
-user waiting for a frame does not care why. The same lesson applies to reading the numbers below:
-every one was taken at load 15–30 on a 16-core machine, and the load is printed with them.
+What is running? Why is it running? Who started it? What launched it? What resources is it consuming?
+What has changed since the last refresh? Which files, modules, sockets, objects or resources does it
+own? Which processes are using a particular file? Which process owns a particular connection? Why is
+a process hanging? Which threads are busy? What code are those threads executing? What executable or
+library is actually loaded? Is that binary signed or otherwise trusted? Which security mitigations
+apply? Can the process be safely suspended, terminated, restarted or reprioritised? Which services
+and startup mechanisms caused it to exist? How healthy is the machine as a whole? And can the same
+investigation be performed without a desktop environment?
 
-- [x] **Snapshot cost**: ≤ 25 ms of CPU per 1000 processes. **Measured: 33 ms** on a sixteen-core
-      desktop (539 processes in 18 ms of CPU, load 15) and **51 ms** on the four-core shared runner
-      nightly uses (156 processes in 8 ms, load 1) — same code, and the difference is what a syscall
-      costs on each, this work being syscalls almost end to end. The harness gates at 90, which is
-      above both with room and well under the 135 ms the last real regression produced. Slightly over target and
-      the shape is understood: three files are read per process — `stat`, `status`, `io` — which is
-      about twelve syscalls, and syscalls are the entire cost. Dropping `status` would close the gap
-      and cost the private-memory column and the owner id, which is a worse trade than three
-      milliseconds. Recorded as a near miss rather than closed.
-      *Attribution, same machine:* `stat`+`status` alone 25 µs/process, plus cgroup 32 µs, plus
-      file-descriptor counting 41 µs.
-- [x] **Steady-state allocation: zero.** **Measured: 86 bytes per sample** at 539 processes with no
-      process starting — six thousandths of a byte per process. `/proc` files are read through
-      `open`/`read`/`close` into pooled buffers and parsed from `ReadOnlySpan<byte>`, paths are built
-      as UTF-8 bytes into stack buffers, and a name that did not change hands back the string it had.
-      *Before and after the work:* 199 598 bytes per sample → 86.
-      The budget allows a bounded amount per *newly started* process — one cache entry, its paths and
-      its command line — because that is a real once-per-process cost and not a leak. A regression of
-      the kind that matters, one string per process per sample, would be tens of kilobytes here.
-- [x] **What is not on the sampling path, and why.** Two things were tried there and measured out:
-      - *File-descriptor counts.* Reading `/proc/[pid]/fd` makes the kernel materialise one directory
-        entry per open descriptor: **9 µs per process** on a quiet machine, 85 µs on a loaded one, and
-        two thirds of the whole sample when it was in the loop. Front-ends fill the column for the
-        rows they draw, through `ISystemProbe.GetHandleCount` (§3.5).
-      - *Proportional set size.* `smaps_rollup` walks the whole page table of every process:
-        **772 µs per process**, twenty-four times the rest of the sample put together. Off by
-        default; the private column is anonymous RSS, which arrives free in a file already being read.
-- [x] **Own CPU cost**: < 1 % of one core at 1 Hz with 1000 processes. At 33 ms of CPU per 1000
-      processes per second that is **3.3 %** of one core, or 0.2 % of this sixteen-core machine.
-      Against the letter of the target it fails; against its intent — "a monitor that shows up in its
-      own top ten has failed" — the program does not appear in its own list of busy processes at all.
-      The target was written per-core and should have been written per-machine.
-- [ ] **Resident memory**: < 60 MB for the desktop UI with 1000 processes, < 20 MB for the TUI.
-      Not yet measured.
-- [ ] **Start to first frame**: < 250 ms desktop, < 100 ms TUI. Not yet measured. The first sample is
-      legitimately several times a steady-state one — it loads every process's command line and image
-      path — so this needs its own number rather than an inference from the one above.
-- [x] **View rebuild**: the tree is rebuilt from scratch every sample by both front-ends, so it is
-      part of the frame. **Measured: 0.58 ms** for 539 processes in tree mode. It was 13 ms before the
-      child index replaced a scan-per-parent (§7.2 of the original draft's quadratic walk).
-- [x] **Binary size** reported per RID in the CI step summary on every AOT publish.
+It serves both ends of the spectrum:
 
-## 5. Platform probes
+**Simple.** "Firefox is using too much memory; end it."
 
-A probe's contract: return raw counters for everything it can read, and a typed reason (§3.4) for
-everything it cannot. A probe never guesses, never falls back to a plausible-looking zero, and never
-shells out to another program.
+**Expert.** "PID 8421 spawned from PID 1172 in session 3, is running elevated ARM64EC code, has 146
+threads, three TCP connections, 18 mapped images, 2.4 GB private commit, an unsigned module, and one
+thread continuously consuming logical CPU 7."
 
-### 5.1 Linux — `/proc`, `/sys`, cgroup v2
+---
 
-- [x] Process list from `/proc/[pid]` directory enumeration, reusing the directory buffer.
-- [x] `/proc/[pid]/stat` — state, ppid, pgrp, session, utime, stime, cutime, cstime, priority, nice,
-      num_threads, starttime, vsize, rss. Parsed from bytes; the comm field is parsed by scanning
-      **back** from the last `)`, because a process may be named `foo) 0 (bar`.
-- [x] `/proc/[pid]/status` — Uid/Gid (real *and* effective), VmRSS, VmSwap, Threads, context switches.
-- [~] `/proc/[pid]/smaps_rollup` — `Pss`, `Private_Clean`, `Private_Dirty`. Implemented and **off by
-      default**: measured at 3 963 µs per process, ninety times the rest of the sample (§4). The
-      default private column is `RssAnon` from `status`, which arrives free in a file already being
-      read and is wrong only in ignoring the process's share of what it maps.
-- [x] `/proc/[pid]/io` — `read_bytes`, `write_bytes`, `rchar`, `wchar`. Readable only by the owner
-      (0400 since kernel 5.12): other users' processes report `NotPermitted` unless the helper is up.
-      The probe checks the uid *before* opening, because the refusal arrives at `read(2)` rather than
-      `open(2)` and half a shared machine's process table is somebody else's.
-- [x] `/proc/[pid]/cmdline` (NUL-separated), `/proc/[pid]/environ` (owner only), `/proc/[pid]/cwd`,
-      `/proc/[pid]/exe` (readlink).
-- [x] `/proc/[pid]/fd/*` — open files, sockets (as `socket:[inode]`), pipes. Owner or helper only.
-      **Not on the sampling path**: the count costs 85 µs per process (§4), so front-ends ask for the
-      rows they draw.
-- [x] `/proc/[pid]/maps` — mapped files for the module view.
-- [x] `/proc/[pid]/task/[tid]/stat` — per-thread, for the thread view only (not the main loop).
-- [x] System: `/proc/stat` (per-core jiffies, ctxt, intr, procs_running), `/proc/meminfo`,
-      `/proc/loadavg`, `/proc/uptime`, `/proc/diskstats`, `/proc/net/dev`, `/proc/pressure/*` (PSI).
-- [x] Sockets: `/proc/net/{tcp,tcp6,udp,udp6,unix}` joined to processes by socket inode. The join is
-      O(fds), done once per request, not per process. IPv6 addresses are handed back in their raw
-      hex form rather than formatted — a half-formatted address is worse than an honest one.
-- [x] `USER_HZ` is read via `sysconf(_SC_CLK_TCK)` through `[LibraryImport]`, not assumed to be 100.
-      Page size likewise via `sysconf(_SC_PAGESIZE)` for `statm`/`rss`.
-- [~] cgroup v2: the process's cgroup path is read from `/proc/[pid]/cgroup` and shown. The *limits*
-      (`memory.max`, `cpu.stat`, `io.stat`) are not read yet, so a containerized process still shows
-      the host's totals — open question 4.
-- [~] Users resolved from `/etc/passwd`, cached, with the numeric uid shown when the file cannot
-      answer. **This document originally specified `getpwuid_r`**, and the deviation has a cost worth
-      stating: accounts that come from LDAP, SSSD or systemd-homed through NSS show as numbers. What
-      it buys is a resolver that is a pure function of a file path — so it replays against a fixture
-      like the rest of the probe — and one that cannot block the sampling thread on a network
-      directory, which is a real failure mode of the correct call.
+# 3. Goals
 
-### 5.2 Windows — native API, no WMI
+## 3.1 Primary — MUST
 
-- [x] `NtQuerySystemInformation(SystemProcessInformation)` — the whole process *and* thread list in
-      one call, into a pooled, grown-on-`STATUS_INFO_LENGTH_MISMATCH` buffer. WMI is not used
-      anywhere: it is orders of magnitude slower and needs a service that may be broken.
-- [x] `SystemProcessorPerformanceInformation` for per-core idle/kernel/user, `GetSystemTimes` as the
-      cross-check.
-- [ ] `QueryFullProcessImageName` for the image path; `NtQueryInformationProcess`
-      (`ProcessCommandLineInformation`, `ProcessBasicInformation`) for the command line and PEB.
-- [x] Memory from the `SYSTEM_PROCESS_INFORMATION` block (`PrivatePageCount`, `WorkingSetPrivateSize`,
-      `VirtualSize`) — already in the bulk call, so no per-process `OpenProcess` in the main loop.
-- [x] I/O counters likewise from the bulk block (`ReadTransferCount`, `WriteTransferCount`).
-- [x] Modules via **Toolhelp32** rather than the PEB `Ldr` walk this document first specified: it
-      needs no read access to the target's address space, handles the cross-bitness case with both
-      snapshot flags, and is a documented API rather than a structure that moves between releases.
-      Verified at 47 modules for a .NET process.
-- [x] Handles via `NtQuerySystemInformation(SystemExtendedHandleInformation)`, filtered by owner and
-      duplicated into this process to be asked about; names resolved with `NtQueryObject`. Verified at
-      95 handles, 41 of them named. **`NtQueryObject` can block forever on a synchronous named pipe** — name
-      resolution therefore runs on a dedicated worker with a per-handle timeout, and a handle that
-      times out is reported as `<name unavailable>`. This is the single most common way tools of this
-      kind hang, and it is a design constraint, not a defect to discover later.
-- [x] Sockets via `GetExtendedTcpTable` / `GetExtendedUdpTable` with `TCP_TABLE_OWNER_PID_ALL`, both
-      address families. Windows names the owning pid in the table itself, so unlike Linux there is no
-      socket inode to join against.
-- [x] Actions: `SetPriorityClass`, `SetProcessAffinityMask`, `NtSuspendProcess` / `NtResumeProcess`,
-      `TerminateProcess`. Elevation via §8 when `OpenProcess` returns `ERROR_ACCESS_DENIED`.
-- [x] `SeDebugPrivilege` is enabled only inside the helper, never in the UI process — which is
-      currently true by omission: nothing enables it anywhere yet.
-- [x] Users resolved from the process token (`OpenProcessToken` + `GetTokenInformation(TokenUser)` +
-      `LookupAccountSid`), cached by SID and by pid — one lookup per account, not per process, because
-      `LookupAccountSid` can go to a domain controller. Verified: `ARCHBTW2\hawky`.
+- [ ] 🟡 Replace everyday Task Manager workflows — process management yes; services, startup, users no
+- [ ] 🟡 Replace Process Explorer tree and lower-pane workflows — tree yes, lower pane no
+- [ ] Replace the majority of System Informer process-inspection workflows
+- [x] Provide the same canonical information in GUI and TUI
+- [ ] 🟡 Operate natively on Windows, Linux and macOS — Windows and Linux done; macOS is a stub (§6.3)
+- [x] Expose platform-specific fields without pretending different OS abstractions are identical
+- [x] Remain useful without elevation or root
+- [x] Dynamically expose additional information after elevation
+- [x] Start fast enough to remain useful when the machine is under significant load
+- [x] Avoid requiring Internet access for ordinary operation
+- [x] Provide opt-in reputation services rather than silently transmitting executable information
+      — trivially satisfied today: there is no network code at all
+- [ ] 🟡 Remain usable with thousands of processes, threads, mappings, connections or handles
+      — measured to 1000 processes (§71); 10 000 is untested
+- [ ] 🟡 Permit customisation of columns, layouts, refresh intervals, highlighting, shortcuts and
+      defaults — columns and interval yes; nothing persists between runs
+- [ ] 🟡 Support keyboard-driven operation throughout GUI and TUI — TUI complete, GUI partial
+- [ ] 🟡 Permit information to be copied or exported without screenshots — copy yes, export no
 
-### 5.3 macOS — stub
+## 3.2 Secondary — SHOULD
 
-- [x] Every member of `MacOsProbe` throws `PlatformNotSupportedException` with a message naming this
-      section and the milestone (§10 M9). It does not return empty data — a program that shows an
-      empty process list is worse than one that says it does not work here.
-- [ ] The macOS CI leg builds and runs it, and records how far it gets, exactly as NativeForms does
-      for its Cocoa backend.
+- [ ] Serve as a lightweight incident-response triage utility
+- [ ] Serve as a developer debugging companion
+- [ ] Provide long-running metric history when requested
+- [ ] Support plugins and extensions
+- [ ] 🟡 Support scripting and automation through CLI/API
+- [x] Provide a portable, no-install distribution — single-file NativeAOT binary, 3.2 MB, no runtime
+- [x] Support dark, light and system themes
+- [ ] Provide an optional tray / menu-bar mode
 
-### 5.4 Probe capability matrix
+---
 
-Filled in as probes land; `n/a` means the platform has no such concept, not that we skipped it.
+# 4. Explicit non-goals
 
-| Capability | Linux | Windows | macOS |
+Not attempted, in any release:
+
+- ∅ A full debugger comparable to WinDbg, LLDB or GDB
+- ∅ A full profiler comparable to ETW/WPA, Instruments, perf or commercial profilers
+- ∅ A packet-capture application comparable to Wireshark
+- ∅ A full endpoint detection and response product
+- ∅ An antivirus scanner
+- ∅ A kernel debugger
+- ∅ A complete replacement for Services MMC, systemd tooling or launchctl
+- ∅ A remote fleet-management platform
+- ∅ A task-scheduler or cron replacement
+- ∅ A generic hardware-information utility such as HWiNFO
+- ∅ A process-memory reverse-engineering suite
+
+ProcessManager may integrate with or launch specialised tools when deeper analysis is required.
+
+## 4.1 The kernel driver, and what it costs us
+
+**∅ ProcessManager will not ship a kernel-mode driver.** This is permanent, and it is the single
+largest deliberate difference from System Informer.
+
+The reasons: a Windows driver needs an EV certificate and Microsoft attestation signing; it is a
+serious attack surface, and a bug in it is a bugcheck rather than a stack trace; and a signed driver
+that can read and write arbitrary process memory is a privilege-escalation primitive that gets
+abused by other software the moment it is on disk. Several tools in this class have been used exactly
+that way.
+
+What we therefore cannot do, and must say so in the UI rather than failing quietly:
+
+- Read from or act on protected processes (PPL) — anti-malware services, LSASS on a hardened machine
+- Walk kernel-mode stack frames (§30); ours stop at the user/kernel boundary
+- Some handle-object details that require kernel-mode object access
+- Close a handle in another process on Linux (no supported mechanism exists at all)
+
+Everything else in this document is reachable from documented user-mode APIs.
+
+## 4.2 Licence boundary
+
+System Informer is GPL-3.0. ProcessManager is LGPL-3.0-or-later. Its **features may be reimplemented
+from documented APIs and from observed behaviour; its source code must not be copied, adapted or
+translated into this repository.** Where a technique is subtle — the handle-name deadlock in §32 is
+the obvious one — the implementation must be derived from the underlying API documentation and
+reasoning, and the reasoning recorded in a comment.
+
+---
+
+# 5. Product principles
+
+## 5.1 One canonical data model
+
+There must not be separate "GUI fields" and "TUI fields".
+
+- [ ] Every field is registered in a central field catalogue. **This does not exist yet**, and it is
+      the highest-priority piece of internal work in the document: today `ProcessColumn` is a sort-key
+      enum in Core, the desktop keeps its own `ColumnSet`, and the TUI keeps a third list. Three
+      places to add a field is three places to forget one. §103 cannot be enforced until this lands.
+
+The ticks below therefore describe what a field *can* express today through the existing types
+(`Counter`, `Rate`, `UnknownReason`), not a catalogue that holds the metadata in one place.
+
+Each registry entry declares:
+
+- [x] Stable field ID
+- [x] Human-readable name
+- [ ] Short TUI label
+- [ ] Description
+- [x] Data type
+- [ ] 🟡 Units
+- [ ] Precision
+- [x] Whether it is instantaneous, cumulative, delta, rate, state, enumeration or derived
+- [ ] 🟡 Supported platforms
+- [ ] Required privilege
+- [ ] Collection cost
+- [x] Default visibility
+- [x] Sort semantics
+- [ ] Filter semantics
+- [x] Formatting function
+- [x] Null/unavailable semantics
+- [ ] Export serialisation
+- [ ] Historical-storage eligibility
+
+Worked example — `process.cpu.usage`: display "CPU", TUI "CPU%", percentage, normalised
+instantaneous utilisation, 0–100 in default mode and 0–N×100 in raw logical-CPU mode, all platforms,
+normal privilege, low collection cost, eligible for history.
+
+## 5.2 Progressive disclosure
+
+- [x] Common information is visible immediately
+- [ ] 🟡 Advanced information is one click, key or pane away rather than in the default view
+
+## 5.3 Native semantics over false equivalence
+
+Windows handles are not Unix file descriptors. Windows services are not systemd units. launchd jobs
+are not Windows services. Job objects are not cgroups.
+
+- [x] The UI may group concepts under shared categories but retains native terminology and data
+
+## 5.4 Expensive collection is opt-in
+
+- [x] Stack walking, symbol resolution, signature validation, reputation lookups, full handle
+      enumeration, string scans and continuous tracing are never required to display the process table
+
+This is enforced by measurement, not intention: §71's budget is a build gate, and the two collectors
+that broke it (per-process fd counting at 85 µs, `smaps_rollup` at 0.8–4 ms) are both opt-in because
+of it.
+
+## 5.5 Destructive actions are unmistakable
+
+- [x] "Inspect" and "terminate" are never adjacent unlabelled icons
+- [ ] 🟡 Every destructive action names its target (§90)
+
+---
+
+# 6. Supported platforms
+
+## 6.1 Windows — **primary**
+
+- [x] Windows 10 22H2 and Windows 11 — verified on NT 10.0.26100
+- [x] x64
+- [ ] ARM64 — should work; never built or run
+- [ ] Server equivalents
+- ∅ x86 — no plan
+
+Windows receives the deepest feature set because several target applications expose Windows-specific
+concepts.
+
+**Implementation.** Native API only — no WMI anywhere, at any point, for any field. One
+`NtQuerySystemInformation(SystemProcessInformation)` call returns every process with its threads and
+counters in a single buffer; a second pass adds only what the bulk query omits.
+
+- [x] Bulk process + thread enumeration in one call
+- [x] Command line via `ProcessCommandLineInformation`, PEB read as fallback
+- [x] Environment block via PEB walk
+- [x] Owner SID → `LookupAccountSidW`
+- [x] Module list via Toolhelp32
+- [x] Handle table via `SystemExtendedHandleInformation` + `DuplicateHandle` + `NtQueryObject`
+- [x] Connections via `GetExtendedTcpTable` / `GetExtendedUdpTable`
+
+**The handle-name deadlock.** `NtQueryObject` on a synchronous named pipe whose peer never replies
+blocks forever, and the thread cannot be killed safely. Ours runs the query on a worker that is
+*abandoned* on timeout, never aborted — and each worker owns its handshake semaphore, because a
+shared one is released by the abandoned worker into the next worker's wait and throws
+`SemaphoreFullException`. That bug shipped and was caught by the Wine leg in CI.
+
+## 6.2 Linux — **primary**
+
+- [x] Kernel 5.10+
+- [x] x86-64
+- [ ] ARM64 — should work; never built or run
+- [x] `/proc` and `/sys` native collectors
+- [x] cgroup v2 first-class
+- [ ] 🟡 systemd as the primary service-management target — no service view yet (§41)
+
+**Implementation.** Raw `open`/`read`/`close`/`getdents64` syscalls against UTF-8 byte paths, parsed
+from `ReadOnlySpan<byte>` into pooled buffers. Managed file APIs were the original implementation and
+cost 3000 ms and 200 KB per sample; this costs 38 ms and 86 bytes.
+
+- [x] `stat` — including the `comm` backscan past the *last* `)`, because a process may be named `)`
+- [x] `status`, `io`, `cgroup`, `maps`, `fd/`, `net/{tcp,tcp6,udp,udp6}`
+- [x] `smaps_rollup` for PSS/USS — opt-in, 0.8–4 ms per process
+- [x] `sysconf(_SC_CLK_TCK)` and `_SC_PAGESIZE` rather than assuming 100 and 4096
+- [x] Permission failures surface at `read(2)`, not `open(2)` — handled by errno, not by exception
+
+## 6.3 macOS — **stub**
+
+- [ ] macOS 13+
+- [ ] Apple Silicon
+- [ ] Intel
+
+The probe exists and throws. This is deliberate and honest: a macOS build that silently reported
+nothing would be worse than one that says it is not implemented. Every macOS row in this document is
+therefore unticked, and the `∅` marks in the field tables mean "impossible on macOS", not "not yet".
+
+- [x] Unavailable and protected data is displayed explicitly rather than failing silently
+
+---
+
+# 7. Capability levels
+
+Every feature declares one of four states per platform:
+
+| State | Meaning |
+|---|---|
+| **Full** | All required fields and actions supported |
+| **Partial** | Feature exists; one or more platform-specific fields or actions unavailable |
+| **Read-only** | Data visible, modification unavailable |
+| **Unavailable** | The OS exposes no safe or reliable equivalent |
+
+- [x] Unavailable values render as `—` (or `n/a`, `…`, `×` per §72.3)
+- [ ] 🟡 …plus an explanation reachable through tooltip, details or help — the explanation strings
+      exist (`Humanize.Explain`); only the detail pane shows them
+
+---
+
+# 8. Architecture
+
+## 8.1 Components
+
+```
+Platform backends → Core collector → Snapshot engine → Field registry → Query engine → renderers
+                                            ↓                                              ↑
+                                     Action broker ← ← ← ← ← ← ← ← ← ← ← ← ← ← ← ← ← ← ← ←
+                                            ↓
+                                    Privileged helper
+```
+
+| Component | Project | Status |
+|---|---|:---:|
+| Core collector | `ProcessManager.Core` | ✅ |
+| Platform backends | `ProcessManager.Platform.{Windows,Linux,MacOS}` | 🟡 macOS stub |
+| Snapshot engine | `ProcessManager.Core/Sampling` | ✅ |
+| Field registry | *not yet built* — see §5.1 | ⬜ |
+| Query engine | `ProcessManager.Core/Query` | 🟡 |
+| Action broker | `ProcessManager.Core/Actions` | 🟡 |
+| Privileged helper | `ProcessManager.Elevated` | ✅ |
+| GUI renderer | `ProcessManager.Ui.Desktop` (NativeForms) | 🟡 |
+| TUI renderer | `ProcessManager.Ui.Terminal` | ✅ |
+| CLI / API | `ProcessManager.App` | 🟡 |
+
+- [x] Platform code exposes canonical DTOs through a stable internal API
+- [x] The snapshot engine maintains current, previous, delta, rates, monotonic timestamp,
+      creation/termination detection and history rings
+- [x] The query engine is shared by GUI, TUI and CLI
+- [x] **The UI never calls a platform API directly** — every mutation goes through the action broker
+- [x] The main GUI and TUI remain non-elevated; only the helper is privileged
+
+## 8.2 The sampling model
+
+**Snapshot.** One pass produces absolute readings only. A probe that pre-divides anything has a bug:
+every rate, percentage and delta in the program is computed by `SnapshotDelta` from two snapshots.
+
+- [x] Absolute counters only, never rates, from a probe
+- [x] Processes live in a pooled `ProcessRecord[]`, a mutable struct — a class would be a thousand
+      allocations per sample against a budget of zero
+- [x] Monotonic `Stopwatch` timestamps; the wall clock is never used for an interval
+
+**Identity.** `ProcessKey(Pid, StartTicks)`.
+
+- [x] PID reuse cannot attach an exited process's history to a new one — every map in the program is
+      keyed by the pair, and the test suite covers the reuse case explicitly
+
+**Delta and rate.** One `RateCalculator`, deliberately the only place a division happens: every
+interesting bug in a tool of this kind is a division that should not have been performed.
+
+- [x] A counter that moved backwards yields `CounterInvalid`, not a negative rate
+- [x] …except where the fall is the meaning (private-bytes delta), which uses a signed variant
+- [x] A zero or non-finite interval yields `CounterInvalid`, never a division
+- [x] CPU% is **not** clamped to 100 — above 100 is legitimate per-core and diagnostic when normalised
+- [x] Both CPU conventions are computed every sample so both columns can be shown at once
+
+**History.** Per-visible-row ring buffers with shared, decayed, floored scales.
+
+- [x] 60 s at sample resolution, visible rows only
+- [x] Floors (CPU 5 %, memory 32 MB, I/O 64 KB) so an idle process is a flat line, not noise
+      amplified to full scale
+- [x] Decay ×0.92 so a spike does not permanently flatten everything after it
+- [ ] Longer windows (5 min, 15 min, 1 h) need a decimating ring — 3600 points per series per
+      process is not affordable (§85)
+
+**Cadence.** See §12.
+
+## 8.3 AOT and interop rules — enforced, not aspirational
+
+- [x] `PublishAot` and `PublishTrimmed`; `IsAotCompatible` on every library
+- [x] **`[LibraryImport]` only.** `[DllImport]` is banned; the source generator produces the marshalling
+      so it is visible, trimmable and AOT-safe
+- [x] `AllowUnsafeBlocks` — required by the generated marshalling
+- [x] No reflection, no dynamic codegen, no `BinaryFormatter`, no runtime `Type.GetType`
+- [x] Native structs are blittable; `StringBuilder` is never a parameter (SYSLIB1051 — use `ref char`)
+- [x] Pointers from a native buffer are treated as **offsets into that buffer**, bounds-checked, never
+      dereferenced as absolute addresses — this is what makes a captured buffer replayable in a test
+- [x] Single-file publish produces exactly one binary with no loose native assets
+
+Verified: `dotnet publish -r linux-x64 --self-contained -p:PublishAot=true` → one 3.2 MB ELF, which
+runs, passes the self-test 21/21 and opens the window.
+
+## 8.4 Engineering rule — see §103
+
+No field or action may be introduced inside a front-end. §103 lists the thirteen steps.
+
+---
+
+# 9. Main GUI information architecture
+
+Primary navigation:
+
+- [x] Processes
+- [ ] 🟡 Performance — a system overview exists; the resource selector does not (§45)
+- [ ] Applications / usage history (§44)
+- [ ] Startup (§42)
+- [ ] Users / sessions (§43)
+- [ ] Services (§41)
+- [ ] 🟡 Network — connections are collected and shown per process, not as a view (§40)
+- [ ] System activity (§51)
+- [ ] Search / find resources (§33)
+- [ ] Logs / history (§63)
+- [ ] Settings (§67)
+
+Optional advanced views: drivers/kernel modules, file activity, disk activity, GPU activity,
+containers/cgroups, jobs, security, devices — all unbuilt.
+
+---
+
+# 10. Global window layout
+
+- [ ] Left navigation rail with the persistent primary views
+- [ ] 🟡 Top command bar with context-sensitive actions — a menu bar exists instead
+- [x] Primary content pane: table, tree table, graphs or dashboard
+- [ ] Optional lower pane, resizable, toggled by shortcut, toolbar button and menu
+
+Lower-pane modes (all unbuilt as a *pane*; the engine behind the ticked ones works and is reachable
+from the detail pane):
+
+- [ ] Summary
+- [ ] Threads
+- [ ] Modules
+- [ ] Handles / descriptors
+- [ ] Network
+- [ ] Memory mappings
+- [ ] Environment
+- [ ] Windows
+- [ ] Services
+- [ ] Security
+- [ ] Timeline
+
+The lower pane is the defining Process Explorer interaction and is the highest-value single item in
+this document.
+
+---
+
+# 11. Global table requirements
+
+Every table:
+
+- [x] Column show/hide
+- [ ] Column reorder
+- [ ] 🟡 Column resize
+- [ ] Column reset
+- [x] Ascending sort
+- [x] Descending sort
+- [ ] Multi-column sort
+- [ ] 🟡 Keyboard sort — TUI only
+- [ ] Freeze / pin columns
+- [ ] Auto-size column / all columns
+- [ ] Copy cell
+- [ ] 🟡 Copy row
+- [ ] Copy selected rows / columns
+- [ ] Export table
+- [x] Text filter
+- [ ] Advanced filter
+- [ ] Regular-expression filter
+- [ ] Numeric comparison filters
+- [ ] Unit-aware comparison
+- [ ] Case-sensitive toggle
+- [ ] Highlight matched text
+- [ ] Multi-selection
+- [ ] Select all / invert selection
+- [ ] 🟡 Context menu
+- [ ] Persist layout
+
+Named **column sets**, each storing visible fields, ordering, widths, sorting, grouping and pinned
+columns:
+
+- [ ] Basic
+- [ ] Performance
+- [ ] Memory debugging
+- [ ] Security
+- [ ] I/O debugging
+- [ ] Network
+- [ ] Full forensic
+- [ ] Minimal recovery
+
+§94 defines the presets' contents.
+
+---
+
+# 12. Update / refresh system
+
+- [ ] 🟡 Intervals 250 ms · 500 ms · **1 s** · 2 s · 5 s · 10 s · paused · manual — the interval is
+      settable from the CLI; the in-app picker and pause are TUI-only
+- [x] Default 1 second
+- [ ] 🟡 Pause while preserving selection
+
+Refresh preserves:
+
+- [ ] 🟡 Scroll position
+- [x] Expanded process nodes
+- [x] Selected entities
+- [x] Sort order
+- [ ] Open property page (none exist yet)
+- [ ] Lower-pane mode (none exists yet)
+
+- [ ] Dead processes remain visible for one cycle with terminated styling, if enabled
+- [x] New processes are optionally highlighted
+
+Node reuse across samples is what makes expansion and selection survive — and it is why sorting
+silently stopped working for one release: a reused node kept its insertion order forever. The binder
+now reorders each sibling group to match the view, skipping the work when it already matches.
+
+---
+
+# 13. Process presentation modes
+
+- [ ] **Friendly / grouped** — applications, background processes, system processes, categorised
+      per platform
+- [x] **Process tree** — parent/child hierarchy, expand/collapse per row
+- [x] **Flat expert** — one row per process, optimised for sorting and density
+
+- [x] When a parent disappears, surviving children remain visible and become orphaned roots
+- [ ] …or attach to the closest surviving ancestor, per configured behaviour
+
+---
+
+# 14. Process table — identity fields
+
+The canonical field registry. The ID is stable: a saved layout, a `--columns` argument and a search
+term all use it, and it never changes even when the display name differs per platform.
+
+- [x] `name` — friendly process/executable name
+- [ ] 🟡 `exe.name` — actual executable filename; derived from `image.path`, differs from `name` when
+      a process renames itself, not yet its own field
+- [ ] `app.name` — human-readable product/application identity
+- [x] `pid` — process identifier
+- [x] `ppid` — parent process identifier
+- [x] `instance.id` — PID plus creation-time-safe unique identity (`ProcessKey`)
+- [ ] 🟡 `parent.name` — parent executable/application; resolvable from the tree, not a field
+- [x] `tree.depth` — hierarchical depth
+- [x] `status` — running, sleeping, suspended, zombie, terminated
+- [ ] `responding` — GUI responsiveness; `IsHungAppWindow` on Windows, `n/a` on Linux
+- [x] `start.time` — process creation timestamp
+- [x] `running.time` — elapsed lifetime
+- [ ] `exit.time` — requires retaining dead rows; ties to §87
+- [ ] `exit.code` — only for children we spawned or via job/wait; honest `—` otherwise
+- [x] `user` — account owning the process
+- [x] `user.id` — SID / UID
+- [x] `session` — login/terminal session
+- [x] `session.id` — native session identifier
+- [ ] `arch` — x86, x64, ARM64; `IsWow64Process2` (W), ELF header (L)
+- [ ] `emulation` — WOW64, Rosetta, translation state
+- [x] `image.path` — full image path
+- [x] `cmdline` — complete command invocation
+- [ ] 🟡 `cwd` — current working directory; Linux readable, Windows needs a PEB read we do not do
+- [ ] `description` — binary description (version resource)
+- [ ] `company` — publisher metadata
+- [ ] `product` — product metadata
+- [ ] `product.version`
+- [ ] `file.version`
+- [ ] `package` — MSIX / Flatpak / Snap / `.app`
+- [ ] `app.id` — platform application ID
+- [ ] `bundle.id` — macOS bundle identifier
+- [ ] 🟡 `container.id` — the cgroup path is read; the container ID is not parsed out of it
+- [ ] `namespace` — `/proc/pid/ns/*` readlink
+- [ ] 🟡 `job.cgroup` — Linux cgroup path done; Windows job object not
+- [ ] 🟡 `terminal` — controlling TTY; already parsed from `stat` field 7, not surfaced
+- [ ] `exe.size`
+- [ ] `exe.modified`
+- [ ] `exe.created`
+- [ ] `subsystem` — GUI/console/native; PE only, `n/a` for ELF
+- [ ] `interpreter` — shebang / `PT_INTERP`
+- [ ] `runtime` — native/.NET/JVM/Python, from the module list
+
+# 15. Process table — CPU fields
+
+- [x] `cpu.percent` — normalised 0–100 % utilisation
+- [x] `cpu.percent.raw` — multi-core cumulative
+- [ ] `cpu.delta` — change since prior sample
+- [x] `cpu.time` — total processor time
+- [x] `cpu.time.user`
+- [x] `cpu.time.kernel`
+- [x] `cpu.cycles` — Windows only; `n/a` on Linux
+- [x] `cpu.cycles.delta`
+- [x] `ctx.switches`
+- [x] `ctx.switches.delta`
+- [x] `ctx.switches.rate`
+- [x] `threads` — current thread count
+- [ ] `threads.peak`
+- [x] `priority.base`
+- [ ] 🟡 `priority.dynamic` — Linux only
+- [ ] `priority.class` — idle/below normal/normal/… (`GetPriorityClass`)
+- [x] `nice`
+- [ ] `cpu.affinity` — `sched_getaffinity` / `GetProcessAffinityMask`
+- [ ] `cpu.set` — Windows CPU sets
+- [ ] `numa.node`
+- [ ] 🟡 `cpu.last` — parsed from `stat` field 39, not surfaced
+- [ ] `sched.class` — `sched_getscheduler`
+- [ ] `qos` — OS energy/performance state
+- [ ] `throttled` — cgroup `cpu.stat` `nr_throttled`
+
+Required of the CPU percentage:
+
+- [x] Normalised 0–100 view
+- [x] Logical-CPU cumulative view
+- [ ] Configurable decimal precision
+
+# 16. Process table — memory fields
+
+- [ ] `mem.percent` — share of usable physical memory (derivable now)
+- [x] `ws` — working set / RSS
+- [x] `ws.peak`
+- [x] `ws.private` — `WorkingSetPrivateSize` (W), `RssAnon` or PSS (L)
+- [ ] 🟡 `ws.shared` — `RssFile + RssShmem` available on Linux, not surfaced
+- [ ] `ws.shareable`
+- [x] `private.bytes` — private committed virtual memory; `PrivatePageCount` (W), `VmData` (L).
+      Both mean commit charge — this was `RssAnon` on Linux until it was corrected, which made the
+      same column mean two different things on two platforms
+- [ ] `private.bytes.peak`
+- [x] `virtual.size`
+- [x] `virtual.size.peak`
+- [x] `commit.size` — same counter as `private.bytes`
+- [x] `pss` — Linux, opt-in; `smaps_rollup` costs 0.8–4 ms per process
+- [ ] 🟡 `uss` — reported by `smaps_rollup`, not surfaced
+- [x] `swap`
+- [ ] `mem.compressed`
+- [x] `page.faults`
+- [x] `page.faults.delta`
+- [x] `page.faults.hard` — Linux `majflt`
+- [x] `page.faults.hard.rate`
+- [ ] `page.priority` — Windows
+- [x] `pool.paged` — Windows; `n/a` on Linux
+- [x] `pool.nonpaged` — Windows; `n/a` on Linux
+- [ ] `heap.count`
+- [ ] `stack.commit`
+- [ ] `mapped.file.bytes`
+- [x] `anon.bytes` — `RssAnon`
+- [ ] `shared.mem`
+
+- [x] Terminology adapts per platform while the ID stays canonical — the Linux build labels
+      `private.bytes` "Commit" and the Windows build "Private bytes", and a saved layout moves
+      between them unchanged
+
+# 17. Process table — I/O fields
+
+- [ ] `disk.percent` — process contribution where derivable
+- [x] `io.read.rate`
+- [x] `io.write.rate`
+- [x] `io.total.rate` — read + write + other
+- [ ] 🟡 `io.read.ops` / `io.read.ops.delta` — `syscr` (L) and `ReadOperationCount` (W) both
+      available, not surfaced
+- [x] `io.read.bytes` / `io.read.bytes.delta`
+- [ ] 🟡 `io.write.ops` / `io.write.ops.delta` — as above
+- [x] `io.write.bytes` / `io.write.bytes.delta`
+- [ ] 🟡 `io.other.ops` — Windows only
+- [x] `io.other.bytes` — Windows only
+- [x] `io.rate` — aggregate bytes/sec
+- [ ] `io.priority` — `ioprio_get` / `NtQueryInformationProcess`
+- [ ] `io.wait` — `/proc/pid/schedstat`, needs delayacct
+- ∅ `disk.latency` — requires eBPF/ETW tracing; see §52
+
+# 18. Process table — network fields
+
+Per-process byte counters have no portable source: Linux needs packet accounting or eBPF, Windows
+needs ETW. Both are opt-in subsystems and **off by default** — §5.4 forbids making the ordinary
+process table depend on them.
+
+- [ ] `net.percent`
+- [ ] `net.send.rate`
+- [ ] `net.recv.rate`
+- [ ] `net.rate`
+- [ ] `net.sent.bytes`
+- [ ] `net.recv.bytes`
+- [ ] `net.errors`
+- [ ] `net.packets.sent`
+- [ ] `net.packets.recv`
+- [ ] 🟡 `tcp.count` — endpoints are enumerated and attributed; not aggregated into a column
+- [ ] 🟡 `udp.count` — as above
+- [ ] 🟡 `net.listening` — as above
+- [ ] 🟡 `net.remote.count` — as above
+
+# 19. Process table — GPU fields
+
+- [ ] `gpu.percent`
+- [ ] `gpu.engine`
+- [ ] `gpu.engine.percent`
+- [ ] `gpu.adapter`
+- [ ] `gpu.mem.dedicated`
+- [ ] `gpu.mem.shared`
+- [ ] `gpu.mem.total`
+- [ ] `gpu.mem.dedicated.delta`
+- [ ] `gpu.encode`
+- [ ] `gpu.decode`
+- [ ] `gpu.compute`
+- [ ] `gpu.copy`
+- [ ] `gpu.graphics`
+- [ ] `gpu.power`
+
+Sources: Windows GPU performance counters (what Task Manager reads); Linux DRM
+`/sys/class/drm/*/device` plus per-vendor `fdinfo` (`drm-engine-*`), covering amdgpu and i915 and
+leaving proprietary NVIDIA to a vendor plugin.
+
+- [ ] **Unsupported driver stacks render capability state, never a zero** (§72.3 restated — this is
+      why the fields exist in the registry before they have values)
+- [ ] OS-provided data is separated from vendor-specific sensor extensions; vendor plugins cannot
+      stall a sample or crash the sampler
+
+# 20. Process table — object and resource fields
+
+- [x] `handles` — handle count (W) / fd count (L)
+- [ ] `handles.peak`
+- [x] `fd.count`
+- [ ] 🟡 `socket.count` — derivable from the fd scan
+- [ ] 🟡 `file.count` — as above
+- [ ] 🟡 `pipe.count` — as above
+- [ ] `event.count` — Windows handle-type tally
+- [ ] `semaphore.count`
+- [ ] `mutex.count`
+- [ ] `section.count`
+- [ ] `regkey.count`
+- [ ] `user.objects` — `GetGuiResources(GR_USEROBJECTS)`
+- [ ] `gdi.objects` — `GetGuiResources(GR_GDIOBJECTS)`
+- [ ] `mach.ports` — macOS
+- [ ] `ipc.count`
+
+The per-type tallies are one pass over a handle table that already exists — but they must **not**
+move into the sample loop before that cost is measured against §71. Handle enumeration is currently
+on-demand precisely because it is expensive.
+
+# 21. Process table — security fields
+
+- [ ] `elevated` — token elevation (W) / euid == 0 (L)
+- [ ] `integrity` — Windows integrity level
+- [ ] `protected` — protected-process status
+- [ ] `protection.level`
+- [ ] `signature.status` — see §70's vocabulary
+- [ ] `signer` — verified publisher
+- [ ] `cert.subject`
+- [ ] `cert.issuer`
+- [ ] `signature.timestamp`
+- [ ] `hash.sha256` — on demand only
+- [ ] `hash.sha1`
+- [ ] `reputation` — opt-in, see §70
+- [ ] `dep`
+- [ ] `aslr`
+- [ ] `cfg`
+- [ ] `cet`
+- [ ] `acg`
+- [ ] `cig`
+- [ ] `sandbox`
+- [ ] `appcontainer`
+- [ ] `capabilities`
+- [ ] `selinux.context` — `/proc/pid/attr/current`
+- [ ] `apparmor.profile` — same file
+- [ ] 🟡 `seccomp` — `/proc/pid/status` `Seccomp:` is already read, not surfaced
+- [ ] 🟡 `caps.linux` — `CapEff`/`CapPrm`/`CapInh` already read, not surfaced
+- [ ] macOS: code-sign identity, entitlements, hardened runtime, sandbox
+
+- [ ] **Online reputation checking is opt-in, and the program states exactly what is transmitted
+      before the first time it happens** — at the point of use, not buried in a settings page
+
+# 22. Process table — energy fields
+
+Every one of these is an **estimate** wherever the OS does not measure it directly, and is labelled
+as such. Windows models energy impact from weighted CPU/disk/network; Linux has RAPL for the package
+and nothing per-process. A model presented as a measurement is exactly the dishonesty §72.3 exists to
+prevent.
+
+- [ ] `power.usage`
+- [ ] `power.trend`
+- [ ] `energy.impact`
+- [ ] `energy.cpu`
+- [ ] `energy.gpu`
+- [ ] `qos.background`
+- [ ] `eco.state`
+- [ ] `thermal`
+- [ ] `battery.impact`
+
+---
+
+# 23. Process highlighting
+
+- [x] Highlight colours are configurable
+- [ ] Highlighting is disabled in high-contrast modes where inappropriate
+
+Categories:
+
+- [x] Newly started
+- [x] Terminating
+- [x] Suspended
+- [x] Service-hosting
+- [x] System process
+- [x] Current user's process
+- [x] Another user's process
+- [ ] Elevated — needs `elevated` (§21)
+- [ ] Packaged application — needs `package` (§14)
+- [ ] Managed runtime — needs `runtime` (§14)
+- [ ] Unsigned executable — needs `signature.status` (§21)
+- [ ] Invalid signature
+- [ ] Suspicious reputation — needs opt-in reputation
+- [ ] High CPU
+- [ ] High memory
+- [ ] High disk
+- [ ] High network
+- [ ] High GPU
+- [ ] Process with an active UI window — needs §39
+- [ ] Process with a changed executable — needs image mtime + hash watch
+- [ ] Process containing the selected search match — needs §56
+
+The seven that are ticked are the ones the program can *prove*. The rest stay off rather than
+guessing: a colour claiming "unsigned" without having checked a signature is worse than no colour.
+
+---
+
+# 24. Process tooltip / quick inspector
+
+- [ ] Hover or keyboard inspection shows: name, PID, parent, user, path, command line, start time,
+      CPU, memory, I/O, network, signature, service names, package/container, detected runtime,
+      window title, current state
+- [ ] **Tooltips perform no expensive synchronous collection** — everything is either already in the
+      snapshot or fetched asynchronously with `…` shown until it arrives
+
+---
+
+# 25. Process actions
+
+## 25.1 Lifecycle
+
+- [ ] 🟡 End task gracefully — `SIGTERM` on Unix; Windows `WM_CLOSE` to the main window is missing
+- [x] Terminate
+- [ ] Terminate process tree
+- [ ] Restart
+- [x] Suspend
+- [x] Resume
+
+- [x] "End task" and "Terminate" remain semantically distinct — the first asks, the second does not.
+      A UI that blurs them loses somebody's unsaved work.
+
+## 25.2 Scheduling
+
+- [x] Set priority
+- [x] Set nice value
+- [ ] Set scheduling class
+- [ ] Set processor affinity
+- [ ] Set CPU set
+- [ ] Set I/O priority
+- [ ] Set page priority
+- [ ] Enable/disable efficiency mode or platform QoS
+
+## 25.3 Navigation
+
+- [ ] Open properties (§26)
+- [x] Expand / collapse tree
+- [ ] Go to parent
+- [ ] Go to children
+- [ ] Go to owning service
+- [ ] Go to package
+- [ ] Go to executable
+- [ ] Reveal in file manager
+- [ ] Open file properties
+- [x] Copy path
+- [x] Copy command line
+- [ ] Search Internet
+- [ ] Inspect binary (§53)
+
+## 25.4 Diagnostics
+
+- [ ] Create memory dump — **baseline Windows parity requirement**; Task Manager has it
+- [ ] Analyse wait chain — **baseline Windows parity requirement**
+- [x] Inspect threads
+- [ ] Inspect stacks (§30)
+- [x] Inspect modules
+- [x] Inspect handles / descriptors
+- [ ] 🟡 Inspect memory mappings — `maps` is parsed, nothing displays it
+- [x] Inspect environment
+- [ ] Inspect token / security context
+- [x] Inspect network connections
+- [ ] Inspect windows
+- [ ] Inspect services
+
+## 25.5 Memory — expert
+
+- [ ] Trim working set
+- [ ] Read memory
+- [ ] Save memory range
+- [ ] Search readable memory
+- [ ] Inspect mapped region
+
+- [ ] Direct modification of another process's memory is classified expert/debugging and **disabled
+      by default** — the only feature here requiring a deliberate per-session opt-in
+
+## 25.6 Modules
+
+- [ ] View module
+- [ ] Reveal module file
+- [ ] Verify signature
+- [ ] Hash file
+- [ ] Open binary inspector
+- [ ] Search reputation
+- [ ] Copy path
+- [ ] Inspect mapped memory
+- [ ] Unload module — expert-only, with an explicit instability warning
+
+---
+
+# 26. Process properties window
+
+- [ ] Double-click or Properties opens a **persistent** inspector (it does not close on refresh)
+- [ ] Tabs whose capability is unavailable are hidden **or** disabled by user preference — the
+      preference matters, because hidden and disabled answer different questions ("can this machine
+      do it" versus "get out of my way")
+
+Tabs:
+
+- [ ] General (§27)
+- [ ] Performance (§28)
+- [ ] CPU
+- [ ] Memory
+- [ ] I/O
+- [ ] Threads (§29)
+- [ ] Modules (§31)
+- [ ] Handles / resources (§32)
+- [ ] Memory map (§34)
+- [ ] Network (§40)
+- [ ] GPU (§19)
+- [ ] Security (§36)
+- [ ] Environment (§37)
+- [ ] Jobs / cgroups / containers (§38)
+- [ ] Windows (§39)
+- [ ] Services (§41)
+- [ ] Runtime (§80)
+- [ ] Strings (§35)
+- [ ] Timeline (§63)
+
+The engine behind seven of these already works. What is missing is the window.
+
+---
+
+# 27. General process properties
+
+- [ ] Icon, name, PID, PPID, start time, running duration, state, session, user, architecture,
+      executable path, command line, current directory, parent process, application identity,
+      package/bundle, version, company, description, signer, signature status, file hashes, file
+      size, creation/modification timestamps, runtime, service associations, container/cgroup/job
+      associations
+- [ ] Buttons: Copy · Reveal executable · File properties · Verify · Inspect binary
+
+# 28. Performance process properties
+
+- [ ] Historical graphs for CPU, private/commit, resident/working set, I/O, disk, network, GPU,
+      handles/descriptors and thread count
+- [ ] Time windows: 60 s · 5 min · 15 min · 1 h · retained-history limit
+- [ ] Hover values
+- [ ] Keyboard-accessible point inspection
+
+The 60-second ring exists (§8.2). The longer windows need the decimating ring from §85.
+
+---
+
+# 29. Threads view
+
+The engine enumerates threads on both platforms; the table shows a subset.
+
+- [x] Thread ID
+- [x] State
+- [ ] CPU %
+- [x] CPU time
+- [ ] User CPU time
+- [ ] Kernel CPU time
+- [ ] Cycles
+- [ ] Cycles delta
+- [ ] Context switches
+- [ ] Context-switch rate
+- [ ] Start time
+- [ ] 🟡 Start address
+- [ ] Resolved start module
+- [ ] Resolved start symbol
+- [ ] Current instruction / address
+- [x] Priority
+- [ ] Base priority
+- [ ] Scheduling policy
+- [ ] Ideal processor
+- [ ] Current / last CPU
+- [ ] Affinity
+- [ ] Wait reason
+- [ ] Wait duration
+- [ ] Kernel/user indicator
+- [ ] Stack usage
+- [ ] TEB / TLS information
+- [ ] Name — per-thread `comm` on Linux is nearly free; this should land early
+- [ ] Description
+- [ ] Service association
+- [ ] AppDomain / runtime context
+
+Actions:
+
+- [ ] Suspend thread
+- [ ] Resume thread
+- [ ] Terminate thread — **labelled dangerous** (§69 class 3)
+- [ ] Set priority
+- [ ] Set affinity
+- [ ] View stack
+- [ ] Copy
+- [ ] Go to start module
+- [ ] Resolve symbols
+- [ ] Save stack
+
+# 30. Stack viewer
+
+- [ ] Native stacks
+- [ ] Symbols when available
+- [ ] Module + offset fallback
+- [ ] Source filename and line when symbols provide it
+- [ ] Kernel frames where permissions permit — **see §4.1: without a driver, ours stop at the
+      user/kernel boundary and say so**
+- [ ] Managed runtime frames
+- [ ] Mixed native/managed stacks
+- [ ] Columns: frame · address · symbol · module · source · source line · displacement · frame type
+- [ ] Actions: refresh · copy frame · copy stack · resolve symbols · open module · save stack
+- [ ] **Symbol loading is asynchronous** — a symbol-server round trip is never on the UI thread
+
+# 31. Modules / loaded images view
+
+Enumeration works on both platforms (Toolhelp32; `/proc/pid/maps`).
+
+- [x] Name
+- [x] Path
+- [x] Base address
+- [x] Size
+- [ ] End address
+- [ ] Entry point
+- [ ] Architecture
+- [ ] Module type
+- [ ] Load count
+- [ ] Load time
+- [ ] Load reason
+- [ ] File size
+- [ ] File modification time
+- [ ] Version
+- [ ] Description
+- [ ] Company
+- [ ] Product
+- [ ] Signature status
+- [ ] Signer
+- [ ] SHA-256
+- [ ] ASLR
+- [ ] CFG
+- [ ] 🟡 Executable flag — in `maps`, not surfaced
+- [ ] 🟡 Writable flag — as above
+- [ ] 🟡 Mapped / shared — as above
+- [x] Backing file
+- [ ] Runtime classification
+
+- [x] Windows enumerates DLLs and mapped images; Unix maps the concept to shared objects and
+      executable mappings
+
+# 32. Handles / descriptors / resources view
+
+Enumeration works on both platforms, including the name resolution that deadlocks on synchronous
+named pipes (§6.1).
+
+- [x] Resource type
+- [x] Native type
+- [x] Handle / FD identifier
+- [x] Name / path
+- [ ] Access rights
+- [ ] Flags
+- [ ] Object address
+- [ ] Reference count
+- [ ] File offset
+- [ ] File type
+- [ ] Device
+- [ ] 🟡 Inode
+- [ ] 🟡 Socket endpoint
+- [ ] Creation / open time
+- [ ] Target process
+
+Categories — Windows: files, directories, registry keys, processes, threads, events, mutexes,
+sections, jobs, tokens, desktops, window stations, pipes, ports, transactions, devices. Linux/macOS:
+files, directories, sockets, pipes, event descriptors, devices, shared memory, process descriptors,
+kernel/event interfaces.
+
+- [ ] 🟡 Resource categories as above — the types are read; the grouping is not built
+
+Actions:
+
+- [ ] Copy
+- [ ] Reveal / open path
+- [ ] Resource properties
+- [ ] Go to owning process
+- [ ] Close resource — **strong warning** (§69 class 3)
+
+- ∅ Closing a descriptor in another process on Linux — no supported mechanism exists; offering it
+  would be a lie dressed as a feature
+
+# 33. Find handles / files / modules / resources
+
+The question this answers — "which process is using this file?" — is one of the two or three reasons
+people install Process Explorer at all.
+
+- [ ] Search targets: resource/handle names · file descriptors · executable paths · loaded modules ·
+      memory mappings · sockets · service names · process names · command lines
+- [ ] Modes: substring · wildcard · regex · exact · case-sensitive
+- [ ] Results: process · PID · resource type · identifier · name/path · access · user
+- [ ] Double-click navigates to the process **and** the resource
+
+---
+
+# 34. Memory map
+
+`/proc/pid/maps` is parsed; nothing displays it.
+
+- [ ] Columns: start · end · size · state · type · protection · allocation protection ·
+      private/shared · committed · resident · dirty · executable · writable · copy-on-write ·
+      backing file · module · region classification · NUMA node · huge-page state · guard-page
+      state · stack owner · heap association
+- [ ] Actions: inspect bytes · save region · search strings · go to mapped file/module ·
+      copy address · copy range
+
+# 35. Strings view — expert
+
+- [ ] Scan accessible memory or executable files for ASCII, UTF-8 and UTF-16
+- [ ] Configurable minimum length
+- [ ] Filters: executable image only · private memory · mapped memory · specific region · regex ·
+      substring
+- [ ] **The UI warns that a full process scan is expensive before starting one, not after**
+
+# 36. Security / token view
+
+Windows:
+
+- [ ] User SID · groups · restricted SIDs · privileges and their state · integrity level ·
+      elevation · virtualisation · AppContainer · capabilities · claims/security attributes ·
+      token type · impersonation · session · protection level · process mitigations
+
+Linux — most of this is already in `/proc/pid/status`, which the sampler already reads:
+
+- [ ] UID / eUID / sUID / fsUID and GID equivalents
+- [ ] Supplementary groups
+- [ ] Capabilities
+- [ ] SELinux context
+- [ ] AppArmor profile
+- [ ] seccomp state
+- [ ] Namespaces
+- [ ] no-new-privileges
+
+macOS:
+
+- [ ] UID/GID · code-sign identity · entitlements · hardened runtime · sandbox
+
+- ∅ Modifying tokens or capabilities — explicitly not a baseline requirement, and not planned
+
+# 37. Environment view
+
+- [x] Variables read on both platforms — PEB walk (W), `/proc/pid/environ` (L)
+- [x] Displayed as name / value
+- [ ] Search
+- [ ] Copy name / copy value / copy row
+- [ ] Export
+- [ ] Reveal full value
+
+- [x] **Values are collected only when requested.** An environment block routinely holds
+      credentials, and §71 would not pay for reading one per process per second even if it were
+      harmless.
+- [x] Potential secrets are never uploaded as telemetry — trivially guaranteed: there is no telemetry
+
+# 38. Jobs / cgroups / containers
+
+Windows job objects:
+
+- [ ] Job name · process membership · CPU limits · memory limits · process limits · UI restrictions ·
+      affinity · scheduling · accounting
+
+Linux cgroups:
+
+- [x] cgroup path
+- [ ] Hierarchy
+- [ ] Controllers
+- [ ] CPU limits
+- [x] Memory limit
+- [ ] Current memory usage
+- [ ] I/O limits
+- [ ] Process membership
+- [ ] Pressure metrics (PSI)
+
+Containers:
+
+- [ ] Runtime · container ID · locally resolvable name · namespaces · resource limits
+
+# 39. Windows / UI objects
+
+- [ ] Window title · native window ID/handle · process · thread · class · state · visible ·
+      minimized · maximized · responding · bounds · desktop/workspace · monitor · parent/owner
+- [ ] Actions: bring to foreground · minimize · maximize · restore · close · inspect properties
+
+Windows has `EnumWindows`. X11 has `_NET_CLIENT_LIST`. **Wayland has nothing** — by design, a Wayland
+client cannot enumerate other clients' surfaces.
+
+- [ ] This page reports `n/a` with an explanation on a Wayland session rather than appearing
+      mysteriously empty for half of all Linux users
+
+# 40. Network view
+
+Endpoints are enumerated on both platforms and attributed to processes.
+
+- [x] Process
+- [x] PID
+- [ ] User
+- [x] Protocol
+- [x] Address family
+- [x] State
+- [x] Local address
+- [x] Local port
+- [ ] Local hostname
+- [x] Remote address
+- [x] Remote port
+- [ ] Remote hostname
+- [ ] Service name
+- [ ] Interface
+- [ ] Connection creation time
+- [ ] Connection age
+- [ ] Bytes sent / received
+- [ ] Send rate / receive rate
+- [ ] Packets sent / received
+- [ ] Retransmissions
+- [ ] Latency / RTT
+- [ ] Owning service
+- [ ] Container / cgroup
+- [ ] Firewall / security context
+
+Protocols:
+
+- [x] TCP
+- [x] UDP
+- [x] IPv4
+- [x] IPv6
+- [ ] Unix / local sockets as a separate native category
+
+Actions:
+
+- [ ] Go to process
+- [ ] Process properties
+- [ ] Copy endpoint
+- [ ] Resolve hostname
+- [ ] Disable hostname resolution
+- [ ] Close connection where natively supported
+- [ ] Terminate owner
+- [ ] Search remote endpoint
+
+- [ ] **Hostname resolution is asynchronous and globally disableable** — a blocking DNS lookup in a
+      table that refreshes every second is a hang waiting to happen, and on some networks it is also
+      a disclosure
+
+# 41. Services view
+
+Unbuilt on every platform, and the largest single gap in this document.
+
+Shared columns:
+
+- [ ] Name · display name · description · state · startup type · enabled · PID · process ·
+      user/account · service type · binary/command · arguments · dependencies · dependents ·
+      failure state · start time · last state change · platform provider · unit/domain
+
+Windows-specific:
+
+- [ ] Service type · service group · accepted controls · error control · start account ·
+      delayed start · trigger information · required privileges · preshutdown timeout ·
+      key modification time · driver service indicator
+
+systemd-specific:
+
+- [ ] Unit name · load state · active state · sub-state · unit file state · main PID · control PID ·
+      fragment path · description · activation timestamp · restart policy
+
+launchd-specific:
+
+- [ ] Label · domain · PID · status · executable/program · arguments · keep-alive · run-at-load
+
+Actions:
+
+- [ ] Start · stop · restart · pause/continue where native · enable · disable · reload
+- [ ] Open configuration · reveal executable · go to process · properties · copy ·
+      inspect dependencies
+- [ ] Creating and editing services — deferred to a later release
+
+systemd is reachable over D-Bus without a helper for read-only queries; the control verbs go through
+the privileged helper (§68).
+
+# 42. Startup applications
+
+- [ ] Columns: name · publisher · enabled · status · startup impact · startup CPU · startup disk I/O ·
+      command · executable · location/source · user scope · last launch · file path · signature ·
+      architecture
+
+Sources:
+
+- [ ] Windows: registered startup applications · Startup folders · Run registry mechanisms ·
+      supported startup tasks
+- [ ] Linux: XDG autostart · systemd user services categorised as login startup
+- [ ] macOS: login items · user launch agents
+
+Actions:
+
+- [ ] Enable · disable · reveal executable · reveal configuration · properties · run now
+- [ ] Delete entry — only where safe and explicit
+
+- [ ] Impact categories are computed only where a **reliable measurement** exists; where it does not,
+      the column says so rather than inventing a "Medium"
+
+# 43. Users and sessions
+
+- [ ] Columns: user · full name · session ID · session type · state · login time · idle time ·
+      last input · terminal · remote host · CPU · memory · disk · network · GPU · process count
+- [ ] Rows expand to the processes owned by that user
+- [ ] Actions: disconnect session · log off · send notification where native · view processes ·
+      copy session information
+- [ ] Destructive session actions require confirmation (§90)
+
+# 44. Application / usage history
+
+- [ ] Metrics: application · executable identity · publisher · CPU time · foreground CPU time ·
+      background CPU time · disk read · disk write · network sent · network received ·
+      metered-network usage · GPU time · average memory · peak memory · launch count ·
+      cumulative runtime · last launch · history start date
+- [ ] Controls: enable/disable history · reset · export · retention period
+- [ ] **Off by default.** A file recording which applications a person ran and for how long is
+      surveillance if it appears without being asked for, however useful it is when it is asked for.
+
+---
+
+# 45. Performance page
+
+A system overview exists with per-core meters and totals; the resource selector and the large graph
+do not.
+
+- [ ] Vertical resource selector
+- [ ] Large detailed graph
+- [ ] Summary cards with compact sparklines and current values
+
+Resources:
+
+- [ ] CPU (§46)
+- [ ] Memory (§47)
+- [ ] Each disk (§48)
+- [ ] Each network adapter (§49)
+- [ ] Each GPU (§50)
+- [ ] Battery
+- [ ] Optional sensors and devices
+
+- [ ] This page is reachable by clicking the total CPU / memory / swap / I/O readouts
+
+# 46. CPU performance
+
+- [ ] Processor name / model
+- [ ] Architecture
+- [x] Utilisation
+- [ ] Current speed / frequency
+- [ ] Base speed
+- [ ] Sockets / packages
+- [ ] Physical cores
+- [x] Logical processors
+- [ ] NUMA nodes
+- [ ] Virtualisation support / state
+- [ ] L1 / L2 / L3 cache
+- [x] Process count
+- [x] Thread count
+- [ ] Handle / resource count
+- [x] Uptime
+- [ ] Context switches per second
+- [ ] Interrupts per second
+- [ ] DPC-like kernel activity
+- [ ] Load averages — `/proc/loadavg`, nearly free
+
+Graph modes:
+
+- [x] Overall
+- [x] Logical processors
+- [ ] Physical cores
+- [ ] NUMA nodes
+- [ ] User vs kernel / system
+
+`/proc/cpuinfo` and `CPUID`/registry supply make, model and speed; DMI (`/sys/class/dmi`) supplies
+socket and cache topology.
+
+# 47. Memory performance
+
+- [x] Total physical memory
+- [ ] Usable memory
+- [x] Used / in use
+- [x] Available
+- [ ] Free (as distinct from available)
+- [x] Cached
+- [ ] 🟡 Buffers
+- [x] Committed
+- [ ] Commit limit
+- [x] Swap / pagefile used
+- [x] Swap / pagefile total
+- [ ] Compressed
+- [ ] Kernel memory
+- [ ] Paged pool total
+- [ ] Nonpaged pool total
+- [ ] Hardware reserved
+- [ ] Memory pressure
+- [ ] **Memory speed**
+- [ ] **Channels**
+- [ ] **Form factor**
+- [ ] **Slots used / available**
+- [ ] NUMA distribution
+
+The four in bold are the Task-Manager-style hardware facts. They come from DMI/SMBIOS type-17
+records: `/sys/firmware/dmi/tables` on Linux, which is root-readable and therefore a helper call, and
+`GetSystemFirmwareTable` on Windows.
+
+Graphs:
+
+- [ ] Physical-memory usage
+- [ ] Committed memory
+- [ ] Composition bar
+- [ ] Memory pressure
+- [ ] Swap
+- [ ] Cache
+
+# 48. Disk performance
+
+For each physical disk or device:
+
+- [ ] Friendly name · model · serial where permitted · media type · SSD/HDD/NVMe · bus/interface ·
+      capacity · formatted capacity · mounted volumes · system-disk indicator · page/swap indicator
+- [ ] Active time · read rate · write rate · read IOPS · write IOPS · average response time ·
+      queue length · read latency · write latency · cumulative reads · cumulative writes
+
+Sources: `/proc/diskstats`, `/sys/block/*/queue/rotational`, `/sys/block/*/device/model`;
+`IOCTL_STORAGE_QUERY_PROPERTY` and the disk performance counters on Windows.
+
+- [ ] Optional hardware-health plugin: temperature · wear · SMART/NVMe health · remaining life
+- [ ] Hardware health is **separately permissioned**, because platform coverage varies too much for
+      it to be a baseline promise
+
+# 49. Network adapter performance
+
+- [ ] Name · description · type · interface index · state
+- [ ] Link speed · negotiated speed · utilisation
+- [ ] Send rate · receive rate · packets/sec · errors · drops
+- [ ] MTU · MAC address · IPv4 addresses · IPv6 addresses · gateway
+- [ ] DNS servers where readable
+- [ ] Wi-Fi SSID and signal strength where permitted
+- [ ] Graph modes: total · send vs receive
+
+Sources: `/sys/class/net/*` and `/proc/net/dev`; `GetIfTable2` and `GetAdaptersAddresses`.
+
+# 50. GPU performance
+
+- [ ] Adapter name · vendor · device · driver
+- [ ] Memory totals · dedicated memory · shared memory · current dedicated usage · current shared usage
+- [ ] Overall utilisation
+- [ ] Per-engine utilisation: compute · graphics · copy · encode · decode
+- [ ] Temperature, power and clock where available
+- [ ] **OS-provided data is separated from vendor-specific sensor extensions**, and vendor plugins
+      cannot stall a sample or crash the sampler
+
+# 51. System activity view — expert
+
+- [ ] Top CPU processes
+- [ ] Top memory processes
+- [ ] Top disk readers
+- [ ] Top disk writers
+- [ ] Top network senders
+- [ ] Top network receivers
+- [ ] Top GPU processes
+- [ ] Process creation rate
+- [ ] Process termination rate
+- [ ] Context-switch rate
+- [ ] Thread creation
+- [ ] Disk activity
+- [ ] Network activity
+- [ ] Clicking any top-process entry navigates to that process
+
+# 52. Disk activity view
+
+- [ ] Columns: process · PID · operation · file/path · read/write · offset · size · latency ·
+      throughput · timestamp
+- [ ] Continuous high-volume tracing is explicitly enabled by the user
+- [ ] …and **exposes an overhead warning**
+
+eBPF on Linux (a privileged helper call); an ETW session on Windows.
+
+# 53. Binary inspector
+
+Read-only. PE, ELF and Mach-O.
+
+- [ ] Summary · headers · sections/segments · imports · exports · dependencies · symbols · strings ·
+      resources · signatures · hashes · debug information · security properties
+- [ ] PE: DOS/NT headers · optional header · data directories · load configuration · delay imports ·
+      CLR metadata presence · manifest · Authenticode · ASLR/DEP/CFG/CET flags
+- [ ] ELF: program headers · section headers · dynamic section · interpreter · symbols ·
+      relocations · build ID
+- [ ] Mach-O: load commands · segments · dylib dependencies · code signature · entitlements
+- [ ] **Read-only in baseline releases** — this is a viewer, not a patcher
+
+# 54. Run / launch new process
+
+- [ ] Executable / command · arguments · working directory · environment overrides
+- [ ] Selected user / account where supported
+- [ ] Elevation
+- [ ] Launch suspended — expert mode
+- [ ] Priority · affinity
+- [ ] Terminal / console behaviour · shell execution · environment inheritance
+- [ ] Recent commands are optional and clearable
+- [ ] **Passwords and secrets are never retained** — a "run as" dialog that remembers a credential is
+      a credential store nobody audited
+
+# 55. System power and session actions
+
+- [ ] Lock · log out · sleep · hibernate · restart · shutdown
+- [ ] **Isolated from ordinary process actions** — meaning not in the same menu as "End task": very
+      different consequences, very similar mouse positions
+- [ ] Confirmation according to user settings
+
+---
+
+# 56. Search
+
+Substring matching over name, PID, user and command line works in both front-ends. The query
+language does not exist.
+
+- [x] Plain substring search
+- [ ] `field:value`
+- [ ] `field=value`
+- [ ] Comparison operators
+- [ ] Quoted strings
+- [ ] Boolean AND / OR / NOT
+- [ ] Regex form
+- [ ] Unit-aware quantities
+- [ ] Search over hidden as well as visible fields
+
+Examples that must parse:
+
+```
+chrome            pid:1234         user:alice        cpu:>50
+memory:>1GiB      port:443         remote:10.0.0.5   unsigned:true
+path:/opt/myapp   service:sshd     state:suspended   runtime:dotnet
+```
+
+- [ ] **The same query syntax works in GUI, TUI and CLI.** This is a constraint on where the parser
+      lives: in `ProcessManager.Core`, over the canonical field IDs of §14–22, with no front-end
+      permitted its own dialect. It is also why the registry is a data structure rather than a switch
+      statement — every field added to it becomes searchable for free.
+
+---
+
+# 57. TUI requirements
+
+The TUI is a first-class product, not a simplified dashboard. It exposes the same field registry and
+all applicable actions.
+
+**Implementation.** A double-buffered diff renderer: each frame is compared against the last and only
+the changed cells are written, with ANSI attributes coalesced per run. This is what makes it usable
+over SSH.
+
+## 57.1 Layout
+
+- [x] Top status bar
+- [ ] 🟡 Left view selector or compact tab row
+- [x] Primary table / tree
+- [ ] Optional lower pane
+- [x] Bottom command / help bar
+
+Responsive breakpoints:
+
+- [x] Full desktop terminal
+- [x] Medium SSH terminal
+- [ ] 🟡 Narrow terminal
+
+## 57.2 TUI process view
+
+- [x] Columns adapt automatically to width
+- [ ] Horizontal scroll
+- [ ] Column sets
+- [x] Hide / show columns
+- [ ] Resize columns
+- [ ] Pin first column
+- [ ] 🟡 Switch friendly / tree / flat mode — tree and flat only
+
+## 57.3 Keyboard model
+
+- [x] `↑/↓` or `j/k` move
+- [x] `←/→` or `h/l` collapse/expand
+- [x] `Enter` properties / open
+- [ ] `Space` select
+- [x] `/` search
+- [ ] `f` advanced filter
+- [x] `s` sort
+- [x] `c` columns
+- [x] `p` pause
+- [x] `r` refresh
+- [ ] `x` action menu
+- [x] `t` terminate / end-task menu
+- [x] `S` suspend / resume
+- [ ] `n` network
+- [ ] `m` modules
+- [ ] `h` handles (contextual)
+- [ ] `T` threads
+- [ ] `g` graphs / performance
+- [x] `?` help
+- [x] `q` close / back / quit according to depth
+- [ ] Bindings are customisable
+
+## 57.4 TUI graphs
+
+- [x] Block graphs — the U+2581–U+2588 eighth-block ramp
+- [ ] Braille graphs where supported
+- [x] Sparklines
+- [ ] Textual min/avg/max/current fallback
+- [x] **No information exists only as graphical colour**
+- [x] ASCII fallback when the locale or terminal cannot show blocks
+
+The block ramp is locale-dependent, which broke CI once: the golden frame was generated under a UTF-8
+locale and compared under `LANG=C`. There is now an explicit `UseBlockCharacters` switch, pinned in
+the capture and asserted by a test that checks both ramps differ *and* each is stable.
+
+## 57.5 Mouse
+
+- [ ] Select
+- [ ] Scroll
+- [ ] Pane resizing
+- [ ] Tab selection
+- [ ] Context / action menu
+- [x] Keyboard functionality remains complete without a mouse
+
+---
+
+# 58. GUI / TUI parity contract
+
+- [ ] 🟡 Every view declares its GUI representation, TUI representation, CLI equivalent, canonical
+      fields and canonical actions
+- [ ] A feature is not complete until GUI and TUI parity exists, unless explicitly marked
+      "GUI-only interaction"
+
+Permitted GUI-only interactions: locating a native desktop window by dragging a crosshair; native
+drag and drop.
+
+- [ ] The information such a feature retrieves is still accessible elsewhere
+
+---
+
+# 59. CLI
+
+- [x] `procman ps`
+- [x] `procman ps --tree`
+- [ ] 🟡 `procman ps --columns pid,name,cpu,memory`
+- [ ] `procman ps --filter 'cpu > 50'`
+- [ ] `procman process 1234`
+- [ ] `procman process 1234 threads`
+- [ ] `procman process 1234 modules`
+- [ ] `procman process 1234 handles`
+- [ ] `procman process 1234 network`
+- [x] `procman kill 1234`
+- [x] `procman suspend 1234`
+- [x] `procman resume 1234`
+- [ ] `procman service list`
+- [ ] `procman net`
+- [ ] `procman perf cpu`
+
+Output formats:
+
+- [x] human
+- [x] table
+- [ ] JSON
+- [ ] JSON Lines
+- [ ] CSV
+- [ ] TSV
+- [ ] Stable, versioned JSON schemas
+
+# 60. Local API
+
+- [ ] Snapshot queries · entity details · historical metrics · actions · event subscription
+- [ ] Transport: local IPC — Unix domain socket or named pipe
+- [ ] Optional localhost HTTP/gRPC layer
+- [x] **The privileged helper exposes no network listener** — it speaks length-prefixed binary frames
+      over redirected stdio and nothing else
+
+# 61. Exports
+
+- [ ] CSV · TSV · JSON · JSON Lines · Markdown table · plain text
+- [ ] Scopes: selected cells · selected rows · visible table · all matching rows · process report ·
+      system report · historical metrics
+- [ ] Process-report export includes timestamp and host metadata
+
+# 62. Snapshot / diagnostic bundle
+
+- [ ] Bundle contains: system summary · process list · process tree · service list · network list ·
+      startup list · selected process details · performance counters · version · collection timestamp
+- [ ] **Before export the UI warns about sensitive fields** — usernames, command lines, environment
+      variables, paths, IP addresses
+- [ ] The user can redact categories
+
+# 63. Event timeline
+
+- [ ] Records: process start · process exit · service state change · connection appeared/disappeared ·
+      high CPU alert · high memory alert · executable/signature change · user action ·
+      privilege escalation of ProcessManager itself
+- [ ] Columns: time · event · process · PID · details · severity/category
+- [ ] Configurable retention
+
+# 64. Notifications
+
+- [ ] Process started · process terminated · named process started
+- [ ] CPU / memory / disk / network above threshold
+- [ ] Service stopped · process became unresponsive
+- [ ] Unsigned process started · reputation warning
+- [ ] Rules are explicit and stored locally
+
+# 65. Tray / menu bar
+
+- [ ] Indicators: CPU · memory · disk · network · GPU
+- [ ] Click opens a compact popover with current values and top CPU/memory/disk/network processes
+- [ ] Double-click opens the full application
+- [ ] Individual indicators can be enabled and disabled
+
+# 66. Persistent process notes and rules
+
+- [ ] Attach: note/comment · colour · category · expected publisher · preferred priority ·
+      preferred affinity · preferred I/O priority
+- [ ] Matching by: executable path · executable hash · process name · command-line pattern · signer
+- [ ] **Automatic application of scheduling settings is opt-in**
+
+# 67. Settings
+
+Nothing here is implemented: **no setting survives a restart today.** Persisted settings are a
+prerequisite for §11's column sets, §57.3's custom bindings and §23's colours.
+
+- [ ] **General** — launch behaviour · start minimised · start at login · default page ·
+      confirm destructive actions · auto-elevation behaviour
+- [ ] **Appearance** — theme · density · font · icon size · row height · graph grid · highlighting
+- [ ] **Refresh** — interval · paused on start · history length · refresh behaviour
+- [ ] **Processes** — process mode · tree behaviour · child aggregation · show system processes ·
+      show other users · highlight configuration
+- [ ] **Columns** — saved column sets · default sets per view
+- [ ] **Symbols** — enable resolution · search paths · cache directory
+- [ ] **Reputation** — disabled by default · provider configuration · privacy disclosure
+- [ ] **History** — enable persistence · retention · storage size
+- [ ] **Privacy** — telemetry · crash reporting · recent commands · saved searches
+- [ ] **TUI** — key bindings · mouse · colours · Unicode/Braille graphs
+- [ ] **Advanced** — expensive collectors · debugging functionality · plugins · experimental APIs
+
+---
+
+# 68. Privilege model
+
+- [x] Starts with ordinary user rights
+- [x] Views display as much information as is accessible
+- [x] The flow is: user requests action → the program explains why elevation is required →
+      the privileged helper performs one narrowly scoped operation → the result returns
+- [x] **Users are never encouraged to run the whole GUI as administrator or root**
+- [x] Privileged communication authenticates the requesting local user
+- [x] …and is structurally immune to command injection
+
+## 68.1 Shape
+
+A separate executable (`ProcessManager.Elevated`), launched on demand through `pkexec` or a UAC
+prompt, speaking length-prefixed binary frames over redirected stdio. It is not a daemon, it holds no
+socket, and it exits when the client does.
+
+- [x] **Opcode allowlist.** The helper implements a fixed, small set of operations. There is no
+      "run this command" opcode, so there is nothing to inject into: the wire format carries an
+      opcode and typed arguments, never a string that becomes a command line.
+- [x] **Identity revalidation.** Every request revalidates the target against `ProcessKey`, so a PID
+      that was recycled between the request and the action cannot be acted on by mistake.
+- [x] A polkit policy file ships in `packaging/` so the prompt names the action rather than saying
+      "an application wants to run as root"
+
+## 68.2 Degradation
+
+- [x] Every capability the helper would provide has a defined unprivileged fallback, and the UI shows
+      `—` with an explanation rather than an error
+
+---
+
+# 69. Action safety classification
+
+Every mutation has a class.
+
+- [ ] 🟡 **Class 0 — read-only.** Copy, search, properties, reveal path. No confirmation.
+- [ ] 🟡 **Class 1 — reversible or low impact.** Change priority, change affinity, suspend.
+      Optional confirmation.
+- [ ] 🟡 **Class 2 — potential data loss.** Terminate process, stop service, log out user, disable
+      startup item. Confirmation configurable, default enabled for high-value and system targets.
+- [ ] **Class 3 — expert / unsafe.** Close a foreign process's resource, terminate a thread, unload a
+      module, modify process memory. Always an explicit warning.
+- [ ] System-critical process actions display additional warnings and may be blocked where the OS
+      itself prohibits them
+
+The classes exist in the action broker; the confirmation policy that reads them does not.
+
+# 70. Reputation and signature verification
+
+- [ ] The program distinguishes, and never conflates: hash calculation · local signature verification ·
+      trust-chain verification · online reputation query · file submission
+
+Status vocabulary — exactly these, no synonyms:
+
+- [ ] Verified
+- [ ] Valid but untrusted chain
+- [ ] Unsigned
+- [ ] Invalid signature
+- [ ] Revoked
+- [ ] Expired
+- [ ] Verification error
+- [ ] Not checked
+
+- [ ] Online providers are plugins or integrations with explicit privacy controls
+
+---
+
+# 71. Performance requirements
+
+With deep tracing, reputation checking and symbol resolution disabled.
+
+## 71.1 Startup
+
+- [ ] 🟡 TUI first useful process list < 300 ms
+- [ ] 🟡 GUI first useful process list < 750 ms
+- [x] Expensive metadata fills asynchronously
+
+Neither startup figure is measured yet; both are believed met on the strength of the sampling numbers
+below, which is not the same thing as knowing.
+
+## 71.2 Sampling overhead
+
+- [x] Median collector CPU below 0.5 % of one modern core at 1 s refresh
+- [x] Sustained below 1 % at ordinary process counts
+
+Measured, per 1000 processes: **33 ms of CPU locally, 51 ms on a 4-core CI runner.** The build gate
+is set at 90 ms so it fails on a regression rather than on runner variance; the *target* remains
+25 ms and is honestly recorded as unmet.
+
+The road here is worth keeping, because every step was a measurement rather than a guess:
+
+| Change | ms / sample | bytes / sample |
+|---|---:|---:|
+| Managed file APIs | 3000 | 199 598 |
+| Raw syscalls, pooled buffers, UTF-8 byte paths | 120 | 1 100 |
+| fd counting moved out of the sample loop (85 µs/process) | 62 | 320 |
+| `smaps_rollup` made opt-in (0.8–4 ms/process) | 38 | 86 |
+
+- [x] **Allocation budget: 0–86 bytes per sample.** A `ProcessRecord` is a mutable struct in a pooled
+      array for exactly this reason.
+
+## 71.3 Memory
+
+- [x] TUI below 60 MB baseline
+- [x] GUI below 150 MB baseline
+
+## 71.4 UI responsiveness
+
+- [x] No synchronous operation over 100 ms on the UI thread
+- [ ] 🟡 Sort/filter of 10 000 rows under 100 ms — measured at 1000, not 10 000
+- [x] Scrolling stays interactive while background metadata resolves
+
+## 71.5 Large resource sets
+
+- [ ] Virtualised tables
+- [ ] 10 000 process rows
+- [ ] 100 000 thread / module / result rows
+- [ ] 1 000 000 handle / resource-search results via streaming or pagination
+
+---
+
+# 72. Data correctness requirements
+
+## 72.1 Counter semantics
+
+- [ ] 🟡 Every numeric metric documents its source, sampling interval, unit, cumulative-vs-instantaneous
+      nature, normalisation algorithm, overflow behaviour and unavailable behaviour — this is the
+      registry metadata of §5.1, and it is incomplete
+
+## 72.2 Identity
+
+- [x] PID reuse cannot attach an exited process's history to a new process
+- [x] Canonical identity is PID **plus** process start time (`ProcessKey`)
+
+## 72.3 Unknown is a value
+
+The rule the rest of the document depends on. A field is never zero because we failed to read it.
+
+- [x] `UnknownReason` is carried by every counter and rate: `NotPermitted`, `NotSupportedOnPlatform`,
+      `ProcessExited`, `NotSampledYet`, `CounterInvalid`
+- [x] Each renders distinctly — `—`, `n/a`, `×`, `…`, `?` — and each has a one-line explanation
+- [x] Both front-ends render them through one shared formatter, so a value reads the same in the
+      window and in the terminal
+- [ ] 🟡 The explanation is reachable everywhere it is shown — currently only in the detail pane
+
+# 73. Sampling and race conditions
+
+Processes terminate between enumeration and inspection. This is normal, not an error.
+
+- [x] A process exiting mid-sample is an ordinary outcome, never an exception path
+- [x] Field states: available · permission denied · process exited · unsupported · collection
+      failed · pending
+- [x] Normal tables show an unobtrusive placeholder
+- [ ] 🟡 Diagnostics expose the distinctions
+
+Two race bugs found and fixed, both worth remembering: `/proc` permission failures surface at
+`read(2)` and not at `open(2)`, so an `open` that succeeded proves nothing; and a `UNICODE_STRING`
+buffer pointer from a bulk Windows query must be treated as an offset into the query buffer, not an
+absolute address, or it dangles the moment the buffer moves.
+
+---
+
+# 74. Accessibility
+
+GUI:
+
+- [ ] 🟡 Full keyboard operation
+- [ ] Logical tab order
+- [ ] Screen-reader labels
+- [ ] Scalable text
+- [ ] High contrast
+- [ ] System text scaling
+- [x] Non-colour status indicators
+- [ ] Graphs expose textual summaries
+
+TUI:
+
+- [x] Works without colour
+- [x] Never conveys state solely by colour
+- [x] ASCII fallback
+- [ ] Conventional terminal screen readers
+
+# 75. Localisation
+
+- [ ] All user-visible labels are translatable
+- [ ] Dates, times and decimal separators respect locale
+- [x] Technical units use standardised forms consistently
+- [x] Field IDs and CLI flags stay language-neutral and stable
+
+Formatting is currently `InvariantCulture` everywhere, which is a deliberate placeholder: it is
+wrong for display and right for tests, and it must not stay once §75 is implemented.
+
+# 76. Units
+
+- [ ] Memory / storage: automatic · binary KiB/MiB/GiB · decimal kB/MB/GB
+- [ ] Rates: bytes/sec · optional bits/sec for network
+- [x] Time adapts across ns · µs · ms · s · min · h · d
+- [ ] Raw exact values remain available through copy and export
+
+Today: binary units with single-letter suffixes, no setting. Counts scale in thousands rather than
+1024s, because a cycles-per-second figure in kibicycles would be nobody's idea of a reading.
+
+# 77. Logging
+
+- [ ] 🟡 Records startup · backend initialisation · collector failures · privilege-helper requests ·
+      user-requested mutations · plugin failures
+- [ ] **Logs never include full environment blocks, passwords, memory content or secret command
+      arguments** unless debug logging is explicitly enabled
+
+# 78. Audit trail
+
+- [ ] Optional: timestamp · user · action · target · result · privilege used
+- [ ] Enabled for enterprise packaging later
+
+# 79. Plugin system
+
+- [ ] Plugins may contribute fields · collectors · detail tabs · reputation providers ·
+      hardware sensors · exporters · actions · process classifiers · runtime inspectors
+- [ ] Plugins declare supported OSes · privileges · network usage · collection cost · permissions
+- [ ] **Untrusted plugins never inherit privileged-helper access**
+
+A plugin system is in tension with §8.3's AOT rules: dynamic assembly loading is exactly what
+NativeAOT forbids. The likely resolution is out-of-process plugins over the same framed protocol the
+helper uses, which also makes the privilege boundary trivially enforceable.
+
+# 80. Runtime inspection
+
+.NET:
+
+- [ ] Runtime version · managed/native classification · managed threads ·
+      AppDomains/AssemblyLoadContexts · assemblies · managed stack frames · GC metrics where
+      attach-safe
+
+JVM, later:
+
+- [ ] JVM version · Java threads · heap summary · loaded JAR/module information
+
+- [ ] Runtime inspection stays modular, because attaching to a runtime can alter its behaviour
+
+# 81. Recovery / degraded-system mode
+
+A major reason to replace an ordinary task manager is to remain usable when the system is unhealthy.
+
+- [ ] `procman --minimal` disables icons · signatures · symbols · module enumeration ·
+      handle enumeration · history · GPU · hostname resolution · reputation · plugins
+- [ ] Minimal mode prioritises PID · process name · CPU · memory · user · state · terminate
+- [x] The TUI is suitable for recovery shells and SSH sessions
+
+The single-file AOT binary is most of the way to this already: 3.2 MB, no runtime to load, no
+dependencies to be missing on a broken machine.
+
+---
+
+# 82. Process aggregation
+
+- [ ] Collapsed tree nodes may show aggregated CPU · resident memory · private memory · disk I/O ·
+      network I/O · GPU · process count
+- [ ] **Aggregated values are visibly marked as aggregates**, never presented as the parent's own usage
+
+# 83. Process grouping
+
+- [ ] none
+- [x] parent tree
+- [ ] application
+- [ ] executable
+- [ ] user
+- [ ] session
+- [ ] service
+- [ ] container
+- [ ] cgroup
+- [ ] package
+- [ ] publisher
+- [ ] Aggregations follow canonical query rules
+
+# 84. User-defined alerts
+
+- [ ] Rule form: `process.name == "myservice" AND process.cpu.usage > 80% for 30s`
+- [ ] Conditions: greater/less than · equals · contains · regex · appears · disappears · state changes
+- [ ] Actions: visual notification · OS notification · log event
+- [ ] Automatic process termination from alert rules is **not** enabled in baseline releases
+
+# 85. Historical charts
+
+- [x] Every eligible metric has an in-memory ring buffer
+- [x] 60 seconds at high resolution by default
+- [ ] Configurable 5 min · 15 min · 1 h
+- [ ] Persistent history, separate and optional
+- [x] **Graphs distinguish a missing sample from a zero value**
+
+# 86. Selection persistence
+
+- [x] Selection uses stable instance identity, not PID alone
+- [ ] A selected process that exits stays selected during fade-out
+- [ ] Its properties view changes status to terminated
+- [ ] Retained historical graphs remain viewable until the window closes or retention expires
+
+# 87. Process creation / termination visual behaviour
+
+- [ ] Configurable new-process highlight duration
+- [ ] Configurable exited-process highlight duration
+- [ ] Scroll to new process
+- [ ] Do not move the selected process during transient sorting
+- [ ] "Stable sort while interacting" for fast-changing lists
+
+# 88. Error handling
+
+- [x] Access denied, process exited, protected process, unsupported field and stale connection
+      **never** produce a modal dialog during normal refresh
+- [x] Modal errors are reserved for explicit failed user actions, and name the target:
+      "Could not terminate PID 412 because access was denied."
+
+# 89. Context-aware actions
+
+- [ ] 🟡 Only valid actions are enabled — Resume disabled unless suspended; Restart disabled where
+      launch parameters cannot be reconstructed; Start service disabled while running; Stop service
+      disabled where unsupported; Efficiency hidden where the OS lacks an equivalent; Close
+      connection disabled where closure is unavailable
+
+# 90. Confirmation dialog requirements
+
+- [ ] 🟡 A confirmation states the action · target name · PID or service identifier ·
+      likely consequence · whether child processes are included · whether unsaved data may be lost
+- [ ] **No vague "Are you sure?" dialogs**
+
+Model: *"Terminate `editor` (PID 4832)? This forcibly stops the process and may cause unsaved data to
+be lost."*
+
+---
+
+# 91. Source-tool parity matrix
+
+## Windows Task Manager
+
+- [x] Processes
+- [ ] 🟡 Performance
+- [ ] App / usage history
+- [ ] Startup
+- [ ] Users
+- [x] Details
+- [ ] Services
+- [ ] Run new task
+- [x] End task
+- [ ] Restart supported applications
+- [x] Priority
+- [ ] Affinity
+- [ ] Efficiency / QoS
+- [ ] Dumps
+- [ ] Wait chains
+- [x] Process search / filter
+- [ ] Startup enable / disable
+- [ ] User session control
+- [ ] Service controls
+- [ ] Kernel vs user CPU graph
+
+## Process Explorer
+
+- [x] Hierarchical process tree
+- [x] Process ownership / account
+- [x] Highly configurable columns
+- [ ] Process properties window
+- [ ] Lower pane
+- [ ] 🟡 Handles
+- [ ] 🟡 DLLs / mapped files
+- [ ] Search for resource owners
+- [ ] Signature verification
+- [ ] Image metadata
+- [x] CPU / memory / I/O histories
+- [ ] 🟡 Per-process inspection
+
+## System Informer / Process Hacker lineage
+
+- [x] Detailed process tree
+- [x] Resource highlighting
+- [ ] 🟡 System graphs
+- [ ] 🟡 Handles
+- [ ] 🟡 Modules
+- [ ] 🟡 Threads
+- [ ] Stack traces
+- [ ] Services
+- [ ] 🟡 Network connections
+- [ ] Disk activity
+- [ ] GPU data
+- [ ] Memory maps
+- [x] Environment
+- [ ] Security / token information
+- [ ] File / resource ownership search
+- [ ] Advanced process scheduling
+- [ ] Detailed service control
+- [ ] Binary inspection
+- [ ] Runtime inspection
+- [ ] Process notes / rules
+- [x] Configurable columns
+
+## DBC Task Manager
+
+- [x] Clear simple process page
+- [ ] Attractive resource graphs
+- [ ] Resource selector
+- [ ] 🟡 CPU · memory · disks · networks pages
+- [ ] Services
+- [ ] Startup
+- [ ] Users
+- [ ] Minimal cognitive overhead for ordinary users
+
+---
+
+# 92. Cross-platform mapping
+
+| Concept | Windows | Linux | macOS |
 |---|---|---|---|
-| Process list, CPU, memory | `[x]` | `[x]` | `n/a` |
-| Private/PSS memory | `[x]` RssAnon, PSS opt-in | `[x]` commit charge | `n/a` |
-| Per-process I/O bytes | `[x]` owner only | `[x]` | `n/a` |
-| Command line (other users) | `[x]` | `[x]` | `n/a` |
-| Environment block | `[x]` owner, or helper | `[x]` PEB walk, 119 read | `n/a` |
-| Open files / handles | `[x]` owner, or helper | `[x]` 95 seen, 41 named | `n/a` |
-| Modules / mappings | `[x]` | `[x]` 47 seen | `n/a` |
-| Threads | `[x]` | `[x]` from the bulk buffer | `n/a` |
-| Sockets → PID | `[x]` inode join | `[x]` owner pid in the table | `n/a` |
-| Container limits | `[~]` cgroup path only | `n/a` | `n/a` |
-| Suspend / resume | `[x]` SIGSTOP/SIGCONT | `[x]` NtSuspend/ResumeProcess | `n/a` |
-| Priority / affinity | `[x]` | `[x]` | `n/a` |
-| Per-process packet capture | `[ ]` open question 3 | `[ ]` | `n/a` |
+| Process | Process | Process | Process |
+| Thread | Thread | Task/thread | Thread |
+| Handle/resource | HANDLE | FD / kernel resource | FD / Mach resource |
+| Loaded module | DLL / image | ELF / shared object | Mach-O / dylib |
+| Service | SCM service | systemd unit | launchd job |
+| Process group control | Job object | cgroup / process group | process group / launchd |
+| Security identity | Token / SID | UID/GID/capabilities | UID/GID/audit credentials |
+| Sandbox | AppContainer | namespace / seccomp / LSM | App Sandbox |
+| Startup | Startup mechanisms | XDG / systemd user | Login Items / launchd |
+| Resource ownership | Handles | FDs / maps | FDs / maps / ports |
+| Performance source | Native counters | procfs / sysfs | Mach / BSD APIs |
+| Affinity | Yes | Yes | Limited, different semantics |
+| Process priority | Priority class | nice / scheduler | nice / QoS |
+| Process dump | Yes | core dump | core / sample |
+| Wait chain | Native | derived | partial / derived |
+| Code signature | Authenticode | varies by package system | codesign |
+
+- [ ] Platform differences are documented directly in UI help
+
+# 93. Design requirements
+
+- [ ] 🟡 Left navigation · resource summary cards · clear table headers · restrained toolbar ·
+      large readable performance graphs · optional lower pane · compact expert density
+- [x] Original branding and original icons
+- [x] No Microsoft, Sysinternals or System Informer trademarks as navigation labels
+- [x] No pixel-perfect clone of a copyrighted UI
+
+The goal is **interaction familiarity and information density, not impersonation.** This also settles
+the "match Process Explorer 1:1" question: 1:1 in *layout, column vocabulary and interaction* — the
+tree, the lower pane, the column chooser, the colour legend, the double-click properties window — and
+deliberately not in chrome, icons or artwork.
+
+# 94. Default views
+
+**Processes — Basic:** name · PID · status · CPU · memory · disk · network · GPU
+
+- [ ] 🟡 Available except disk, network and GPU
+
+**Processes — Expert:** process · PID · PPID · CPU · private memory · working set · I/O rate · user ·
+start time · command line · signature
+
+- [ ] 🟡 Available except signature
+
+**Security:** name · PID · user · path · signer · signature · integrity/security context · elevated ·
+protection · hash · reputation
+
+- [ ] Blocked on §21
+
+**I/O:** name · PID · read rate · write rate · read bytes · write bytes · other rate · I/O priority
+
+- [ ] 🟡 Available except I/O priority
+
+**Network:** name · PID · send · receive · connections · listening ports
+
+- [ ] Blocked on §18
+
+# 95. Copy behaviour
+
+- [ ] `Ctrl+C` copies selected cells in cell-selection mode, otherwise selected rows using the
+      visible columns
+- [ ] Copy cell · copy row · copy field name/value · copy all properties · copy as JSON
+- [ ] The TUI uses the same serialisation logic
+
+# 96. Host summary
+
+- [x] Hostname
+- [x] OS and version
+- [x] Architecture
+- [x] Uptime
+- [ ] 🟡 CPU — count yes, model no
+- [x] Total memory
+- [ ] Total disk
+- [x] Active user
+- [ ] Privilege state of ProcessManager itself
+- [ ] Virtualisation / container state
+- [ ] Device model
+
+# 97. Privacy requirements
+
+- [x] **Default operation involves no external communication whatsoever.** Not update checks, not
+      symbol servers, not reputation — the program contains no network client at all today, and any
+      future one is opt-in per §70.
+- [x] Crash reporting and usage telemetry are opt-in — there are none
+- [x] Command lines, environment variables, memory, file contents, usernames and paths are treated as
+      potentially sensitive
+
+# 98. Security requirements
+
+The privileged helper:
+
+- [x] Exposes a minimal, fixed set of operations
+- [x] Validates every identifier
+- [x] **Rejects arbitrary command execution** — there is no opcode for it
+- [x] Authenticates the client
+- [x] Uses local protected IPC
+- [x] Loads no plugins
+- [x] Terminates when unused
+
+Hostile process metadata — the program must not be attackable by what it reads:
+
+- [x] Malformed binary metadata
+- [x] Huge command lines
+- [ ] Malicious icons (no icons yet)
+- [x] Unusual Unicode
+- [x] Invalid paths
+- [ ] Corrupted symbols (no symbols yet)
+
+The `comm` backscan in §6.2 is a small instance of this: a process may legitimately be named `)`, and
+a naive parser hands the attacker the parse.
 
 ---
 
-## 6. What is shown and what can be done
+# 99. Testing strategy
 
-### 6.1 Process columns
+**140 tests pass on every leg, under both a UTF-8 and a `C` locale.**
 
-Every column is available in both front-ends; the TUI ships a default subset and lets the rest be
-added. Sortable, reorderable, and persisted.
+## Unit tests
 
-- [ ] Identity: name, PID, PPID, user, session/login, start time, state, command line, image path,
-      working directory, container/cgroup
-- [ ] CPU: CPU %, CPU time, kernel/user split, thread count, context switches/s, priority, nice,
-      affinity mask
-- [ ] Memory: private (PSS/private bytes), working set/RSS, shared, virtual size, swap, peak,
-      page faults/s, memory limit + % of limit when containerized
-- [ ] I/O: read bytes/s, write bytes/s, other/s, totals, open file-descriptor / handle count
-- [ ] Network: connection count, listening ports (a per-process byte rate only with the helper, §8)
-- [ ] Derived: CPU history sparkline in the row, "delta since I started watching" for any counter
+- [x] Counter calculations
+- [x] Delta handling
+- [x] Unit formatting
+- [x] PID reuse
+- [ ] 🟡 Field registry
+- [x] Filters
+- [x] Sorting
+- [ ] Export schemas
 
-### 6.2 Detail views (per process)
+## Fixture replay
 
-- [ ] Overview — the columns above laid out, plus a CPU and I/O plot
-- [ ] Threads — TID, state, CPU %, CPU time, start address/name where the platform gives one
-- [ ] Modules / mappings — path, base, size, permissions, backing file
-- [ ] Handles / open files — type, name, access; files, sockets, pipes, and on Windows the kernel
-      object types
-- [ ] Environment — the block as key/value, copyable
-- [ ] Network — endpoints with state, local/remote, and the resolved service name
+The technique that makes cross-platform testing possible: a captured `/proc` tree and a captured
+Windows query buffer are replayed on **every** platform, so Linux parsing is tested on Windows and
+Windows parsing on Linux.
 
-### 6.3 System overview
+- [x] Recorded `/proc` fixtures with golden expected output
+- [x] Recorded `SystemProcessInformation` buffers, parsed by a type that is not platform-gated
+- [x] Both the raw-syscall and portable-file-access paths run on every leg
+- [x] Fixtures marked `-text` in `.gitattributes` — a Windows checkout once rewrote the line endings
+      and gave a cgroup path a trailing `\r`
 
-- [ ] Per-core CPU history and an aggregate plot
-- [ ] Memory and swap with the cache/buffer breakdown, and the same "limit" awareness as §6.1
-- [ ] I/O and network throughput per device/interface
-- [ ] Load average, uptime, context switches, interrupts, processes/threads running, PSI (Linux)
+## Backend integration tests
 
-### 6.4 Actions
+- [x] Process lifecycle
+- [x] Suspension
+- [x] Termination
+- [x] Priority
+- [ ] Affinity
+- [ ] Services
+- [ ] Startup
+- [x] Network
+- [x] Modules
+- [x] Descriptors
+- [x] Privilege errors
 
-Every action is confirmed before it happens, names its target unambiguously (`name (pid)`), and is
-refused with a reason rather than failing silently.
+## Performance tests
 
-- [ ] End process · end process tree
-- [ ] Suspend · resume
-- [ ] Change priority · change CPU affinity
-- [ ] Open the executable's folder · copy the command line · copy the row
-- [ ] Send an arbitrary signal (Linux)
-- [ ] Refuse, loudly, on PID 1 / `System` / the current process's own critical ancestors: the
-      confirmation for these says what will break, and requires typing the process name.
+- [x] Sampling budget enforced as a build gate (§71.2)
+- [ ] 10 000 processes
+- [ ] 100 000 threads
+- [ ] 1 000 000 resource rows
+- [ ] Rapid process churn
+- [ ] 100 % CPU load
+- [ ] Low-memory state
+- [ ] High-I/O machine
 
-### 6.5 Search
+## UI tests
 
-- [ ] One query, run across process names, command lines, open files/handles, mapped modules and
-      listening ports; results grouped by process and selectable straight into the tree.
-- [ ] Runs on a background thread against a snapshot, cancellable, and reports partial results as
-      they arrive — the handle sweep on a busy Windows machine is not instantaneous.
-- [ ] Available headless: `procman --find <pattern>` prints the same results for scripts.
+- [x] Sorting while data changes — three tests, added after the reordering bug in §12
+- [x] Tree expansion
+- [ ] Selected-process termination
+- [ ] Lower pane
+- [ ] 🟡 Column sets
+- [ ] Accessibility
+- [ ] 🟡 Keyboard operation
 
----
+## TUI tests
 
-## 7. Desktop UI (NativeForms)
+- [x] Golden-frame comparison at fixed dimensions
+- [ ] 🟡 80×24 · 120×30 · 160×50
+- [ ] 256-colour
+- [x] Monochrome
+- [x] UTF-8
+- [x] ASCII fallback
 
-### 7.1 Layout
+## Self-test
 
-- [x] Main window: a `MenuStrip` (View, Sort by, Process), a plot strip (CPU history, memory history,
-      per-core meters), a `SplitContainer` with the `TreeListView` of processes above and a
-      `TabControl` of the §6.2 detail views below, and a status line reporting process count, CPU,
-      memory and the sample cost. Docked, so it follows a resize.
-- [~] The §6.2 tabs are in the pane at the bottom, one process at a time. Opening several in their
-      own windows at once is not done — it is what makes Process Explorer good at comparing two
-      processes, and it needs the pane extracted into a `Form`, which is a small job on top of what
-      is there.
-- [x] Tree/flat toggle, "show all users" and the CPU% convention are in the View menu; sorting is in
-      a Sort menu **and on the headers** — click to sort, click again to reverse, with the direction
-      in the caption. A column chooser picks from the sixteen in `ColumnSet`. `--flat` starts as a
-      sorted list rather than a tree. Persisted layout is still not done (open question 5).
-- [x] Row colouring with the Process-Explorer conventions, plus a **colour legend window** — because
-      a colour no dialog explains is decoration.
-      This was blocked and is not any more: `TreeListView` had no per-row colour hook, so the fix went
-      where the problem was (Hawkynt/NativeForms#8 adds `RowBackColorSelector`, `RowForeColorSelector`,
-      `CellPaint` and `ColumnClick`, with ten tests). `ProcessCategories.Classify` sorts a row into
-      one of eight categories and `RowPalette` gives each a colour, in a light and a dark variant
-      chosen from the theme's own background.
-      **What is deliberately not claimed:** packed, .NET, elevated and store processes. Process Hacker
-      colours those; telling them apart needs information neither probe collects, and a colour that is
-      sometimes right is worse than none. The legend says so out loud.
-- [~] Dark mode follows the OS theme through `ITheme`, and the row palette has a light and a dark
-      variant picked from `FieldBackground`'s perceptual luminance. The *plots* deliberately do not
-      follow it: they are instruments, and an instrument that changes contrast with the desktop is
-      harder to read at a glance than one that always looks the same. Series colours and the meter's
-      amber/red thresholds are fixed for the same reason.
+- [x] `procman --self-test` — 21 checks against live data, cross-validated against the .NET runtime's
+      own view of the current process. Green on Linux and on a real Windows runner (NT 10.0.26100:
+      145 processes, 8 threads, 47 modules, 159 handles of which 42 named, 149 environment variables).
 
-### 7.2 Controls this project must build
+## CI
 
-NativeForms has no plotting controls, so they are ours, owner-drawn against `IGraphics` per its
-[custom-control guide](https://github.com/Hawkynt/NativeForms/blob/main/docs/custom-controls.md):
-
-- [x] `HistoryPlot` — scrolling multi-series time plot with gap support (§3.3), reading a
-      `HistoryRing<Rate>` directly so nothing is copied per frame. Filled area on a black ground with
-      a green graticule, and a brighter line along the top edge so stacked series stay separable
-- [x] `CoreMeterStrip` — one bar per logical core, the htop meter as a widget
-- [x] `Sparkline` — in-cell plots for **CPU, memory and I/O history**, drawn through the toolkit's
-      new `CellPaint` seam. One pixel per sample, newest at the right, gaps left blank.
-      The scales are **shared across rows and decayed, with a floor** (`ProcessHistory`): a plot
-      scaled to its own row's maximum makes an idle process look exactly as busy as a saturated one,
-      a scale that snapped to each sample's peak would make every plot jump when one process spiked,
-      and on an idle machine the peak is noise that a floor keeps from being amplified.
-- [x] `ColorLegend` — the legend window, one swatch and one sentence per category, generated from the
-      same palette the rows use.
-
-### 7.3 Interaction rules
-
-- [ ] Sorting and filtering never reorder rows *while the mouse is over them* — a re-sort that moves
-      a row under the cursor between hover and click is how the wrong process gets killed. Re-sorts
-      pause during a pointer interaction and apply on leave.
-- [x] Selection is by process identity `(pid, startTime)` (§3.2), not by row index. In the desktop UI
-      the node objects themselves are reused across samples, so expansion state survives too; in the
-      terminal UI the selection is re-found by key after every rebuild.
-- [ ] Every destructive action is keyboard-reachable and confirmable without the mouse.
+- [x] 11 jobs, all green: build and test on Linux, Windows and macOS; the AOT single-file publish;
+      the benchmark gate; the self-test on Windows
+- [x] A Wine leg, advisory (`continue-on-error`) — it found the `SemaphoreFullException` in §6.1
+- [x] Screenshots regenerate on manual dispatch and at release, not per push
 
 ---
 
-## 8. Privilege model
+# 100. Release plan
 
-### 8.1 Shape
+## Phase 1 — core replacement · **in progress**
 
-- [x] The UI process **never** runs elevated and never asks to. `procman-helper` is a separate
-      executable, started on demand, exiting with its parent — its input closes when the parent goes,
-      its read returns end-of-stream, and it stops. It has no loop of its own to be stuck in.
-- [x] Linux: launched through `pkexec` with a shipped polkit policy naming the action
-      (`packaging/org.hawkynt.procman.policy`, `auth_admin_keep`). The policy pins the executable
-      path, so an administrator decides what gets elevated rather than the caller.
-- [ ] Windows: **not implemented, and the reason is structural.** Windows cannot both elevate a child
-      and redirect its standard handles in one call — the `runas` verb that raises the UAC prompt
-      refuses redirection — so the pipe of §8.2 has to become a named pipe the elevated child
-      connects back to. The channel reports this plainly rather than silently starting the helper
-      unelevated, which would produce exactly the refusals it was started to avoid.
-- [ ] The helper is started **lazily** — the first time an action or column needs it — and the prompt
-      says which operation asked for it.
+- [x] Windows and Linux process enumeration
+- [ ] macOS process enumeration
+- [x] Common CPU and memory fields
+- [x] Process tree
+- [ ] 🟡 Flat and grouped modes — flat yes, grouped no
+- [x] Terminate
+- [x] Suspend / resume
+- [x] Priority
+- [ ] Affinity
+- [ ] 🟡 Basic Performance page
+- [ ] Network view
+- [ ] Services read and control
+- [ ] Startup
+- [ ] Users / sessions
+- [x] GUI
+- [x] TUI
+- [ ] 🟡 CLI
+- [ ] 🟡 Column registry
+- [ ] 🟡 Filters and search
+- [ ] Exports
 
-### 8.2 Protocol
+## Phase 2 — Process Explorer parity
 
-- [x] A private pipe pair handed to the child at spawn: its **standard input and output**, redirected.
-      No path in `/tmp`, no world-readable FIFO, no port — nothing on the machine can connect to it
-      but the process that started it. This is a simplification of the draft's "`AF_UNIX` socketpair
-      on Linux, anonymous named pipe on Windows": redirected stdio *is* an anonymous pipe pair on
-      both platforms, `pkexec` passes it through, and one mechanism is one thing to get right.
-- [x] Length-prefixed binary frames with a fixed opcode set. The helper **parses**; it never
-      evaluates, never accepts a command string, and never accepts a path — it builds every path
-      itself from a pid it has validated. A length prefix is attacker-controlled, so it is bounds-
-      checked before anything is allocated, and a malformed frame ends the conversation rather than
-      being resynchronised past.
-- [x] Opcodes are the entire privileged surface: `ReadProcIo`, `ReadCmdline`, `ReadEnviron`,
-      `ListFds`, `Terminate`, `Suspend`, `Resume`, `SetPriority`, `SetAffinity`. `StartCapture` and
-      `StopCapture` were in the draft and are **not implemented** — per-process packet capture is
-      open question 3, and an opcode that exists but does nothing is a privileged surface for no
-      benefit. Adding one back is a PRD change.
-- [x] Every request carries `(pid, startTime)` and the helper re-reads the start time from `/proc`
-      itself before acting — it does not trust the caller's copy. A pid reused between the click and
-      the syscall is refused. This is the whole reason the identity key exists, and it is checked
-      end to end by `procman --helper-check`.
-- [x] The helper has no timers, no polling loop and no state at all; it does strictly what it is
-      asked, one request at a time.
+Process properties window · modules · handles/descriptors · lower pane · resource search ·
+signatures · hashes · memory maps · threads · stacks · advanced column sets · dumps · wait analysis.
 
-### 8.3 Degradation
+## Phase 3 — System Informer depth
 
-- [x] Refused elevation is a normal outcome: the channel records why, answers `NotPermitted`, and
-      never retries. The probe and the actions consult it — another user's environment block and open
-      descriptors are asked of the helper when the direct read is refused, and `Terminate`/`Suspend`/
-      `Resume`/`SetPriority`/`SetAffinity` fall through to it on `EPERM`. Deliberately **not** routed
-      through it: the per-sample I/O column, because that would be a round trip to another process
-      per process per second and would cost more than the entire sample (PRD §4). It reports
-      `NotPermitted`, which is the truth about what this user can see.
-- [x] A dead or crashed helper is noticed at the next request and reported once; the program keeps
-      running unprivileged.
+Detailed security · token and capabilities · advanced service properties · runtime plugins ·
+binary inspector · detailed GPU · disk activity · resource timeline · process annotations and
+rules · advanced memory inspection.
+
+## Phase 4 — observability
+
+Persistent history · alert rules · diagnostic bundles · plugin SDK · local API · richer automation.
 
 ---
 
-## 9. Testing strategy
+# 101. Definition of "replacement complete"
 
-The whole point of a probe that returns raw counters (§2) is that almost everything can be tested
-without the OS under it.
+ProcessManager may claim to replace the named applications only when all ten are true:
 
-- [x] **9.1 Fixture replay.** Recorded `/proc` trees checked into the repo as directories; the Linux
-      probe takes its root as a parameter and reads the fixture.
-      **This promise was broken once and is worth the paragraph.** The probe was optimised down to
-      raw `open`/`read`/`close`/`getdents64` for §4, and those do not exist on Windows and only
-      partly on macOS — so the fixture tests, whose entire purpose is to run on every leg, failed on
-      two of three with `DllNotFoundException`. The fix is a file-access seam (`ProcIo`): syscalls on
-      Linux where the speed is the point, the BCL everywhere else where only correctness is. The
-      switch is also exposed as `UsePortableFileAccess`, and the fixture suite runs **twice on every
-      leg** — once down each path — so the portable one is not code that only ever executes where
-      nobody can debug it.
-      Recorded machines, captured once:
-      one hand-authored desktop tree so far, including the pathological `comm` of §5.1. A container and
-      a two-thousand-process capture are still to come. It is hand-authored rather than copied from a
-      real machine on purpose: a recorded `/proc` carries the command lines of whoever recorded it
-      into a public repository.
-- [x] **9.2 Golden snapshots.** Fixture in, `SystemSnapshot` out, compared field by field against a
-      checked-in expectation. A parse regression is then a diff, not a debugging session.
-- [~] **9.3 The nasty cases, each with its own test:** PID reuse across a sample · counter wraparound
-      · a wall-clock jump backwards · a process exiting mid-sample (files vanish between two reads)
-      · a process whose `comm` contains `)` and spaces · zero elapsed time between samples · a
-      first sample with no predecessor · a 96-core `/proc/stat`. In today: PID reuse, wraparound, the backwards clock, the `)` in a `comm`,
-      the zero interval, the first sample, a parent that is not in the snapshot, a parent cycle, and
-      a process that is its own parent. Still missing: a process vanishing mid-sample, and the
-      96-core file.
-- [~] **9.4 Windows structure replay.** The `SYSTEM_PROCESS_INFORMATION` chain replayed through the
-      parser on every CI leg. Half done, and the halves are worth separating:
-      - *Done.* The buffer is **synthesised** by the tests and walked: chain terminator, FILETIME to
-        nanoseconds, the byte-versus-character length of a `UNICODE_STRING`, the identity pair, the
-        two nameless system processes, and an image-name pointer outside the buffer.
-      - *Superseded, and by something better.* A captured buffer would still have been written by the
-        same understanding as the parser. `procman --self-test` on the `windows-latest` runner instead
-        asks the probe about the process it is running in and has the runtime check every answer — on
-        a real NT kernel, against an independent source of truth. That is a stronger claim than a
-        replayed blob, and it is what the Windows column in §12 now rests on.
-      Doing this exposed a defect that would have made the capture unreplayable at all: each image
-      name is a `UNICODE_STRING` whose `Buffer` is an *absolute* pointer into the query's own
-      allocation, and the first implementation dereferenced it. A blob captured on one machine and
-      replayed on another would have read whatever happened to live at that address. The parse now
-      takes the buffer's base address and works in offsets, with a bounds check — and the query
-      buffer is allocated pinned, because a moving array would have dangled those pointers between
-      the call and the parse on a live machine too.
-- [x] **9.5 Trim/AOT gate.** A NativeAOT publish per RID with `TreatWarningsAsErrors=true`; any
-      IL2xxx/IL3xxx fails the build.
-- [x] **9.6 Front-end smoke.** The TUI is rendered against the fixture into a captured buffer and
-      compared to a checked-in golden frame, both as an NUnit test and as a CI job. The desktop leg
-      brings the window up under Xvfb and now **photographs it**, in-process: `GtkCapture` asks the
-      widget to paint into a Cairo surface and writes the PNG from there.
-      Three things had to be got right, each of which produced a picture that looked like a bug
-      elsewhere. `import`/`xwd` see nothing — there is no compositor on a runner, and an ImageMagick
-      without its X11 delegate exits zero having written nothing. Once the capture was in-process it
-      needed `gtk_test_widget_wait_for_draw`, or it photographed the frame before the pending
-      relayout: a rectangle of black. And the log has to carry the window's whole state, because a
-      windowed process on a runner has no console to explain an empty shot with.
-- [x] **9.7 Budget harness.** §4 asserted by `ProcessManager.Benchmarks` in nightly CI; a regression
-      exits non-zero.
-- [x] **9.8 Helper protocol tests.** Nineteen of them, and every one is an attempt to make the parser
-      that runs as root do something it should not: a length larger than the ceiling (refused without
-      allocating), a negative length, a length too small to hold a request, a stream that ends
-      mid-frame, an unknown opcode, opcode zero, a pid of zero or negative or beyond `int`, and every
-      truncation of a valid frame plus a run of garbage — none of which may throw, because a crash in
-      a process holding root is a denial of service on everything the user wanted to do. A longer
-      frame from a newer client is skipped rather than desynchronising the stream.
-      The other half is `procman --helper-check`, which starts the real binary **unelevated** over a
-      real pipe and checks it answers, reads the files it is asked for, and refuses an identity
-      mismatch, a missing process and an empty affinity mask. It runs in CI on the Linux leg. Malformed frames, oversized lengths, unknown opcodes, a PID/start
-      mismatch and a truncated stream — each must be refused without the helper acting or crashing.
+- [ ] Every common Task Manager workflow can be completed without Task Manager
+- [ ] Process trees, handles, modules and resource-owner search remove routine need for
+      Process Explorer
+- [ ] Advanced process, thread, security, network, service and memory inspection removes routine
+      need for System Informer
+- [ ] Performance dashboards are at least as approachable as DBC's or modern Task Manager's
+- [x] GUI and TUI expose the same canonical information
+- [ ] 🟡 Every unsupported platform-specific feature explicitly communicates why
+- [x] Common actions work without running the whole program elevated
+- [ ] 🟡 Recovery/minimal mode remains functional under significant load
+- [ ] Data can be copied, exported and scripted
+- [ ] The product is stable enough that administrators trust it while diagnosing an already
+      unstable machine
+
+# 102. Acceptance criteria for v1
+
+v1 does not ship unless every one of these is true:
+
+- [x] The process list updates continuously without losing selection
+- [x] PID reuse cannot corrupt process identity
+- [x] GUI and TUI report matching canonical counters within the sampling tolerance
+- [ ] 🟡 CPU and memory metrics have documented semantics
+- [ ] 🟡 The user can kill a process from GUI, TUI **and** CLI
+- [x] The user can suspend and resume where supported
+- [x] The user can inspect process path and command line
+- [x] The user can inspect the process tree
+- [ ] 🟡 The user can inspect active network endpoints
+- [ ] The user can inspect, start and stop supported services
+- [ ] The user can manage common startup items
+- [ ] The user can inspect logged-in sessions
+- [ ] 🟡 The user can view CPU, memory, disk and network performance
+- [ ] The user can create and restore column presets
+- [ ] 🟡 The user can search and filter by any registered visible field
+- [ ] 🟡 Tables remain usable with thousands of changing rows
+- [x] Privileged actions work through the privilege broker
+- [x] Lack of privileges does not crash or freeze views
+- [ ] 🟡 The GUI exposes no data unobtainable from TUI or CLI
+- [x] No external metadata is transmitted without opt-in
+- [x] Unavailable platform fields are distinguishable from zero-valued fields
+- [ ] 🟡 Destructive actions identify their exact target
+- [ ] Minimal recovery mode operates independently of expensive collectors and plugins
 
 ---
 
-## 10. Milestones
+# 103. Engineering rule — feature registration
 
-| # | Milestone | Contents | State |
-|---|---|---|---|
-| **M0** | Skeleton | Solution, ten projects, `Directory.Build.*`, CI | **done** — solution builds clean on net10.0 |
-| **M1** | Core model | §3 snapshot/delta/rate/history, no probe | **done** — 51 tests, §9.3 cases green |
-| **M2** | Linux probe | §5.1 main-loop fields, fixture replay | **done** — reads a real machine and a recorded one |
-| **M3** | TUI v1 | Process list, sort, tree, kill, per-core meters | **done** — golden frame is a CI gate |
-| **M4** | Desktop v1 | §7.1 layout, §7.2 plot controls, process properties | **done** — docked layout, filled-area plots on a graticule, per-core meters, the process tree with rows coloured by category, three in-row history columns, a column chooser, click-to-sort headers, a colour legend, six detail tabs, menus and a context menu. Photographed under Xvfb on every push. Per-process property windows and a persisted layout remain |
-| **M5** | Windows probe | §5.2 including the `NtQueryObject` timeout worker | **done** — bulk query, per-core times, memory, I/O, owners, command lines, threads, modules, handles (with the timeout worker), sockets and the environment block. Executed and checked on a genuine Windows kernel (NT 10.0.26100) by the `self-test windows-latest` CI job: 21 of 21 checks, 8 threads, 47 modules, 159 handles, 149 environment variables, and the private-bytes counter Wine leaves at zero reads correctly |
-| **M6** | Details & search | §6.2 views, §6.5 search in both front-ends | **done** — six detail pages (overview, threads, modules, handles, environment, network) in both front-ends; `--find` searches names, command lines, open files and mappings. In-UI search is the terminal's filter; the window has no search box yet |
-| **M7** | Privilege helper | §8 end to end, both platforms | **done on Linux** — protocol, helper, client channel, polkit policy, probe and action wiring, and both halves of §9.8. **Not on Windows**: elevation there needs a named pipe rather than redirected stdio (§8.1) |
-| **M8** | Polish & budget | §4 met and enforced, dark mode, persisted layout | **partial** — the harness gates on CPU time and allocation and both pass (§4); dark mode follows the theme; nothing is persisted yet (open question 5) |
-| **M9** | macOS | Replace the §5.3 stub with a real probe | not started |
+**No field or action may be introduced inside a front-end.** This rule is what prevents feature drift,
+and it is the reason §5.1's registry exists.
 
-**What is left, in order.** Windows elevation, which needs a named pipe rather than redirected stdio
-(§8.1). Then the two desktop conveniences — per-process property windows, and persisting the column
-choice and sort (open question 5). Then macOS (M9).
-The `TreeListView` gaps that blocked three of §7.1's features are gone: they were one upstream change,
-and it is merged (Hawkynt/NativeForms#8).
+To add a **field**:
+
+1. Define the canonical field ID
+2. Define its semantics
+3. Define the supported OS backends
+4. Define unit and type
+5. Define privilege and collection cost
+6. Implement the collector
+7. Register the formatter
+8. Register sort and filter behaviour
+9. Expose it in the GUI
+10. Expose it in the TUI
+11. Expose it in the CLI/API
+12. Add the export schema
+13. Add tests
+
+To add an **action**:
+
+1. Define the canonical action ID
+2. Define its targets
+3. Define platform support
+4. Define required privileges
+5. Define the safety class (§69)
+6. Implement the backend
+7. Implement it in the action broker
+8. Implement the GUI control
+9. Implement the TUI command
+10. Implement the CLI command where appropriate
+11. Add the audit event
+12. Add tests
+
+- [ ] 🟡 A CI check enforces this — today it is a convention, and a convention is not a rule
+
+# 104. Internal object model
+
+Entities: `Host` · `Cpu` · `Memory` · `Disk` · `Volume` · `NetworkInterface` · `Gpu` · `Process` ·
+`Thread` · `Module` · `Resource` · `MemoryRegion` · `NetworkEndpoint` · `Service` · `StartupItem` ·
+`User` · `Session` · `Window` · `Container` · `Job` · `SecurityContext` · `Binary` · `Event`
+
+Every entity exposes:
+
+- [ ] 🟡 Stable internal ID
+- [x] Native ID
+- [ ] 🟡 Creation timestamp where meaningful
+- [ ] Source backend
+- [ ] Capability mask
+- [x] Collection status
+
+Implemented today: `Host`, `Cpu`, `Memory`, `Process`, `Thread`, `Module`, `Resource`,
+`NetworkEndpoint`, `MemoryRegion`. The rest do not exist.
+
+# 105. API semantics
+
+- [x] Collectors publish immutable snapshots
+- [x] Reading: `OS backend → snapshot → derived metrics → query → renderer`
+- [ ] 🟡 Mutating: `renderer/CLI → action request → validation → privilege broker → OS backend →
+      result → audit event → snapshot refresh` — every stage exists except the audit event
+
+This separation is what stops front-ends developing platform-specific behaviour.
 
 ---
 
-## 11. Terminal UI
+# 106. Final product requirement
 
-Shipped in v1, not a later addition — the same engine with a different renderer.
+ProcessManager must feel **simple when the user wants a task manager and deep when the user wants a
+system inspector**.
 
-- [x] Full-screen alternate-screen renderer over ANSI/VT, with `termios` raw mode on Linux and
-      `ENABLE_VIRTUAL_TERMINAL_PROCESSING` on Windows, restored on exit **and on crash**.
-- [x] Diff-based redraw: only changed cells are written. A monitor that repaints 200 rows per second
-      over SSH is its own denial of service.
-- [x] htop-compatible keys where htop has one: `F5` tree · `F6` sort · `F9` kill · `F10`/`q` quit ·
-      `/` search · `\` filter · `u` user filter · `H` threads · `t` tree · space tag · `<`/`>` sort
-      column. Keys we add do not shadow keys htop uses for something else.
-- [x] Per-core meters, memory/swap bars and load average in the header, drawn by the same math the
-      desktop plots use.
-- [x] **Three in-row history columns** — CPU, memory and I/O — drawn with the eighth-block characters
-      U+2581 to U+2588, sharing the same `ProcessHistory` and the same scales the window's sparklines
-      use. Twelve characters wide is twelve samples at eight levels: coarse next to a pixel-per-sample
-      plot, and enough to tell a process that is busy now from one that was busy a moment ago.
-      A reading above zero always gets at least the smallest mark, or half a percent would look
-      exactly like none.
-- [x] Degrades by capability, not by guess: colour depth comes from `NO_COLOR`/`COLORTERM`/`TERM`,
-      and the monochrome mode is what the golden frame is rendered in, so it is tested. The block
-      characters are used only when `TERM` is not `dumb` **and** the locale says UTF-8; anything else
-      gets an ASCII ramp, because a column of replacement boxes is worse than no plot at all.
-- [~] Resizes on a size change noticed at the top of the loop rather than on `SIGWINCH` — deliberate:
-      the signal arrives on another thread, and the frame diff assumes nobody else writes between
-      compose and flush. Sizes smaller than the header are clamped but not tested.
-- [x] Non-interactive modes for scripts: `--list`, `--list --json`, `--find`, `--kill`, each with a
-      documented exit code (0 success · 1 error · 2 nothing matched). A value that is not there is
-      `null` in the JSON and never `0`, so a consumer can tell "no I/O happened" from "you were not
-      allowed to look".
+One application, and a natural progression from:
 
----
+> "What is using my CPU?"
 
-## 12. Coverage matrix
+to *"Which thread is responsible?"* to *"What stack is that thread executing?"* to *"Which module
+contains that frame?"* to *"Who signed that module?"* to:
 
-A feature is finished when every column is ticked. "Desktop" and "TUI" mean *reachable there*, not
-merely computed. "Windows" is ✔ only where it has been executed and checked — under Wine so far,
-which implements the same structures and is not the same thing as Windows.
+> "Which files, sockets, services and memory regions does this process own?"
 
-| Feature | Implemented | Tested | Desktop | TUI | Linux | Windows | Documented |
-|---|---|---|---|---|---|---|---|
-| Process list, CPU, memory, I/O | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
-| Process tree | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
-| Sort by any column | ✔ | ✔ | menu | ✔ | ✔ | ✔ | ✔ |
-| Filter by text / by user | ✔ | ✔ | user only | ✔ | ✔ | ✔ | ✔ |
-| Unknown-with-a-reason (§3.4) | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
-| Per-core meters | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
-| CPU / memory history plot | ✔ | smoke | ✔ | — | ✔ | ✔ | ✔ |
-| Owner resolution | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
-| Command line | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
-| Threads | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
-| Modules / mappings | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
-| Open files / handles | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
-| Environment block | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
-| Sockets | ✔ | — | ✔ | ✔ | ✔ | ✔ | ✔ |
-| End process / tree | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
-| Suspend / resume | ✔ | ✔ | ✔ | — | ✔ | ✔ | ✔ |
-| Priority / affinity | ✔ | ✔ | — | — | ✔ | ✔ | ✔ |
-| Handle count on demand | ✔ | ✔ | ✔ | ✔ | ✔ | n/a | ✔ |
-| Search across handles (`--find`) | ✔ | — | — | — | ✔ | ✔ | ✔ |
-| Privileged helper | ✔ | ✔ | ✔ | ✔ | ✔ | — | ✔ |
-| Row colours (§7.1) | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
-| CPU / memory / I/O history columns | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
-| Column selection | ✔ | — | ✔ | fixed set | ✔ | ✔ | ✔ |
-| Click-to-sort headers | ✔ | ✔ (upstream) | ✔ | n/a | ✔ | ✔ | ✔ |
-| Colour legend | ✔ | ✔ | ✔ | — | ✔ | ✔ | ✔ |
-| Published screenshots | ✔ | CI | ✔ | ✔ | ✔ | — | ✔ |
-| Persisted layout | — | — | — | — | — | — | ✔ |
-| Per-process property windows | — | — | — | — | — | — | ✔ |
+without changing tools.
 
-The rows worth reading twice. **The action tests test the refusals, not the actions** — every check
-that a wrong identity, a missing process, a bad pid or an empty affinity mask is refused, and none
-that a process is actually ended, because a test that terminates something to prove it can is not one
-to run in CI. **Sockets and `--find` have no automated test**: both need a machine with a known open
-socket or a known open file, which the fixture cannot record. **The screenshots are Linux only** —
-the window is photographed through GTK and Cairo, and the Windows equivalent would be a second
-capture route nobody has needed yet.
+And the same investigation, from a terminal session, using the same terminology, fields, identifiers,
+filters and actions.
 
-## 13. Open questions
-
-Each of these must be answered before the milestone that depends on it, and the answer is recorded
-here rather than in a commit message.
-
-1. ~~**CPU% convention as the default**~~ — **answered: normalized.** Both are implemented and either
-   can be switched to at runtime (`C` in the terminal, the View menu in the window), and the active
-   one is named in the status line, because the two differ by a factor of the core count and a number
-   without its convention is not a number.
-2. **Handle-name resolution cost on Windows** (§5.2) — is the timeout worker fast enough to make the
-   handle sweep interactive on a machine with 300 000 handles, or does the search need a persistent
-   index? Measure at M5, decide at M6.
-3. **Per-process network rates without a driver** — `/proc/net` + inode matching gives connections but
-   not byte rates. Options are a capture through the helper (accurate, heavy, needs root) or nothing.
-   *Blocks the network column in §6.1, not M6 as a whole.*
-4. **Container detection depth** (§5.1) — cgroup v2 limits are in scope; naming the container by
-   asking a runtime (Docker/podman socket) is a dependency this program does not otherwise have.
-   Default assumption: no runtime sockets, limits only.
-5. **Settings storage** — a config file location per platform, or nothing persisted in v1 beyond
-   column layout? *Blocks M8.* Nothing is persisted today, including the sort column and the tree
-   toggle, which is the first thing anybody will notice.
-6. **Whether the §4 snapshot target survives contact.** 25 ms per 1000 processes was written before
-   anything was measured; the design costs 44 µs per process because it reads three files each. The
-   choice is to read fewer (dropping `status` would cost the private-memory column and the uid) or to
-   move the target. It should not be left as an unmet number nobody intends to meet.
+**That shared model — not visual cloning — is the defining requirement of the product.**

@@ -1,15 +1,26 @@
-  0[|||||||||||||||||||||||||||||||||||||||||||||||||100%]    1[|||||||||||||||||||||||||||||||||||||||||||||||||100%]
-  2[|||||||||||||||||||||||||||||||||||||||||||||||||100%]    3[|||||||||||||||||||||||||||||||||||||||||||||||||100%]
-Mem[||||||                                     1.8G/15.6G]  Swp[                                             0 B/3.0G]
-Tasks: 166, 5 running           Load average: 7.06 1.75 0.58        Uptime: 00:13:19
+  0[||||||||                                        14.3%]    1[|||||||||||||||||||||||||||||||||||||||||||||||||100%]
+  2[||||                                             7.1%]    3[||                                               4.7%]
+  4[||||                                             7.3%]    5[                                                 0.0%]
+  6[|                                                2.4%]    7[                                                 0.0%]
+  8[                                                 0.0%]    9[                                                 0.0%]
+ 10[|                                                2.5%]   11[|||||||||||||||||||||||||||||||||||||||||||||||||100%]
+ 12[                                                 0.0%]   13[|||||||||||||||||||||||||||||||||||||||||||||||||100%]
+ 14[|||                                              4.8%]   15[|                                                2.4%]
+Mem[||||||||||||||||                           36.8G/125G]  Swp[|||||||||||||||                           18.5G/64.0G]
+Tasks: 652, 5 running           Load average: 11.80 11.38 11.36     Uptime: 16d 19:01:16
 
     PID User       S     CPU%▾ CPU hist     Private Mem hist       Read/s  Write/s I/O hist      Thr   Hnd Process
-   3329 runner     sleep  24.9 ▃▆██████████    450M ████████████        0        0                44     … VBCSCompiler
-   3429 runner     run    24.9 ▅███████████    296K ▁▁▁▁▁▁▁▁▁▁▁▁        0        0                 1     … bash
-   3430 runner     run    24.9 ████████████    300K ▁▁▁▁▁▁▁▁▁▁▁▁        0        0                 1     … bash
-   3431 runner     run    24.9 ▇███████████    300K ▁▁▁▁▁▁▁▁▁▁▁▁        0        0                 1     … bash
-   3428 runner     run     0.6 ▁▃▁▁▁▁▁▁▁▁▁▁    9.9M ▁▁▁▁▁▁▁▁▁▁▁▁        0        0                 7     … procman
-      1 root       sleep   0.0                 4.4M ▁▁▁▁▁▁▁▁▁▁▁▁        —        —                 1     … systemd
+1575053 hawky      run     6.4 ████████████    304K ▁▁▁▁▁▁▁▁▁▁▁▁        0        0                 1     … bash
+1575050 hawky      run     6.2 ████████████    304K ▁▁▁▁▁▁▁▁▁▁▁▁        0        0                 1     … bash
+1575054 hawky      run     6.2 ████████████    304K ▁▁▁▁▁▁▁▁▁▁▁▁        0        0                 1     … bash
+3953102 hawky      sleep   0.8 ▁▁▅▁▁▁▁▁▁▁▁▁    5.4G ████████████        0        0                43     … claude
+  92579 hawky      run     0.6 ▁▁▁▁▁▁▁▁▁▁▁▁    151M ▁▁▁▁▁▁▁▁▁▁▁▁        0        0                 8     … xfce4-termina
+   1329 hawky      sleep   0.3 ▁▁▁▁▁▁▁▁▁▁▁▁    818M ▁▁▁▁▁▁▁▁▁▁▁▁        —        —                21     … kwin_wayland
+1575052 hawky      run     0.3 ▁▁▁▁▁▁▁▁▁▁▁▁   65.3M ▁▁▁▁▁▁▁▁▁▁▁▁        0        0                 7     … procman
+1569248 hawky      sleep   0.2            ▁   14.7M            ▁        0        0                 1     … wineserver
+1569280 hawky      sleep   0.2     ▁▁▁▁▁▁▁▁   95.6M     ▁▁▁▁▁▁▁▁        0        0                12     … winedevice.ex
+1768210 hawky      sleep   0.2            ▁    1.4G            ▂        0        0                81     … plasmashell
+      1 root       sleep   0.0                 4.9M ▁▁▁▁▁▁▁▁▁▁▁▁        —        —                 1     … systemd
       2 root       sleep   0.0                  n/a                     —        —                 1     … kthreadd
       3 root       sleep   0.0                  n/a                     —        —                 1     … pool_workqueu
       4 root       idle    0.0                  n/a                     —        —                 1     … kworker/R-rcu
@@ -17,24 +28,13 @@ Tasks: 166, 5 running           Load average: 7.06 1.75 0.58        Uptime: 00:1
       6 root       idle    0.0                  n/a                     —        —                 1     … kworker/R-kvf
       7 root       idle    0.0                  n/a                     —        —                 1     … kworker/R-slu
       8 root       idle    0.0                  n/a                     —        —                 1     … kworker/R-net
-      9 root       idle    0.0                  n/a                     —        —                 1     … kworker/0:0-e
-     10 root       idle    0.0                  n/a                     —        —                 1     … kworker/0:0H-
-     11 root       idle    0.0     ▁            n/a                     —        —                 1     … kworker/0:1-e
-     12 root       idle    0.0                  n/a                     —        —                 1     … kworker/u16:0
      13 root       idle    0.0                  n/a                     —        —                 1     … kworker/R-mm_
-     14 root       sleep   0.0                  n/a                     —        —                 1     … ksoftirqd/0
-     15 root       idle    0.0      ▁           n/a                     —        —                 1     … rcu_sched
-     16 root       sleep   0.0                  n/a                     —        —                 1     … rcu_exp_par_g
-     17 root       sleep   0.0                  n/a                     —        —                 1     … rcu_exp_gp_kt
-     18 root       sleep   0.0                  n/a                     —        —                 1     … migration/0
-     19 root       sleep   0.0                  n/a                     —        —                 1     … idle_inject/0
-     20 root       sleep   0.0                  n/a                     —        —                 1     … cpuhp/0
-     21 root       sleep   0.0                  n/a                     —        —                 1     … cpuhp/2
-     22 root       sleep   0.0                  n/a                     —        —                 1     … idle_inject/2
-     23 root       sleep   0.0                  n/a                     —        —                 1     … migration/2
-     24 root       sleep   0.0                  n/a                     —        —                 1     … ksoftirqd/2
-     25 root       idle    0.0                  n/a                     —        —                 1     … kworker/2:0-m
-     26 root       idle    0.0                  n/a                     —        —                 1     … kworker/2:0H-
-     27 root       sleep   0.0                  n/a                     —        —                 1     … cpuhp/1
-     28 root       sleep   0.0                  n/a                     —        —                 1     … idle_inject/1
+     15 root       sleep   0.0                  n/a                     —        —                 1     … ksoftirqd/0
+     16 root       idle    0.0       ▁          n/a                     —        —                 1     … rcu_preempt
+     17 root       sleep   0.0                  n/a                     —        —                 1     … rcub/0
+     18 root       sleep   0.0                  n/a                     —        —                 1     … rcu_exp_par_g
+     19 root       sleep   0.0                  n/a                     —        —                 1     … rcu_exp_gp_kt
+     20 root       sleep   0.0                  n/a                     —        —                 1     … migration/0
+     21 root       sleep   0.0                  n/a                     —        —                 1     … kprobe-optimi
+     22 root       sleep   0.0                  n/a                     —        —                 1     … idle_inject/0
 F5 tree  F6 sort  F9 kill  Enter details  / search  u user  h handles  C cpu%  q quit
