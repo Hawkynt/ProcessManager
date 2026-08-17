@@ -35,6 +35,15 @@ internal static class SystemProcessInformationReader {
     var written = 0;
     var offset = 0;
     var totalThreads = 0;
+    // A counter that reads zero for every process on the machine is not a measurement, it is an
+    // unimplemented stub. Wine returns zero for these three from SystemProcessInformation, and
+    // reporting "0 B private bytes" for every process would be a confident lie where "not reported
+    // here" is the truth (PRD §72.3). Real Windows sets each of these on the first process with any
+    // memory at all, so the fix-up pass below never runs there.
+    var anyPrivateBytes = false;
+    var anyPrivateWorkingSet = false;
+    var anyPageFaults = false;
+    var anyCycles = false;
 
     while (offset >= 0 && offset < buffer.Length && written < records.Length) {
       ref readonly var entry = ref MemoryMarshal.AsRef<NtStructures.SystemProcessInformation>(buffer[offset..]);
@@ -75,6 +84,11 @@ internal static class SystemProcessInformationReader {
       record.PeakNonPagedPoolBytes = Counter.Of((ulong)entry.QuotaPeakNonPagedPoolUsage);
       record.PageFaults = Counter.Of(entry.PageFaultCount);
       record.Cycles = Counter.Of(entry.CycleTime);
+
+      anyPrivateBytes |= entry.PrivatePageCount != 0;
+      anyPrivateWorkingSet |= entry.WorkingSetPrivateSize > 0;
+      anyPageFaults |= entry.PageFaultCount != 0;
+      anyCycles |= entry.CycleTime != 0;
       record.ReadBytes = Counter.Of((ulong)Math.Max(0, entry.ReadTransferCount));
       record.WriteBytes = Counter.Of((ulong)Math.Max(0, entry.WriteTransferCount));
       record.OtherBytes = Counter.Of((ulong)Math.Max(0, entry.OtherTransferCount));
@@ -91,6 +105,21 @@ internal static class SystemProcessInformationReader {
         break;
 
       offset += (int)entry.NextEntryOffset;
+    }
+
+    if (!anyPrivateBytes || !anyPrivateWorkingSet || !anyPageFaults || !anyCycles) {
+      var parsed = records[..written];
+      for (var i = 0; i < parsed.Length; ++i) {
+        ref var record = ref parsed[i];
+        if (!anyPrivateBytes)
+          record.PrivateBytes = Counter.NotSupported;
+        if (!anyPrivateWorkingSet)
+          record.PrivateWorkingSetBytes = Counter.NotSupported;
+        if (!anyPageFaults)
+          record.PageFaults = Counter.NotSupported;
+        if (!anyCycles)
+          record.Cycles = Counter.NotSupported;
+      }
     }
 
     snapshot.PrepareProcesses(written);

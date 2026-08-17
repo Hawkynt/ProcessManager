@@ -137,6 +137,40 @@ public sealed class WindowsProcessInformationReplayTests {
     }
   }
 
+  /// <summary>
+  /// Wine implements SystemProcessInformation but leaves several counters at zero. A counter that
+  /// reads zero for every process on the machine is a stub, not a measurement, and must be reported
+  /// as unavailable rather than as a confident zero (PRD §72.3).
+  /// </summary>
+  [Test]
+  public void ACounterThatIsZeroForEveryProcessIsReportedUnavailableRatherThanZero() {
+    var processes = new[] {
+      new FakeProcess(4, 0, "System", 133_000_000_000_000_000L, 10_000_000, 20_000_000, 180, 4200, 0, 143_360, 0, 0, 0),
+      new FakeProcess(1234, 4, "explorer.exe", 133_100_000_000_000_000L, 5_000_000, 2_500_000, 42, 1337,
+        0, 209_715_200, 4_096_000, 2_048_000, 1),
+    };
+
+    var (buffer, baseAddress, handle) = Build(processes);
+    try {
+      var snapshot = new SystemSnapshot();
+      InvokeParse(buffer, baseAddress, snapshot);
+
+      // The builder never sets these three, so they are zero throughout, exactly as under wine.
+      var process = Find(snapshot, 1234);
+      Assert.That(process.PrivateBytes.HasValue, Is.False, "private bytes");
+      Assert.That(process.PrivateBytes.Reason, Is.EqualTo(UnknownReason.NotSupportedOnPlatform));
+      Assert.That(process.PageFaults.HasValue, Is.False, "page faults");
+      Assert.That(process.Cycles.HasValue, Is.False, "cycles");
+
+      // …while a counter that any process reported is kept for all of them, including the ones
+      // whose own value happens to be zero.
+      Assert.That(process.WorkingSetBytes.Value, Is.EqualTo(209_715_200ul));
+      Assert.That(Find(snapshot, 4).ReadBytes.Value, Is.EqualTo(0ul), "a real zero survives");
+    } finally {
+      handle.Free();
+    }
+  }
+
   [Test]
   public void AnImageNamePointingOutsideTheBufferIsRefusedRatherThanRead() {
     // What a captured buffer looks like when it is replayed with the wrong base address, and what a
