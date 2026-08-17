@@ -126,7 +126,7 @@ public sealed class ProcessTreeBinderTests {
     var binder = new ProcessTreeBinder(tree);
     var (snapshot, delta, view) = Build((10, 0), (20, 0), (30, 0));
 
-    view.SortColumn = ProcessColumn.Pid;
+    view.SortColumn = ProcessField.Pid;
     view.SortDescending = false;
     view.Rebuild(snapshot, delta);
     binder.Sync(snapshot, delta, view);
@@ -145,7 +145,7 @@ public sealed class ProcessTreeBinderTests {
     var tree = new TreeListView();
     var binder = new ProcessTreeBinder(tree);
     var (snapshot, delta, view) = Build((10, 0), (20, 0));
-    view.SortColumn = ProcessColumn.Pid;
+    view.SortColumn = ProcessField.Pid;
     view.SortDescending = false;
     view.Rebuild(snapshot, delta);
     binder.Sync(snapshot, delta, view);
@@ -166,7 +166,7 @@ public sealed class ProcessTreeBinderTests {
     var tree = new TreeListView();
     var binder = new ProcessTreeBinder(tree);
     var (snapshot, delta, view) = Build((1, 0), (10, 1), (20, 1), (30, 1));
-    view.SortColumn = ProcessColumn.Pid;
+    view.SortColumn = ProcessField.Pid;
     view.SortDescending = true;
     view.Rebuild(snapshot, delta);
     binder.Sync(snapshot, delta, view);
@@ -221,7 +221,7 @@ public sealed class ProcessTreeBinderTests {
     var delta = new SnapshotDelta();
     delta.Update(null, snapshot, CpuPercentMode.Normalized);
 
-    var view = new ProcessView { TreeMode = true, SortColumn = ProcessColumn.Pid, SortDescending = false };
+    var view = new ProcessView { TreeMode = true, SortColumn = ProcessField.Pid, SortDescending = false };
     view.Rebuild(snapshot, delta);
     return (snapshot, delta, view);
   }

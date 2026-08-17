@@ -101,7 +101,7 @@ public sealed class ProcessHistoryTests {
 
     var delta = new SnapshotDelta();
     delta.Update(null, snapshot, CpuPercentMode.Normalized);
-    var view = new ProcessView { SortColumn = ProcessColumn.Pid, SortDescending = false };
+    var view = new ProcessView { SortColumn = ProcessField.Pid, SortDescending = false };
     view.Rebuild(snapshot, delta);
     return (snapshot, delta, view);
   }

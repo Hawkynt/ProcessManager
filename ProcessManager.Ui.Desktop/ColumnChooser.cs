@@ -1,3 +1,4 @@
+using Hawkynt.ProcessManager.Query;
 using Hawkynt.NativeForms;
 
 namespace Hawkynt.ProcessManager.Ui.Desktop;
@@ -13,9 +14,9 @@ namespace Hawkynt.ProcessManager.Ui.Desktop;
 public sealed class ColumnChooser : Form {
 
   private readonly CheckedListBox _list = new();
-  private readonly List<DesktopColumn> _order = [];
+  private readonly List<ProcessField> _order = [];
 
-  public ColumnChooser(IReadOnlyCollection<DesktopColumn> visible) {
+  public ColumnChooser(IReadOnlyCollection<ProcessField> visible) {
     ArgumentNullException.ThrowIfNull(visible);
 
     this.Text = "Select columns";
@@ -23,9 +24,9 @@ public sealed class ColumnChooser : Form {
 
     this._list.Bounds = new(12, 12, 344, 372);
     foreach (var info in ColumnSet.All) {
-      this._order.Add(info.Column);
+      this._order.Add(info.Id);
       this._list.Items.Add(info.Header);
-      this._list.SetItemChecked(this._list.Items.Count - 1, visible.Contains(info.Column));
+      this._list.SetItemChecked(this._list.Items.Count - 1, visible.Contains(info.Id));
     }
 
     var ok = new Button { Text = "OK", Bounds = new(180, 394, 80, 28) };
@@ -49,15 +50,15 @@ public sealed class ColumnChooser : Form {
   /// What was ticked. The name column is forced on: a list whose rows have no name is a list of
   /// numbers.
   /// </summary>
-  public List<DesktopColumn> Selection {
+  public List<ProcessField> Selection {
     get {
-      var result = new List<DesktopColumn>();
+      var result = new List<ProcessField>();
       for (var i = 0; i < this._order.Count; ++i)
         if (this._list.GetItemChecked(i))
           result.Add(this._order[i]);
 
-      if (!result.Contains(DesktopColumn.Name))
-        result.Insert(0, DesktopColumn.Name);
+      if (!result.Contains(ProcessField.Name))
+        result.Insert(0, ProcessField.Name);
 
       return result;
     }

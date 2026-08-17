@@ -18,7 +18,7 @@ public sealed class MainWindow : Form {
   private readonly Sampler _sampler;
   private readonly ISystemProbe _probe;
   private readonly IProcessActions? _actions;
-  private readonly ProcessView _view = new() { TreeMode = true, SortColumn = ProcessColumn.CpuPercent, SortDescending = true };
+  private readonly ProcessView _view = new() { TreeMode = true, SortColumn = ProcessField.CpuPercent, SortDescending = true };
   private readonly ProcessTreeBinder _binder;
   private readonly TreeListView _tree = new();
   private readonly HistoryPlot _cpuPlot = new();
@@ -32,7 +32,7 @@ public sealed class MainWindow : Form {
   private readonly HistoryRing<Rate> _cpuHistory = new(600);
   private readonly HistoryRing<Rate> _memoryHistory = new(600);
   private readonly ProcessHistory _rowHistory = new();
-  private readonly List<DesktopColumn> _columns = [.. ColumnSet.Default];
+  private readonly List<ProcessField> _columns = [.. ColumnSet.Default];
   private bool _splitPlaced;
   private ITheme _theme = DefaultTheme.Instance;
   private int _laidOutWidth = -1;
@@ -226,11 +226,11 @@ public sealed class MainWindow : Form {
     foreach (var column in this._columns) {
       var info = ColumnSet.Info(column);
       var header = info.Header;
-      if (info.SortBy == this._view.SortColumn)
+      if (info.IsSortable && column == this._view.SortColumn)
         header = this._view.SortDescending ? header + " ▾" : header + " ▴";
 
       var which = column;
-      this._tree.Columns.Add(new(header, info.Width, node => ((ProcessRow)node.Tag!).TextOf(which)) {
+      this._tree.Columns.Add(new(header, info.DesktopWidth, node => ((ProcessRow)node.Tag!).TextOf(which)) {
         TextAlign = info.RightAligned ? ContentAlignment.MiddleRight : ContentAlignment.MiddleLeft,
       });
     }
@@ -261,7 +261,8 @@ public sealed class MainWindow : Form {
     if ((uint)e.Column >= (uint)this._columns.Count)
       return;
 
-    if (ColumnSet.Info(this._columns[e.Column]).SortBy is not { } sortBy)
+    var sortBy = this._columns[e.Column];
+    if (!ColumnSet.Info(sortBy).IsSortable)
       // A history column has no text to sort by, and sorting by "the shape of a graph" is not a
       // thing. Clicking one does nothing rather than doing something arbitrary.
       return;
@@ -334,20 +335,20 @@ public sealed class MainWindow : Form {
     // ColumnClick (its ListView does, and is flat). Click-to-sort is the gesture people expect, so
     // this is a stand-in for a hook that has to come from the toolkit, not a preference.
     var sort = new ToolStripMenuItem("Sort by");
-    foreach (var column in (ReadOnlySpan<ProcessColumn>)[
-      ProcessColumn.CpuPercent,
-      ProcessColumn.PrivateBytes,
-      ProcessColumn.WorkingSetBytes,
-      ProcessColumn.ReadBytesPerSecond,
-      ProcessColumn.WriteBytesPerSecond,
-      ProcessColumn.ThreadCount,
-      ProcessColumn.Name,
-      ProcessColumn.Pid,
-      ProcessColumn.UserName,
-      ProcessColumn.StartTime,
+    foreach (var column in (ReadOnlySpan<ProcessField>)[
+      ProcessField.CpuPercent,
+      ProcessField.PrivateBytes,
+      ProcessField.WorkingSetBytes,
+      ProcessField.ReadBytesPerSecond,
+      ProcessField.WriteBytesPerSecond,
+      ProcessField.ThreadCount,
+      ProcessField.Name,
+      ProcessField.Pid,
+      ProcessField.UserName,
+      ProcessField.StartTime,
     ]) {
       var chosen = column;
-      sort.DropDownItems.Add(Item(column.ToHeader(), () => {
+      sort.DropDownItems.Add(Item(column.Header(), () => {
         this._view.SortColumn = chosen;
         this._view.SortDescending = chosen.PrefersDescending();
         this.Refresh();

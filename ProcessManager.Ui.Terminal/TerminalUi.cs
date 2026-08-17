@@ -43,7 +43,7 @@ public sealed class TerminalUi {
     this._screen = new(width, height, depth);
     this._detail = new(probe);
     this._view.TreeMode = false;
-    this._view.SortColumn = ProcessColumn.CpuPercent;
+    this._view.SortColumn = ProcessField.CpuPercent;
     this._view.SortDescending = true;
   }
 
@@ -197,10 +197,10 @@ public sealed class TerminalUi {
       case 'i': this.OpenDetail(); return true;
       case '<': this.PreviousSortColumn(); return true;
       case '>': this.NextSortColumn(); return true;
-      case 'P': this._view.SortColumn = ProcessColumn.CpuPercent; this._view.SortDescending = true; return true;
-      case 'M': this._view.SortColumn = ProcessColumn.PrivateBytes; this._view.SortDescending = true; return true;
-      case 'T': this._view.SortColumn = ProcessColumn.StartTime; this._view.SortDescending = false; return true;
-      case 'N': this._view.SortColumn = ProcessColumn.Pid; this._view.SortDescending = false; return true;
+      case 'P': this._view.SortColumn = ProcessField.CpuPercent; this._view.SortDescending = true; return true;
+      case 'M': this._view.SortColumn = ProcessField.PrivateBytes; this._view.SortDescending = true; return true;
+      case 'T': this._view.SortColumn = ProcessField.StartTime; this._view.SortDescending = false; return true;
+      case 'N': this._view.SortColumn = ProcessField.Pid; this._view.SortDescending = false; return true;
       case 'C':
         this._sampler.CpuPercentMode = this._sampler.CpuPercentMode == CpuPercentMode.Normalized
           ? CpuPercentMode.PerCore
@@ -357,7 +357,7 @@ public sealed class TerminalUi {
     index = ((index < 0 ? 0 : index) + direction + columns.Length) % columns.Length;
     this._view.SortColumn = columns[index];
     this._view.SortDescending = columns[index].PrefersDescending();
-    this.Say($"sorted by {columns[index].ToHeader()}", Attributes.Accent);
+    this.Say($"sorted by {columns[index].Header()}", Attributes.Accent);
   }
 
   private void BeginKill(bool tree) {
@@ -510,10 +510,11 @@ public sealed class TerminalUi {
   private void DrawColumnHeader(int y) {
     this._screen.Fill(0, y, this._screen.Width, ' ', Attributes.Header);
     var x = 0;
-    foreach (var column in Layout.Columns) {
-      var width = column.Width;
-      var header = column.Header;
-      if (column.Sortable is { } sortable && sortable == this._view.SortColumn)
+    foreach (var field in Layout.Columns) {
+      var column = Layout.Info(field);
+      var width = column.TerminalWidth;
+      var header = column.ShortHeader;
+      if (column.IsSortable && field == this._view.SortColumn)
         header = this._view.SortDescending ? header + "▾" : header + "▴";
 
       // A header that does not fit loses its tail, not its head: "Working set" clipped to "ing set"
@@ -522,7 +523,7 @@ public sealed class TerminalUi {
       if (header.Length > width)
         header = header[..width];
 
-      if (Layout.IsRightAligned(in column))
+      if (column.RightAligned)
         this._screen.WriteRight(x, y, width, header, Attributes.Header);
       else
         this._screen.Write(x, y, header, Attributes.Header);
@@ -555,8 +556,9 @@ public sealed class TerminalUi {
         this._screen.Fill(0, top + line, this._screen.Width, ' ', Attributes.Selected);
 
       var x = 0;
-      foreach (var column in Layout.Columns) {
-        var width = column.Width;
+      foreach (var field in Layout.Columns) {
+        var column = Layout.Info(field);
+        var width = column.TerminalWidth;
         if (column.Series is { } series) {
           // Drawn, not written: the eighth-block ramp turns a column of text into a plot (PRD §11).
           var plot = BlockSparkline.Render(
@@ -574,8 +576,8 @@ public sealed class TerminalUi {
           continue;
         }
 
-        var text = this.CellText(in column, row, in process, delta);
-        if (Layout.IsRightAligned(in column))
+        var text = this.CellText(field, row, in process, delta);
+        if (column.RightAligned)
           this._screen.WriteRight(x, top + line, width, text, baseAttribute);
         else
           this._screen.Write(x, top + line, text.Length > width ? text[..width] : text, baseAttribute);
@@ -594,24 +596,31 @@ public sealed class TerminalUi {
     _ => Attributes.Warn,
   };
 
-  private string CellText(in Layout.TerminalColumn column, ViewRow row, in ProcessRecord process, SnapshotDelta delta)
-    => column.Sortable switch {
-      ProcessColumn.Pid => process.Pid.ToString(CultureInfo.InvariantCulture),
-      ProcessColumn.UserName => process.UserName ?? (process.UserId >= 0 ? process.UserId.ToString(CultureInfo.InvariantCulture) : "?"),
-      ProcessColumn.PrivateBytes => Humanize.Bytes(process.PrivateBytes),
-      ProcessColumn.WorkingSetBytes => Humanize.Bytes(process.WorkingSetBytes),
-      ProcessColumn.State => Humanize.State(process.State),
-      ProcessColumn.CpuPercent => Humanize.Percent(delta.CpuPercent(row.Index)),
-      ProcessColumn.ReadBytesPerSecond => Humanize.BytesPerSecond(delta.ReadBytesPerSecond(row.Index)),
-      ProcessColumn.WriteBytesPerSecond => Humanize.BytesPerSecond(delta.WriteBytesPerSecond(row.Index)),
-      ProcessColumn.ThreadCount => process.ThreadCount.ToString(CultureInfo.InvariantCulture),
-      ProcessColumn.HandleCount => Humanize.Count(this._handleCounts.TryGetValue(process.Key, out var handles) ? handles : process.HandleCount),
-      ProcessColumn.Name => this._view.TreeMode
-        ? new string(' ', Math.Min(row.Depth * 2, 32)) + (row.HasChildren ? "+ " : "  ") + process.Name
-        : process.Name,
-      ProcessColumn.CommandLine => process.CommandLine ?? string.Empty,
-      _ => string.Empty,
-    };
+  /// <summary>
+  /// The text for one cell. Everything goes through the shared accessor so a value reads the same
+  /// here as in the window (PRD §5.1); the two exceptions below are things the terminal knows and
+  /// the engine does not.
+  /// </summary>
+  private string CellText(ProcessField field, ViewRow row, in ProcessRecord process, SnapshotDelta delta) {
+    switch (field) {
+      // The tree lives in the name column, so indentation and the expander are part of its text.
+      case ProcessField.Name:
+        return this._view.TreeMode
+          ? new string(' ', Math.Min(row.Depth * 2, 32)) + (row.HasChildren ? "+ " : "  ") + process.Name
+          : process.Name;
+
+      // Handles are counted on their own schedule because counting them is expensive (PRD §5.4).
+      case ProcessField.HandleCount when this._handleCounts.TryGetValue(process.Key, out var handles):
+        return Humanize.Count(handles);
+
+      // A missing user name falls back to the numeric id, which is narrower and more use than a dash.
+      case ProcessField.UserName when process.UserName is null:
+        return process.UserId >= 0 ? process.UserId.ToString(CultureInfo.InvariantCulture) : "?";
+
+      default:
+        return FieldAccessor.Text(field, in process, delta, row.Index);
+    }
+  }
 
   private void DrawStatus() {
     var y = this._screen.Height - 1;
