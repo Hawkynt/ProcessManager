@@ -29,6 +29,9 @@ internal static class Program {
       case RunMode.Help:
         Console.WriteLine(CommandLineOptions.HelpText);
         return _ExitOk;
+      case RunMode.HelpFields:
+        Console.Write(CommandLineOptions.FieldHelpText);
+        return _ExitOk;
       case RunMode.Version:
         Console.WriteLine($"procman {typeof(Program).Assembly.GetName().Version}");
         return _ExitOk;
@@ -144,6 +147,7 @@ internal static class Program {
       SortColumn = options.SortColumn,
       SortDescending = options.SortDescending,
       TreeMode = options.TreeMode,
+      TextFilter = options.Filter,
     };
 
     view.Rebuild(sampler.Current, sampler.Delta);

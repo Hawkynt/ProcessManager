@@ -39,7 +39,28 @@ public sealed class ProcessView {
   public bool TreeMode { get; set; }
 
   /// <summary>Case-insensitive substring matched against name and command line; null for all.</summary>
-  public string? TextFilter { get; set; }
+  /// <summary>
+  /// The filter, in the query language of PRD §56 — <c>chrome</c>, <c>cpu:&gt;50</c>,
+  /// <c>user:alice AND memory:&gt;1GiB</c>.
+  /// </summary>
+  /// <remarks>
+  /// Anything that does not parse falls back to a plain substring search rather than matching
+  /// nothing, because somebody typing "chrome:" is halfway through a working query and blanking the
+  /// list at every keystroke makes the box unusable.
+  /// </remarks>
+  public string? TextFilter {
+    get => this._filterText;
+    set {
+      this._filterText = value;
+      this._query = ProcessQuery.ParseOrSubstring(value);
+    }
+  }
+
+  private string? _filterText;
+  private ProcessQuery _query = ProcessQuery.Empty;
+
+  /// <summary>The parsed filter, so a caller can report what was wrong with it.</summary>
+  public ProcessQuery Query => this._query;
 
   /// <summary>Show only this user's processes; null for every user.</summary>
   public int? UserIdFilter { get; set; }
@@ -92,7 +113,7 @@ public sealed class ProcessView {
       this._byPid[processes[i].Pid] = i;
 
     for (var i = 0; i < count; ++i)
-      this._visible[i] = this.Matches(processes[i]);
+      this._visible[i] = this.Matches(processes[i], i);
 
     if (this.TreeMode)
       this.BuildTree(processes, count);
@@ -187,7 +208,7 @@ public sealed class ProcessView {
   }
 
   private void PromoteAncestorsOfMatches(int count) {
-    if (this.TextFilter is null && this.UserIdFilter is null)
+    if (this._query.IsEmpty && this.UserIdFilter is null)
       return;
 
     // A process is shown when it matches, or when something under it does. Without this, filtering in
@@ -225,16 +246,11 @@ public sealed class ProcessView {
     }
   }
 
-  private bool Matches(in ProcessRecord process) {
+  private bool Matches(in ProcessRecord process, int index) {
     if (this.UserIdFilter is { } uid && process.UserId != uid)
       return false;
 
-    var filter = this.TextFilter;
-    if (string.IsNullOrEmpty(filter))
-      return true;
-
-    return process.Name.Contains(filter, StringComparison.OrdinalIgnoreCase)
-        || (process.CommandLine?.Contains(filter, StringComparison.OrdinalIgnoreCase) ?? false);
+    return this._query.Matches(in process, this._delta, index);
   }
 
   private int Compare(int left, int right) {

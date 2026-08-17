@@ -179,4 +179,41 @@ public sealed class ProcessViewTests {
 
   #endregion
 
+
+  /// <summary>
+  /// The view filters through the shared parser, so the window's search box, the terminal's and
+  /// <c>--filter</c> all behave identically (PRD §56, §58).
+  /// </summary>
+  [Test]
+  public void TheViewFiltersWithTheQueryLanguage() {
+    var snapshot = new SystemSnapshot();
+    var records = snapshot.PrepareProcesses(2);
+    for (var i = 0; i < 2; ++i) {
+      records[i] = default;
+      records[i].Key = new(i + 1, (ulong)(i + 1));
+      records[i].ThreadCount = i == 0 ? 40 : 1;
+    }
+
+    records[0].Name = "chrome";
+    records[1].Name = "sshd";
+
+    var delta = new SnapshotDelta();
+    delta.Update(null, snapshot, CpuPercentMode.Normalized);
+
+    var view = new ProcessView { TextFilter = "threads:>10" };
+    view.Rebuild(snapshot, delta);
+    Assert.That(view.RowCount, Is.EqualTo(1));
+    Assert.That(snapshot.Processes[view.Rows[0].Index].Name, Is.EqualTo("chrome"));
+
+    // And a half-typed query must not blank the list, it must degrade to a substring search.
+    view.TextFilter = "ssh";
+    view.Rebuild(snapshot, delta);
+    Assert.That(view.RowCount, Is.EqualTo(1));
+    Assert.That(snapshot.Processes[view.Rows[0].Index].Name, Is.EqualTo("sshd"));
+
+    view.TextFilter = null;
+    view.Rebuild(snapshot, delta);
+    Assert.That(view.RowCount, Is.EqualTo(2));
+  }
+
 }
