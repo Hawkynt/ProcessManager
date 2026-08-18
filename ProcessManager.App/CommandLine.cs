@@ -1,4 +1,6 @@
 using Hawkynt.ProcessManager.Query;
+using Hawkynt.ProcessManager.Sampling;
+using Hawkynt.ProcessManager.Settings;
 
 namespace Hawkynt.ProcessManager.App;
 
@@ -134,8 +136,37 @@ internal sealed record CommandLineOptions {
 
   public string? Error { get; init; }
 
-  public static CommandLineOptions Parse(string[] args) {
-    var options = new CommandLineOptions();
+  /// <summary>Where the settings were read from, and where --save-settings will write them.</summary>
+  public string? SettingsPath { get; init; }
+
+  /// <summary>Write the options this run ended up with back to the settings file, then carry on.</summary>
+  public bool SaveSettings { get; init; }
+
+  /// <summary>Which CPU convention percentages are expressed in (PRD §3.2).</summary>
+  public CpuPercentMode CpuMode { get; init; } = CpuPercentMode.Normalized;
+
+  /// <summary>
+  /// Parses the command line over the saved settings, so a flag beats a setting and a setting beats
+  /// the built-in default — the layering every program of this shape has (PRD §67).
+  /// </summary>
+  public static CommandLineOptions Parse(string[] args, UserSettings? settings) {
+    settings ??= new();
+    var seeded = new CommandLineOptions {
+      Interval = TimeSpan.FromSeconds(settings.IntervalSeconds),
+      SortColumn = settings.SortField,
+      SortDescending = settings.SortDescending,
+      TreeMode = settings.TreeMode,
+      CpuMode = settings.CpuMode,
+      AsciiOnly = !settings.BlockCharacters,
+    };
+
+    return Parse(args, seeded, settings);
+  }
+
+  public static CommandLineOptions Parse(string[] args) => Parse(args, new CommandLineOptions(), new());
+
+  private static CommandLineOptions Parse(string[] args, CommandLineOptions seed, UserSettings settings) {
+    var options = seed;
     var explicitMode = false;
 
     for (var i = 0; i < args.Length; ++i) {
@@ -164,12 +195,49 @@ internal sealed record CommandLineOptions {
         case "--columns": {
           if (!TryValue(args, ref i, inlineValue, out var list))
             return options with { Error = "--columns needs a comma-separated list of fields" };
+
+          // "@name" is a saved or built-in column set, which is the whole point of naming them.
+          if (list.StartsWith('@')) {
+            var setName = list[1..];
+            if (!settings.TryGetColumnSet(setName, out var named))
+              return options with {
+                Error = $"there is no column set called '{setName}'; try {string.Join(", ", settings.ColumnSetNames())}",
+              };
+
+            // A set is written for the window, where a drawn history is the point of the column. A
+            // file has no cell to draw one in, so they are dropped here rather than written as an
+            // empty column — which is the same rule --columns applies to a named graph, reached the
+            // other way round.
+            var writable = new List<ProcessField>(named.Length);
+            foreach (var candidate in named)
+              if (!FieldRegistry.Get(candidate).IsGraph)
+                writable.Add(candidate);
+
+            if (writable.Count == 0)
+              return options with { Error = $"the column set '{setName}' is nothing but drawn histories" };
+
+            options = options with { Fields = [.. writable] };
+            break;
+          }
+
           if (!Exporter.TryParseFields(list, out var fields, out var reason))
             return options with { Error = $"--columns: {reason}" };
 
           options = options with { Fields = fields };
           break;
         }
+
+        case "--settings": {
+          if (!TryValue(args, ref i, inlineValue, out var path))
+            return options with { Error = "--settings needs a path" };
+
+          options = options with { SettingsPath = path };
+          break;
+        }
+
+        case "--save-settings":
+          options = options with { SaveSettings = true };
+          break;
 
         case "--filter": {
           if (!TryValue(args, ref i, inlineValue, out var query))
@@ -364,6 +432,9 @@ internal sealed record CommandLineOptions {
       --filter <query>   show only matching processes: 'cpu:>50', 'user:alice AND memory:>1GiB'
       --format <fmt>     text (default), csv, tsv, json, jsonl, markdown
       --columns <a,b,c>  which fields to write; see --help-fields
+      --columns @<name>  a saved or built-in column set: basic, expert, security, io, memory, cpu
+      --settings <path>  read settings from here instead of the usual place
+      --save-settings    write this run's options back to the settings file
       --tree             show the process tree (with --kill: the whole subtree)
       --flat             start with a flat list sorted by CPU rather than a tree
       --user             only this user's processes

@@ -18,12 +18,20 @@ internal static class Program {
   private const int _ExitNoMatch = 2;
 
   private static int Main(string[] args) {
-    var options = CommandLineOptions.Parse(args);
+    // Settings first, so the command line is layered over them rather than the other way round.
+    // A settings file that is missing or unreadable yields the defaults and never stops the program
+    // starting (PRD §81).
+    var settingsPath = SettingsPathFrom(args);
+    var settings = Settings.SettingsStore.Load(settingsPath);
+    var options = CommandLineOptions.Parse(args, settings);
     if (options.Error is { } error) {
       Console.Error.WriteLine($"procman: {error}");
       Console.Error.WriteLine("Try 'procman --help'.");
       return _ExitError;
     }
+
+    if (options.SaveSettings && !SaveSettings(options, settings, settingsPath))
+      Console.Error.WriteLine("procman: the settings could not be written; carrying on with them unsaved.");
 
     switch (options.Mode) {
       case RunMode.Help:
@@ -243,5 +251,40 @@ internal static class Program {
   private static string Owner(in ProcessRecord process)
     => process.UserName ?? (process.UserId >= 0 ? process.UserId.ToString(CultureInfo.InvariantCulture) : "?");
 
+
+
+  /// <summary>
+  /// Finds --settings before the rest of the command line is parsed, because the rest of the command
+  /// line is parsed over what that file says.
+  /// </summary>
+  private static string? SettingsPathFrom(string[] args) {
+    for (var i = 0; i < args.Length; ++i) {
+      if (args[i].StartsWith("--settings=", StringComparison.Ordinal))
+        return args[i]["--settings=".Length..];
+
+      if (args[i] == "--settings" && i + 1 < args.Length)
+        return args[i + 1];
+    }
+
+    return null;
+  }
+
+  private static bool SaveSettings(CommandLineOptions options, Settings.UserSettings loaded, string? path) {
+    // Everything the file already held is kept; only what this run could actually have changed is
+    // overwritten. Saving must not quietly drop a column set somebody wrote by hand.
+    var updated = loaded with {
+      IntervalSeconds = options.Interval.TotalSeconds,
+      SortField = options.SortColumn,
+      SortDescending = options.SortDescending,
+      TreeMode = options.TreeMode,
+      CpuMode = options.CpuMode,
+      BlockCharacters = !options.AsciiOnly,
+    };
+
+    if (options.Fields is { Length: > 0 } fields)
+      updated = updated with { DesktopColumns = fields, TerminalColumns = fields };
+
+    return Settings.SettingsStore.Save(updated, path ?? options.SettingsPath);
+  }
 
 }
