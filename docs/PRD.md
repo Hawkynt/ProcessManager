@@ -1409,9 +1409,15 @@ Resources:
 - [x] Load averages
 
 Read once and cached: none of it changes between samples, and walking the cache directories every
-second would be indefensible against §71. Windows gets the identity and the logical-processor count
-and reports `n/i` for the rest — the registry and `GetLogicalProcessorInformationEx` have it all, and
-that is simply not written yet.
+second would be indefensible against §71.
+
+Windows answers the same questions by different means: `GetLogicalProcessorInformationEx` for cores,
+packages, NUMA nodes and caches, and `CPUID` leaves 0x80000002–4 for the brand string. Asking the
+processor rather than the registry avoids a dependency the trimmer would have to be told about, and
+returns the same string, because that is where Windows got it. ARM64 has no CPUID and reports that it
+does not know rather than inventing a name. The live clock speed is still `n/i` there — Windows
+exposes it only through a performance counter or a power interface, neither worth opening to describe
+a machine.
 
 Graph modes:
 

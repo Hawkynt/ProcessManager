@@ -37,6 +37,16 @@ internal static partial class Native {
   [return: MarshalAs(UnmanagedType.Bool)]
   internal static partial bool GetPerformanceInfo(ref NtStructures.PerformanceInformation info, uint size);
 
+  /// <summary>
+  /// The processor topology: cores, packages, NUMA nodes and caches, in one variable-length buffer.
+  /// </summary>
+  [LibraryImport("kernel32.dll", SetLastError = true)]
+  [return: MarshalAs(UnmanagedType.Bool)]
+  internal static partial bool GetLogicalProcessorInformationEx(int relationshipType, nint buffer, ref uint returnedLength);
+
+  /// <summary>RelationAll — every record in one call rather than four calls for four kinds.</summary>
+  public const int RelationAll = 0xFFFF;
+
   [LibraryImport("kernel32.dll", SetLastError = true)]
   internal static partial nint OpenProcess(uint desiredAccess, [MarshalAs(UnmanagedType.Bool)] bool inheritHandle, int processId);
 
