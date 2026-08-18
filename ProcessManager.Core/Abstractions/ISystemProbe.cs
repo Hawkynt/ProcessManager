@@ -60,6 +60,11 @@ public interface ISystemProbe : IDisposable {
   /// <summary>Sockets owned by one process.</summary>
   IReadOnlyList<ConnectionRecord> GetConnections(ProcessKey key);
 
+  /// <summary>
+  /// What is configured to start at login (PRD §42), or an empty list where that is not read yet.
+  /// </summary>
+  IReadOnlyList<StartupEntry> GetStartupEntries();
+
   /// <summary>The process's environment block, or an empty list when it may not be read.</summary>
   IReadOnlyList<KeyValuePair<string, string>> GetEnvironment(ProcessKey key);
 

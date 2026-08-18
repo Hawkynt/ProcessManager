@@ -678,6 +678,24 @@ public sealed class LinuxProbe : ISystemProbe {
     return found ? Counter.Of(voluntary + involuntary) : Counter.NotSupported;
   }
 
+  /// <summary>
+  /// XDG autostart entries, user files overriding system ones of the same name (PRD §42).
+  /// </summary>
+  public IReadOnlyList<StartupEntry> GetStartupEntries() => XdgAutostartReader.Read(
+    this._options.AutostartUserDirectory ?? DefaultUserAutostart(),
+    this._options.AutostartSystemDirectories ?? ["/etc/xdg/autostart"],
+    this._options.CurrentDesktop ?? Environment.GetEnvironmentVariable("XDG_CURRENT_DESKTOP")
+  );
+
+  private static string? DefaultUserAutostart() {
+    var config = Environment.GetEnvironmentVariable("XDG_CONFIG_HOME");
+    if (!string.IsNullOrEmpty(config))
+      return Path.Combine(config, "autostart");
+
+    var home = Environment.GetEnvironmentVariable("HOME");
+    return string.IsNullOrEmpty(home) ? null : Path.Combine(home, ".config", "autostart");
+  }
+
   public IReadOnlyList<ThreadRecord> GetThreads(ProcessKey key) {
     var result = new List<ThreadRecord>();
     var taskRoot = $"{this._procRoot}/{key.Pid}/task";

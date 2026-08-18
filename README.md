@@ -100,6 +100,7 @@ stub whose every member throws `PlatformNotSupportedException` with an actionabl
 procman                       # desktop UI (Win32 on Windows, GTK on Linux)
 procman --tui                 # full-screen terminal UI
 procman --host                # what this machine is: processor, cache, memory, uptime
+procman --startup             # what will run when you log in, and what will not, and why
 procman --find "libssl"       # which processes have a handle/mapping matching this?
 procman --kill 1234 --tree    # end a process and its descendants
 
@@ -255,8 +256,9 @@ These are consequences of the design, not a to-do list; the to-do list is the PR
   Measured and written down in PRD §71 rather than left as a number nobody intends to meet.
 - **Per-process property windows are not implemented.** The detail pane shows one process at a time;
   Process Explorer opens several at once, which is what makes it good at comparing two of them.
-- **No services, startup or users view.** Three of Task Manager's tabs have no equivalent here yet.
-  They are specified in PRD §41–§43 and are the largest remaining gap.
+- **No services or users view, and startup is a list rather than a page.** `--startup` reads the XDG
+  autostart entries and says which will run; Windows startup, systemd user units, and any view at all
+  are still missing, as are services and users entirely. PRD §41–§43, and the largest remaining gap.
 - **Only some things are persisted.** Columns, sort order, tree mode and the sample interval survive
   a restart, in a `key=value` file meant to be edited by hand. Window size, the highlight colours and
   everything else in PRD §67 do not.

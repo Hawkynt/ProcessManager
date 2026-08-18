@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Has Actions
+Exec=/usr/bin/real
+
+[Desktop Action Extra]
+Name=Not The Name
+Exec=/usr/bin/not-this

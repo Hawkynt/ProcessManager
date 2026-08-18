@@ -1,0 +1,5 @@
+[Desktop Entry]
+Type=Application
+Name=Switched Off
+Exec=/usr/bin/off
+X-GNOME-Autostart-enabled=false
