@@ -55,6 +55,15 @@ public struct ProcessRecord {
   /// <summary>Unix nice value; 0 elsewhere.</summary>
   public int Nice;
 
+  /// <summary>
+  /// The logical processor this last ran on, or -1 when the platform does not say.
+  /// </summary>
+  /// <remarks>
+  /// A snapshot of something that changes constantly, and useful for exactly that reason: a thread
+  /// pinned to one core looks different from one the scheduler is moving around.
+  /// </remarks>
+  public int LastCpu;
+
   /// <summary>Total CPU consumed since start, in nanoseconds.</summary>
   public Counter CpuTimeNs;
 

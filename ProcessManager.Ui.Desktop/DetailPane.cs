@@ -40,7 +40,22 @@ public sealed class DetailPane {
     this._hint.Dock = DockStyle.Bottom;
 
     AddPage("Overview", this._overview);
-    AddList("Threads", this._threads, ("TID", 90), ("State", 90), ("CPU time", 110), ("Priority", 80), ("Start address", 160));
+    AddList(
+      "Threads",
+      this._threads,
+      ("TID", 80),
+      ("Name", 150),
+      ("State", 70),
+      ("CPU time", 100),
+      ("User", 90),
+      ("Kernel", 90),
+      ("Ctx switches", 100),
+      ("CPU#", 60),
+      ("Priority", 70),
+      // Last, and widest: it is a kernel symbol or a wait reason, and it is the column that answers
+      // "why is this hanging" (PRD §2, §29).
+      ("Waiting on", 200)
+    );
     AddList("Modules", this._modules, ("Path", 520), ("Base", 140), ("Size", 100), ("Permissions", 100));
     AddList("Handles", this._handles, ("Type", 110), ("Handle", 90), ("Name", 640));
     AddList("Environment", this._environment, ("Variable", 220), ("Value", 700));
@@ -127,10 +142,17 @@ public sealed class DetailPane {
     var threads = this._probe.GetThreads(this._key);
     Fill(this._threads, threads.Count, i => [
       threads[i].Tid.ToString(CultureInfo.InvariantCulture),
+      threads[i].Name ?? "—",
       Humanize.State(threads[i].State),
       Humanize.Duration(threads[i].CpuTimeNs),
+      Humanize.Duration(threads[i].UserTimeNs),
+      Humanize.Duration(threads[i].KernelTimeNs),
+      Humanize.Count(threads[i].ContextSwitches),
+      threads[i].LastCpu >= 0 ? threads[i].LastCpu.ToString(CultureInfo.InvariantCulture) : "—",
       threads[i].Priority.ToString(CultureInfo.InvariantCulture),
-      threads[i].StartSymbol ?? (threads[i].StartAddress == 0 ? "—" : "0x" + threads[i].StartAddress.ToString("x", CultureInfo.InvariantCulture)),
+      threads[i].WaitReason
+        ?? threads[i].StartSymbol
+        ?? (threads[i].StartAddress == 0 ? "—" : "0x" + threads[i].StartAddress.ToString("x", CultureInfo.InvariantCulture)),
     ]);
   }
 
