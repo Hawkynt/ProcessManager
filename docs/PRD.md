@@ -31,8 +31,8 @@ shorthand:
 it is not known*. An unticked box must never become a zero on screen. This is restated here because
 it is the single requirement most likely to be broken while filling the tables in.
 
-**Counting, as of the last update:** **447 of 1251 boxes are ticked** — 62 of 189 in the field
-registry (§14–22), 385 of 1062 across the capabilities. A further 114 are marked 🟡, meaning some of
+**Counting, as of the last update:** **450 of 1251 boxes are ticked** — 62 of 189 in the field
+registry (§14–22), 388 of 1062 across the capabilities. A further 116 are marked 🟡, meaning some of
 the work behind them is already done. §100 tracks the phases; §101 defines when this may be called
 finished.
 
@@ -1364,24 +1364,26 @@ Actions:
 
 # 45. Performance page
 
-A system overview exists with per-core meters and totals; the resource selector and the large graph
-do not.
+A system overview exists with per-core meters and totals, and a performance view behind it.
 
-- [ ] Vertical resource selector
-- [ ] Large detailed graph
-- [ ] Summary cards with compact sparklines and current values
+- [ ] Vertical resource selector — one page for the whole machine so far, not a rail of devices
+- [ ] 🟡 Large detailed graph — the CPU and memory histories are enlarged on the page; a single
+      selected-resource graph needs the rail above
+- [x] Summary cards with compact sparklines and current values — the plots along the top of the
+      main window
 
 Resources:
 
-- [ ] CPU (§46)
-- [ ] Memory (§47)
+- [x] CPU (§46)
+- [x] Memory (§47)
 - [ ] Each disk (§48)
 - [ ] Each network adapter (§49)
 - [ ] Each GPU (§50)
 - [ ] Battery
 - [ ] Optional sensors and devices
 
-- [ ] This page is reachable by clicking the total CPU / memory / swap / I/O readouts
+- [ ] 🟡 Reachable from View ▸ Performance. Clicking the readouts themselves needs a click event on
+      the plot control, which is the next step
 
 # 46. CPU performance
 
@@ -1458,6 +1460,10 @@ socket and cache topology.
 The four in bold are the Task-Manager-style hardware facts. They come from DMI/SMBIOS type-17
 records: `/sys/firmware/dmi/tables` on Linux, which is root-readable and therefore a helper call, and
 `GetSystemFirmwareTable` on Windows.
+
+The page renders from `PerformanceReport`, which is data rather than a window — so `--host` on a
+terminal and the desktop view show the same figures by construction, and the content is unit-tested
+in a way a window is not (§58).
 
 Graphs:
 

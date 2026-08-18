@@ -366,6 +366,7 @@ public sealed class MainWindow : Form {
 
     view.DropDownItems.Add(new ToolStripSeparator());
     view.DropDownItems.Add(Item("Select columns…", this.ChooseColumns));
+    view.DropDownItems.Add(Item("Performance…", this.ShowPerformance));
     view.DropDownItems.Add(Item("Colour legend…", () => new LegendWindow().ShowDialog()));
 
     var process = new ToolStripMenuItem("Process");
@@ -503,6 +504,23 @@ public sealed class MainWindow : Form {
       MessageBox.Show(result.Detail ?? result.Outcome.ToString(), "Process Manager");
 
     this.Refresh();
+  }
+
+
+  /// <summary>
+  /// Opens the performance view (PRD §45).
+  /// </summary>
+  /// <remarks>
+  /// Modal, and deliberately: it is a page somebody opens to read, not a palette to keep beside the
+  /// list, and a modeless one would need its own timer and its own lifetime. The plots share the
+  /// main window's rings, so it opens showing the last sixty seconds rather than starting blank.
+  /// </remarks>
+  private void ShowPerformance() {
+    // Not disposed: the toolkit's Form is not IDisposable, and ShowDialog owns the window's
+    // lifetime the same way the colour legend above does.
+    var window = new PerformanceWindow(this._probe, this._sampler, this._cpuHistory, this._memoryHistory);
+    window.Update(100);
+    window.ShowDialog();
   }
 
 }
