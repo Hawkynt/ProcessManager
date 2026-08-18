@@ -193,6 +193,12 @@ public static class FieldAccessor {
       ? process.SeccompMode.Value switch { 0 => "off", 1 => "strict", 2 => "filter", _ => null }
       : null,
     ProcessField.SecurityContext => process.SecurityContext,
+    // Textual because a 64-bit mask is read as hex, not compared as a magnitude — and without this
+    // the column rendered a value on screen and exported an empty cell.
+    ProcessField.Capabilities => process.EffectiveCapabilities.HasValue
+      ? "0x" + process.EffectiveCapabilities.Value.ToString("x", CultureInfo.InvariantCulture)
+      : null,
+    ProcessField.PidHex => "0x" + process.Pid.ToString("X", CultureInfo.InvariantCulture),
     ProcessField.Pid => process.Pid.ToString(CultureInfo.InvariantCulture),
     ProcessField.ParentPid => process.ParentPid.ToString(CultureInfo.InvariantCulture),
     _ => null,

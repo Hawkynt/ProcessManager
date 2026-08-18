@@ -262,4 +262,53 @@ public sealed class FieldRegistryTests {
     return snapshot;
   }
 
+
+  /// <summary>
+  /// Every field that shows something on screen must export something too.
+  /// </summary>
+  /// <remarks>
+  /// Asserted through the exporter rather than through the accessors, because the bug this catches
+  /// lived in the seam between them: the exporter branches on the field's <see cref="FieldKind"/>
+  /// and asks only <see cref="FieldAccessor.RawText"/> for a textual one, so a text field with a
+  /// number but no raw text rendered a value in the window and wrote an empty cell to a file.
+  /// Capabilities did exactly that — the column read 0x1ffffffffff and the CSV read nothing.
+  /// </remarks>
+  [Test]
+  public void EveryFieldThatRendersAValueAlsoExportsOne() {
+    var snapshot = OneProcess();
+    var records = snapshot.PrepareProcesses(1);
+
+    // Fill what the fixture leaves alone, so "empty because unknown" cannot be mistaken for
+    // "empty because the exporter never asked".
+    records[0].EffectiveCapabilities = Counter.Of(0x1ffffffffffUL);
+    records[0].IsElevated = Counter.Of(1ul);
+    records[0].SeccompMode = Counter.Of(2ul);
+    records[0].NoNewPrivileges = Counter.Of(1ul);
+    records[0].IntegrityLevel = Counter.Of(0x3000ul);
+    records[0].SecurityContext = "unconfined";
+    records[0].ContainerPath = "/user.slice";
+    records[0].SwapBytes = Counter.Of(4096ul);
+    records[0].LastCpu = 3;
+
+    var delta = new SnapshotDelta();
+    delta.Update(null, snapshot, CpuPercentMode.Normalized);
+    var view = new ProcessView();
+    view.Rebuild(snapshot, delta);
+
+    foreach (var descriptor in FieldRegistry.All) {
+      if (descriptor.IsGraph)
+        continue;
+
+      var shown = FieldAccessor.Text(descriptor.Id, in snapshot.Processes[0], delta, 0);
+      if (shown.Length == 0 || shown == Humanize.Placeholder(UnknownReason.NotSampledYet))
+        continue;
+
+      var writer = new StringWriter();
+      Exporter.Write(writer, ExportFormat.Csv, snapshot, delta, view, [descriptor.Id]);
+      var cell = writer.ToString().Split('\n')[1];
+
+      Assert.That(cell, Is.Not.Empty, $"{descriptor.Key} shows '{shown}' and exports an empty cell");
+    }
+  }
+
 }
