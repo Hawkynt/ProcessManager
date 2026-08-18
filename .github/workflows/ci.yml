@@ -130,6 +130,12 @@ jobs:
       - name: Ask the probe about itself and check the runtime agrees
         run: dotnet run --project ProcessManager.App --configuration Release --no-build -- --self-test
 
+      # The topology walk and the CPUID brand string are unit-tested against hand-built buffers, but
+      # nothing else in the pipeline calls the real APIs. This does, and fails the job if describing
+      # the machine throws (PRD §46).
+      - name: Describe the machine
+        run: dotnet run --project ProcessManager.App --configuration Release --no-build -- --host
+
       # The other half of the helper's tests. The protocol tests (PRD §9.8) drive the parser with
       # malformed frames; this drives the real binary over a real pipe and checks that it answers,
       # reads what it is asked for, and refuses a request whose identity does not match. Unelevated,

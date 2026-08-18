@@ -43,35 +43,8 @@ public sealed class WindowsProbe : ISystemProbe {
 
   private HostInfo? _host;
 
-  /// <summary>
-  /// What Windows tells us without asking anything hard.
-  /// </summary>
-  /// <remarks>
-  /// The processor model, the cache sizes and the socket count all exist on Windows — in the
-  /// registry and in <c>GetLogicalProcessorInformationEx</c> — and none of it is read yet. Those
-  /// fields say <c>n/i</c> rather than <c>n/a</c>, because the machine can answer and we have not
-  /// asked (PRD §7, §72.3).
-  /// </remarks>
-  public HostInfo DescribeHost() => this._host ??= new() {
-    HostName = Environment.MachineName,
-    OperatingSystem = System.Runtime.InteropServices.RuntimeInformation.OSDescription,
-    OperatingSystemVersion = Environment.OSVersion.Version.ToString(),
-    Architecture = System.Runtime.InteropServices.RuntimeInformation.OSArchitecture.ToString(),
-    LogicalProcessors = Counter.Of((ulong)Environment.ProcessorCount),
-
-    CpuBaseHertz = Counter.Unknown(UnknownReason.NotImplementedHere),
-    CpuCurrentHertz = Counter.Unknown(UnknownReason.NotImplementedHere),
-    Sockets = Counter.Unknown(UnknownReason.NotImplementedHere),
-    PhysicalCores = Counter.Unknown(UnknownReason.NotImplementedHere),
-    NumaNodes = Counter.Unknown(UnknownReason.NotImplementedHere),
-    L1DataBytes = Counter.Unknown(UnknownReason.NotImplementedHere),
-    L1InstructionBytes = Counter.Unknown(UnknownReason.NotImplementedHere),
-    L2Bytes = Counter.Unknown(UnknownReason.NotImplementedHere),
-    L3Bytes = Counter.Unknown(UnknownReason.NotImplementedHere),
-    MemoryTransfersPerSecond = Counter.Unknown(UnknownReason.NotImplementedHere),
-    MemorySlotsUsed = Counter.Unknown(UnknownReason.NotImplementedHere),
-    MemorySlotsTotal = Counter.Unknown(UnknownReason.NotImplementedHere),
-  };
+  /// <summary>Read once; nothing in it changes while the program runs.</summary>
+  public HostInfo DescribeHost() => this._host ??= WindowsHostReader.Read();
 
   public void Dispose() => this._handleNames.Dispose();
 
