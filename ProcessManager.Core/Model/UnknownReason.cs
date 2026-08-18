@@ -16,6 +16,17 @@ public enum UnknownReason : byte {
   /// <summary>This platform has no such counter. Not a failure — a different machine.</summary>
   NotSupportedOnPlatform,
 
+  /// <summary>
+  /// This platform could report it and we have not built that yet.
+  /// </summary>
+  /// <remarks>
+  /// Deliberately distinct from <see cref="NotSupportedOnPlatform"/>. "Windows has no cgroups" and
+  /// "we have not written the Windows token code yet" are different statements, and rendering the
+  /// second as the first tells the reader the machine cannot do something it can (PRD §7). One is a
+  /// fact about the operating system; the other is a fact about us.
+  /// </remarks>
+  NotImplementedHere,
+
   /// <summary>The process went away between two reads of its own files.</summary>
   ProcessExited,
 

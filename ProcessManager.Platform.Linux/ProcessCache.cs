@@ -25,6 +25,7 @@ internal sealed class ProcessCache {
   private static ReadOnlySpan<byte> _io => "io"u8;
   private static ReadOnlySpan<byte> _fd => "fd"u8;
   private static ReadOnlySpan<byte> _smapsRollup => "smaps_rollup"u8;
+  private static ReadOnlySpan<byte> _attrCurrent => "attr/current"u8;
 
   private byte[] _nameBytes = [];
   private int _nameLength;
@@ -35,6 +36,7 @@ internal sealed class ProcessCache {
     this.IoPath = BuildPath(procRoot, pid, _io);
     this.FdPath = BuildPath(procRoot, pid, _fd);
     this.SmapsRollupPath = BuildPath(procRoot, pid, _smapsRollup);
+    this.SecurityContextPath = BuildPath(procRoot, pid, _attrCurrent);
     this.Pid = pid;
   }
 
@@ -45,6 +47,7 @@ internal sealed class ProcessCache {
   public byte[] IoPath { get; }
   public byte[] FdPath { get; }
   public byte[] SmapsRollupPath { get; }
+  public byte[] SecurityContextPath { get; }
 
   public string Name { get; private set; } = string.Empty;
   public string? CommandLine { get; private set; }

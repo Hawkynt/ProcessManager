@@ -333,4 +333,52 @@ public sealed class ProcessQueryTests {
 
   #endregion
 
+
+  /// <summary>
+  /// A yes/no field shows "yes" and "no"; §56's own example spells it "unsigned:true". All the
+  /// usual spellings resolve to the same query.
+  /// </summary>
+  [TestCase("yes")]
+  [TestCase("true")]
+  [TestCase("1")]
+  [TestCase("Y")]
+  public void ABooleanFieldAcceptsTheUsualSpellings(string spelling) {
+    Assert.That(ProcessQuery.TryParse($"elevated:{spelling}", out var parsed, out var error), Is.True, error);
+
+    var snapshot = new SystemSnapshot();
+    var records = snapshot.PrepareProcesses(2);
+    for (var i = 0; i < 2; ++i) {
+      records[i] = default;
+      records[i].Key = new(i + 1, (ulong)(i + 1));
+      records[i].Name = "p" + i;
+    }
+
+    records[0].IsElevated = Counter.Of(1ul);
+    records[1].IsElevated = Counter.Of(0ul);
+
+    var delta = new SnapshotDelta();
+    delta.Update(null, snapshot, CpuPercentMode.Normalized);
+    var processes = snapshot.Processes;
+
+    Assert.That(parsed.Matches(in processes[0], delta, 0), Is.True, spelling);
+    Assert.That(parsed.Matches(in processes[1], delta, 1), Is.False, spelling);
+  }
+
+  /// <summary>A state whose values are words is not a boolean and must not be rewritten as one.</summary>
+  [Test]
+  public void AWordStateIsNotTreatedAsABoolean() {
+    Assert.That(ProcessQuery.TryParse("seccomp:filter", out var parsed, out var error), Is.True, error);
+
+    var snapshot = new SystemSnapshot();
+    var records = snapshot.PrepareProcesses(1);
+    records[0] = default;
+    records[0].Key = new(1, 1);
+    records[0].Name = "p";
+    records[0].SeccompMode = Counter.Of(2ul);
+
+    var delta = new SnapshotDelta();
+    delta.Update(null, snapshot, CpuPercentMode.Normalized);
+    Assert.That(parsed.Matches(in snapshot.Processes[0], delta, 0), Is.True);
+  }
+
 }

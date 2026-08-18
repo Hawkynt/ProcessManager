@@ -58,6 +58,27 @@ public static class FieldAccessor {
       case ProcessField.WriteBytesPerSecond:
         return Humanize.BytesPerSecond(Rated(delta, index, field));
 
+      case ProcessField.Elevated: return YesNo(process.IsElevated);
+      case ProcessField.NoNewPrivileges: return YesNo(process.NoNewPrivileges);
+      case ProcessField.Seccomp:
+        if (!process.SeccompMode.HasValue)
+          return Humanize.Placeholder(process.SeccompMode.Reason);
+
+        return process.SeccompMode.Value switch {
+          0 => "off",
+          1 => "strict",
+          2 => "filter",
+          _ => "?",
+        };
+
+      case ProcessField.Capabilities:
+        return process.EffectiveCapabilities.HasValue
+          ? "0x" + process.EffectiveCapabilities.Value.ToString("x", CultureInfo.InvariantCulture)
+          : Humanize.Placeholder(process.EffectiveCapabilities.Reason);
+
+      case ProcessField.SecurityContext:
+        return process.SecurityContext ?? Humanize.Placeholder(process.SecurityContextReason);
+
       case ProcessField.ThreadCount: return process.ThreadCount.ToString(CultureInfo.InvariantCulture);
       case ProcessField.HandleCount: return Humanize.Count(process.HandleCount);
       case ProcessField.Priority: return process.Priority.ToString(CultureInfo.InvariantCulture);
@@ -100,6 +121,11 @@ public static class FieldAccessor {
       case ProcessField.Priority: return process.Priority;
       case ProcessField.SessionId: return process.SessionId;
       case ProcessField.StartTime: return process.StartTimeUtcTicks;
+
+      case ProcessField.Elevated: return Number(process.IsElevated);
+      case ProcessField.Seccomp: return Number(process.SeccompMode);
+      case ProcessField.NoNewPrivileges: return Number(process.NoNewPrivileges);
+      case ProcessField.Capabilities: return Number(process.EffectiveCapabilities);
 
       case ProcessField.CpuTime: return Number(process.CpuTimeNs);
       case ProcessField.PrivateBytes: return Number(process.PrivateBytes);
@@ -145,6 +171,14 @@ public static class FieldAccessor {
     ProcessField.CommandLine => process.CommandLine,
     ProcessField.Container => process.ContainerPath,
     ProcessField.State => Humanize.State(process.State),
+    // The security states are matched by the word they show, so "elevated:yes" reads the way it
+    // would be said aloud. The numeric form still works, because Number covers them too.
+    ProcessField.Elevated => Word(process.IsElevated),
+    ProcessField.NoNewPrivileges => Word(process.NoNewPrivileges),
+    ProcessField.Seccomp => process.SeccompMode.HasValue
+      ? process.SeccompMode.Value switch { 0 => "off", 1 => "strict", 2 => "filter", _ => null }
+      : null,
+    ProcessField.SecurityContext => process.SecurityContext,
     ProcessField.Pid => process.Pid.ToString(CultureInfo.InvariantCulture),
     ProcessField.ParentPid => process.ParentPid.ToString(CultureInfo.InvariantCulture),
     _ => null,
@@ -186,6 +220,14 @@ public static class FieldAccessor {
   }
 
   private static double? Number(Counter counter) => counter.HasValue ? counter.Value : null;
+
+  /// <summary>A yes/no counter as the word, or the reason there is no answer.</summary>
+  private static string YesNo(Counter counter)
+    => counter.HasValue ? (counter.Value != 0 ? "yes" : "no") : Humanize.Placeholder(counter.Reason);
+
+  /// <summary>The same, but <see langword="null"/> rather than a placeholder, for filtering.</summary>
+  private static string? Word(Counter counter)
+    => counter.HasValue ? (counter.Value != 0 ? "yes" : "no") : null;
 
   private static Rate Rated(SnapshotDelta? delta, int index, ProcessField field) {
     if (delta is null)

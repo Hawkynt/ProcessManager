@@ -32,6 +32,9 @@ public static class RowPalette {
       ProcessCategory.Zombie => dark ? Color.FromArgb(0xFF, 0x4A, 0x2A, 0x12) : Color.FromArgb(0xFF, 0xFF, 0xE0, 0xC0),
       ProcessCategory.Suspended => dark ? Color.FromArgb(0xFF, 0x33, 0x33, 0x38) : Color.FromArgb(0xFF, 0xDC, 0xDC, 0xE0),
       ProcessCategory.System => dark ? Color.FromArgb(0xFF, 0x1B, 0x2E, 0x4A) : Color.FromArgb(0xFF, 0xCF, 0xE2, 0xF7),
+      // Purple, and deliberately not near the blue of System: the two mean different things and a
+      // reader must not have to compare shades to tell "root started it" from "it became root".
+      ProcessCategory.Elevated => dark ? Color.FromArgb(0xFF, 0x3A, 0x1E, 0x4A) : Color.FromArgb(0xFF, 0xEB, 0xD6, 0xF7),
       ProcessCategory.Service => dark ? Color.FromArgb(0xFF, 0x14, 0x38, 0x3A) : Color.FromArgb(0xFF, 0xCF, 0xF0, 0xF2),
       ProcessCategory.Own => dark ? Color.FromArgb(0xFF, 0x3A, 0x36, 0x18) : Color.FromArgb(0xFF, 0xFB, 0xF5, 0xCE),
       _ => null,

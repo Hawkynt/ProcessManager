@@ -6,6 +6,15 @@ namespace Hawkynt.ProcessManager.Platform.Linux;
 /// </summary>
 public sealed record LinuxProbeOptions {
 
+  /// <summary>
+  /// Read each process's LSM label from <c>attr/current</c> (PRD §21, §36).
+  /// </summary>
+  /// <remarks>
+  /// Off by default: it is one more open and read per process, which at six hundred processes is the
+  /// same order of cost as the file-descriptor scan that had to leave the sample loop (PRD §5.4).
+  /// </remarks>
+  public bool ReadSecurityContext { get; init; }
+
   /// <summary>Where <c>/proc</c> is. A fixture directory in tests.</summary>
   public string ProcRoot { get; init; } = "/proc";
 

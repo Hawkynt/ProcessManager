@@ -15,6 +15,7 @@ public static class Humanize {
   public static string Placeholder(UnknownReason reason) => reason switch {
     UnknownReason.NotPermitted => "—",
     UnknownReason.NotSupportedOnPlatform => "n/a",
+    UnknownReason.NotImplementedHere => "n/i",
     UnknownReason.ProcessExited => "×",
     UnknownReason.NotSampledYet => "…",
     UnknownReason.CounterInvalid => "?",
@@ -25,6 +26,7 @@ public static class Humanize {
   public static string Explain(UnknownReason reason) => reason switch {
     UnknownReason.NotPermitted => "Not readable as this user; start the elevated helper to see it.",
     UnknownReason.NotSupportedOnPlatform => "This operating system does not report this value.",
+    UnknownReason.NotImplementedHere => "This operating system reports it; ProcessManager does not read it yet.",
     UnknownReason.ProcessExited => "The process ended while it was being read.",
     UnknownReason.NotSampledYet => "Needs a second sample; wait one interval.",
     UnknownReason.CounterInvalid => "The counter moved backwards or the interval was zero.",
