@@ -99,16 +99,35 @@ stub whose every member throws `PlatformNotSupportedException` with an actionabl
 ```sh
 procman                       # desktop UI (Win32 on Windows, GTK on Linux)
 procman --tui                 # full-screen terminal UI
-procman --tui --sort=cpu      # start sorted by CPU, tree mode off
-procman --list --json         # one snapshot to stdout as JSON, then exit
+procman --host                # what this machine is: processor, cache, memory, uptime
 procman --find "libssl"       # which processes have a handle/mapping matching this?
 procman --kill 1234 --tree    # end a process and its descendants
 
+# Filtering. The same syntax in the window, the terminal and here.
+procman --filter 'cpu:>50'
+procman --filter 'user:alice AND memory:>1GiB'
+procman --filter 'elevated:yes AND NOT name:chrome'
+procman --filter 'name:/^kworker/'
+
+# Any field, in any of six formats.
+procman --list --columns pid,name,private,cpu.time,start --format=csv
+procman --list --columns @security --format=json
+procman --list --columns @memory --sort=private.delta
+procman --help-fields         # every field, its aliases, and the filter grammar
+
 procman --flat                # start as a sorted list rather than a tree
+procman --save-settings       # keep this run's columns, sort and interval
 procman --self-test           # ask the probe about itself; the runtime checks its answer
 procman --helper-check        # talk to the privileged helper over its pipe, unelevated
 procman --no-helper           # never start the helper, even for an action that needs it
 ```
+
+Every field has a stable key — `private.ws`, `faults.delta`, `cpu.raw` — and that one key works as a
+sort column, a filter term, an export column and a line in the settings file. There is one catalogue
+behind all four, so a field added to it becomes sortable, filterable and exportable at once.
+
+Named column sets come built in: `basic`, `expert`, `security`, `io`, `memory`, `cpu`, `minimal`.
+Write your own into the settings file and it replaces the preset of that name.
 
 The terminal UI keeps the keys htop users already have in their fingers — `F5` tree, `F6` sort,
 `F9` kill, `F10` quit, `/` search, `\` filter, `u` filter by user — plus `Enter` for a process's
@@ -116,7 +135,8 @@ details and `h` to read handle counts for the visible rows. The desktop UI keeps
 Explorer users already have in their eyes: plots and per-core meters on top, the process tree below
 them, and a tabbed detail pane under that — overview, threads, modules, handles, environment,
 network. Click a header to sort by it, click it again to reverse; **View → Select columns** chooses
-from sixteen, and **View → Colour legend** says what every row colour means.
+from forty-five, **View → Performance** (or clicking any plot) opens what the machine is and what it
+is doing, and **View → Colour legend** says what every row colour means.
 
 ### The colours
 
@@ -126,24 +146,25 @@ from sixteen, and **View → Colour legend** says what every row colour means.
 | Red | ended since the last refresh |
 | Pale yellow | yours |
 | Blue | the system's (root / SYSTEM) |
+| Purple | elevated — you started it, it is running as root |
 | Teal | a service |
 | Grey | suspended |
 | Orange | a zombie — exited, not yet reaped |
 
-Not distinguished: packed, .NET, elevated and store processes. Telling those apart needs information
-neither probe collects, and a colour that is sometimes right is worse than none.
+Not distinguished: packed, .NET and store processes. Telling those apart needs information neither
+probe collects, and a colour that is sometimes right is worse than none.
 
 ## 📊 What it shows
 
 | Area                    | Contents                                                                                                                                                                                                                  |
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Process tree**        | Name, PID, PPID, user, state, CPU %, private bytes, working set / RSS, virtual size, I/O read + write rates, handle / file-descriptor count, thread count, start time, session, priority, command line, working directory |
-| **Per-process details** | Threads (TID, state, CPU, start address) · modules and mappings (path, base, size, permissions) · handles and open files (type, name, access) · environment block · TCP/UDP endpoints · memory regions                    |
-| **System overview**     | Per-core CPU history, load average, memory and swap with cache breakdown, I/O throughput, network per-interface throughput, disk per-device throughput, uptime, context switches, interrupts                              |
-| **Search**              | One query across process names, command lines, open files, mapped modules and listening ports — the "who is holding this file" question, answered in one place                                                            |
+| **Process tree**        | Forty-five fields: identity and lineage · CPU as a share of the machine or of one core, CPU time, cycles and context switches per second, last processor · private bytes and how fast they are moving, private and total working set with their peaks, virtual size, swap, pool quotas, page faults per second · I/O read, write and total rates · threads, handles, priority, session, start time · elevation, integrity, seccomp, no-new-privs, capabilities, LSM label · cgroup, image path, command line |
+| **Per-process details** | Threads (TID, name, state, CPU split into user and kernel, context switches, last processor, and what it is blocked in) · modules and mappings · handles and open files · environment block · TCP/UDP endpoints · memory regions |
+| **Performance**         | Processor model and vendor, base and current speed, sockets, physical cores, logical processors, NUMA nodes, L1/L2/L3 cache · memory total, in use, available, cached, swap · uptime, load average, process and thread counts |
+| **System overview**     | Per-core CPU history, load average, memory and swap with cache breakdown, I/O throughput, uptime, context switches, interrupts |
+| **Filter**              | `field:value` with comparisons, booleans, regex and unit-aware sizes, over every field — plus the "who is holding this file" search across open files, mapped modules and endpoints |
 
-Rows are coloured the way Process Explorer colours them — new green, exited red — in the terminal UI.
-The window does not colour them yet; see the limitations below for why.
+Rows are coloured the way Process Explorer colours them — new green, exited red — in both front-ends.
 
 ## 🔐 Privileged operations
 
@@ -227,15 +248,18 @@ These are consequences of the design, not a to-do list; the to-do list is the PR
 - **macOS is the only platform with no probe at all.** Windows and Linux are both verified against
   their own kernels on every push by `procman --self-test`, which asks the probe about the process it
   is running in and has the runtime check every answer.
-- **Sampling costs a third more than the budget says.** 33 ms of CPU per 1000 processes against a
-  target of 25 — three files are read per process, and syscalls are the entire cost. Closing it means
-  dropping `status` and with it the private-memory column and the owner id, which is a worse trade
-  than three milliseconds. Measured and written down in PRD §4 rather than left as a number nobody
-  intends to meet.
+- **Sampling costs more than the budget says.** Around 30 ms of CPU per 1000 processes on an idle
+  machine against a target of 25, and considerably more on a busy one — three files are read per
+  process and syscalls are the entire cost. Closing it means dropping `status`, and with it private
+  memory, the owner id and every security field, which is a worse trade than a few milliseconds.
+  Measured and written down in PRD §71 rather than left as a number nobody intends to meet.
 - **Per-process property windows are not implemented.** The detail pane shows one process at a time;
   Process Explorer opens several at once, which is what makes it good at comparing two of them.
-- **Nothing is persisted.** Column choice, sort and window size are back to their defaults on every
-  start.
+- **No services, startup or users view.** Three of Task Manager's tabs have no equivalent here yet.
+  They are specified in PRD §41–§43 and are the largest remaining gap.
+- **Only some things are persisted.** Columns, sort order, tree mode and the sample interval survive
+  a restart, in a `key=value` file meant to be edited by hand. Window size, the highlight colours and
+  everything else in PRD §67 do not.
 - **Per-process network capture needs the helper.** Linux attributes sockets to processes through
   `/proc/net` plus inode matching, which is unprivileged but coarse; anything finer needs root.
 - **No kernel driver, ever.** Everything Process Explorer does through its driver — real thread

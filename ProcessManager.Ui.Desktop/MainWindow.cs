@@ -148,6 +148,12 @@ public sealed class MainWindow : Form {
     this._memoryPlot.Caption = "Memory";
     this._memoryPlot.AddSeries(this._memoryHistory, Color.FromArgb(0x46, 0x82, 0xB4), "Memory");
 
+    // Clicking a total is how somebody asks for the detail behind it, so all three plots open the
+    // performance view. The menu item stays, for people who would rather not find that by accident.
+    this._cpuPlot.Click += (_, _) => this.ShowPerformance();
+    this._memoryPlot.Click += (_, _) => this.ShowPerformance();
+    this._cores.Click += (_, _) => this.ShowPerformance();
+
     this._plots.Controls.Add(this._cpuPlot);
     this._plots.Controls.Add(this._memoryPlot);
     this._plots.Controls.Add(this._cores);
