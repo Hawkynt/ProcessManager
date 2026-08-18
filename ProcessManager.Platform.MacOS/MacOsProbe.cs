@@ -20,6 +20,8 @@ public sealed class MacOsProbe : ISystemProbe {
 
   public string Description => "macos:not-implemented";
 
+  public HostInfo DescribeHost() => throw new PlatformNotSupportedException(_Message);
+
   public void Sample(SystemSnapshot snapshot) => throw new PlatformNotSupportedException(_Message);
 
   public Counter GetHandleCount(ProcessKey key) => throw new PlatformNotSupportedException(_Message);

@@ -23,6 +23,15 @@ public interface ISystemProbe : IDisposable {
   string Description { get; }
 
   /// <summary>
+  /// What the machine is, as opposed to what it is doing (PRD §96).
+  /// </summary>
+  /// <remarks>
+  /// Cached by the probe: none of it changes between samples, and several of the reads would be
+  /// indefensible at one hertz. Callers may ask as often as they like.
+  /// </remarks>
+  HostInfo DescribeHost();
+
+  /// <summary>
   /// Fills <paramref name="snapshot"/> with the current state of the machine. Called on a background
   /// thread; never called re-entrantly for the same probe.
   /// </summary>

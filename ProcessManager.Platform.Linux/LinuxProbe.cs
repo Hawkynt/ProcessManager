@@ -61,6 +61,11 @@ public sealed class LinuxProbe : ISystemProbe {
 
   public void Dispose() { }
 
+  private HostInfo? _host;
+
+  /// <summary>Read once; nothing in it changes while the program runs, except the live clock speed.</summary>
+  public HostInfo DescribeHost() => this._host ??= LinuxHostReader.Read(this._options.ProcRoot, this._options.SysRoot);
+
   public void Sample(SystemSnapshot snapshot) {
     ArgumentNullException.ThrowIfNull(snapshot);
 
@@ -236,13 +241,21 @@ public sealed class LinuxProbe : ISystemProbe {
 
     var buffer = snapshot.PrepareProcesses(this._pids.Count);
     var written = 0;
+    var totalThreads = 0;
     foreach (var pid in this._pids)
-      if (this.ReadProcess(pid, ref buffer[written]))
+      if (this.ReadProcess(pid, ref buffer[written])) {
+        totalThreads += buffer[written].ThreadCount;
         ++written;
+      }
 
     // Processes that exited between the listing and their own stat file leave a hole; the snapshot
     // is shortened rather than carrying a half-filled record.
     snapshot.PrepareProcesses(written);
+
+    // Summed here rather than left at zero. Windows gets this free from its bulk query and Linux
+    // never set it, so the machine-wide thread count read as a confident zero — which is the one
+    // thing this program is not allowed to do (PRD §72.3).
+    snapshot.System.TotalThreads = totalThreads;
   }
 
   private bool ReadProcess(int pid, ref ProcessRecord record) {
