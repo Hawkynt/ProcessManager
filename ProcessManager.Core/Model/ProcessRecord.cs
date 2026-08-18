@@ -178,6 +178,15 @@ public struct ProcessRecord {
   /// </remarks>
   public Counter IsElevated;
 
+  /// <summary>
+  /// The Windows mandatory integrity level: 0x1000 low, 0x2000 medium, 0x3000 high, 0x4000 system.
+  /// </summary>
+  /// <remarks>
+  /// Kept as the raw level rather than an enum so a value Microsoft adds later is still shown as a
+  /// number instead of being flattened into the nearest name we happen to know.
+  /// </remarks>
+  public Counter IntegrityLevel;
+
   /// <summary>Linux seccomp mode: 0 disabled, 1 strict, 2 filtered.</summary>
   public Counter SeccompMode;
 

@@ -31,7 +31,7 @@ shorthand:
 it is not known*. An unticked box must never become a zero on screen. This is restated here because
 it is the single requirement most likely to be broken while filling the tables in.
 
-**Counting, as of the last update:** **445 of 1251 boxes are ticked** — 60 of 189 in the field
+**Counting, as of the last update:** **447 of 1251 boxes are ticked** — 62 of 189 in the field
 registry (§14–22), 385 of 1062 across the capabilities. A further 114 are marked 🟡, meaning some of
 the work behind them is already done. §100 tracks the phases; §101 defines when this may be called
 finished.
@@ -754,10 +754,9 @@ on-demand precisely because it is expensive.
 
 # 21. Process table — security fields
 
-- [ ] 🟡 `elevated` — done on Linux from the effective uid. Windows reports it through the process
-      token and we have not written that, so it renders `n/i` rather than `n/a`: the machine can
-      answer, we cannot yet
-- [ ] `integrity` — Windows integrity level
+- [x] `elevated` — the effective uid on Linux, `TokenElevation` on Windows
+- [x] `integrity` — the last sub-authority of the token's mandatory label: untrusted, low, medium,
+      medium+, high or system, and the raw number for anything Microsoft adds later
 - [ ] `protected` — protected-process status
 - [ ] `protection.level`
 - [ ] `signature.status` — see §70's vocabulary
@@ -1163,9 +1162,9 @@ people install Process Explorer at all.
 
 Windows:
 
-- [ ] User SID · groups · restricted SIDs · privileges and their state · integrity level ·
-      elevation · virtualisation · AppContainer · capabilities · claims/security attributes ·
-      token type · impersonation · session · protection level · process mitigations
+- [ ] 🟡 User SID ✔ · groups · restricted SIDs · privileges and their state · integrity level ✔ ·
+      elevation ✔ · virtualisation · AppContainer · capabilities · claims/security attributes ·
+      token type · impersonation · session ✔ · protection level · process mitigations
 
 Linux — most of this is already in `/proc/pid/status`, which the sampler already reads:
 

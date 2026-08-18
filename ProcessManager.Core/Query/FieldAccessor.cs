@@ -65,6 +65,11 @@ public static class FieldAccessor {
         return Humanize.BytesPerSecond(Rated(delta, index, field));
 
       case ProcessField.Elevated: return YesNo(process.IsElevated);
+      case ProcessField.Integrity:
+        return process.IntegrityLevel.HasValue
+          ? IntegrityName(process.IntegrityLevel.Value)
+          : Humanize.Placeholder(process.IntegrityLevel.Reason);
+
       case ProcessField.NoNewPrivileges: return YesNo(process.NoNewPrivileges);
       case ProcessField.Seccomp:
         if (!process.SeccompMode.HasValue)
@@ -130,6 +135,7 @@ public static class FieldAccessor {
       case ProcessField.StartTime: return process.StartTimeUtcTicks;
 
       case ProcessField.Elevated: return Number(process.IsElevated);
+      case ProcessField.Integrity: return Number(process.IntegrityLevel);
       case ProcessField.Seccomp: return Number(process.SeccompMode);
       case ProcessField.NoNewPrivileges: return Number(process.NoNewPrivileges);
       case ProcessField.Capabilities: return Number(process.EffectiveCapabilities);
@@ -181,6 +187,7 @@ public static class FieldAccessor {
     // The security states are matched by the word they show, so "elevated:yes" reads the way it
     // would be said aloud. The numeric form still works, because Number covers them too.
     ProcessField.Elevated => Word(process.IsElevated),
+    ProcessField.Integrity => process.IntegrityLevel.HasValue ? IntegrityName(process.IntegrityLevel.Value) : null,
     ProcessField.NoNewPrivileges => Word(process.NoNewPrivileges),
     ProcessField.Seccomp => process.SeccompMode.HasValue
       ? process.SeccompMode.Value switch { 0 => "off", 1 => "strict", 2 => "filter", _ => null }
@@ -227,6 +234,24 @@ public static class FieldAccessor {
   }
 
   private static double? Number(Counter counter) => counter.HasValue ? counter.Value : null;
+
+  /// <summary>
+  /// The well-known mandatory integrity levels, by name.
+  /// </summary>
+  /// <remarks>
+  /// A level Microsoft adds later shows as its number rather than being flattened into the nearest
+  /// name we happen to know — "0x2800" is a true statement and "medium" would not be.
+  /// </remarks>
+  private static string IntegrityName(ulong level) => level switch {
+    0x0000 => "untrusted",
+    0x1000 => "low",
+    0x2000 => "medium",
+    0x2100 => "medium+",
+    0x3000 => "high",
+    0x4000 => "system",
+    0x5000 => "protected",
+    _ => "0x" + level.ToString("x", CultureInfo.InvariantCulture),
+  };
 
   /// <summary>A yes/no counter as the word, or the reason there is no answer.</summary>
   private static string YesNo(Counter counter)

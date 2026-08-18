@@ -189,6 +189,14 @@ internal static partial class Native {
   public const uint TOKEN_QUERY = 0x0008;
   public const int TokenUser = 1;
 
+  /// <summary>TOKEN_ELEVATION: one DWORD, non-zero when the token is elevated.</summary>
+  public const int TokenElevation = 20;
+
+  /// <summary>
+  /// TOKEN_MANDATORY_LABEL: a SID whose last sub-authority is the integrity level.
+  /// </summary>
+  public const int TokenIntegrityLevel = 25;
+
   /// <summary>
   /// <c>ProcessCommandLineInformation</c>. Available since Windows 8.1 and the only way to read a
   /// command line without reading the target's PEB through its address space.

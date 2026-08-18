@@ -112,7 +112,9 @@ internal static class SystemProcessInformationReader {
       // Elevation is a different case: Windows reports it perfectly well through the process token,
       // and we have not written that yet. Saying "not supported here" would tell the reader the
       // machine cannot answer a question it can (PRD §7).
-      record.IsElevated = Counter.Unknown(UnknownReason.NotImplementedHere);
+      // Filled from the token a moment later, in the pass that resolves the owner.
+      record.IsElevated = Counter.NotPermitted;
+      record.IntegrityLevel = Counter.NotPermitted;
       record.State = entry.NumberOfThreads == 0 ? ProcessState.Dead : ProcessState.Running;
       record.IsSuspended = false;
 

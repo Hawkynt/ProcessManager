@@ -382,6 +382,8 @@ public sealed class LinuxProbe : ISystemProbe {
     record.NoNewPrivileges = Counter.NotSupported;
     record.EffectiveCapabilities = Counter.NotSupported;
     record.EffectiveUserId = -1;
+    // Linux confines processes with capabilities and LSMs, not with an integrity level.
+    record.IntegrityLevel = Counter.NotSupported;
 
     if (!this._reader.TryRead(cache.StatusPath, out var content, out var errno)) {
       if (errno is Native.EACCES or Native.EPERM) {
