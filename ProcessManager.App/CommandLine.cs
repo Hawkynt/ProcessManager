@@ -37,6 +37,12 @@ internal sealed record CommandLineOptions {
   /// <summary>A filter in the query language of PRD §56, applied to --list and the two UIs.</summary>
   public string? Filter { get; init; }
 
+  /// <summary>What --list writes: text, csv, tsv, json, jsonl or markdown (PRD §61).</summary>
+  public ExportFormat Format { get; init; } = ExportFormat.Text;
+
+  /// <summary>Which fields --list writes, in order. Null means the default set.</summary>
+  public ProcessField[]? Fields { get; init; }
+
   /// <summary>
   /// Every field, printed from the registry rather than from a list kept alongside it — which is how
   /// the old help text came to name ten sort keys when there were seventeen (PRD §5.1).
@@ -122,6 +128,26 @@ internal sealed record CommandLineOptions {
           options = options with { Mode = RunMode.List };
           explicitMode = true;
           break;
+        case "--format": {
+          if (!TryValue(args, ref i, inlineValue, out var formatName))
+            return options with { Error = "--format needs one of: text, csv, tsv, json, jsonl, markdown" };
+          if (!Exporter.TryParseFormat(formatName, out var format))
+            return options with { Error = $"unknown format '{formatName}'; try text, csv, tsv, json, jsonl or markdown" };
+
+          options = options with { Format = format };
+          break;
+        }
+
+        case "--columns": {
+          if (!TryValue(args, ref i, inlineValue, out var list))
+            return options with { Error = "--columns needs a comma-separated list of fields" };
+          if (!Exporter.TryParseFields(list, out var fields, out var reason))
+            return options with { Error = $"--columns: {reason}" };
+
+          options = options with { Fields = fields };
+          break;
+        }
+
         case "--filter": {
           if (!TryValue(args, ref i, inlineValue, out var query))
             return options with { Error = "--filter needs a query" };
@@ -307,11 +333,13 @@ internal sealed record CommandLineOptions {
     Options:
       --sort <field>     any field key; see --help-fields for the list
       --filter <query>   show only matching processes: 'cpu:>50', 'user:alice AND memory:>1GiB'
+      --format <fmt>     text (default), csv, tsv, json, jsonl, markdown
+      --columns <a,b,c>  which fields to write; see --help-fields
       --tree             show the process tree (with --kill: the whole subtree)
       --flat             start with a flat list sorted by CPU rather than a tree
       --user             only this user's processes
       --interval <s>     seconds between samples (default 1)
-      --json             machine-readable output for --list and --find
+      --json             the same as --format=json
       --probe-root <d>   read a recorded /proc tree instead of the live one
       --ascii            draw the terminal's history columns with ASCII rather than block characters
       --no-helper        never start the privileged helper, even for an action that needs it

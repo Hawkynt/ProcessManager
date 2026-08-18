@@ -24,6 +24,7 @@ defaults:
 
 jobs:
   test:
+    timeout-minutes: 20
     name: test ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -61,6 +62,7 @@ jobs:
           path: '**/TestResults/*.trx'
 
   tui:
+    timeout-minutes: 15
     name: tui smoke (fixture replay)
     runs-on: ubuntu-latest
     steps:
@@ -96,6 +98,7 @@ jobs:
           if-no-files-found: warn
 
   self-test:
+    timeout-minutes: 15
     name: self-test ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -136,6 +139,7 @@ jobs:
         run: dotnet run --project ProcessManager.App --configuration Release --no-build -- --helper-check
 
   wine:
+    timeout-minutes: 25
     name: self-test (win-x64 under wine)
     runs-on: ubuntu-latest
     # Advisory, and the reason is not squeamishness: the authoritative Windows check is the
@@ -186,6 +190,7 @@ jobs:
           wine wine-out/procman.exe --self-test
 
   desktop:
+    timeout-minutes: 20
     name: desktop smoke (linux/gtk)
     runs-on: ubuntu-latest
     steps:
@@ -229,6 +234,7 @@ jobs:
           if-no-files-found: warn
 
   aot:
+    timeout-minutes: 30
     name: aot ${{ matrix.rid }}
     strategy:
       fail-fast: false

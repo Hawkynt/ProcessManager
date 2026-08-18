@@ -31,8 +31,8 @@ shorthand:
 it is not known*. An unticked box must never become a zero on screen. This is restated here because
 it is the single requirement most likely to be broken while filling the tables in.
 
-**Counting, as of the last update:** **398 of 1250 boxes are ticked** — 55 of 189 in the field
-registry (§14–22), 343 of 1061 across the capabilities. A further 112 are marked 🟡, meaning some of
+**Counting, as of the last update:** **407 of 1250 boxes are ticked** — 55 of 189 in the field
+registry (§14–22), 352 of 1061 across the capabilities. A further 111 are marked 🟡, meaning some of
 the work behind them is already done. §100 tracks the phases; §101 defines when this may be called
 finished.
 
@@ -113,7 +113,7 @@ thread continuously consuming logical CPU 7."
 - [ ] 🟡 Permit customisation of columns, layouts, refresh intervals, highlighting, shortcuts and
       defaults — columns and interval yes; nothing persists between runs
 - [ ] 🟡 Support keyboard-driven operation throughout GUI and TUI — TUI complete, GUI partial
-- [ ] 🟡 Permit information to be copied or exported without screenshots — copy yes, export no
+- [x] Permit information to be copied or exported without screenshots
 
 ## 3.2 Secondary — SHOULD
 
@@ -1680,7 +1680,7 @@ drag and drop.
 
 - [x] `procman ps`
 - [x] `procman ps --tree`
-- [ ] 🟡 `procman ps --columns pid,name,cpu,memory`
+- [x] `procman ps --columns pid,name,cpu,memory` — with `--format` for the six formats
 - [x] `procman ps --filter 'cpu > 50'` — as `--filter`, plus `--help-fields` listing every
       field, its aliases and the filter grammar, generated from the registry so it cannot drift
 - [ ] `procman process 1234`
@@ -1699,11 +1699,13 @@ Output formats:
 
 - [x] human
 - [x] table
-- [ ] JSON
-- [ ] JSON Lines
-- [ ] CSV
-- [ ] TSV
-- [ ] Stable, versioned JSON schemas
+- [x] JSON
+- [x] JSON Lines
+- [x] CSV
+- [x] TSV
+- [x] Stable, versioned JSON schemas — every document carries `"schema": 1`, bumped when a key is
+      renamed or removed. The keys are the registry keys now rather than a second camel-cased set
+      kept alongside them, which is the rename this version records.
 
 # 60. Local API
 
@@ -1715,10 +1717,19 @@ Output formats:
 
 # 61. Exports
 
-- [ ] CSV · TSV · JSON · JSON Lines · Markdown table · plain text
-- [ ] Scopes: selected cells · selected rows · visible table · all matching rows · process report ·
-      system report · historical metrics
+- [x] CSV · TSV · JSON · JSON Lines · Markdown table · plain text
+- [ ] 🟡 Scopes — the visible table and all matching rows are done, through `--columns` and
+      `--filter`; selected cells and rows need a selection model, and the process and system reports
+      and the historical metrics need §26 and §85
 - [ ] Process-report export includes timestamp and host metadata
+
+**Machine formats carry raw exact values; human formats carry what the screen shows.** CSV, TSV,
+JSON and JSON Lines write bytes as bytes and nanoseconds as nanoseconds — a spreadsheet cannot sum
+"1.5K", and a number rounded to one decimal is not the measurement any more. Text and Markdown write
+"1.5K", because a person is reading them. That split is what makes §76 true rather than aspirational.
+
+An unknown value is an empty cell and a JSON `null`, never a zero and never the placeholder glyph —
+which would turn "we could not read this" into the literal string "—" in a column of numbers.
 
 # 62. Snapshot / diagnostic bundle
 
@@ -1976,7 +1987,7 @@ wrong for display and right for tests, and it must not stay once §75 is impleme
 - [ ] Memory / storage: automatic · binary KiB/MiB/GiB · decimal kB/MB/GB
 - [ ] Rates: bytes/sec · optional bits/sec for network
 - [x] Time adapts across ns · µs · ms · s · min · h · d
-- [ ] Raw exact values remain available through copy and export
+- [x] Raw exact values remain available through export
 
 Today: binary units with single-letter suffixes, no setting. Counts scale in thousands rather than
 1024s, because a cycles-per-second figure in kibicycles would be nobody's idea of a reading.
