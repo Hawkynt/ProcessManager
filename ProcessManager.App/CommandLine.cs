@@ -44,6 +44,29 @@ internal sealed record CommandLineOptions {
   public ProcessField[]? Fields { get; init; }
 
   /// <summary>
+  /// Whether anything this run asked for needs the LSM label, which costs a file per process.
+  /// </summary>
+  /// <remarks>
+  /// Inferred rather than flagged: naming the field in --columns or in --filter is already a clear
+  /// request for it, and a separate --security switch would only be a way to get an empty column
+  /// by forgetting it (PRD §5.4).
+  /// </remarks>
+  public bool WantsSecurityContext {
+    get {
+      if (this.Fields is { } fields)
+        // Not "field": in C# 14 that is a keyword inside a property accessor and binds to the
+        // synthesised backing field rather than to the loop variable.
+        foreach (var candidate in fields)
+          if (candidate == ProcessField.SecurityContext)
+            return true;
+
+      var key = FieldRegistry.Get(ProcessField.SecurityContext).Key;
+      return this.Filter is { } filter
+        && filter.Contains(key, StringComparison.OrdinalIgnoreCase);
+    }
+  }
+
+  /// <summary>
   /// Every field, printed from the registry rather than from a list kept alongside it — which is how
   /// the old help text came to name ten sort keys when there were seventeen (PRD §5.1).
   /// </summary>

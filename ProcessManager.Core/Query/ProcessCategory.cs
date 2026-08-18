@@ -23,6 +23,17 @@ public enum ProcessCategory : byte {
   /// <summary>Belongs to root / SYSTEM.</summary>
   System,
 
+  /// <summary>
+  /// Started by an ordinary user and now running as root: a setuid binary, or anything else that
+  /// gained privilege after it was launched.
+  /// </summary>
+  /// <remarks>
+  /// Distinct from <see cref="System"/>, which is a process root started. This one is a process
+  /// <em>somebody else</em> started that is root now, which is the more interesting of the two and
+  /// the one worth a colour of its own.
+  /// </remarks>
+  Elevated,
+
   /// <summary>A background service — a systemd unit's process, or a Windows service host.</summary>
   Service,
 
@@ -62,6 +73,11 @@ public static class ProcessCategories {
     if (process.UserId == 0 || process.Pid is 0 or 4 && OperatingSystem.IsWindows())
       return ProcessCategory.System;
 
+    // Effective uid 0 with a real uid that is not: privilege was gained rather than granted at
+    // launch. Only claimed when the probe actually read it — an unknown is not a "no" (PRD §72.3).
+    if (process.IsElevated.HasValue && process.IsElevated.Value != 0)
+      return ProcessCategory.Elevated;
+
     if (IsService(in process))
       return ProcessCategory.Service;
 
@@ -94,6 +110,7 @@ public static class ProcessCategories {
   public static string Describe(ProcessCategory category) => category switch {
     ProcessCategory.Own => "Your processes",
     ProcessCategory.System => "System processes (root / SYSTEM)",
+    ProcessCategory.Elevated => "Elevated — started by a user, running as root",
     ProcessCategory.Service => "Service processes",
     ProcessCategory.Suspended => "Suspended",
     ProcessCategory.Zombie => "Zombie — exited, not yet reaped",

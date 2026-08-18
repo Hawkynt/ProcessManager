@@ -49,6 +49,12 @@ public enum ProcessField : byte {
   WriteBytesPerSecond,
   IoHistory,
 
+  Elevated,
+  Seccomp,
+  NoNewPrivileges,
+  Capabilities,
+  SecurityContext,
+
   ThreadCount,
   HandleCount,
   Priority,

@@ -4,8 +4,11 @@ State:	S (sleeping)
 Tgid:	1
 Ngid:	0
 Pid:	1
-Uid:	1000	1000	1000	1000
+Uid:	1000	0	0	1000
 Gid:	1000	1000	1000	1000
+CapEff:	0000003fffffffff
+NoNewPrivs:	0
+Seccomp:	0
 VmPeak:	  100000 kB
 VmSize:	  100000 kB
 VmHWM:	  2548 kB

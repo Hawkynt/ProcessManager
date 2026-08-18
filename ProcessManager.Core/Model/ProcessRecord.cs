@@ -154,4 +154,43 @@ public struct ProcessRecord {
   /// <summary>True when the whole process is stopped (SIGSTOP, or every thread suspended).</summary>
   public bool IsSuspended;
 
+  /// <summary>
+  /// Effective user id, which is the one that decides what the process may do. Differs from
+  /// <see cref="UserId"/> for anything setuid, which is exactly the case worth noticing.
+  /// </summary>
+  public int EffectiveUserId;
+
+  /// <summary>
+  /// 1 when the process runs with administrative authority, 0 when it does not.
+  /// </summary>
+  /// <remarks>
+  /// A counter rather than a bool so that "we could not tell" is expressible, which for a security
+  /// field is the answer that matters most (PRD §72.3).
+  /// </remarks>
+  public Counter IsElevated;
+
+  /// <summary>Linux seccomp mode: 0 disabled, 1 strict, 2 filtered.</summary>
+  public Counter SeccompMode;
+
+  /// <summary>Linux <c>no_new_privs</c>: 1 when the process can never gain privileges.</summary>
+  public Counter NoNewPrivileges;
+
+  /// <summary>Linux effective capability mask.</summary>
+  public Counter EffectiveCapabilities;
+
+  /// <summary>
+  /// The LSM label — an SELinux context or an AppArmor profile — or <see langword="null"/>.
+  /// </summary>
+  /// <remarks>
+  /// Costs an extra file per process, so it is off unless asked for (PRD §5.4).
+  /// </remarks>
+  public string? SecurityContext;
+
+  /// <summary>
+  /// Why <see cref="SecurityContext"/> is <see langword="null"/>: not asked for, no LSM on this
+  /// kernel, or not readable as this user. A string field cannot carry its own reason the way a
+  /// <see cref="Counter"/> does, and "no answer" needs one just as much (PRD §72.3).
+  /// </summary>
+  public UnknownReason SecurityContextReason;
+
 }

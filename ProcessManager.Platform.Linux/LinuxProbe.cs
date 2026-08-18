@@ -359,10 +359,23 @@ public sealed class LinuxProbe : ISystemProbe {
   };
 
   private void ReadStatus(ProcessCache cache, ref ProcessRecord record) {
+    // Set before anything is parsed, because default(Counter) is a confident zero: a kernel that
+    // does not write one of these lines, or a status we could not open at all, must leave the field
+    // unknown rather than claiming the process is unprivileged and unconfined (PRD §72.3).
+    record.IsElevated = Counter.NotSupported;
+    record.SeccompMode = Counter.NotSupported;
+    record.NoNewPrivileges = Counter.NotSupported;
+    record.EffectiveCapabilities = Counter.NotSupported;
+    record.EffectiveUserId = -1;
+
     if (!this._reader.TryRead(cache.StatusPath, out var content, out var errno)) {
       if (errno is Native.EACCES or Native.EPERM) {
         record.PrivateBytes = Counter.NotPermitted;
         record.ContextSwitches = Counter.NotPermitted;
+        record.IsElevated = Counter.NotPermitted;
+        record.SeccompMode = Counter.NotPermitted;
+        record.NoNewPrivileges = Counter.NotPermitted;
+        record.EffectiveCapabilities = Counter.NotPermitted;
       }
 
       return;
@@ -371,6 +384,7 @@ public sealed class LinuxProbe : ISystemProbe {
     ulong rssAnon = 0, swap = 0, voluntary = 0, involuntary = 0, data = 0, peakVirtual = 0, peakRss = 0;
     var haveRssAnon = false;
     var haveData = false;
+    var haveEffectiveUid = false;
     var scanner = new AsciiScanner(content);
     while (!scanner.IsEmpty) {
       var line = scanner.NextLine();
@@ -379,8 +393,25 @@ public sealed class LinuxProbe : ISystemProbe {
 
       if (AsciiScanner.StartsWith(line, "Uid:"u8)) {
         var uids = new AsciiScanner(line["Uid:"u8.Length..]);
-        record.UserId = uids.NextInt32();                  // real uid; effective is the next field
-      } else if (TryValue(line, "RssAnon:"u8, out var value)) {
+        record.UserId = uids.NextInt32();                  // real, effective, saved, filesystem
+        record.EffectiveUserId = uids.NextInt32();
+        haveEffectiveUid = true;
+
+        // Effective uid, not real: a setuid binary started by an ordinary user is running as root
+        // now, which is the thing worth colouring a row for (PRD §23).
+        record.IsElevated = Counter.Of(record.EffectiveUserId == 0 ? 1ul : 0ul);
+      } else if (TryValue(line, "Seccomp:"u8, out var flag))
+        record.SeccompMode = Counter.Of(flag);
+      else if (TryValue(line, "NoNewPrivs:"u8, out flag))
+        record.NoNewPrivileges = Counter.Of(flag);
+      else if (AsciiScanner.StartsWith(line, "CapEff:"u8)) {
+        // Bare hex with no 0x prefix, and separated from the label by a TAB rather than a space —
+        // trimming only spaces left the tab in front of it and ParseHex stopped on the first
+        // non-hex byte, reporting every process as having no capabilities at all.
+        var mask = line["CapEff:"u8.Length..].TrimStart((byte)' ').TrimStart((byte)'\t');
+        record.EffectiveCapabilities = Counter.Of(ParseHex(mask));
+      }
+      else if (TryValue(line, "RssAnon:"u8, out var value)) {
         rssAnon = value * 1024;
         haveRssAnon = true;
       } else if (TryValue(line, "VmData:"u8, out value)) {
@@ -414,8 +445,55 @@ public sealed class LinuxProbe : ISystemProbe {
     if (haveRssAnon)
       record.PrivateWorkingSetBytes = Counter.Of(rssAnon);
 
+    // A kernel too old to report the effective uid leaves this unknown rather than guessing that
+    // the real uid is also the effective one, which is false for every setuid process there is.
+    if (!haveEffectiveUid)
+      record.EffectiveUserId = -1;
+
+    if (this._options.ReadSecurityContext)
+      this.ReadSecurityContext(cache, ref record);
+    else
+      record.SecurityContextReason = UnknownReason.NotSampledYet;
+
     if (this._options.UseProportionalSetSize && this.MayRead(record))
       this.ReadProportionalSetSize(cache, ref record);
+  }
+
+  /// <summary>
+  /// Reads the LSM label from <c>/proc/[pid]/attr/current</c> — an SELinux context on one machine,
+  /// an AppArmor profile on another, and nothing at all on a kernel with neither.
+  /// </summary>
+  /// <remarks>
+  /// One more open and read per process, which is why it is opt-in: at six hundred processes it is
+  /// the same order of cost as the file-descriptor scan that had to leave the sample loop (PRD §4).
+  /// </remarks>
+  private void ReadSecurityContext(ProcessCache cache, ref ProcessRecord record) {
+    if (!this._reader.TryRead(cache.SecurityContextPath, out var content, out var errno)) {
+      // A kernel with no LSM loaded fails this read with EINVAL rather than leaving the file empty,
+      // so "no security module here" and "not allowed to look" are different answers and are
+      // reported as different answers.
+      record.SecurityContextReason = errno is Native.EACCES or Native.EPERM
+        ? UnknownReason.NotPermitted
+        : UnknownReason.NotSupportedOnPlatform;
+
+      return;
+    }
+
+    // The file is NUL-terminated and often has a trailing newline; both would end up in the column.
+    var end = content.IndexOf((byte)0);
+    if (end >= 0)
+      content = content[..end];
+
+    content = content.TrimEnd((byte)'\n');
+    if (content.IsEmpty) {
+      record.SecurityContextReason = UnknownReason.NotSupportedOnPlatform;
+      return;
+    }
+
+    var text = System.Text.Encoding.UTF8.GetString(content);
+    // "unconfined" is what AppArmor says when there is no profile. It is a real answer, not a
+    // missing one, so it is kept rather than blanked.
+    record.SecurityContext = text;
   }
 
   private void ReadProportionalSetSize(ProcessCache cache, ref ProcessRecord record) {

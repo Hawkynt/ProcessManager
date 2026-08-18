@@ -6,6 +6,9 @@ Ngid:	0
 Pid:	1
 Uid:	1000	1000	1000	1000
 Gid:	1000	1000	1000	1000
+CapEff:	0000000000000000
+NoNewPrivs:	1
+Seccomp:	2
 VmPeak:	  100000 kB
 VmSize:	  100000 kB
 VmHWM:	  6048 kB

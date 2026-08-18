@@ -31,8 +31,8 @@ shorthand:
 it is not known*. An unticked box must never become a zero on screen. This is restated here because
 it is the single requirement most likely to be broken while filling the tables in.
 
-**Counting, as of the last update:** **407 of 1250 boxes are ticked** — 55 of 189 in the field
-registry (§14–22), 352 of 1061 across the capabilities. A further 111 are marked 🟡, meaning some of
+**Counting, as of the last update:** **417 of 1250 boxes are ticked** — 59 of 189 in the field
+registry (§14–22), 358 of 1061 across the capabilities. A further 111 are marked 🟡, meaning some of
 the work behind them is already done. §100 tracks the phases; §101 defines when this may be called
 finished.
 
@@ -320,7 +320,7 @@ Every feature declares one of four states per platform:
 | **Read-only** | Data visible, modification unavailable |
 | **Unavailable** | The OS exposes no safe or reliable equivalent |
 
-- [x] Unavailable values render as `—` (or `n/a`, `…`, `×` per §72.3)
+- [x] Unavailable values render as `—` (or `n/a`, `n/i`, `…`, `×` per §72.3)
 - [ ] 🟡 …plus an explanation reachable through tooltip, details or help — the explanation strings
       exist (`Humanize.Explain`); only the detail pane shows them
 
@@ -750,7 +750,9 @@ on-demand precisely because it is expensive.
 
 # 21. Process table — security fields
 
-- [ ] `elevated` — token elevation (W) / euid == 0 (L)
+- [ ] 🟡 `elevated` — done on Linux from the effective uid. Windows reports it through the process
+      token and we have not written that, so it renders `n/i` rather than `n/a`: the machine can
+      answer, we cannot yet
 - [ ] `integrity` — Windows integrity level
 - [ ] `protected` — protected-process status
 - [ ] `protection.level`
@@ -771,10 +773,10 @@ on-demand precisely because it is expensive.
 - [ ] `sandbox`
 - [ ] `appcontainer`
 - [ ] `capabilities`
-- [ ] `selinux.context` — `/proc/pid/attr/current`
-- [ ] `apparmor.profile` — same file
-- [ ] 🟡 `seccomp` — `/proc/pid/status` `Seccomp:` is already read, not surfaced
-- [ ] 🟡 `caps.linux` — `CapEff`/`CapPrm`/`CapInh` already read, not surfaced
+- [x] `selinux.context` — `/proc/pid/attr/current`, opt-in
+- [x] `apparmor.profile` — same file, same field: the LSM label is one value whichever module wrote it
+- [x] `seccomp` — off, strict or filter
+- [x] `caps.linux` — the effective mask (`CapEff`); the permitted and inheritable sets are not shown yet
 - [ ] macOS: code-sign identity, entitlements, hardened runtime, sandbox
 
 - [ ] **Online reputation checking is opt-in, and the program states exactly what is transmitted
@@ -813,7 +815,8 @@ Categories:
 - [x] System process
 - [x] Current user's process
 - [x] Another user's process
-- [ ] Elevated — needs `elevated` (§21)
+- [x] Elevated — and deliberately not the same colour as System: one is a process root started, the
+      other is a process a user started that is root now, which is the more interesting of the two
 - [ ] Packaged application — needs `package` (§14)
 - [ ] Managed runtime — needs `runtime` (§14)
 - [ ] Unsigned executable — needs `signature.status` (§21)
@@ -1156,14 +1159,15 @@ Windows:
 
 Linux — most of this is already in `/proc/pid/status`, which the sampler already reads:
 
-- [ ] UID / eUID / sUID / fsUID and GID equivalents
+- [ ] 🟡 UID / eUID / sUID / fsUID and GID equivalents — the real and effective uids are read; the
+      saved and filesystem ids and the group ids are not
 - [ ] Supplementary groups
-- [ ] Capabilities
-- [ ] SELinux context
-- [ ] AppArmor profile
-- [ ] seccomp state
+- [x] Capabilities
+- [x] SELinux context
+- [x] AppArmor profile
+- [x] seccomp state
 - [ ] Namespaces
-- [ ] no-new-privileges
+- [x] no-new-privileges
 
 macOS:
 
@@ -1929,7 +1933,13 @@ The road here is worth keeping, because every step was a measurement rather than
 The rule the rest of the document depends on. A field is never zero because we failed to read it.
 
 - [x] `UnknownReason` is carried by every counter and rate: `NotPermitted`, `NotSupportedOnPlatform`,
-      `ProcessExited`, `NotSampledYet`, `CounterInvalid`
+      `NotImplementedHere`, `ProcessExited`, `NotSampledYet`, `CounterInvalid`
+
+`NotImplementedHere` is the newest and the one this document most needed. "Windows has no cgroups"
+and "we have not written the Windows token code yet" are different statements, and rendering the
+second as the first tells the reader their machine cannot do something it can. One is a fact about
+the operating system; the other is a fact about us. It shows as `n/i` against `n/a`, and it is what
+lets a field be listed as available on a platform before it is built there.
 - [x] Each renders distinctly — `—`, `n/a`, `×`, `…`, `?` — and each has a one-line explanation
 - [x] Both front-ends render them through one shared formatter, so a value reads the same in the
       window and in the terminal

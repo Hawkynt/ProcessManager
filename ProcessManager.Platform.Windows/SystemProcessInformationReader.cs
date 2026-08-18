@@ -97,6 +97,19 @@ internal static class SystemProcessInformationReader {
       // every process on every sample is not worth a column nobody sorts by. The threads carry it.
       record.ContextSwitches = Counter.NotSupported;
       record.MemoryLimitBytes = Counter.NotSupported;
+
+      // Windows has no seccomp, no no_new_privs and no capability mask; it has integrity levels and
+      // privileges instead, which are different things and get their own fields when they are built.
+      record.SeccompMode = Counter.NotSupported;
+      record.NoNewPrivileges = Counter.NotSupported;
+      record.EffectiveCapabilities = Counter.NotSupported;
+      record.EffectiveUserId = -1;
+      record.SecurityContextReason = UnknownReason.NotSupportedOnPlatform;
+
+      // Elevation is a different case: Windows reports it perfectly well through the process token,
+      // and we have not written that yet. Saying "not supported here" would tell the reader the
+      // machine cannot answer a question it can (PRD §7).
+      record.IsElevated = Counter.Unknown(UnknownReason.NotImplementedHere);
       record.State = entry.NumberOfThreads == 0 ? ProcessState.Dead : ProcessState.Running;
       record.IsSuspended = false;
 

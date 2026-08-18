@@ -289,8 +289,20 @@ public sealed class ProcessQuery {
       // value: "pid:1234" is a number because a pid is an identifier, and "name:1234" is text
       // because a name is text, even though both look like digits.
       var descriptor = FieldRegistry.Get(field);
-      if (descriptor.Kind is FieldKind.Text or FieldKind.State)
+      if (descriptor.Kind is FieldKind.Text or FieldKind.State) {
+        // A yes/no field shows "yes" and "no", but nobody agrees on how to type that. §56's own
+        // example is "unsigned:true", so the usual spellings are accepted for all of them. A state
+        // field whose real values are words ("off", "strict", "filter") is unaffected, because none
+        // of them is spelled like a boolean.
+        if (descriptor.Kind == FieldKind.State)
+          value = value.ToLowerInvariant() switch {
+            "true" or "1" or "y" => "yes",
+            "false" or "0" or "n" => "no",
+            _ => value,
+          };
+
         return new TextComparisonNode(field, op, value);
+      }
 
       if (!Quantity.TryParse(value, descriptor.Unit, out var number))
         throw new QueryException($"'{value}' is not a number {descriptor.Header.ToLowerInvariant()} can be compared to");

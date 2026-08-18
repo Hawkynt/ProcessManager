@@ -24,6 +24,7 @@ public sealed class LegendWindow : Form {
       ProcessCategory.Exited,
       ProcessCategory.Own,
       ProcessCategory.System,
+      ProcessCategory.Elevated,
       ProcessCategory.Service,
       ProcessCategory.Suspended,
       ProcessCategory.Zombie,
