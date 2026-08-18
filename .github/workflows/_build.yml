@@ -32,6 +32,7 @@ defaults:
 
 jobs:
   build:
+    timeout-minutes: 20
     name: publish ${{ matrix.rid }}
     strategy:
       fail-fast: false
