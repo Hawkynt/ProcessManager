@@ -31,8 +31,8 @@ shorthand:
 it is not known*. An unticked box must never become a zero on screen. This is restated here because
 it is the single requirement most likely to be broken while filling the tables in.
 
-**Counting, as of the last update:** **417 of 1250 boxes are ticked** — 59 of 189 in the field
-registry (§14–22), 358 of 1061 across the capabilities. A further 111 are marked 🟡, meaning some of
+**Counting, as of the last update:** **429 of 1251 boxes are ticked** — 59 of 189 in the field
+registry (§14–22), 370 of 1062 across the capabilities. A further 111 are marked 🟡, meaning some of
 the work behind them is already done. §100 tracks the phases; §101 defines when this may be called
 finished.
 
@@ -1376,17 +1376,20 @@ Resources:
 
 # 46. CPU performance
 
-- [ ] Processor name / model
-- [ ] Architecture
+- [x] Processor name / model
+- [x] Architecture
 - [x] Utilisation
-- [ ] Current speed / frequency
-- [ ] Base speed
-- [ ] Sockets / packages
-- [ ] Physical cores
+- [x] Current speed / frequency — averaged across the logical processors, and separate from the base
+      speed because it moves constantly on any modern part
+- [x] Base speed — `base_frequency` where the kernel has it, parsed out of the model name otherwise
+- [x] Sockets / packages
+- [x] Physical cores — counted per socket, because both sockets have a core 0 and counting the bare
+      ids reports two cores on an eight-thread machine
 - [x] Logical processors
-- [ ] NUMA nodes
-- [ ] Virtualisation support / state
-- [ ] L1 / L2 / L3 cache
+- [x] NUMA nodes
+- [ ] 🟡 Virtualisation support / state — a hypervisor is detected and named from the DMI product
+      name; whether the CPU *supports* virtualisation is not read
+- [x] L1 / L2 / L3 cache — data and instruction separately at L1
 - [x] Process count
 - [x] Thread count
 - [ ] Handle / resource count
@@ -1394,7 +1397,12 @@ Resources:
 - [ ] Context switches per second
 - [ ] Interrupts per second
 - [ ] DPC-like kernel activity
-- [ ] Load averages — `/proc/loadavg`, nearly free
+- [x] Load averages
+
+Read once and cached: none of it changes between samples, and walking the cache directories every
+second would be indefensible against §71. Windows gets the identity and the logical-processor count
+and reports `n/i` for the rest — the registry and `GetLogicalProcessorInformationEx` have it all, and
+that is simply not written yet.
 
 Graph modes:
 
@@ -1426,10 +1434,10 @@ socket and cache topology.
 - [ ] Nonpaged pool total
 - [ ] Hardware reserved
 - [ ] Memory pressure
-- [ ] **Memory speed**
+- [ ] **Memory speed** — refused rather than guessed: `—`, with the reason
 - [ ] **Channels**
-- [ ] **Form factor**
-- [ ] **Slots used / available**
+- [ ] **Form factor** — as above
+- [ ] **Slots used / available** — as above
 - [ ] NUMA distribution
 
 The four in bold are the Task-Manager-style hardware facts. They come from DMI/SMBIOS type-17
@@ -1697,6 +1705,7 @@ drag and drop.
 - [x] `procman resume 1234`
 - [ ] `procman service list`
 - [ ] `procman net`
+- [x] `procman --host` — the §96 summary, which is `perf cpu` without the graph
 - [ ] `procman perf cpu`
 
 Output formats:
@@ -2279,13 +2288,17 @@ protection · hash · reputation
 - [x] OS and version
 - [x] Architecture
 - [x] Uptime
-- [ ] 🟡 CPU — count yes, model no
+- [x] CPU — model, vendor, base and current speed, sockets, cores, threads, cache
 - [x] Total memory
 - [ ] Total disk
 - [x] Active user
 - [ ] Privilege state of ProcessManager itself
-- [ ] Virtualisation / container state
+- [x] Virtualisation / container state
 - [ ] Device model
+
+All of it is reachable as `procman --host`. Written as a command before a page because a command can
+be tested, scripted and pasted into a bug report, and a page cannot — the Performance page of §45
+will render the same values.
 
 # 97. Privacy requirements
 

@@ -18,6 +18,12 @@ public sealed record LinuxProbeOptions {
   /// <summary>Where <c>/proc</c> is. A fixture directory in tests.</summary>
   public string ProcRoot { get; init; } = "/proc";
 
+  /// <summary>
+  /// Where <c>/sys</c> is. Separate from <see cref="ProcRoot"/> so a recorded machine can carry both
+  /// and the host description is testable the same way the process list is (PRD §9.1).
+  /// </summary>
+  public string SysRoot { get; init; } = "/sys";
+
   /// <summary>Where the password file is, for uid → name.</summary>
   public string PasswdPath { get; init; } = "/etc/passwd";
 
