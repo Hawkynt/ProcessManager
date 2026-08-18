@@ -31,8 +31,8 @@ shorthand:
 it is not known*. An unticked box must never become a zero on screen. This is restated here because
 it is the single requirement most likely to be broken while filling the tables in.
 
-**Counting, as of the last update:** **450 of 1251 boxes are ticked** — 62 of 189 in the field
-registry (§14–22), 388 of 1062 across the capabilities. A further 116 are marked 🟡, meaning some of
+**Counting, as of the last update:** **451 of 1251 boxes are ticked** — 62 of 189 in the field
+registry (§14–22), 389 of 1062 across the capabilities. A further 115 are marked 🟡, meaning some of
 the work behind them is already done. §100 tracks the phases; §101 defines when this may be called
 finished.
 
@@ -1382,8 +1382,9 @@ Resources:
 - [ ] Battery
 - [ ] Optional sensors and devices
 
-- [ ] 🟡 Reachable from View ▸ Performance. Clicking the readouts themselves needs a click event on
-      the plot control, which is the next step
+- [x] Reachable by clicking any of the plots along the top — which is where somebody looking at a
+      total goes for the detail behind it — and from View ▸ Performance for people who would rather
+      not find that by accident
 
 # 46. CPU performance
 
