@@ -266,6 +266,12 @@ public sealed class WindowsProbe : ISystemProbe {
   /// <c>SYSTEM_THREAD_INFORMATION</c> per thread, so the whole machine's threads arrived with the
   /// process list. Linux has to open a directory per process for the same answer (PRD §5.1).
   /// </remarks>
+  /// <summary>
+  /// Not read yet. Windows keeps startup entries in the registry's Run keys, the Startup folders and
+  /// the task scheduler, and none of the three is implemented (PRD §42).
+  /// </summary>
+  public IReadOnlyList<StartupEntry> GetStartupEntries() => [];
+
   public IReadOnlyList<ThreadRecord> GetThreads(ProcessKey key)
     => this._bufferLength == 0
       ? []

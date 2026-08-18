@@ -1,0 +1,5 @@
+[Desktop Entry]
+Type=Application
+Name=Overridden Thing
+Exec=/usr/bin/system-version
+Hidden=true

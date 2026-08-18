@@ -24,6 +24,15 @@ public sealed record LinuxProbeOptions {
   /// </summary>
   public string SysRoot { get; init; } = "/sys";
 
+  /// <summary>Where this user's autostart entries live; null uses XDG_CONFIG_HOME or ~/.config.</summary>
+  public string? AutostartUserDirectory { get; init; }
+
+  /// <summary>The machine-wide autostart directories; null uses /etc/xdg/autostart.</summary>
+  public IReadOnlyList<string>? AutostartSystemDirectories { get; init; }
+
+  /// <summary>Overrides XDG_CURRENT_DESKTOP, so the desktop-specific rules are testable.</summary>
+  public string? CurrentDesktop { get; init; }
+
   /// <summary>Where the password file is, for uid → name.</summary>
   public string PasswdPath { get; init; } = "/etc/passwd";
 

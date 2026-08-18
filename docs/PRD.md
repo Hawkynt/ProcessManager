@@ -31,8 +31,8 @@ shorthand:
 it is not known*. An unticked box must never become a zero on screen. This is restated here because
 it is the single requirement most likely to be broken while filling the tables in.
 
-**Counting, as of the last update:** **451 of 1251 boxes are ticked** — 62 of 189 in the field
-registry (§14–22), 389 of 1062 across the capabilities. A further 115 are marked 🟡, meaning some of
+**Counting, as of the last update:** **452 of 1252 boxes are ticked** — 62 of 189 in the field
+registry (§14–22), 390 of 1063 across the capabilities. A further 119 are marked 🟡, meaning some of
 the work behind them is already done. §100 tracks the phases; §101 defines when this may be called
 finished.
 
@@ -421,7 +421,7 @@ Primary navigation:
 - [x] Processes
 - [ ] 🟡 Performance — a system overview exists; the resource selector does not (§45)
 - [ ] Applications / usage history (§44)
-- [ ] Startup (§42)
+- [ ] 🟡 Startup — `--startup` lists them; there is no view (§42)
 - [ ] Users / sessions (§43)
 - [ ] Services (§41)
 - [ ] 🟡 Network — connections are collected and shown per process, not as a view (§40)
@@ -1728,6 +1728,7 @@ drag and drop.
 - [ ] `procman service list`
 - [ ] `procman net`
 - [x] `procman --host` — the §96 summary, which is `perf cpu` without the graph
+- [x] `procman --startup` — what will run at login
 - [ ] `procman perf cpu`
 
 Output formats:
@@ -2172,7 +2173,7 @@ be lost."*
 - [x] Processes
 - [ ] 🟡 Performance
 - [ ] App / usage history
-- [ ] Startup
+- [ ] 🟡 Startup
 - [ ] Users
 - [x] Details
 - [ ] Services
@@ -2236,7 +2237,7 @@ be lost."*
 - [ ] Resource selector
 - [ ] 🟡 CPU · memory · disks · networks pages
 - [ ] Services
-- [ ] Startup
+- [ ] 🟡 Startup
 - [ ] Users
 - [ ] Minimal cognitive overhead for ordinary users
 
@@ -2464,7 +2465,7 @@ Windows parsing on Linux.
 - [ ] 🟡 Basic Performance page
 - [ ] Network view
 - [ ] Services read and control
-- [ ] Startup
+- [ ] 🟡 Startup
 - [ ] Users / sessions
 - [x] GUI
 - [x] TUI

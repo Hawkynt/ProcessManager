@@ -24,6 +24,8 @@ public sealed class MacOsProbe : ISystemProbe {
 
   public void Sample(SystemSnapshot snapshot) => throw new PlatformNotSupportedException(_Message);
 
+  public IReadOnlyList<StartupEntry> GetStartupEntries() => throw new PlatformNotSupportedException(_Message);
+
   public Counter GetHandleCount(ProcessKey key) => throw new PlatformNotSupportedException(_Message);
 
   public IReadOnlyList<ThreadRecord> GetThreads(ProcessKey key) => throw new PlatformNotSupportedException(_Message);

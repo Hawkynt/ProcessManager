@@ -1,0 +1,5 @@
+[Desktop Entry]
+Type=Application
+Name=Not For KDE
+Exec=/usr/bin/elsewhere
+NotShowIn=KDE;

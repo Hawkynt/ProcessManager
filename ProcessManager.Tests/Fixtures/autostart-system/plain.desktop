@@ -1,0 +1,4 @@
+[Desktop Entry]
+Type=Application
+Name=Plain Thing
+Exec=/usr/bin/plain --start

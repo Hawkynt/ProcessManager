@@ -1,0 +1,5 @@
+[Desktop Entry]
+Type=Application
+Name=Gnome Only
+Exec=/usr/bin/gnomeish
+OnlyShowIn=GNOME;Unity;
