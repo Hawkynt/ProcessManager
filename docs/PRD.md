@@ -31,8 +31,8 @@ shorthand:
 it is not known*. An unticked box must never become a zero on screen. This is restated here because
 it is the single requirement most likely to be broken while filling the tables in.
 
-**Counting, as of the last update:** **437 of 1251 boxes are ticked** — 60 of 189 in the field
-registry (§14–22), 377 of 1062 across the capabilities. A further 110 are marked 🟡, meaning some of
+**Counting, as of the last update:** **445 of 1251 boxes are ticked** — 60 of 189 in the field
+registry (§14–22), 385 of 1062 across the capabilities. A further 114 are marked 🟡, meaning some of
 the work behind them is already done. §100 tracks the phases; §101 defines when this may be called
 finished.
 
@@ -490,19 +490,23 @@ Every table:
 - [ ] Multi-selection
 - [ ] Select all / invert selection
 - [ ] 🟡 Context menu
-- [ ] Persist layout
+- [x] Persist layout — columns, sort and interval survive a restart
 
-Named **column sets**, each storing visible fields, ordering, widths, sorting, grouping and pinned
-columns:
+Named **column sets**. Each stores its visible fields and their ordering; widths come from the
+registry, and sorting, grouping and pinned columns are not stored yet.
 
-- [ ] Basic
-- [ ] Performance
-- [ ] Memory debugging
-- [ ] Security
-- [ ] I/O debugging
-- [ ] Network
-- [ ] Full forensic
-- [ ] Minimal recovery
+- [x] Basic
+- [x] Performance — as `cpu`
+- [x] Memory debugging — as `memory`
+- [x] Security
+- [x] I/O debugging — as `io`
+- [ ] Network — blocked on §18
+- [ ] 🟡 Full forensic — `expert` is close, but has none of the security or I/O detail
+- [x] Minimal recovery — as `minimal`
+
+Reachable as `--columns @security`. A set saved in the file replaces a built-in preset of the same
+name; the presets themselves are never written into the file, because a preset copied into
+everybody's settings could never be improved again.
 
 §94 defines the presets' contents.
 
@@ -510,8 +514,8 @@ columns:
 
 # 12. Update / refresh system
 
-- [ ] 🟡 Intervals 250 ms · 500 ms · **1 s** · 2 s · 5 s · 10 s · paused · manual — the interval is
-      settable from the CLI; the in-app picker and pause are TUI-only
+- [ ] 🟡 Intervals 250 ms · 500 ms · **1 s** · 2 s · 5 s · 10 s · paused · manual — settable from
+      the CLI and persisted; the in-app picker and pause are TUI-only
 - [x] Default 1 second
 - [ ] 🟡 Pause while preserving selection
 
@@ -1793,13 +1797,18 @@ which would turn "we could not read this" into the literal string "—" in a col
 Nothing here is implemented: **no setting survives a restart today.** Persisted settings are a
 prerequisite for §11's column sets, §57.3's custom bindings and §23's colours.
 
+The file is `key=value` lines at the platform's own config location, and it is meant to be edited by
+hand: every value in it is a field key or a plain number, and `--help-fields` lists them all. Two
+rules make that safe — a line that cannot be parsed leaves its setting at the default rather than
+failing the file, and a key this build does not understand is written back out untouched so an older
+build cannot eat a newer one's settings.
+
 - [ ] **General** — launch behaviour · start minimised · start at login · default page ·
       confirm destructive actions · auto-elevation behaviour
 - [ ] **Appearance** — theme · density · font · icon size · row height · graph grid · highlighting
-- [ ] **Refresh** — interval · paused on start · history length · refresh behaviour
-- [ ] **Processes** — process mode · tree behaviour · child aggregation · show system processes ·
-      show other users · highlight configuration
-- [ ] **Columns** — saved column sets · default sets per view
+- [ ] 🟡 **Refresh** — the interval persists; paused-on-start, history length and refresh behaviour do not
+- [ ] 🟡 **Processes** — tree-or-flat persists; the rest do not
+- [x] **Columns** — saved column sets, and the columns each front-end opens with
 - [ ] **Symbols** — enable resolution · search paths · cache directory
 - [ ] **Reputation** — disabled by default · provider configuration · privacy disclosure
 - [ ] **History** — enable persistence · retention · storage size
@@ -2504,7 +2513,8 @@ v1 does not ship unless every one of these is true:
 - [ ] The user can manage common startup items
 - [ ] The user can inspect logged-in sessions
 - [ ] 🟡 The user can view CPU, memory, disk and network performance
-- [ ] The user can create and restore column presets
+- [ ] 🟡 The user can create and restore column presets — restoring works from the file and from
+      `--columns @name`; creating one means editing the file, not a dialog
 - [x] The user can search and filter by any registered field, visible or not
 - [ ] 🟡 Tables remain usable with thousands of changing rows
 - [x] Privileged actions work through the privilege broker
