@@ -154,22 +154,10 @@ internal static class Program {
     var snapshot = sampler.Current;
     var delta = sampler.Delta;
 
-    if (options.Json) {
-      WriteJson(snapshot, delta, view);
-      return _ExitOk;
-    }
-
-    Console.WriteLine($"{"PID",7} {"USER",-12} {"S",-1} {"CPU%",6} {"PRIVATE",8} {"RSS",8} {"THR",4} NAME");
-    foreach (var row in view.Rows) {
-      ref readonly var process = ref snapshot.Processes[row.Index];
-      var indent = options.TreeMode ? new string(' ', Math.Min(row.Depth * 2, 40)) : string.Empty;
-      Console.WriteLine(
-        $"{process.Pid,7} {Owner(process),-12} {Humanize.State(process.State)[..1],-1} "
-        + $"{Humanize.Percent(delta.CpuPercent(row.Index)),6} {Humanize.Bytes(process.PrivateBytes),8} "
-        + $"{Humanize.Bytes(process.WorkingSetBytes),8} {process.ThreadCount,4} {indent}{process.Name}"
-      );
-    }
-
+    // One writer for every format, over any set of registry fields (PRD §61). --json is kept as a
+    // spelling of --format=json because it is what every script already passes.
+    var format = options.Json ? ExportFormat.Json : options.Format;
+    Exporter.Write(Console.Out, format, snapshot, delta, view, options.Fields, options.TreeMode);
     return _ExitOk;
   }
 
@@ -254,67 +242,5 @@ internal static class Program {
   private static string Owner(in ProcessRecord process)
     => process.UserName ?? (process.UserId >= 0 ? process.UserId.ToString(CultureInfo.InvariantCulture) : "?");
 
-  private static void WriteJson(SystemSnapshot snapshot, SnapshotDelta delta, ProcessView view) {
-    // Written by hand rather than through a serializer: the output shape is a documented contract
-    // (PRD §11), and System.Text.Json's reflection-free path would need a source-generated context
-    // for a shape this small.
-    var builder = new StringBuilder(64 * 1024);
-    builder.Append("{\"processes\":[");
-    var first = true;
-    foreach (var row in view.Rows) {
-      ref readonly var process = ref snapshot.Processes[row.Index];
-      if (!first)
-        builder.Append(',');
-
-      first = false;
-      builder.Append("{\"pid\":").Append(process.Pid)
-        .Append(",\"ppid\":").Append(process.ParentPid)
-        .Append(",\"name\":").Append(JsonString(process.Name))
-        .Append(",\"user\":").Append(JsonString(process.UserName))
-        .Append(",\"state\":").Append(JsonString(Humanize.State(process.State)))
-        .Append(",\"cpuPercent\":").Append(JsonNumber(delta.CpuPercent(row.Index)))
-        .Append(",\"privateBytes\":").Append(JsonNumber(process.PrivateBytes))
-        .Append(",\"workingSetBytes\":").Append(JsonNumber(process.WorkingSetBytes))
-        .Append(",\"threads\":").Append(process.ThreadCount)
-        .Append(",\"commandLine\":").Append(JsonString(process.CommandLine))
-        .Append('}');
-    }
-
-    builder.Append("]}");
-    Console.WriteLine(builder.ToString());
-  }
-
-  // A value that is not there is null, never 0: the whole point of §3.4 is that a consumer can tell
-  // "no I/O happened" from "you were not allowed to look".
-  private static string JsonNumber(Counter counter)
-    => counter.HasValue ? counter.Value.ToString(CultureInfo.InvariantCulture) : "null";
-
-  private static string JsonNumber(Rate rate)
-    => rate.HasValue ? rate.Value.ToString("0.###", CultureInfo.InvariantCulture) : "null";
-
-  private static string JsonString(string? value) {
-    if (value is null)
-      return "null";
-
-    var builder = new StringBuilder(value.Length + 2);
-    builder.Append('"');
-    foreach (var c in value)
-      switch (c) {
-        case '"': builder.Append("\\\""); break;
-        case '\\': builder.Append("\\\\"); break;
-        case '\n': builder.Append("\\n"); break;
-        case '\r': builder.Append("\\r"); break;
-        case '\t': builder.Append("\\t"); break;
-        default:
-          if (char.IsControl(c))
-            builder.Append("\\u").Append(((int)c).ToString("x4", CultureInfo.InvariantCulture));
-          else
-            builder.Append(c);
-
-          break;
-      }
-
-    return builder.Append('"').ToString();
-  }
 
 }
