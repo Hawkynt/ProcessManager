@@ -106,6 +106,8 @@ internal static class SelfTest {
       !self.PageFaults.HasValue || self.PageFaults.Value > 0,
       "a process that has run has faulted at least once");
 
+    CheckSecurity(failures, notes, in self);
+
     // CPU time only grows, and the probe read it first, so it must not exceed the later reading by
     // more than the interval could account for.
     var expectedCpuNs = (ulong)(expected.TotalProcessorTime.TotalSeconds * 1_000_000_000);
@@ -350,6 +352,112 @@ internal static class SelfTest {
         return false;
 
     return true;
+  }
+
+
+  /// <summary>
+  /// The security fields, against whatever the runtime will say about this same process.
+  /// </summary>
+  /// <remarks>
+  /// The arithmetic behind these is unit-tested against hand-built structures on every platform;
+  /// this is the other half — that the real tokens and the real /proc files on a real machine feed
+  /// that arithmetic the bytes it expects (PRD §9.4).
+  /// </remarks>
+  private static void CheckSecurity(List<string> failures, List<string> notes, in ProcessRecord self) {
+    if (OperatingSystem.IsWindows()) {
+      // The BCL's own answer to "am I running elevated": the administrators group is enabled in the
+      // token rather than present as deny-only, which is what TokenElevation reports too.
+      var principal = new System.Security.Principal.WindowsPrincipal(
+        System.Security.Principal.WindowsIdentity.GetCurrent()
+      );
+
+      var expected = principal.IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
+      Check(
+        failures,
+        notes,
+        "elevated",
+        FieldAccessor.Text(ProcessField.Elevated, in self, null, 0),
+        self.IsElevated.HasValue && (self.IsElevated.Value != 0) == expected,
+        $"the runtime says elevated={expected}"
+      );
+
+      // Not compared to a fixed level: a test runner may be medium or high depending on how it was
+      // started. What must hold is that it is one Windows actually defines.
+      var integrity = FieldAccessor.Text(ProcessField.Integrity, in self, null, 0);
+      Check(
+        failures,
+        notes,
+        "integrity",
+        integrity,
+        self.IntegrityLevel.HasValue && !integrity.StartsWith("0x", StringComparison.Ordinal),
+        "the level should be one of the documented ones"
+      );
+
+      return;
+    }
+
+    if (!OperatingSystem.IsLinux())
+      return;
+
+    // Read again, plainly, with the managed file APIs: the probe reaches the same line through raw
+    // syscalls and a span parser, and this is the check that the two agree. The capability mask was
+    // wrong for every process on the machine because of a tab the span parser did not trim, and a
+    // second reading of the same file is what catches that shape of bug.
+    var euid = -1;
+    var capabilities = "?";
+    try {
+      foreach (var line in File.ReadAllLines("/proc/self/status")) {
+        if (line.StartsWith("Uid:", StringComparison.Ordinal)) {
+          var fields = line[4..].Split('\t', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+          if (fields.Length > 1 && int.TryParse(fields[1], out var parsed))
+            euid = parsed;
+        } else if (line.StartsWith("CapEff:", StringComparison.Ordinal)) {
+          // Compared as a number, not as text: status writes it zero-padded to sixteen digits, and
+          // trimming the padding off an all-zero mask leaves nothing at all.
+          capabilities = ulong.TryParse(
+            line[7..].Trim(),
+            System.Globalization.NumberStyles.HexNumber,
+            System.Globalization.CultureInfo.InvariantCulture,
+            out var parsedMask
+          )
+            ? "0x" + parsedMask.ToString("x", System.Globalization.CultureInfo.InvariantCulture)
+            : "?";
+        }
+      }
+    } catch (IOException) {
+      return;
+    }
+
+    if (euid < 0)
+      return;
+
+    Check(
+      failures,
+      notes,
+      "elevated",
+      FieldAccessor.Text(ProcessField.Elevated, in self, null, 0),
+      self.IsElevated.HasValue && (self.IsElevated.Value != 0) == (euid == 0),
+      $"status says euid {euid}"
+    );
+
+    Check(
+      failures,
+      notes,
+      "effective uid",
+      self.EffectiveUserId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+      self.EffectiveUserId == euid,
+      $"status says {euid}"
+    );
+
+    var mask = FieldAccessor.Text(ProcessField.Capabilities, in self, null, 0);
+    Check(
+      failures,
+      notes,
+      "capabilities",
+      mask,
+      capabilities == "?" || string.Equals(mask, capabilities, StringComparison.OrdinalIgnoreCase),
+      $"status says {capabilities}"
+    );
   }
 
 }

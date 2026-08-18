@@ -208,8 +208,21 @@ public sealed class WindowsProbe : ISystemProbe {
       ref var record = ref processes[i];
       this._livePids.Add(record.Pid);
 
-      record.UserName = this._identities.Resolve(record.Pid, record.Key.StartTicks, out var userId);
+      // One token read answers all three, and the answer is cached for the life of the process:
+      // none of the owner, the elevation or the integrity level changes while it runs.
+      record.UserName = this._identities.Resolve(
+        record.Pid,
+        record.Key.StartTicks,
+        out var userId,
+        out var elevated,
+        out var integrity
+      );
+
       record.UserId = userId;
+      record.IsElevated = elevated;
+      record.IntegrityLevel = integrity;
+      // Windows has no notion of a real-versus-effective uid; the token is the whole answer.
+      record.EffectiveUserId = userId;
 
       if (this._commandLines.TryGetValue(record.Key, out var commandLine)) {
         record.CommandLine = commandLine;

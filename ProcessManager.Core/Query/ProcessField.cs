@@ -51,6 +51,7 @@ public enum ProcessField : byte {
   IoHistory,
 
   Elevated,
+  Integrity,
   Seccomp,
   NoNewPrivileges,
   Capabilities,
