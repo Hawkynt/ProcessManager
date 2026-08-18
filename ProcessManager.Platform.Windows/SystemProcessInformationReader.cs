@@ -106,6 +106,9 @@ internal static class SystemProcessInformationReader {
       record.EffectiveUserId = -1;
       record.SecurityContextReason = UnknownReason.NotSupportedOnPlatform;
 
+      // The bulk query carries this per thread, not per process; a process does not have one.
+      record.LastCpu = -1;
+
       // Elevation is a different case: Windows reports it perfectly well through the process token,
       // and we have not written that yet. Saying "not supported here" would tell the reader the
       // machine cannot answer a question it can (PRD §7).
@@ -188,6 +191,28 @@ internal static class SystemProcessInformationReader {
   /// on every sample would be work nobody asked for (PRD §3.5). The bytes are already here, which is
   /// why it costs nothing to ask later.
   /// </remarks>
+  /// <summary>
+  /// The documented KWAIT_REASON values, as words. Only the ones a user-mode thread is actually
+  /// found in are named; the rest are rare enough that the number is more honest than a guess.
+  /// </summary>
+  private static string? MapWaitReason(uint reason) => reason switch {
+    0 => "executive",
+    1 => "free page",
+    2 => "page in",
+    3 => "pool allocation",
+    4 => "delay execution",
+    5 => "suspended",
+    6 => "user request",
+    7 => "wr executive",
+    8 => "wr free page",
+    9 => "wr page in",
+    13 => "wr queue",
+    15 => "wr virtual memory",
+    27 => "wr dispatch int",
+    31 => "wr keyed event",
+    _ => reason.ToString(System.Globalization.CultureInfo.InvariantCulture),
+  };
+
   public static IReadOnlyList<ThreadRecord> ReadThreads(ReadOnlySpan<byte> buffer, ProcessKey key) {
     var entrySize = System.Runtime.CompilerServices.Unsafe.SizeOf<NtStructures.SystemProcessInformation>();
     var threadSize = System.Runtime.CompilerServices.Unsafe.SizeOf<NtStructures.SystemThreadInformation>();
@@ -208,7 +233,15 @@ internal static class SystemProcessInformationReader {
             thread.CreateTime > 0 ? DateTime.FromFileTimeUtc(thread.CreateTime).Ticks : 0,
             (ulong)thread.StartAddress,
             null,
-            thread.Priority
+            thread.Priority,
+            // Windows names a thread only when the program calls SetThreadDescription, and the
+            // bulk query does not carry the name even then.
+            Name: null,
+            UserTimeNs: Counter.Of((ulong)Math.Max(0, thread.UserTime) * 100),
+            KernelTimeNs: Counter.Of((ulong)Math.Max(0, thread.KernelTime) * 100),
+            ContextSwitches: Counter.Of(thread.ContextSwitches),
+            LastCpu: -1,
+            WaitReason: MapWaitReason(thread.WaitReason)
           ));
         }
 

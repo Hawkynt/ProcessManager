@@ -31,8 +31,8 @@ shorthand:
 it is not known*. An unticked box must never become a zero on screen. This is restated here because
 it is the single requirement most likely to be broken while filling the tables in.
 
-**Counting, as of the last update:** **429 of 1251 boxes are ticked** — 59 of 189 in the field
-registry (§14–22), 370 of 1062 across the capabilities. A further 111 are marked 🟡, meaning some of
+**Counting, as of the last update:** **437 of 1251 boxes are ticked** — 60 of 189 in the field
+registry (§14–22), 377 of 1062 across the capabilities. A further 110 are marked 🟡, meaning some of
 the work behind them is already done. §100 tracks the phases; §101 defines when this may be called
 finished.
 
@@ -615,7 +615,7 @@ term all use it, and it never changes even when the display name differs per pla
 - [ ] `cpu.affinity` — `sched_getaffinity` / `GetProcessAffinityMask`
 - [ ] `cpu.set` — Windows CPU sets
 - [ ] `numa.node`
-- [ ] 🟡 `cpu.last` — parsed from `stat` field 39, not surfaced
+- [x] `cpu.last` — field 39, which sits behind fourteen fields nothing else reads
 - [ ] `sched.class` — `sched_getscheduler`
 - [ ] `qos` — OS energy/performance state
 - [ ] `throttled` — cgroup `cpu.stat` `nr_throttled`
@@ -989,13 +989,13 @@ The engine enumerates threads on both platforms; the table shows a subset.
 - [x] State
 - [ ] CPU %
 - [x] CPU time
-- [ ] User CPU time
-- [ ] Kernel CPU time
+- [x] User CPU time
+- [x] Kernel CPU time
 - [ ] Cycles
 - [ ] Cycles delta
-- [ ] Context switches
+- [x] Context switches
 - [ ] Context-switch rate
-- [ ] Start time
+- [x] Start time
 - [ ] 🟡 Start address
 - [ ] Resolved start module
 - [ ] Resolved start symbol
@@ -1004,17 +1004,23 @@ The engine enumerates threads on both platforms; the table shows a subset.
 - [ ] Base priority
 - [ ] Scheduling policy
 - [ ] Ideal processor
-- [ ] Current / last CPU
+- [x] Current / last CPU
 - [ ] Affinity
-- [ ] Wait reason
+- [x] Wait reason
 - [ ] Wait duration
 - [ ] Kernel/user indicator
 - [ ] Stack usage
 - [ ] TEB / TLS information
-- [ ] Name — per-thread `comm` on Linux is nearly free; this should land early
+- [x] Name
 - [ ] Description
 - [ ] Service association
 - [ ] AppDomain / runtime context
+
+The wait reason earns its place above the rest: it answers "why is this hanging" — §2's first
+question — without a stack walk. On Linux it is the kernel symbol from `wchan`
+(`futex_wait_queue_me`, `poll_schedule_timeout`); on Windows it is the thread's `KWAIT_REASON`, which
+the bulk query already carried and nothing read. The names come free from the same `stat` line the
+rest is parsed from, because Linux gives every thread its own `comm`.
 
 Actions:
 

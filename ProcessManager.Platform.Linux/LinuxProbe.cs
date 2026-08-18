@@ -327,6 +327,8 @@ public sealed class LinuxProbe : ISystemProbe {
     var startTicks = scanner.NextUInt64();                 // 22
     var virtualBytes = scanner.NextUInt64();               // 23
     var rssPages = scanner.NextUInt64();                   // 24
+    scanner.Skip(14);                                      // 25 rsslim .. 38 delayacct_blkio_ticks
+    record.LastCpu = scanner.NextInt32();                  // 39 processor
 
     record.Key = new(0, startTicks);
     record.UserTimeNs = Counter.Of((ulong)(utime * nanosecondsPerTick));
@@ -625,6 +627,55 @@ public sealed class LinuxProbe : ISystemProbe {
 
   #region details
 
+  /// <summary>The command name from a stat line: everything between the first ( and the last ).</summary>
+  private static string? ReadCommand(ReadOnlySpan<byte> content) {
+    var open = content.IndexOf((byte)'(');
+    var close = content.LastIndexOf((byte)')');
+    return open < 0 || close <= open
+      ? null
+      : System.Text.Encoding.UTF8.GetString(content[(open + 1)..close]);
+  }
+
+  /// <summary>
+  /// What the thread is blocked in, as a kernel symbol name.
+  /// </summary>
+  /// <remarks>
+  /// "poll_schedule_timeout" or "futex_wait" answers "why is this hanging" without a stack walk,
+  /// which is the question §2 puts first. The file reads as "0" for a running thread and is
+  /// unreadable without permission, both of which mean there is nothing to show.
+  /// </remarks>
+  private string? ReadWaitChannel(string taskDirectory) {
+    if (!this._reader.TryRead(taskDirectory + "/wchan", out var content, out _))
+      return null;
+
+    content = content.TrimEnd((byte)'\n');
+    if (content.IsEmpty || content.SequenceEqual("0"u8))
+      return null;
+
+    return System.Text.Encoding.UTF8.GetString(content);
+  }
+
+  private Counter ReadThreadContextSwitches(string taskDirectory) {
+    if (!this._reader.TryRead(taskDirectory + "/status", out var content, out _))
+      return Counter.NotPermitted;
+
+    ulong voluntary = 0, involuntary = 0;
+    var found = false;
+    var scanner = new AsciiScanner(content);
+    while (!scanner.IsEmpty) {
+      var line = scanner.NextLine();
+      if (TryValue(line, "voluntary_ctxt_switches:"u8, out var value)) {
+        voluntary = value;
+        found = true;
+      } else if (TryValue(line, "nonvoluntary_ctxt_switches:"u8, out value)) {
+        involuntary = value;
+        found = true;
+      }
+    }
+
+    return found ? Counter.Of(voluntary + involuntary) : Counter.NotSupported;
+  }
+
   public IReadOnlyList<ThreadRecord> GetThreads(ProcessKey key) {
     var result = new List<ThreadRecord>();
     var taskRoot = $"{this._procRoot}/{key.Pid}/task";
@@ -639,6 +690,10 @@ public sealed class LinuxProbe : ISystemProbe {
       if (!this._reader.TryRead(directory + "/stat", out var content, out _))
         continue;
 
+      // The thread's name is between the parentheses of the very line already being read, so it is
+      // free: Linux gives every thread its own comm, and it is usually the most useful column here.
+      var threadName = ReadCommand(content);
+
       var record = new ProcessRecord();
       if (!ParseStat(content, this._nanosecondsPerTick, this._options.PageSize, ref record))
         continue;
@@ -650,7 +705,16 @@ public sealed class LinuxProbe : ISystemProbe {
         this._bootTimeUtcTicks + (long)(record.Key.StartTicks * this._nanosecondsPerTick / 100),
         0,
         null,
-        record.Priority
+        record.Priority,
+        Name: threadName,
+        UserTimeNs: record.UserTimeNs,
+        KernelTimeNs: record.KernelTimeNs,
+        // Per-thread switch counts live in the thread's own status, which is one more file each.
+        // Threads are enumerated for one process on demand, so it is affordable here in a way it
+        // would not be in the sample loop (PRD §5.4).
+        ContextSwitches: this.ReadThreadContextSwitches(directory),
+        LastCpu: record.LastCpu,
+        WaitReason: this.ReadWaitChannel(directory)
       ));
     }
 

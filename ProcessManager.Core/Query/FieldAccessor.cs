@@ -36,6 +36,12 @@ public static class FieldAccessor {
       case ProcessField.CpuPercent: return Humanize.Percent(Rated(delta, index, field));
       case ProcessField.CpuPercentPerCore: return Humanize.Percent(Rated(delta, index, field));
       case ProcessField.CpuTime: return Humanize.Duration(process.CpuTimeNs);
+      case ProcessField.LastCpu:
+        // -1 is the platform declining to say, not processor number minus one.
+        return process.LastCpu >= 0
+          ? process.LastCpu.ToString(CultureInfo.InvariantCulture)
+          : Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform);
+
       case ProcessField.CyclesDelta: return Humanize.Rate(Rated(delta, index, field));
       case ProcessField.ContextSwitchesDelta: return Humanize.Rate(Rated(delta, index, field));
       case ProcessField.PageFaultsDelta: return Humanize.Rate(Rated(delta, index, field));
@@ -117,6 +123,7 @@ public static class FieldAccessor {
       case ProcessField.PidHex: return process.Pid;
       case ProcessField.ParentPid: return process.ParentPid;
       case ProcessField.State: return (byte)process.State;
+      case ProcessField.LastCpu: return process.LastCpu >= 0 ? process.LastCpu : null;
       case ProcessField.ThreadCount: return process.ThreadCount;
       case ProcessField.Priority: return process.Priority;
       case ProcessField.SessionId: return process.SessionId;
