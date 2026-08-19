@@ -22,13 +22,26 @@ public readonly record struct PerformanceRow(string Label, string Value);
 /// two machines' graphs mean the same thing; throughput has no natural ceiling and cannot be.
 /// </param>
 /// <param name="PrimaryLabel">How the primary reads in the rail, already formatted.</param>
+/// <param name="Secondary">
+/// A second series plotted underneath the first, on the same scale — kernel time under total CPU,
+/// which is the split every reference tool draws and the one that tells "my program is slow" from
+/// "the machine is in the kernel" (PRD §46). Absent for everything else.
+/// </param>
+/// <param name="SecondaryLabel">What the second series is, for the legend.</param>
 public readonly record struct PerformanceSection(
   string Title,
   IReadOnlyList<PerformanceRow> Rows,
   Rate Primary = default,
   double PrimaryMaximum = 0,
-  string PrimaryLabel = ""
-);
+  string PrimaryLabel = "",
+  Rate Secondary = default,
+  string SecondaryLabel = ""
+) {
+
+  /// <summary>Whether there is a second series worth plotting.</summary>
+  public bool HasSecondary => this.SecondaryLabel.Length > 0;
+
+}
 
 /// <summary>
 /// The performance page's content, as data (PRD §45, §46, §47, §96).
@@ -57,7 +70,8 @@ public static class PerformanceReport {
     SystemSnapshot snapshot,
     SnapshotDelta? delta = null,
     Func<string, DiskInfo>? describeDisk = null,
-    Func<string, NetworkInterfaceInfo>? describeInterface = null
+    Func<string, NetworkInterfaceInfo>? describeInterface = null,
+    Func<IReadOnlyList<GpuInfo>>? describeGpus = null
   ) {
     ArgumentNullException.ThrowIfNull(host);
     ArgumentNullException.ThrowIfNull(snapshot);
@@ -67,9 +81,50 @@ public static class PerformanceReport {
 
     var sections = new List<PerformanceSection> {
       new("System", BuildSystem(host, snapshot)),
-      new("Processor", BuildProcessor(host, snapshot, delta), utilisation, 100, Percent(utilisation)),
+      new(
+        "Processor",
+        BuildProcessor(host, snapshot, delta),
+        utilisation,
+        100,
+        Percent(utilisation),
+        delta?.SystemKernelPercent ?? Rate.NotSampledYet,
+        "kernel"
+      ),
       new("Memory", BuildMemory(host, snapshot), memory, 100, Percent(memory)),
     };
+
+    // One section per logical processor, which is what §46's "logical processors" graph mode asks
+    // for in the shape this page holds. A core's own kernel time comes with it: the interesting
+    // question about a busy core is almost always which half of it is busy.
+    var cores = delta?.PerCoreCount ?? 0;
+    for (var core = 0; core < cores; ++core) {
+      var busy = delta!.PerCoreBusyPercent(core);
+      sections.Add(new(
+        $"Core {core}",
+        BuildCore(core, delta),
+        busy,
+        100,
+        Percent(busy),
+        delta.PerCoreKernelPercent(core),
+        "kernel"
+      ));
+    }
+
+    // One per adapter, and only where there is an adapter: a machine with no discrete graphics gets
+    // no heading rather than an empty one (PRD §50).
+    foreach (var gpu in describeGpus?.Invoke() ?? []) {
+      var busy = gpu.BusyPercent.HasValue
+        ? Rate.Of(gpu.BusyPercent.Value)
+        : Rate.Unknown(gpu.BusyPercent.Reason);
+
+      sections.Add(new(
+        gpu.Model is null ? $"GPU — {gpu.Name}" : $"GPU — {gpu.Model}",
+        BuildGpu(gpu),
+        busy,
+        100,
+        Percent(busy)
+      ));
+    }
 
     // One section per device, so a machine with three disks gets three headings rather than one
     // heading with everything in it — which is the rail §45 asks for, in the shape a page can hold.
@@ -228,6 +283,8 @@ public static class PerformanceReport {
       new("Model", host.CpuModel ?? Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform)),
       new("Vendor", host.CpuVendor ?? Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform)),
       new("Utilisation", Percent(delta?.SystemCpuPercent)),
+      new("User time", Percent(delta?.SystemUserPercent)),
+      new("Kernel time", Percent(delta?.SystemKernelPercent)),
       new("Base speed", Hertz(host.CpuBaseHertz)),
       new("Current speed", Hertz(host.CpuCurrentHertz)),
       new("Sockets", Humanize.Count(host.Sockets)),
@@ -257,6 +314,59 @@ public static class PerformanceReport {
     return [.. rows];
   }
 
+  /// <summary>
+  /// One logical processor's own figures.
+  /// </summary>
+  /// <remarks>
+  /// User and kernel do not add up to busy, and deliberately: steal time is busy from this machine's
+  /// point of view and belongs to neither, so a virtual machine losing a third of its core to the
+  /// hypervisor shows it as the gap rather than hiding it in one of the two.
+  /// </remarks>
+  private static PerformanceRow[] BuildCore(int core, SnapshotDelta delta) => [
+    new("Logical processor", core.ToString(CultureInfo.InvariantCulture)),
+    new("Utilisation", Percent(delta.PerCoreBusyPercent(core))),
+    new("User time", Percent(delta.PerCoreUserPercent(core))),
+    new("Kernel time", Percent(delta.PerCoreKernelPercent(core))),
+  ];
+
+  /// <summary>
+  /// One graphics adapter's figures (PRD §50).
+  /// </summary>
+  /// <remarks>
+  /// Most of these are blank on most machines and say so rather than reading zero. Which reading is
+  /// missing is itself information: an adapter whose driver publishes nothing renders as a column of
+  /// <c>n/i</c> beside its name and its driver, which is a truthful page — and a better one than a
+  /// row of confident zeros for a card that is busy.
+  /// </remarks>
+  private static PerformanceRow[] BuildGpu(GpuInfo gpu) {
+    var rows = new List<PerformanceRow> {
+      new("Adapter", gpu.Model ?? gpu.Name),
+      new("Driver", gpu.Driver ?? Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform)),
+      new("Utilisation", Percent(gpu.BusyPercent.HasValue ? Rate.Of(gpu.BusyPercent.Value) : Rate.Unknown(gpu.BusyPercent.Reason))),
+      new("Dedicated memory", Humanize.Bytes(gpu.MemoryTotalBytes)),
+      new("Memory in use", Humanize.Bytes(gpu.MemoryUsedBytes)),
+      new("Temperature", Celsius(gpu.TemperatureMilliCelsius)),
+      new("Power", Watts(gpu.PowerMicrowatts)),
+    };
+
+    if (gpu.PowerState is { } state)
+      rows.Add(new("Power state", state));
+
+    return [.. rows];
+  }
+
+  /// <summary>hwmon counts temperature in thousandths of a degree, which nobody wants to read.</summary>
+  private static string Celsius(Counter milliCelsius)
+    => milliCelsius.HasValue
+      ? string.Format(CultureInfo.InvariantCulture, "{0:0.0} °C", milliCelsius.Value / 1000d)
+      : Humanize.Placeholder(milliCelsius.Reason);
+
+  /// <summary>And power in microwatts, for the same reason.</summary>
+  private static string Watts(Counter microwatts)
+    => microwatts.HasValue
+      ? string.Format(CultureInfo.InvariantCulture, "{0:0.0} W", microwatts.Value / 1_000_000d)
+      : Humanize.Placeholder(microwatts.Reason);
+
   private static PerformanceRow[] BuildMemory(HostInfo host, SystemSnapshot snapshot) {
     var system = snapshot.System;
     var used = system.TotalMemoryBytes.HasValue && system.AvailableMemoryBytes.HasValue
@@ -278,8 +388,16 @@ public static class PerformanceReport {
 
   #region formatting
 
-  private static string Percent(Rate? rate)
-    => rate is { } value ? Humanize.Percent(value) + " %" : Humanize.Placeholder(UnknownReason.NotSampledYet);
+  /// <summary>
+  /// A percentage, with its sign — but never a unit on a placeholder. "n/i %" reads as a
+  /// measurement of nothing rather than as an admission that nothing was measured.
+  /// </summary>
+  private static string Percent(Rate? rate) {
+    if (rate is not { } value)
+      return Humanize.Placeholder(UnknownReason.NotSampledYet);
+
+    return value.HasValue ? Humanize.Percent(value) + " %" : Humanize.Placeholder(value.Reason);
+  }
 
   private static string Hertz(Counter counter) {
     if (!counter.HasValue)

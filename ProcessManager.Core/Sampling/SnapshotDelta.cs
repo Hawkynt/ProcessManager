@@ -26,6 +26,8 @@ public sealed class SnapshotDelta {
   private Rate[] _privateBytesDelta = [];
   private bool[] _isNew = [];
   private Rate[] _perCoreBusy = [];
+  private Rate[] _perCoreKernel = [];
+  private Rate[] _perCoreUser = [];
 
   /// <summary>False until two samples have been taken; every rate is then <see cref="Rate.NotSampledYet"/>.</summary>
   public bool HasPrevious { get; private set; }
@@ -95,6 +97,19 @@ public sealed class SnapshotDelta {
   public Rate PerCoreBusyPercent(int core)
     => (uint)core < (uint)this._perCoreBusy.Length ? this._perCoreBusy[core] : Rate.NotSampledYet;
 
+  /// <summary>How much of one core's interval went to the kernel (PRD §46).</summary>
+  public Rate PerCoreKernelPercent(int core)
+    => (uint)core < (uint)this._perCoreKernel.Length ? this._perCoreKernel[core] : Rate.NotSampledYet;
+
+  /// <summary>How much of one core's interval went to user code.</summary>
+  public Rate PerCoreUserPercent(int core)
+    => (uint)core < (uint)this._perCoreUser.Length ? this._perCoreUser[core] : Rate.NotSampledYet;
+
+  /// <summary>The machine's kernel and user time, the same split as the per-core figures.</summary>
+  public Rate SystemKernelPercent { get; private set; } = Rate.NotSampledYet;
+
+  public Rate SystemUserPercent { get; private set; } = Rate.NotSampledYet;
+
   public int PerCoreCount { get; private set; }
 
   /// <summary>
@@ -126,6 +141,8 @@ public sealed class SnapshotDelta {
       this.UpdateDevices(null, current, double.NaN);
       this.ElapsedNanoseconds = double.NaN;
       this.SystemCpuPercent = Rate.NotSampledYet;
+      this.SystemKernelPercent = Rate.NotSampledYet;
+      this.SystemUserPercent = Rate.NotSampledYet;
       this.PerCoreCount = 0;
       var processes = current.Processes;
       for (var i = 0; i < processes.Length; ++i) {
@@ -196,14 +213,21 @@ public sealed class SnapshotDelta {
 
     this.UpdateDevices(previous, current, elapsed);
     this.SystemCpuPercent = RateCalculator.BusyPercent(previous.System.Cpu, current.System.Cpu);
+    this.SystemKernelPercent = RateCalculator.KernelPercent(previous.System.Cpu, current.System.Cpu);
+    this.SystemUserPercent = RateCalculator.UserPercent(previous.System.Cpu, current.System.Cpu);
 
     var coreCount = Math.Min(previous.PerCoreCount, current.PerCoreCount);
     EnsureLength(ref this._perCoreBusy, coreCount);
+    EnsureLength(ref this._perCoreKernel, coreCount);
+    EnsureLength(ref this._perCoreUser, coreCount);
     this.PerCoreCount = coreCount;
     var previousCores = previous.PerCore;
     var currentCores = current.PerCore;
-    for (var i = 0; i < coreCount; ++i)
+    for (var i = 0; i < coreCount; ++i) {
       this._perCoreBusy[i] = RateCalculator.BusyPercent(previousCores[i], currentCores[i]);
+      this._perCoreKernel[i] = RateCalculator.KernelPercent(previousCores[i], currentCores[i]);
+      this._perCoreUser[i] = RateCalculator.UserPercent(previousCores[i], currentCores[i]);
+    }
   }
 
   #region devices

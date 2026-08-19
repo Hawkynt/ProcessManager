@@ -97,6 +97,50 @@ public static class RateCalculator {
   /// the per-process figure this one has its own denominator — the counters themselves account for
   /// every nanosecond, idle included — so it needs no wall clock and no core count.
   /// </summary>
+  /// <summary>
+  /// How much of the interval this core spent in the kernel: system time, hard IRQ and soft IRQ.
+  /// </summary>
+  /// <remarks>
+  /// The three together and not system time alone. Interrupt handling is the kernel running on this
+  /// core whether or not it is attributed to a process, and a machine drowning in soft IRQs — which
+  /// is what a saturated network adapter looks like from here — would otherwise show a nearly idle
+  /// kernel beside a fully busy core (PRD §46).
+  /// </remarks>
+  public static Rate KernelPercent(in CpuTimes previous, in CpuTimes current)
+    => PortionPercent(
+      previous, current,
+      previous.KernelNs + previous.IrqNs + previous.SoftIrqNs,
+      current.KernelNs + current.IrqNs + current.SoftIrqNs
+    );
+
+  /// <summary>How much of the interval this core spent running user code, nice time included.</summary>
+  public static Rate UserPercent(in CpuTimes previous, in CpuTimes current)
+    => PortionPercent(
+      previous, current,
+      previous.UserNs + previous.NiceNs,
+      current.UserNs + current.NiceNs
+    );
+
+  /// <summary>
+  /// One slice of a core's time as a percentage of the whole interval.
+  /// </summary>
+  /// <remarks>
+  /// Both counters have to be checked, not just the slice: a counter that went backwards means the
+  /// core was hot-unplugged or the machine was suspended, and the honest answer to that is that
+  /// nothing can be computed — never a zero, which would read as an idle core (PRD §5.3).
+  /// </remarks>
+  private static Rate PortionPercent(in CpuTimes previous, in CpuTimes current, ulong before, ulong after) {
+    var total = current.TotalNs;
+    var previousTotal = previous.TotalNs;
+    if (total < previousTotal || after < before)
+      return Rate.Unknown(UnknownReason.CounterInvalid);
+
+    var totalDelta = total - previousTotal;
+    return totalDelta == 0
+      ? Rate.Unknown(UnknownReason.CounterInvalid)
+      : Rate.Of((after - before) * 100d / totalDelta);
+  }
+
   public static Rate BusyPercent(in CpuTimes previous, in CpuTimes current) {
     var total = current.TotalNs;
     var previousTotal = previous.TotalNs;

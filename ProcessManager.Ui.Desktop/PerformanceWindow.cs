@@ -41,6 +41,9 @@ public sealed class PerformanceWindow : Form {
   /// <summary>One ring per resource, keyed by section title and added to as devices appear.</summary>
   private readonly Dictionary<string, HistoryRing<Rate>> _history = new(StringComparer.Ordinal);
 
+  /// <summary>The second series where a resource has one: kernel time under total CPU (PRD §46).</summary>
+  private readonly Dictionary<string, HistoryRing<Rate>> _secondary = new(StringComparer.Ordinal);
+
   private IReadOnlyList<PerformanceSection> _sections = [];
   private string _shown = string.Empty;
 
@@ -92,7 +95,8 @@ public sealed class PerformanceWindow : Form {
       this._sampler.Current,
       this._sampler.Delta,
       this._probe.DescribeDisk,
-      this._probe.DescribeInterface
+      this._probe.DescribeInterface,
+      this._probe.DescribeGpus
     );
 
     this.RecordHistory();
@@ -118,6 +122,16 @@ public sealed class PerformanceWindow : Form {
       }
 
       ring.Add(section.Primary);
+
+      if (!section.HasSecondary)
+        continue;
+
+      if (!this._secondary.TryGetValue(section.Title, out var under)) {
+        under = new(600);
+        this._secondary[section.Title] = under;
+      }
+
+      under.Add(section.Secondary);
     }
   }
 
@@ -197,6 +211,11 @@ public sealed class PerformanceWindow : Form {
       this._plot.Caption = title;
       if (this._history.TryGetValue(title, out var ring))
         this._plot.AddSeries(ring, ColourFor(title), title);
+
+      // Kernel time second, so it draws over the total rather than under it — the reader is looking
+      // for how much of a busy core is kernel, which is a comparison and not a sum.
+      if (chosen.HasSecondary && this._secondary.TryGetValue(title, out var under))
+        this._plot.AddSeries(under, RowPalette.CpuKernel, chosen.SecondaryLabel);
     }
 
     this._plot.Maximum = chosen.PrimaryMaximum > 0 ? chosen.PrimaryMaximum : this.Ceiling(title);
@@ -242,7 +261,11 @@ public sealed class PerformanceWindow : Form {
   private static Color ColourFor(string title) => title switch {
     "Processor" => Color.FromArgb(0x2E, 0x8B, 0x57),
     "Memory" => Color.FromArgb(0x46, 0x82, 0xB4),
+    // A core keeps the processor's own green: the reader is comparing one core with the whole
+    // machine, and a different hue per core would say those are different kinds of thing.
+    _ when title.StartsWith("Core ", StringComparison.Ordinal) => Color.FromArgb(0x2E, 0x8B, 0x57),
     _ when title.StartsWith("Disk", StringComparison.Ordinal) => Color.FromArgb(0xB8, 0x86, 0x0B),
+    _ when title.StartsWith("GPU", StringComparison.Ordinal) => Color.FromArgb(0xC0, 0x6C, 0x2C),
     _ => Color.FromArgb(0x9A, 0x5F, 0xB8),
   };
 
