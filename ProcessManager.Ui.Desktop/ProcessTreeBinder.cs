@@ -59,9 +59,15 @@ public sealed class ProcessTreeBinder {
   /// Whether a subtree the user collapsed may be reopened by the program.
   /// </summary>
   /// <remarks>
-  /// Off. A parent used to be expanded whenever a child appeared under it, which on a machine that
-  /// forks steadily meant the tree reopening itself every second and everything below it sliding
-  /// down the screen — including whatever was being read (PRD §87).
+  /// Off, and it is about an <em>existing</em> parent. A parent used to be expanded whenever a child
+  /// appeared under it, which on a machine that forks steadily meant the tree reopening a subtree
+  /// somebody had closed every second, sliding everything below it down the screen — including
+  /// whatever was being read (PRD §87).
+  /// <para>
+  /// A node is still expanded when it is created, which is what makes the tree open showing the
+  /// machine. That argues with nobody: a node that has just come into existence is one nobody has
+  /// had the chance to collapse.
+  /// </para>
   /// </remarks>
   public bool ExpandOnNewChild { get; set; }
 
@@ -101,6 +107,11 @@ public sealed class ProcessTreeBinder {
 
       if (!this._nodes.TryGetValue(key, out var node)) {
         node = new(row.Label) { Tag = row };
+        // Expanded from the moment it exists, so the tree opens showing the machine rather than two
+        // roots. This is not the same as expanding a parent when a child appears under it: a node
+        // being created is one nobody has had the chance to collapse, so opening it argues with
+        // nobody. Reopening one somebody closed is what made the list jump (PRD §87).
+        node.Expand();
         this._nodes[key] = node;
       } else if (!string.Equals(node.Text, row.Label, StringComparison.Ordinal))
         node.Text = row.Label;

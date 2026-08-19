@@ -296,6 +296,37 @@ public sealed class ProcessTreeBinderTests {
     Assert.That(CountNodes(tree), Is.EqualTo(3), "the child is there, it is just not shown");
   }
 
+  /// <summary>
+  /// The other half of it: dropping the re-expand left the window opening on two collapsed roots and
+  /// four hundred processes nobody could see. A node is expanded when it is created — which argues
+  /// with nobody, because nobody has had the chance to collapse it yet.
+  /// </summary>
+  [Test]
+  public void TheTreeOpensShowingTheMachine() {
+    var tree = new TreeListView();
+    var binder = new ProcessTreeBinder(tree);
+
+    var (snapshot, delta, view) = Build((1, 0), (2, 1), (3, 2), (4, 3));
+    binder.Sync(snapshot, delta, view);
+
+    Assert.That(tree.VisibleNodeCount, Is.EqualTo(4), "every process, not just the root");
+  }
+
+  /// <summary>A process that forks after the window opened brings its children with it.</summary>
+  [Test]
+  public void AProcessThatAppearsWithChildrenShowsThemToo() {
+    var tree = new TreeListView();
+    var binder = new ProcessTreeBinder(tree);
+
+    var (snapshot, delta, view) = Build((1, 0));
+    binder.Sync(snapshot, delta, view);
+
+    var (after, afterDelta, afterView) = Build((1, 0), (2, 0), (3, 2));
+    binder.Sync(after, afterDelta, afterView);
+
+    Assert.That(tree.VisibleNodeCount, Is.EqualTo(3));
+  }
+
   /// <summary>The old behaviour is still available, for anybody who wants it.</summary>
   [Test]
   public void ExpandOnNewChildRestoresTheOldBehaviour() {
