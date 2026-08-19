@@ -227,6 +227,8 @@ public sealed class MainWindow : Form {
     this._tree.CellPaint += this.OnCellPaint;
     this._tree.ColumnClick += this.OnColumnClick;
     this._tree.AfterSelect += (_, _) => this.UpdateDetails();
+    // Double-click is how every tool of this kind opens a process, and the gesture people try first.
+    this._tree.DoubleClick += (_, _) => this.ShowProperties();
     this._tree.ContextMenuStrip = this.BuildContextMenu();
   }
 
@@ -383,6 +385,7 @@ public sealed class MainWindow : Form {
     menu.Items.Add(Item("Resume", () => this.Act("resume", key => this._actions!.Resume(key))));
     menu.Items.Add(new ToolStripSeparator());
     menu.Items.Add(Item("Read handle count", this.FillHandleCounts));
+    menu.Items.Add(Item("Properties…", this.ShowProperties));
     menu.Items.Add(Item("Refresh details", () => this._details.Invalidate()));
     return menu;
   }
@@ -470,6 +473,7 @@ public sealed class MainWindow : Form {
     process.DropDownItems.Add(Item("Resume", () => this.Act("resume", key => this._actions!.Resume(key))));
     process.DropDownItems.Add(new ToolStripSeparator());
     process.DropDownItems.Add(Item("Read handle count", this.FillHandleCounts));
+    process.DropDownItems.Add(Item("Properties…", this.ShowProperties));
     process.DropDownItems.Add(Item("Refresh details", () => this._details.Invalidate()));
     menu.Items.Add(process);
 
@@ -498,6 +502,9 @@ public sealed class MainWindow : Form {
     this._cores.Bind(delta);
     this.StretchLastColumn();
     this._performance?.UpdateFromSample();
+    foreach (var window in this._properties)
+      window.UpdateFromSample(snapshot, this._binder.RowFor(window.Key));
+
     this._cpuPlot.Invalidate();
     this._memoryPlot.Invalidate();
 
@@ -612,6 +619,34 @@ public sealed class MainWindow : Form {
   /// list, and a modeless one would need its own timer and its own lifetime. The plots share the
   /// main window's rings, so it opens showing the last sixty seconds rather than starting blank.
   /// </remarks>
+  private readonly List<ProcessPropertiesWindow> _properties = [];
+
+  /// <summary>
+  /// Opens the selected process in a window of its own (PRD §26).
+  /// </summary>
+  /// <remarks>
+  /// One per process, and a second request for the same one brings the existing window forward
+  /// rather than opening a duplicate — several windows are the point, several of the *same* process
+  /// are not.
+  /// </remarks>
+  private void ShowProperties() {
+    if (this._binder.SelectedRow is not { } row)
+      return;
+
+    foreach (var open in this._properties)
+      if (open.Key == row.Key) {
+        // The toolkit has no Activate; focusing it is the nearest thing and is enough to say
+        // "this one is already open" rather than opening a second.
+        open.Focus();
+        return;
+      }
+
+    var window = new ProcessPropertiesWindow(this._probe, row.Key, row.Name);
+    window.FormClosed += (_, _) => this._properties.Remove(window);
+    this._properties.Add(window);
+    window.Show();
+  }
+
   private PerformanceWindow? _performance;
 
   /// <summary>

@@ -46,6 +46,9 @@ public sealed class ProcessTreeBinder {
   /// <summary>Handle counts filled on demand for the visible rows (PRD §3.5).</summary>
   public Dictionary<ProcessKey, Counter> HandleCounts { get; } = [];
 
+  /// <summary>The row for one process, or null once it has gone.</summary>
+  public ProcessRow? RowFor(ProcessKey key) => this._rows.TryGetValue(key, out var row) ? row : null;
+
   /// <summary>The row behind the selected node, or null.</summary>
   public ProcessRow? SelectedRow => this._tree.SelectedNode?.Tag as ProcessRow;
 

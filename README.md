@@ -138,7 +138,8 @@ The terminal UI keeps the keys htop users already have in their fingers — `F5`
 details and `h` to read handle counts for the visible rows. The desktop UI keeps the layout Process
 Explorer users already have in their eyes: plots and per-core meters on top, the process tree below
 them, and a tabbed detail pane under that — overview, threads, modules, handles, environment,
-network. Click a header to sort by it, click it again to reverse; **View → Select columns** chooses
+network — and double-clicking a row opens that process in a window of its own, so two of them can be
+compared side by side. Click a header to sort by it, click it again to reverse; **View → Select columns** chooses
 from forty-five, **View → Performance** (or clicking any plot) opens the system information window —
 a rail of every processor, disk and adapter with its current reading, and a large graph of whichever
 is selected — and **View → Colour legend** says what every row colour means.
@@ -263,8 +264,6 @@ These are consequences of the design, not a to-do list; the to-do list is the PR
   process and syscalls are the entire cost. Closing it means dropping `status`, and with it private
   memory, the owner id and every security field, which is a worse trade than a few milliseconds.
   Measured and written down in PRD §71 rather than left as a number nobody intends to meet.
-- **Per-process property windows are not implemented.** The detail pane shows one process at a time;
-  Process Explorer opens several at once, which is what makes it good at comparing two of them.
 - **Services, startup and users are lists rather than pages.** `--services`, `--startup` and
   `--users` answer all three of Task Manager's missing tabs on Linux, and none of them has a view in
   either front-end. Windows has none of the three, and nothing can be started, stopped or disabled

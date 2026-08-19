@@ -31,8 +31,8 @@ shorthand:
 it is not known*. An unticked box must never become a zero on screen. This is restated here because
 it is the single requirement most likely to be broken while filling the tables in.
 
-**Counting, as of the last update:** **462 of 1254 boxes are ticked** — 62 of 189 in the field
-registry (§14–22), 400 of 1065 across the capabilities. A further 136 are marked 🟡, meaning some of
+**Counting, as of the last update:** **469 of 1254 boxes are ticked** — 62 of 189 in the field
+registry (§14–22), 407 of 1065 across the capabilities. A further 137 are marked 🟡, meaning some of
 the work behind them is already done. §100 tracks the phases; §101 defines when this may be called
 finished.
 
@@ -876,7 +876,7 @@ guessing: a colour claiming "unsigned" without having checked a signature is wor
 
 ## 25.3 Navigation
 
-- [ ] Open properties (§26)
+- [x] Open properties (§26)
 - [x] Expand / collapse tree
 - [ ] Go to parent
 - [ ] Go to children
@@ -932,26 +932,28 @@ guessing: a colour claiming "unsigned" without having checked a signature is wor
 
 # 26. Process properties window
 
-- [ ] Double-click or Properties opens a **persistent** inspector (it does not close on refresh)
+- [x] Double-click or Properties opens a **persistent** inspector — one per process, and several at
+      once, which is what makes comparing two of them possible
 - [ ] Tabs whose capability is unavailable are hidden **or** disabled by user preference — the
       preference matters, because hidden and disabled answer different questions ("can this machine
       do it" versus "get out of my way")
 
 Tabs:
 
-- [ ] General (§27)
+- [ ] 🟡 General (§27) — the overview tab carries identity, ownership, timing and the command line;
+      the version, signature and hash fields need §21
 - [ ] Performance (§28)
 - [ ] CPU
 - [ ] Memory
 - [ ] I/O
-- [ ] Threads (§29)
-- [ ] Modules (§31)
-- [ ] Handles / resources (§32)
+- [x] Threads (§29)
+- [x] Modules (§31)
+- [x] Handles / resources (§32)
 - [ ] Memory map (§34)
-- [ ] Network (§40)
+- [x] Network (§40)
 - [ ] GPU (§19)
 - [ ] Security (§36)
-- [ ] Environment (§37)
+- [x] Environment (§37)
 - [ ] Jobs / cgroups / containers (§38)
 - [ ] Windows (§39)
 - [ ] Services (§41)
@@ -959,7 +961,12 @@ Tabs:
 - [ ] Strings (§35)
 - [ ] Timeline (§63)
 
-The engine behind seven of these already works. What is missing is the window.
+The window exists now, hosting the same pane the main window docks at its foot — pinned to one
+process rather than following the selection, which is what makes two of them comparable.
+
+When the process ends the window stays open, says so in its title and stops asking about the pid:
+a window that followed the number would quietly start describing whoever the kernel gave it to next
+(§72.2, §86).
 
 ---
 
