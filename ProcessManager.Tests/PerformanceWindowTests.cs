@@ -1,3 +1,4 @@
+using System.Drawing;
 using Hawkynt.ProcessManager.Abstractions;
 using Hawkynt.ProcessManager.Model;
 using Hawkynt.ProcessManager.Sampling;
@@ -272,6 +273,22 @@ public sealed class PerformanceWindowTests {
   }
 
   /// <summary>
+  /// The rail's colour and the graph's colour used to be worked out separately and disagreed — a
+  /// GPU's sparkline was orange and its graphs teal, which reads as two different resources.
+  /// </summary>
+  [Test]
+  public void ASparklineAndItsGraphAgreeAboutTheResourcesColour() {
+    var (window, _, _) = Open();
+
+    Select(window, Titles(window).IndexOf("Processor"));
+    var plot = PlotShowing(window);
+
+    Assert.That(plot, Is.Not.Null);
+    Assert.That(plot!.SeriesColours, Is.Not.Empty);
+    Assert.That(plot.SeriesColours[0], Is.EqualTo(RowFor(window, "Processor").Accent));
+  }
+
+  /// <summary>
   /// The rail is 230 pixels wide and "GPU — NVIDIA RTX A5000 Laptop GPU" is not. The rail names the
   /// resource and the header names the hardware; one truncated string in the rail says less than the
   /// two of them do (§45.1).
@@ -458,6 +475,14 @@ public sealed class PerformanceWindowTests {
 
   private static void Toggle(PerformanceWindow window, bool on) => Box(window).Checked = on;
 
+  private static HistoryPlot? PlotShowing(PerformanceWindow window) {
+    foreach (var control in window.Controls)
+      if (control is HistoryPlot { Visible: true } plot)
+        return plot;
+
+    return null;
+  }
+
   private static int PlotsShowing(PerformanceWindow window) {
     var showing = 0;
     foreach (var control in window.Controls)
@@ -488,14 +513,29 @@ public sealed class PerformanceWindowTests {
   /// on — which is the only thing a reader can go by either.
   /// </summary>
   private static List<string> LabelsAt(PerformanceWindow window, bool hardware) {
-    var middle = 230 + 24 + 330;
+    // The two column headings are the only fixed points, and they move with the layout — a magic
+    // number here would keep passing while quietly reading the wrong column.
+    var live = HeadingNamed(window, "Live");
+    var specs = HeadingNamed(window, "Hardware");
     var labels = new List<string>();
-    foreach (var control in window.Controls)
-      if (control is NativeForms.Label label && label.Text.Length > 0 && label.Bounds.Y > 280
-          && (label.Bounds.X >= middle) == hardware)
+    foreach (var control in window.Controls) {
+      if (control is not NativeForms.Label label || label.Text.Length == 0 || label.Bounds.Y <= live.Y)
+        continue;
+
+      var column = specs is { Width: > 0 } && label.Bounds.X >= specs.X;
+      if (column == hardware)
         labels.Add(label.Text);
+    }
 
     return labels;
+  }
+
+  private static Rectangle HeadingNamed(PerformanceWindow window, string text) {
+    foreach (var control in window.Controls)
+      if (control is NativeForms.Label label && label.Text == text)
+        return label.Bounds;
+
+    return default;
   }
 
   /// <summary>The labels of the figures currently shown, blank ones left out.</summary>

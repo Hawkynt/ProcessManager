@@ -1503,16 +1503,21 @@ numeric highlights — so the eye can follow one resource across the whole windo
 | Network | orange | | I/O | yellow |
 | GPU | teal | | | |
 
-- [ ] The palette above, which is not the one in use — the plots are currently an instrument's
-      green-on-black throughout (§7.2), and the two ideas have to be reconciled rather than layered
+- [x] 🟡 One accent per resource, used by its sparkline and its graph alike — the two were worked
+      out in different places and disagreed, a GPU's sparkline being orange while its graphs were
+      teal. The hues are not yet the table's exactly: the plots keep the instrument's black ground
+      with a green graticule (§7.2), and a resource's colour is the trace on it rather than the
+      window's chrome
 - [x] Every accent is overridable from the settings file (§67)
 
 ## 45.6 Missing readings
 
 - [x] A sensor that cannot be read never shows a zero
 - [x] It carries a tooltip saying why, from `Humanize.Explain`
-- [ ] A category the hardware does not have at all has its graph hidden rather than emptied — a GPU
-      with no fan sensor shows no fan graph
+- [x] A category the hardware does not have at all has its graph hidden rather than emptied — a GPU
+      with no fan sensor shows no fan graph. Utilisation is the exception and is always plotted:
+      its absence is itself the finding, and "this card has no fan" is a different sentence from
+      "nobody can tell you what this card is doing"
 
 **Deliberately not a single `—`.** Five reasons a value is missing are five different situations, and
 collapsing them loses the one thing a reader needs: `n/a` means this OS cannot report it, `n/i` means
@@ -1697,9 +1702,10 @@ Windows needs `IOCTL_STORAGE_QUERY_PROPERTY` and the disk performance counters, 
 Graphs — two, not one:
 
 - [x] **Active time**, fixed 0–100 %
-- [ ] **Transfer rate**, reads and writes as separate lines on a dynamic scale whose unit follows the
-      traffic (KB/s → MB/s → GB/s). Active time says a disk is busy; only the transfer rate says
-      whether that is a hundred large reads or a hundred thousand small ones
+- [x] 🟡 **Transfer rate** on a dynamic scale whose unit follows the traffic — one combined line,
+      with reads and writes named separately in its label; two lines are not drawn yet. Active time
+      says a disk is busy; only the transfer rate says whether that is a hundred large reads or a
+      hundred thousand small ones
 
 - [ ] Optional hardware-health plugin: temperature · wear · SMART/NVMe health · remaining life
 - [ ] Hardware health is **separately permissioned**, because platform coverage varies too much for
@@ -1775,13 +1781,14 @@ whose six readings genuinely move independently — a card can be at full utilis
 and hot, and only seeing both at once explains either. Stacked, in this order, each with its own
 60-second history:
 
-- [ ] **Utilisation**, 0–100 %, with an optional selector for 3D · compute · copy · decode · encode
-- [ ] **Dedicated memory**, scaled to the card's VRAM — `7.2 GB / 16.0 GB`
-- [ ] **Shared memory**, in a lighter shade of the GPU accent — `134 MB / 31.9 GB`
-- [ ] **Power**, 0–100 % of the ceiling, labelled with the absolute figure too — `28 % · 89 W`
-- [ ] **Temperature**, on the red accent so it never reads as another utilisation figure
-- [ ] **Fan**, in RPM, one line per fan where the card exposes several. Zero RPM is a flat line at
-      the bottom and not an error: it is what a modern card does when it is cool
+- [x] **Utilisation**, 0–100 % — the per-engine selector (3D · compute · copy · decode · encode) is not
+- [x] **Dedicated memory**, scaled to the card's VRAM — `14.7G / 16.0G`
+- [x] **Memory bus**, which sysfs and NVML both offer and Task Manager does not
+- [ ] **Shared memory** — not read
+- [x] **Power**, scaled to the ceiling and labelled with both figures — `25.5 W of 130.0 W`
+- [x] **Temperature**, on the red accent so it never reads as another utilisation figure, and on a
+      fixed 0–100 scale so a card idling between 40 and 42 °C does not fill its graph
+- [ ] 🟡 **Fan** — plotted where the card reports one; RPM and multiple fans are not read
 
 A card that exposes no fan sensor shows **no fan graph** (§45.6) rather than an empty one.
 
