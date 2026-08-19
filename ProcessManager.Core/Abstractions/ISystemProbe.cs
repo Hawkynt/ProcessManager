@@ -80,6 +80,17 @@ public interface ISystemProbe : IDisposable {
   IReadOnlyList<GpuInfo> DescribeGpus() => [];
 
   /// <summary>
+  /// How the machine's logical processors are arranged: sockets, physical cores, and which are
+  /// performance and which efficiency cores (PRD §46).
+  /// </summary>
+  /// <remarks>
+  /// Read once — a machine does not repartition its cores while a program watches it. The default
+  /// is an empty topology, which a caller must read as "nothing is known about the arrangement" and
+  /// fall back to a flat list of cores, not as "this machine has none".
+  /// </remarks>
+  CpuTopology DescribeTopology() => CpuTopology.Empty;
+
+  /// <summary>
   /// Who is logged in (PRD §43), or an empty list where that is not read yet.
   /// </summary>
   IReadOnlyList<SessionRecord> GetSessions();

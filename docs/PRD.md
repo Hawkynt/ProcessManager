@@ -1616,8 +1616,28 @@ Graph modes:
       would put twenty entries in the rail and bury the disks under them, and "overall or per core"
       is one switch rather than twenty destinations. Ticked, the plot becomes a grid of one small
       plot per core; the terminal has no checkbox and prints them all
-- [ ] Physical cores
+- [x] 🟡 Physical cores — SMT siblings sit adjacent in the heat map, so a physical core reads as a
+      pair; they are not yet summed into one cell
 - [ ] NUMA nodes
+
+The main window shows the cores as a **heat map** rather than a meter each. A bar per core is
+readable at eight and useless at sixty-four — four pixels of width is a texture, not a reading —
+whereas colour survives being small in a way a height does not. Cells wrap toward square, because a
+colour is judged by area and cells of wildly different aspect get compared wrongly.
+
+**Grouped, not merely listed** (§46 hybrid parts): performance cores first, efficiency cores after,
+each socket its own block, SMT siblings adjacent. A grid in the kernel's enumeration order
+interleaves the two kinds on some machines and separates them on others, so the same silicon would
+not always look the same — and "the fast half is idle while the slow half is saturated" has to be
+visible as a shape rather than worked out from sixteen numbers.
+
+- [x] Performance and efficiency cores told apart — from the kernel's own hybrid PMUs,
+      `/sys/devices/cpu_core/cpus` and `/sys/devices/cpu_atom/cpus`, which exist only on a hybrid
+      part and name exactly which processors are which
+- [x] Grouped by socket where the machine says which is which
+- [ ] ARM big.LITTLE — the PMU directories are Intel's; nothing here reads the equivalent, and a
+      guess from differing maximum clocks would be a guess. Unknown rather than wrong (§5.3)
+- [ ] Windows: no topology is read, so the map falls back to one flat row
 - [x] User vs kernel / system — plotted together, total in green with kernel over it in red, on the
       processor page and on every core
 

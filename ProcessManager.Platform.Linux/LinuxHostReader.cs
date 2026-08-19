@@ -1,5 +1,6 @@
 using System.Globalization;
 using Hawkynt.ProcessManager.Model;
+using Hawkynt.ProcessManager.Query;
 
 namespace Hawkynt.ProcessManager.Platform.Linux;
 
@@ -12,6 +13,56 @@ namespace Hawkynt.ProcessManager.Platform.Linux;
 /// is the right trade (PRD §71).
 /// </remarks>
 internal static class LinuxHostReader {
+
+  /// <summary>
+  /// Which logical processor sits on which core, socket and kind (PRD §46).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Read once, like everything else here. Only online processors appear: an offline one has no
+  /// topology directory, and inventing an entry for it would put a permanently cold cell in the
+  /// middle of a heat map.
+  /// </para>
+  /// <para>
+  /// The kind comes from the kernel's own hybrid PMUs — <c>/sys/devices/cpu_core/cpus</c> and
+  /// <c>/sys/devices/cpu_atom/cpus</c> — which exist only on a hybrid part and name exactly which
+  /// processors are which. That is the authoritative source and there is no need to guess when it
+  /// is present; where it is absent, the machine is not hybrid, or is hybrid in a way this kernel
+  /// does not describe, and the honest answer is that we do not know (§5.3).
+  /// </para>
+  /// </remarks>
+  public static CpuTopology ReadTopology(string sysRoot) {
+    var cpuRoot = Path.Combine(sysRoot, "devices", "system", "cpu");
+    if (!Directory.Exists(cpuRoot))
+      return CpuTopology.Empty;
+
+    var performance = ReadCpuList(Path.Combine(sysRoot, "devices", "cpu_core", "cpus"));
+    var efficiency = ReadCpuList(Path.Combine(sysRoot, "devices", "cpu_atom", "cpus"));
+
+    var cores = new List<CoreDescriptor>();
+    foreach (var logical in ReadCpuList(Path.Combine(cpuRoot, "online"))) {
+      var topology = Path.Combine(cpuRoot, $"cpu{logical.ToString(CultureInfo.InvariantCulture)}", "topology");
+      cores.Add(new(
+        logical,
+        ReadInt(Path.Combine(topology, "physical_package_id")),
+        ReadInt(Path.Combine(topology, "core_id")),
+        performance.Contains(logical) ? CoreKind.Performance
+          : efficiency.Contains(logical) ? CoreKind.Efficiency
+          : CoreKind.Unknown
+      ));
+    }
+
+    return cores.Count > 0 ? new(cores) : CpuTopology.Empty;
+  }
+
+  private static IReadOnlyList<int> ReadCpuList(string path) {
+    var text = TryReadText(path);
+    return text is null ? [] : CpuList.Parse(text);
+  }
+
+  /// <summary>A number from one sysfs file, or -1 where the machine does not publish it.</summary>
+  private static int ReadInt(string path)
+    => int.TryParse(TryReadText(path), NumberStyles.Integer, CultureInfo.InvariantCulture, out var value) ? value : -1;
 
   public static HostInfo Read(string procRoot, string sysRoot) {
     var cpuinfo = TryReadLines(Path.Combine(procRoot, "cpuinfo"));
