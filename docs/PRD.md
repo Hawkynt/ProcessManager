@@ -1483,7 +1483,10 @@ a machine.
 Graph modes:
 
 - [x] Overall
-- [x] Logical processors — one rail entry per core, each with its own history
+- [x] Logical processors — a checkbox on the processor page, not a rail entry per core: twenty cores
+      would put twenty entries in the rail and bury the disks under them, and "overall or per core"
+      is one switch rather than twenty destinations. Ticked, the plot becomes a grid of one small
+      plot per core; the terminal has no checkbox and prints them all
 - [ ] Physical cores
 - [ ] NUMA nodes
 - [x] User vs kernel / system — plotted together, total in green with kernel over it in red, on the

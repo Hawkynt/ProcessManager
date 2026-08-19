@@ -28,6 +28,16 @@ public readonly record struct PerformanceRow(string Label, string Value);
 /// "the machine is in the kernel" (PRD §46). Absent for everything else.
 /// </param>
 /// <param name="SecondaryLabel">What the second series is, for the legend.</param>
+/// <param name="PartOf">
+/// The section this one belongs under, or empty when it stands on its own.
+/// </param>
+/// <remarks>
+/// <paramref name="PartOf"/> is what keeps the window's rail readable: a machine with twenty cores
+/// would otherwise put twenty entries in it and bury the disks below them. The cores belong under
+/// the processor, where a checkbox switches between the whole and the parts — the shape Task Manager
+/// uses. A terminal has no checkbox and prints them all, which is why the grouping is a property of
+/// the data rather than a decision taken in the report.
+/// </remarks>
 public readonly record struct PerformanceSection(
   string Title,
   IReadOnlyList<PerformanceRow> Rows,
@@ -35,11 +45,15 @@ public readonly record struct PerformanceSection(
   double PrimaryMaximum = 0,
   string PrimaryLabel = "",
   Rate Secondary = default,
-  string SecondaryLabel = ""
+  string SecondaryLabel = "",
+  string PartOf = ""
 ) {
 
   /// <summary>Whether there is a second series worth plotting.</summary>
   public bool HasSecondary => this.SecondaryLabel.Length > 0;
+
+  /// <summary>Whether this stands on its own in a list of resources.</summary>
+  public bool IsTopLevel => this.PartOf.Length == 0;
 
 }
 
@@ -106,7 +120,8 @@ public static class PerformanceReport {
         100,
         Percent(busy),
         delta.PerCoreKernelPercent(core),
-        "kernel"
+        "kernel",
+        PartOf: "Processor"
       ));
     }
 

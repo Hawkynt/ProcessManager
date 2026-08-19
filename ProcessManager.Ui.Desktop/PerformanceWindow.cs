@@ -30,10 +30,16 @@ public sealed class PerformanceWindow : Form {
   private const int _RailWidth = 230;
   private const int _Rows = 24;
 
+  private static readonly Rectangle _PlotArea = new(0, 36, 660, 200);
+
   private readonly ISystemProbe _probe;
   private readonly Sampler _sampler;
   private readonly ListBox _rail = new();
   private readonly HistoryPlot _plot = new();
+  private readonly CheckBox _perCore = new() { Text = "Per logical processor" };
+
+  /// <summary>One small plot per core, built when the core count is first known.</summary>
+  private readonly List<HistoryPlot> _corePlots = [];
   private readonly Label _heading = new();
   private readonly List<Label> _labels = [];
   private readonly List<Label> _values = [];
@@ -69,8 +75,16 @@ public sealed class PerformanceWindow : Form {
     this._heading.Bounds = new(right, 12, 660, 20);
     this.Controls.Add(this._heading);
 
-    this._plot.Bounds = new(right, 36, 660, 200);
+    this._plot.Bounds = _PlotArea with { X = right };
     this.Controls.Add(this._plot);
+
+    // The processor's two views, as one box rather than as twenty rail entries: a machine with
+    // twenty cores would bury the disks under them, and the question "overall or per core" is one
+    // switch and not twenty destinations (PRD §46).
+    this._perCore.Bounds = new(right, 12, 200, 20);
+    this._perCore.CheckedChanged += (_, _) => this.ShowSelected(force: true);
+    this._perCore.Visible = false;
+    this.Controls.Add(this._perCore);
 
     // Built once at the widest a section gets, then filled and blanked. Adding and removing controls
     // every tick would make a page somebody watches for a minute flicker once a second.
@@ -148,7 +162,7 @@ public sealed class PerformanceWindow : Form {
   private void SyncRail() {
     var wanted = new List<string>(this._sections.Count);
     foreach (var section in this._sections)
-      if (Plottable(section) || section.Title == "System")
+      if (section.IsTopLevel && (Plottable(section) || section.Title == "System"))
         wanted.Add(section.Title);
 
     var changed = wanted.Count != this._rail.Items.Count;
@@ -201,6 +215,13 @@ public sealed class PerformanceWindow : Form {
     if (this.Find(title) is not { } chosen)
       return;
 
+    var parts = this.PartsOf(title);
+    this._perCore.Visible = parts.Count > 0;
+    this._perCore.Text = $"Per logical processor ({parts.Count})";
+    var split = this._perCore.Visible && this._perCore.Checked;
+    this.LayOutPlots(split ? parts : []);
+    this._plot.Visible = !split;
+
     if (force || !string.Equals(this._shown, title, StringComparison.Ordinal)) {
       this._shown = title;
       this._heading.Text = title;
@@ -221,6 +242,12 @@ public sealed class PerformanceWindow : Form {
     this._plot.Maximum = chosen.PrimaryMaximum > 0 ? chosen.PrimaryMaximum : this.Ceiling(title);
     this._plot.Value = chosen.PrimaryLabel;
     this._plot.Invalidate();
+
+    for (var i = 0; i < parts.Count && split && i < this._corePlots.Count; ++i) {
+      var plot = this._corePlots[i];
+      plot.Value = parts[i].PrimaryLabel;
+      plot.Invalidate();
+    }
 
     for (var i = 0; i < this._labels.Count; ++i) {
       var has = i < chosen.Rows.Count;
@@ -247,6 +274,68 @@ public sealed class PerformanceWindow : Form {
         highest = Math.Max(highest, ring[i].Value);
 
     return Math.Max(highest * 1.15, 64 * 1024);
+  }
+
+  /// <summary>The sections that live under a heading — the cores under the processor.</summary>
+  private List<PerformanceSection> PartsOf(string title) {
+    var parts = new List<PerformanceSection>();
+    foreach (var section in this._sections)
+      if (string.Equals(section.PartOf, title, StringComparison.Ordinal))
+        parts.Add(section);
+
+    return parts;
+  }
+
+  /// <summary>
+  /// Puts one small plot on screen per part, in a grid, or takes them all away again.
+  /// </summary>
+  /// <remarks>
+  /// The plots are built once and reused, because a core count does not change while a machine is
+  /// running — and adding and removing controls on a page somebody is watching would flicker it
+  /// once a second even when nothing moved.
+  /// <para>
+  /// Rows before columns: eight across is about the narrowest a plot can be and still show a shape,
+  /// so a machine with more than eight cores gets a second row rather than thinner plots.
+  /// </para>
+  /// </remarks>
+  private void LayOutPlots(List<PerformanceSection> parts) {
+    while (this._corePlots.Count < parts.Count) {
+      var plot = new HistoryPlot { Visible = false };
+      this._corePlots.Add(plot);
+      this.Controls.Add(plot);
+    }
+
+    for (var i = parts.Count; i < this._corePlots.Count; ++i)
+      this._corePlots[i].Visible = false;
+
+    if (parts.Count == 0)
+      return;
+
+    var columns = Math.Min(8, parts.Count);
+    var rows = (parts.Count + columns - 1) / columns;
+    var area = _PlotArea with { X = _RailWidth + 24 };
+    var width = area.Width / columns;
+    var height = area.Height / rows;
+
+    for (var i = 0; i < parts.Count; ++i) {
+      var plot = this._corePlots[i];
+      plot.Bounds = new(
+        area.X + ((i % columns) * width),
+        area.Y + ((i / columns) * height),
+        width - 2,
+        height - 2
+      );
+
+      plot.Caption = parts[i].Title;
+      plot.Maximum = 100;
+      plot.Visible = true;
+      plot.ClearSeries();
+      if (this._history.TryGetValue(parts[i].Title, out var ring))
+        plot.AddSeries(ring, ColourFor(parts[i].Title), parts[i].Title);
+
+      if (parts[i].HasSecondary && this._secondary.TryGetValue(parts[i].Title, out var under))
+        plot.AddSeries(under, RowPalette.CpuKernel, parts[i].SecondaryLabel);
+    }
   }
 
   private PerformanceSection? Find(string title) {
