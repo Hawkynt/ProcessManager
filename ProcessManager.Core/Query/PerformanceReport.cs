@@ -16,6 +16,25 @@ namespace Hawkynt.ProcessManager.Query;
 public readonly record struct PerformanceRow(string Label, string Value, bool IsHardware = false);
 
 /// <summary>
+/// One plotted series on a resource's page.
+/// </summary>
+/// <param name="Label">Its heading, which is also how a reader tells two of them apart without
+/// relying on colour (PRD §45.9).</param>
+/// <param name="Value">The current reading.</param>
+/// <param name="Maximum">The top of its scale, or 0 to fit what it has seen.</param>
+/// <param name="ValueLabel">That reading, formatted — including the ceiling where there is one.</param>
+/// <param name="Accent">Which colour it takes: <c>cpu</c>, <c>memory</c>, <c>temperature</c>,
+/// <c>fan</c>, <c>power</c>, <c>io</c>. Temperature especially, so it never reads as another
+/// utilisation figure (PRD §50.1).</param>
+public readonly record struct PerformanceGraph(
+  string Label,
+  Rate Value,
+  double Maximum,
+  string ValueLabel,
+  string Accent
+);
+
+/// <summary>
 /// A group of figures under one heading, and the one number that stands for the whole group.
 /// </summary>
 /// <param name="Primary">
@@ -36,6 +55,12 @@ public readonly record struct PerformanceRow(string Label, string Value, bool Is
 /// <param name="SecondaryLabel">What the second series is, for the legend.</param>
 /// <param name="PartOf">
 /// The section this one belongs under, or empty when it stands on its own.
+/// </param>
+/// <param name="Graphs">
+/// The series this resource stacks, where one plot is not enough. A GPU is the case that forces it:
+/// six readings that genuinely move independently — a card can be at full utilisation and cold, or
+/// idle and hot, and only seeing both at once explains either (PRD §50.1). Null means the resource
+/// has the one graph its primary describes.
 /// </param>
 /// <param name="RailTitle">
 /// What the rail calls this, where the full title is too long for a 230-pixel column. "GPU 0" in
@@ -65,7 +90,8 @@ public readonly record struct PerformanceSection(
   string SecondaryLabel = "",
   string PartOf = "",
   string RailDetail = "",
-  string RailTitle = ""
+  string RailTitle = "",
+  IReadOnlyList<PerformanceGraph>? Graphs = null
 ) {
 
   /// <summary>Whether there is a second series worth plotting.</summary>
@@ -76,6 +102,21 @@ public readonly record struct PerformanceSection(
 
   /// <summary>What to put in the rail: the short name where there is one.</summary>
   public string RailName => this.RailTitle.Length > 0 ? this.RailTitle : this.Title;
+
+  /// <summary>
+  /// Every series this page plots. A resource that named none plots the one its primary describes,
+  /// so a caller never has to ask which shape it is dealing with.
+  /// </summary>
+  public IReadOnlyList<PerformanceGraph> Series
+    => this.Graphs ?? [new(this.Title, this.Primary, this.PrimaryMaximum, this.PrimaryLabel, DefaultAccent(this.Title))];
+
+  private static string DefaultAccent(string title) => title switch {
+    "Processor" => "cpu",
+    "Memory" => "memory",
+    _ when title.StartsWith("Core ", StringComparison.Ordinal) => "cpu",
+    _ when title.StartsWith("Disk", StringComparison.Ordinal) => "io",
+    _ => "network",
+  };
 
 }
 
@@ -170,7 +211,8 @@ public static class PerformanceReport {
         100,
         Percent(busy),
         RailDetail: gpu.TemperatureMilliCelsius.HasValue ? Celsius(gpu.TemperatureMilliCelsius) : string.Empty,
-        RailTitle: $"GPU {adapter++}"
+        RailTitle: $"GPU {adapter++}",
+        Graphs: GpuGraphs(gpu)
       ));
     }
 
@@ -188,7 +230,21 @@ public static class PerformanceReport {
         // Reads and writes together: which one a disk is doing is a question for its own page, and
         // the rail has room for one number.
         RailDetail: rates is { } r ? Humanize.BytesPerSecond(Sum(r.ReadBytesPerSecond, r.WriteBytesPerSecond)) : string.Empty,
-        RailTitle: $"Disk {disk.Name}"
+        RailTitle: $"Disk {disk.Name}",
+        // Two, not one: active time says a disk is busy, and only the transfer rate says whether
+        // that is a hundred large reads or a hundred thousand small ones (PRD §48).
+        Graphs: [
+          new("Active time", busy, 100, Percent(busy), "io"),
+          new(
+            "Transfer rate",
+            rates is { } t ? Sum(t.ReadBytesPerSecond, t.WriteBytesPerSecond) : Rate.NotSampledYet,
+            0,
+            rates is { } shown
+              ? $"{Humanize.BytesPerSecond(shown.ReadBytesPerSecond)} read, {Humanize.BytesPerSecond(shown.WriteBytesPerSecond)} write"
+              : Pending,
+            "io"
+          ),
+        ]
       ));
     }
 
@@ -417,6 +473,69 @@ public static class PerformanceReport {
     var used = total - Math.Min(system.AvailableMemoryBytes.Value, total);
     return $"{Humanize.Bytes(used)} / {Humanize.Bytes(total)}";
   }
+
+  /// <summary>
+  /// The stack of series a GPU page shows (PRD §50.1).
+  /// </summary>
+  /// <remarks>
+  /// A card whose driver does not report a reading gets no graph for it, rather than an empty one:
+  /// §45.6's rule that a category the hardware does not have is hidden and not emptied. A laptop
+  /// card with no fan of its own should not have a permanently flat fan graph implying it has one
+  /// that never spins.
+  /// <para>
+  /// Utilisation is always here even when it is unknown, because it is what the page is about and
+  /// its absence is itself the finding — that is the difference between "this card has no fan" and
+  /// "nobody can tell you what this card is doing".
+  /// </para>
+  /// </remarks>
+  private static PerformanceGraph[] GpuGraphs(GpuInfo gpu) {
+    var graphs = new List<PerformanceGraph> {
+      new("Utilisation", AsRate(gpu.BusyPercent), 100, AsPercent(gpu.BusyPercent), "gpu"),
+    };
+
+    if (gpu.MemoryUsedBytes.HasValue)
+      graphs.Add(new(
+        "Dedicated memory",
+        Rate.Of(gpu.MemoryUsedBytes.Value),
+        // Scaled to the card's own VRAM, so the height of the fill is the fraction in use.
+        gpu.MemoryTotalBytes.HasValue ? gpu.MemoryTotalBytes.Value : 0,
+        gpu.MemoryTotalBytes.HasValue
+          ? $"{Humanize.Bytes(gpu.MemoryUsedBytes)} / {Humanize.Bytes(gpu.MemoryTotalBytes)}"
+          : Humanize.Bytes(gpu.MemoryUsedBytes),
+        "gpu"
+      ));
+
+    if (gpu.MemoryBusyPercent.HasValue)
+      graphs.Add(new("Memory bus", AsRate(gpu.MemoryBusyPercent), 100, AsPercent(gpu.MemoryBusyPercent), "gpu"));
+
+    if (gpu.PowerMicrowatts.HasValue)
+      graphs.Add(new(
+        "Power",
+        Rate.Of(gpu.PowerMicrowatts.Value / 1_000_000d),
+        gpu.PowerLimitMicrowatts.HasValue ? gpu.PowerLimitMicrowatts.Value / 1_000_000d : 0,
+        PowerDraw(gpu.PowerMicrowatts, gpu.PowerLimitMicrowatts),
+        "power"
+      ));
+
+    if (gpu.TemperatureMilliCelsius.HasValue)
+      graphs.Add(new(
+        "Temperature",
+        Rate.Of(gpu.TemperatureMilliCelsius.Value / 1000d),
+        // A fixed hundred rather than the hottest yet: a card idling between 40 and 42 °C would
+        // otherwise fill its graph and look alarming (PRD §45.4).
+        100,
+        Celsius(gpu.TemperatureMilliCelsius),
+        "temperature"
+      ));
+
+    if (gpu.FanPercent.HasValue)
+      graphs.Add(new("Fan", AsRate(gpu.FanPercent), 100, AsPercent(gpu.FanPercent), "fan"));
+
+    return [.. graphs];
+  }
+
+  private static Rate AsRate(Counter counter)
+    => counter.HasValue ? Rate.Of(counter.Value) : Rate.Unknown(counter.Reason);
 
   private static PerformanceRow[] BuildGpu(GpuInfo gpu) {
     var rows = new List<PerformanceRow> {

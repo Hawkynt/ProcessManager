@@ -31,9 +31,19 @@ public sealed class PerformanceWindow : Form {
   private const int _RailWidth = 230;
   private const int _Rows = 24;
 
-  private static readonly Rectangle _PlotArea = new(0, 36, 660, 200);
+  /// <summary>
+  /// The plot area at its shortest: one graph.
+  /// </summary>
+  /// <remarks>
+  /// A stack takes more, and the statistics move down to make room — five graphs sharing two hundred
+  /// pixels are forty pixels each, which is a line and not a shape. The area grows to
+  /// <see cref="_TallPlotHeight"/> and the columns follow it.
+  /// </remarks>
+  private static readonly Rectangle _PlotArea = new(0, 36, 880, 210);
 
-  private const int _ColumnWidth = 330;
+  private const int _TallPlotHeight = 430;
+
+  private const int _ColumnWidth = 380;
 
   private readonly ISystemProbe _probe;
   private readonly Sampler _sampler;
@@ -61,6 +71,7 @@ public sealed class PerformanceWindow : Form {
 
   private IReadOnlyList<PerformanceSection> _sections = [];
   private string _shown = string.Empty;
+  private int _statisticsTop = -1;
 
   public PerformanceWindow(ISystemProbe probe, Sampler sampler) {
     ArgumentNullException.ThrowIfNull(probe);
@@ -74,9 +85,11 @@ public sealed class PerformanceWindow : Form {
     // true because the first window shown owns the message loop; every window that is not that one
     // has to say so.
     this.QuitsOnClose = false;
-    this.Bounds = new(0, 0, 940, 700);
+    // §45.1's reference size, near enough: the rail plus a plot area wide enough that a minute of
+    // history is a minute of pixels.
+    this.Bounds = new(0, 0, 1180, 780);
 
-    this._rail.Bounds = new(10, 10, _RailWidth, 650);
+    this._rail.Bounds = new(10, 10, _RailWidth, 730);
     this._rail.SelectedIndexChanged += (_, _) => this.ShowSelected(force: true);
     this.Controls.Add(this._rail);
 
@@ -86,40 +99,39 @@ public sealed class PerformanceWindow : Form {
 
     // The model to the right of the name, which is where §45.1 puts it: what this is, then what it
     // actually is. Right-aligned so a long part number grows away from the name rather than into it.
-    this._model.Bounds = new(right + 310, 12, 350, 20);
+    this._model.Bounds = new(right + 310, 12, 560, 20);
     this._model.TextAlign = ContentAlignment.TopRight;
     this.Controls.Add(this._model);
 
     this._plot.Bounds = _PlotArea with { X = right };
+    this._liveHeading.Bounds = new(right, _PlotArea.Bottom + 34, 200, 16);
     this.Controls.Add(this._plot);
 
     // The processor's two views, as one box rather than as twenty rail entries: a machine with
     // twenty cores would bury the disks under them, and the question "overall or per core" is one
     // switch and not twenty destinations (PRD §46).
-    this._perCore.Bounds = new(right, 240, 200, 20);
+    this._perCore.Bounds = new(right, _PlotArea.Bottom + 6, 220, 20);
     this._perCore.CheckedChanged += (_, _) => this.ShowSelected(force: true);
     this._perCore.Visible = false;
     this.Controls.Add(this._perCore);
 
     // Two columns, because the live measurements and the hardware facts answer different questions
     // and reading them as one list is what makes a performance page look like a data dump (§45.1).
-    this._liveHeading.Bounds = new(right, 266, 200, 16);
-    this._hardwareHeading.Bounds = new(right + _ColumnWidth, 266, 200, 16);
     this.Controls.Add(this._liveHeading);
     this.Controls.Add(this._hardwareHeading);
 
     // Built once at the widest a section gets, then filled and blanked. Adding and removing controls
     // every tick would make a page somebody watches for a minute flicker once a second.
     for (var i = 0; i < _Rows; ++i) {
-      var column = i >= _Rows / 2 ? _ColumnWidth : 0;
-      var row = i % (_Rows / 2);
-      var label = new Label { Bounds = new(right + column, 288 + (row * 18), 150, 16) };
-      var value = new Label { Bounds = new(right + column + 150, 288 + (row * 18), 175, 16) };
+      var label = new Label();
+      var value = new Label();
       this._labels.Add(label);
       this._values.Add(value);
       this.Controls.Add(label);
       this.Controls.Add(value);
     }
+
+    this.LayOutStatistics(_PlotArea.Bottom);
 
     this.UpdateFromSample();
   }
@@ -178,6 +190,11 @@ public sealed class PerformanceWindow : Form {
       if (!Plottable(section))
         continue;
 
+      // One ring per series, so a GPU's six move independently and a disk's transfer rate is not
+      // overwritten by its active time.
+      foreach (var graph in section.Series)
+        this.Ring(SeriesKey(section.Title, graph.Label)).Add(graph.Value);
+
       if (!this._history.TryGetValue(section.Title, out var ring)) {
         ring = new(600);
         this._history[section.Title] = ring;
@@ -196,6 +213,22 @@ public sealed class PerformanceWindow : Form {
       under.Add(section.Secondary);
     }
   }
+
+  /// <summary>The ring for one series, made the first time it is asked for.</summary>
+  private HistoryRing<Rate> Ring(string key) {
+    if (this._history.TryGetValue(key, out var ring))
+      return ring;
+
+    ring = new(600);
+    this._history[key] = ring;
+    return ring;
+  }
+
+  /// <summary>
+  /// A series is identified by its section and its label together, with a separator no label can
+  /// contain — "Temperature" belongs to a GPU, and two GPUs each have one.
+  /// </summary>
+  private static string SeriesKey(string section, string label) => $"{section}\u0000{label}";
 
   private static bool Plottable(PerformanceSection section)
     => section.PrimaryMaximum > 0 || section.Primary.HasValue;
@@ -269,6 +302,29 @@ public sealed class PerformanceWindow : Form {
     return best;
   }
 
+  /// <summary>
+  /// Puts the two statistic columns under whatever height the plots ended up taking.
+  /// </summary>
+  private void LayOutStatistics(int plotBottom) {
+    if (this._statisticsTop == plotBottom)
+      return;
+
+    this._statisticsTop = plotBottom;
+    var right = _RailWidth + 24;
+    var top = plotBottom + 34;
+
+    this._liveHeading.Bounds = new(right, top, 200, 16);
+    this._hardwareHeading.Bounds = new(right + _ColumnWidth, top, 200, 16);
+
+    var perColumn = _Rows / 2;
+    for (var i = 0; i < this._labels.Count; ++i) {
+      var column = i >= perColumn ? _ColumnWidth : 0;
+      var row = i % perColumn;
+      this._labels[i].Bounds = new(right + column, top + 22 + (row * 18), 160, 16);
+      this._values[i].Bounds = new(right + column + 165, top + 22 + (row * 18), 200, 16);
+    }
+  }
+
   /// <summary>A rail entry: what the resource is, what it is doing, and how long it has been.</summary>
   private ResourceRow Entry(string title) {
     foreach (var section in this._sections) {
@@ -313,8 +369,13 @@ public sealed class PerformanceWindow : Form {
     this._perCore.Visible = parts.Count > 0;
     this._perCore.Text = $"Per logical processor ({parts.Count})";
     var split = this._perCore.Visible && this._perCore.Checked;
-    this.LayOutPlots(split ? parts : []);
-    this._plot.Visible = !split;
+
+    // Three shapes, in order of specificity: the cores when asked for, a resource's own stack of
+    // series where it has more than one, and otherwise the single plot.
+    var series = chosen.Series;
+    var stacked = !split && series.Count > 1;
+    this.LayOutPlots(split ? parts : [], stacked ? (title, series) : default);
+    this._plot.Visible = !split && !stacked;
 
     if (force || !string.Equals(this._shown, title, StringComparison.Ordinal)) {
       this._shown = title;
@@ -442,7 +503,13 @@ public sealed class PerformanceWindow : Form {
   /// so a machine with more than eight cores gets a second row rather than thinner plots.
   /// </para>
   /// </remarks>
-  private void LayOutPlots(List<PerformanceSection> parts) {
+  private void LayOutPlots(List<PerformanceSection> parts, (string Title, IReadOnlyList<PerformanceGraph> Series) stack) {
+    if (stack.Series is { Count: > 0 }) {
+      this.LayOutStack(stack.Title, stack.Series);
+      return;
+    }
+
+    this.LayOutStatistics(_PlotArea.Bottom);
     while (this._corePlots.Count < parts.Count) {
       var plot = new HistoryPlot { Visible = false };
       this._corePlots.Add(plot);
@@ -482,6 +549,57 @@ public sealed class PerformanceWindow : Form {
     }
   }
 
+  /// <summary>
+  /// A resource's own series, stacked down the plot area.
+  /// </summary>
+  /// <remarks>
+  /// Full width and short rather than side by side: these are six different quantities against one
+  /// shared time axis, and stacking them lets the eye read down a moment — the spike in utilisation
+  /// and the rise in temperature four seconds later — which side-by-side plots cannot show
+  /// (PRD §50.1).
+  /// </remarks>
+  private void LayOutStack(string title, IReadOnlyList<PerformanceGraph> series) {
+    while (this._corePlots.Count < series.Count) {
+      var plot = new HistoryPlot { Visible = false };
+      this._corePlots.Add(plot);
+      this.Controls.Add(plot);
+    }
+
+    for (var i = series.Count; i < this._corePlots.Count; ++i)
+      this._corePlots[i].Visible = false;
+
+    // A stack gets the taller area: five graphs in two hundred pixels are forty pixels each, which
+    // is a line rather than a shape.
+    var area = _PlotArea with { X = _RailWidth + 24, Height = _TallPlotHeight };
+    var height = area.Height / series.Count;
+    for (var i = 0; i < series.Count; ++i) {
+      var plot = this._corePlots[i];
+      plot.Bounds = new(area.X, area.Y + (i * height), area.Width, height - 2);
+      plot.Caption = series[i].Label;
+      plot.Value = series[i].ValueLabel;
+      plot.Maximum = series[i].Maximum > 0 ? series[i].Maximum : this.Ceiling(SeriesKey(title, series[i].Label));
+      plot.Visible = true;
+      plot.ClearSeries();
+      plot.AddSeries(this.Ring(SeriesKey(title, series[i].Label)), AccentFor(series[i].Accent), series[i].Label);
+      plot.Invalidate();
+    }
+
+    this.LayOutStatistics(area.Bottom);
+  }
+
+  /// <summary>Each kind of series keeps its own colour, so a page of six says six things.</summary>
+  private static Color AccentFor(string accent) => accent switch {
+    "cpu" => RowPalette.Cpu,
+    "memory" => RowPalette.Memory,
+    "io" => RowPalette.Io,
+    "temperature" => RowPalette.CpuKernel,
+    "fan" => Color.FromArgb(0xC8, 0x5A, 0xC8),
+    "power" => Color.FromArgb(0x9A, 0xD8, 0x30),
+    "gpu" => Color.FromArgb(0x30, 0xC0, 0xB0),
+    "network" => Color.FromArgb(0xE0, 0x8C, 0x2C),
+    _ => Color.FromArgb(0x9A, 0x5F, 0xB8),
+  };
+
   private PerformanceSection? Find(string title) {
     foreach (var section in this._sections)
       if (section.Title == title)
@@ -490,16 +608,25 @@ public sealed class PerformanceWindow : Form {
     return null;
   }
 
-  /// <summary>Each kind of resource keeps its own colour, so the plot says what it is.</summary>
-  private static Color ColourFor(string title) => title switch {
-    "Processor" => Color.FromArgb(0x2E, 0x8B, 0x57),
-    "Memory" => Color.FromArgb(0x46, 0x82, 0xB4),
-    // A core keeps the processor's own green: the reader is comparing one core with the whole
-    // machine, and a different hue per core would say those are different kinds of thing.
-    _ when title.StartsWith("Core ", StringComparison.Ordinal) => Color.FromArgb(0x2E, 0x8B, 0x57),
-    _ when title.StartsWith("Disk", StringComparison.Ordinal) => Color.FromArgb(0xB8, 0x86, 0x0B),
-    _ when title.StartsWith("GPU", StringComparison.Ordinal) => Color.FromArgb(0xC0, 0x6C, 0x2C),
-    _ => Color.FromArgb(0x9A, 0x5F, 0xB8),
-  };
+  /// <summary>
+  /// A resource's own colour, used by its sparkline and by its graph alike.
+  /// </summary>
+  /// <remarks>
+  /// One accent per resource across the whole window is what lets the eye follow one thing from the
+  /// rail to the plot (§45.5). The two used to be worked out separately and disagreed: a GPU's rail
+  /// sparkline was orange and its graphs teal, which reads as two different resources.
+  /// <para>
+  /// A core keeps the processor's own colour. The reader is comparing one core with the whole
+  /// machine, and a different hue per core would say those are different kinds of thing.
+  /// </para>
+  /// </remarks>
+  private static Color ColourFor(string title) => AccentFor(title switch {
+    "Processor" => "cpu",
+    "Memory" => "memory",
+    _ when title.StartsWith("Core ", StringComparison.Ordinal) => "cpu",
+    _ when title.StartsWith("Disk", StringComparison.Ordinal) => "io",
+    _ when title.StartsWith("GPU", StringComparison.Ordinal) => "gpu",
+    _ => "network",
+  });
 
 }

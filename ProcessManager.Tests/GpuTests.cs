@@ -224,6 +224,98 @@ public sealed class GpuTests {
     Assert.That(titles, Does.Contain("GPU — card2"));
   }
 
+  #region the stack of graphs (PRD §50.1)
+
+  /// <summary>
+  /// A GPU is the case that forces more than one plot: six readings that move independently. A card
+  /// can be at full utilisation and cold, or idle and hot, and only seeing both explains either.
+  /// </summary>
+  [Test]
+  public void AnAdapterThatReportsEverythingGetsAGraphForEach() {
+    var section = Find(Sections(Adapter("card0", "AMD 73ff", Counter.Of(42), Counter.Of(200_000_000))));
+
+    var labels = new List<string>();
+    foreach (var graph in section.Series)
+      labels.Add(graph.Label);
+
+    Assert.That(labels, Is.EqualTo(new[] { "Utilisation", "Dedicated memory", "Power", "Temperature" }));
+  }
+
+  /// <summary>
+  /// §45.6: a category the hardware does not have is hidden, not emptied. A laptop card with no fan
+  /// of its own must not get a permanently flat fan graph implying it has one that never spins.
+  /// </summary>
+  [Test]
+  public void AReadingTheCardDoesNotReportGetsNoGraphAtAll() {
+    var section = Find(Sections(Adapter("card0", "AMD 73ff", Counter.Of(42))));
+
+    foreach (var graph in section.Series)
+      Assert.That(graph.Label, Is.Not.EqualTo("Fan"));
+  }
+
+  /// <summary>
+  /// Utilisation stays even when it is unknown, because its absence is the finding. "This card has
+  /// no fan" and "nobody can tell you what this card is doing" are different sentences.
+  /// </summary>
+  [Test]
+  public void UtilisationIsAlwaysPlottedEvenWhenNobodyCanReadIt() {
+    var section = Find(Sections(Adapter("card0", "NVIDIA 24b6", Counter.Unknown(UnknownReason.NotImplementedHere))));
+
+    Assert.That(section.Series[0].Label, Is.EqualTo("Utilisation"));
+    Assert.That(section.Series[0].Value.HasValue, Is.False);
+  }
+
+  /// <summary>Temperature takes its own colour so it never reads as another utilisation figure.</summary>
+  [Test]
+  public void TemperatureIsNotDrawnLikeALoad() {
+    var section = Find(Sections(Adapter("card0", "AMD 73ff", Counter.Of(42))));
+
+    foreach (var graph in section.Series) {
+      if (graph.Label != "Temperature")
+        continue;
+
+      Assert.That(graph.Accent, Is.EqualTo("temperature"));
+      Assert.That(graph.Maximum, Is.EqualTo(100), "a fixed scale, or a card idling at 40-42 °C fills its graph");
+      return;
+    }
+
+    Assert.Fail("no temperature graph");
+  }
+
+  /// <summary>Memory is scaled to the card's own VRAM, so the fill height is the fraction in use.</summary>
+  [Test]
+  public void DedicatedMemoryIsScaledToTheCardsOwnMemory() {
+    var section = Find(Sections(Adapter("card0", "AMD 73ff", Counter.Of(42))));
+
+    foreach (var graph in section.Series) {
+      if (graph.Label != "Dedicated memory")
+        continue;
+
+      Assert.That(graph.Maximum, Is.EqualTo(8d * 1024 * 1024 * 1024));
+      Assert.That(graph.ValueLabel, Is.EqualTo("2.0G / 8.0G"));
+      return;
+    }
+
+    Assert.Fail("no memory graph");
+  }
+
+  /// <summary>Everything else has one graph, and must not be made to look like it has more.</summary>
+  [Test]
+  public void AResourceThatNamedNoGraphsStillHasOne() {
+    foreach (var section in Sections()) {
+      if (section.Title != "Memory")
+        continue;
+
+      Assert.That(section.Series, Has.Count.EqualTo(1));
+      Assert.That(section.Series[0].Label, Is.EqualTo("Memory"));
+      return;
+    }
+
+    Assert.Fail("no memory section");
+  }
+
+  #endregion
+
   private static PerformanceSection Find(IReadOnlyList<PerformanceSection> sections) {
     foreach (var section in sections)
       if (section.Title.StartsWith("GPU", StringComparison.Ordinal))

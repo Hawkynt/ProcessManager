@@ -91,7 +91,9 @@ public static class DesktopApp {
             : $"capture:      none — {failure}\n";
 
           // And the performance page, which is where most of §45 lives and none of it was ever
-          // photographed. Opened last so it is the active window the capture finds.
+          // photographed. It was opened at the start of the hold rather than here, so its graphs
+          // have a history to draw: opened at capture time it has exactly one sample, and every
+          // plot on it is an empty grid — a picture that proves the layout and nothing else.
           var performance = window.OpenPerformance();
           description += performance.DescribeForCapture();
           var pagePng = Path.Combine(directory, "performance.png");
@@ -109,6 +111,17 @@ public static class DesktopApp {
         Application.Exit();
       };
 
+      // The performance page is opened as soon as the loop is running rather than at capture time,
+      // so its graphs have a history to draw — opened at capture time it has exactly one sample and
+      // every plot on it is an empty grid, a picture that proves the layout and nothing else. It
+      // cannot be opened before Application.Run: Form.Show needs a loop to show into.
+      var opener = new NativeForms.Timer { Interval = 400 };
+      opener.Tick += (_, _) => {
+        opener.Stop();
+        window.OpenPerformance();
+      };
+
+      opener.Start();
       closer.Start();
       window.Start();
       Application.Run(window);

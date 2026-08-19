@@ -53,6 +53,24 @@ public sealed class HistoryPlot : OwnerDrawnControl {
   /// </remarks>
   public void ClearSeries() => this._series.Clear();
 
+  /// <summary>
+  /// The colour of each series, in the order they were added.
+  /// </summary>
+  /// <remarks>
+  /// So a caller — and a test — can ask what a plot is actually drawing. §45.5 requires a resource's
+  /// sparkline and its graph to be the same colour, and the two are worked out in different places;
+  /// nothing but reading the plot back can check that they agree.
+  /// </remarks>
+  public IReadOnlyList<Color> SeriesColours {
+    get {
+      var colours = new Color[this._series.Count];
+      for (var i = 0; i < colours.Length; ++i)
+        colours[i] = this._series[i].Color;
+
+      return colours;
+    }
+  }
+
   public void AddSeries(HistoryRing<Rate> values, Color color, string label = "") {
     ArgumentNullException.ThrowIfNull(values);
     this._series.Add(new(values, color, label));
