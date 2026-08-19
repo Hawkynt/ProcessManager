@@ -150,9 +150,12 @@ public sealed class MainWindow : Form {
 
     // Clicking a total is how somebody asks for the detail behind it, so all three plots open the
     // performance view. The menu item stays, for people who would rather not find that by accident.
-    this._cpuPlot.Click += (_, _) => this.ShowPerformance();
-    this._memoryPlot.Click += (_, _) => this.ShowPerformance();
-    this._cores.Click += (_, _) => this.ShowPerformance();
+    //
+    // MouseUp rather than Click: the toolkit raises Click only from PerformClick, so nothing a mouse
+    // does ever reaches it. Wiring Click here compiled, read correctly, and did nothing at all.
+    this._cpuPlot.MouseUp += (_, _) => this.ShowPerformance();
+    this._memoryPlot.MouseUp += (_, _) => this.ShowPerformance();
+    this._cores.MouseUp += (_, _) => this.ShowPerformance();
 
     this._plots.Controls.Add(this._cpuPlot);
     this._plots.Controls.Add(this._memoryPlot);
@@ -228,7 +231,7 @@ public sealed class MainWindow : Form {
     this._tree.ColumnClick += this.OnColumnClick;
     this._tree.AfterSelect += (_, _) => this.UpdateDetails();
     // Double-click is how every tool of this kind opens a process, and the gesture people try first.
-    this._tree.DoubleClick += (_, _) => this.ShowProperties();
+    this._tree.MouseDoubleClick += (_, _) => this.ShowProperties();
     this._tree.ContextMenuStrip = this.BuildContextMenu();
   }
 
