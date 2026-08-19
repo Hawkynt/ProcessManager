@@ -26,8 +26,20 @@ public sealed class PerformanceWindowTests {
 
     public string Description => "stub";
 
+    public int Cores = 4;
+
     public void Sample(SystemSnapshot snapshot) {
       snapshot.PrepareProcesses(0);
+
+      // Core i spends i tenths of the second busy, so the per-core figures differ from each other
+      // and from the machine's.
+      var cores = snapshot.PrepareCores(this.Cores);
+      for (var i = 0; i < this.Cores; ++i)
+        cores[i] = new() {
+          UserNs = this.Ticks / 10 * (ulong)i,
+          IdleNs = this.Ticks / 10 * (ulong)(10 - i),
+        };
+
       snapshot.TimestampTicks = (long)(this.Ticks += (ulong)System.Diagnostics.Stopwatch.Frequency);
       snapshot.System.TotalMemoryBytes = Counter.Of(16ul * 1024 * 1024 * 1024);
       snapshot.System.AvailableMemoryBytes = Counter.Of(8ul * 1024 * 1024 * 1024);
@@ -144,6 +156,76 @@ public sealed class PerformanceWindowTests {
     Assert.That(Titles(window)[SelectedIndex(window)], Is.EqualTo("Memory"), "and the selection stayed put");
   }
 
+  /// <summary>
+  /// A machine with twenty cores would put twenty entries in the rail and bury the disks under them.
+  /// The cores belong under the processor, where one checkbox switches between the whole and the
+  /// parts (PRD §46).
+  /// </summary>
+  [Test]
+  public void TheCoresAreNotTwentyEntriesInTheRail() {
+    var (window, _, _) = Open();
+
+    foreach (var title in Titles(window))
+      Assert.That(title, Does.Not.StartWith("Core "), title);
+
+    Assert.That(Titles(window), Does.Contain("Processor"), "one entry, not one per core");
+  }
+
+  /// <summary>The terminal has no checkbox, so the report still carries every core.</summary>
+  [Test]
+  public void TheReportStillCarriesEveryCoreForTheTerminal() {
+    var (_, probe, sampler) = Open();
+
+    var titles = new List<string>();
+    foreach (var section in Query.PerformanceReport.Build(probe.DescribeHost(), sampler.Current, sampler.Delta))
+      titles.Add(section.Title);
+
+    Assert.That(titles, Does.Contain("Core 0"));
+    Assert.That(titles, Does.Contain("Core 3"));
+  }
+
+  /// <summary>Ticking the box swaps one plot for a grid of them, and unticking puts it back.</summary>
+  [Test]
+  public void TheCheckboxSwapsTheWholeForTheParts() {
+    var (window, _, _) = Open();
+    Select(window, Titles(window).IndexOf("Processor"));
+
+    Assert.That(PlotsShowing(window), Is.EqualTo(1), "the machine as one plot");
+
+    Toggle(window, true);
+    Assert.That(PlotsShowing(window), Is.EqualTo(4), "one per core, and the whole one hidden");
+
+    Toggle(window, false);
+    Assert.That(PlotsShowing(window), Is.EqualTo(1));
+  }
+
+  /// <summary>The box belongs to the processor page and has no meaning on a disk.</summary>
+  [Test]
+  public void TheCheckboxOnlyAppearsWhereItMeansSomething() {
+    var (window, _, _) = Open();
+
+    Select(window, Titles(window).IndexOf("Processor"));
+    Assert.That(Box(window).Visible, Is.True);
+
+    Select(window, Titles(window).IndexOf("Disk — sda"));
+    Assert.That(Box(window).Visible, Is.False);
+  }
+
+  /// <summary>
+  /// Leaving it ticked and walking away from the processor must not leave a grid of core plots
+  /// painted over a disk's page.
+  /// </summary>
+  [Test]
+  public void TheCorePlotsGoAwayWithTheProcessorPage() {
+    var (window, _, _) = Open();
+    Select(window, Titles(window).IndexOf("Processor"));
+    Toggle(window, true);
+
+    Select(window, Titles(window).IndexOf("Memory"));
+
+    Assert.That(PlotsShowing(window), Is.EqualTo(1));
+  }
+
   [Test]
   public void SelectingAResourceShowsItsOwnFigures() {
     var (window, _, _) = Open();
@@ -199,6 +281,26 @@ public sealed class PerformanceWindowTests {
   }
 
   private static int SelectedIndex(PerformanceWindow window) => Rail(window).SelectedIndex;
+
+  private static NativeForms.CheckBox Box(PerformanceWindow window) {
+    foreach (var control in window.Controls)
+      if (control is NativeForms.CheckBox box)
+        return box;
+
+    Assert.Fail("the window has no per-core box");
+    return null!;
+  }
+
+  private static void Toggle(PerformanceWindow window, bool on) => Box(window).Checked = on;
+
+  private static int PlotsShowing(PerformanceWindow window) {
+    var showing = 0;
+    foreach (var control in window.Controls)
+      if (control is HistoryPlot { Visible: true })
+        ++showing;
+
+    return showing;
+  }
 
   private static void Select(PerformanceWindow window, int index) => Rail(window).SelectedIndex = index;
 
