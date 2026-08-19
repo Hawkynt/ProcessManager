@@ -42,6 +42,9 @@ internal static partial class GtkCapture {
   [LibraryImport(_Gtk)]
   private static partial nint gtk_window_list_toplevels();
 
+  [LibraryImport("libgtk-3.so.0")]
+  private static partial nint gtk_window_get_title(nint window);
+
   [LibraryImport(_Gtk)]
   private static partial int gtk_widget_get_mapped(nint widget);
 
@@ -89,13 +92,22 @@ internal static partial class GtkCapture {
   }
 
   /// <summary>
-  /// Writes a PNG of the first mapped toplevel. Returns its size, or null with the reason.
+  /// Writes a PNG of a mapped toplevel. Returns its size, or null with the reason.
   /// </summary>
-  public static Size? Window(string path, out string? failure) {
+  /// <param name="title">
+  /// Which window, by the caption it carries. Null takes the first mapped one, which was the only
+  /// possible answer while the program had one window — it now has several, and a capture run that
+  /// opens the performance page and photographs the process list is worse than no capture at all,
+  /// because it looks like evidence.
+  /// </param>
+  public static Size? Window(string path, out string? failure, string? title = null) {
     failure = null;
-    var widget = FirstMappedToplevel();
+    var widget = MappedToplevel(title);
     if (widget == 0) {
-      failure = "no mapped GTK toplevel — the window never reached the display server";
+      failure = title is null
+        ? "no mapped GTK toplevel — the window never reached the display server"
+        : $"no mapped GTK toplevel titled '{title}'";
+
       return null;
     }
 
@@ -140,13 +152,14 @@ internal static partial class GtkCapture {
   }
 
   /// <summary>
-  /// The first toplevel GTK reports as mapped.
+  /// A mapped toplevel, by caption where one is asked for.
   /// </summary>
   /// <remarks>
-  /// By mapped-ness rather than by title: the title is the caller's to change, and this program has
-  /// exactly one window when it is being photographed.
+  /// Mapped-ness first, always: an unmapped window has never reached the display server and drawing
+  /// it produces a picture of the theme's background. The caption only chooses between the ones that
+  /// have.
   /// </remarks>
-  private static nint FirstMappedToplevel() {
+  private static nint MappedToplevel(string? title) {
     var list = gtk_window_list_toplevels();
     if (list == 0)
       return 0;
@@ -155,7 +168,10 @@ internal static partial class GtkCapture {
       // GList: { gpointer data; GList* next; GList* prev; }
       for (var node = list; node != 0; node = Marshal.ReadIntPtr(node, nint.Size)) {
         var widget = Marshal.ReadIntPtr(node);
-        if (widget != 0 && gtk_widget_get_mapped(widget) != 0)
+        if (widget == 0 || gtk_widget_get_mapped(widget) == 0)
+          continue;
+
+        if (title is null || string.Equals(TitleOf(widget), title, StringComparison.Ordinal))
           return widget;
       }
 
@@ -163,6 +179,11 @@ internal static partial class GtkCapture {
     } finally {
       g_list_free(list);
     }
+  }
+
+  private static string? TitleOf(nint window) {
+    var text = gtk_window_get_title(window);
+    return text == 0 ? null : Marshal.PtrToStringUTF8(text);
   }
 
 }

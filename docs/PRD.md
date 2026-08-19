@@ -1415,26 +1415,142 @@ knowing where it came from — so it reads "local" rather than leaving the colum
 
 # 45. Performance page
 
-A system overview exists with per-core meters and totals, and a performance view behind it.
+The page answers three questions, in this order, and its whole layout follows from them:
 
-- [x] Vertical resource selector — a rail down the left with one entry per processor, disk and
-      adapter, each carrying its own current reading so it answers "which of these is busy" before
-      anything is clicked
-- [x] Large detailed graph — one plot, whose series follows the selection. Every resource's history
-      is recorded whether or not it is on screen, so selecting a disk that has been idle for a minute
-      shows that minute rather than starting blank
-- [x] Summary cards with compact sparklines and current values — the plots along the top of the
-      main window
+1. **What part of this machine is busy right now?** — answered by the rail, before anything is clicked
+2. **How has it behaved over the last minute?** — answered by the graph
+3. **What is the hardware underneath it?** — answered by the statistics below
 
-Resources:
+It has to feel like a diagnostic instrument, not a dashboard: dense, quiet, and readable by somebody
+who is not an expert but is looking for the one thing that is unusual.
+
+## 45.1 Shape
+
+- [x] Vertical resource rail down the left, one entry per resource, 210–240 px wide
+- [ ] Each rail row carries a **sparkline** over the same history the main graph uses
+- [ ] Each rail row carries a primary value and an optional secondary — `13 %  4.17 GHz`,
+      `8.4 / 16.0 GB`, `↓ 11.6 KB/s ↑ 2.9 KB/s`, `42 %  57 °C`
+- [ ] The selected row takes a pale accent background and a 2–3 px accent stripe down its left edge
+- [x] One resource selected at a time
+- [ ] The rail scrolls on its own when a machine has many disks, adapters or GPUs
+- [ ] Header: resource name large and left, full hardware model smaller and right —
+      `CPU                    Intel Core i9-14900K`
+- [x] Large detailed graph, whose series follows the selection. Every resource's history is recorded
+      whether or not it is on screen, so selecting a disk that has been idle for a minute shows that
+      minute rather than starting blank
+- [ ] Statistics in **two columns**: live measurements on the left, hardware specifications on the
+      right — the two answer different questions and reading them as one list is what makes a
+      performance page look like a data dump
+- [ ] Engineering diagnostics collapsed below both, so the default state is not overwhelming
+- [ ] Reference size 1280×780, minimum 900×600, graphs growing horizontally rather than leaving
+      whitespace
+
+## 45.2 Visual hierarchy
+
+Four levels, and nothing may jump a level:
+
+1. **Immediate status**, readable without reading — sparklines, percentages, the main graph
+2. **Current measurements** — utilisation, clock, usage, throughput, temperature, fan
+3. **Hardware specifications**, smaller — model, cores, capacity, interface, caches, driver
+4. **Engineering diagnostics**, collapsed — context switches, page faults, kernel pools, I/O counters
+
+## 45.3 Resources
 
 - [x] CPU (§46)
 - [x] Memory (§47)
 - [x] Each disk (§48) — one section per device
 - [x] Each network adapter (§49) — one section per interface
-- [ ] Each GPU (§50)
+- [x] Each GPU (§50)
 - [ ] Battery
 - [ ] Optional sensors and devices
+
+- [ ] The page opens on whatever is under the greatest meaningful load rather than always on the
+      processor, with a setting to turn that off
+
+## 45.4 Graphs
+
+- [x] 60 seconds by default, newest on the right, moving right to left
+- [x] Updated once a second
+- [ ] Selectable history: 30 s · 60 s · 2 min · 5 min · 15 min
+- [ ] Optional 500 ms mode
+- [x] Engineering graticule — major and minor rules, graph paper rather than an analytics chart
+- [x] Thin resource-coloured stroke over a translucent fill; no data-point markers; no animation
+      that gets in the way of reading the current value
+- [x] Scale label in the corner — `100%`, `16 GB`
+- [ ] Axis labels: `60 seconds ago` at the left, `Now` at the right
+- [ ] Hover tooltip carrying the timestamp and that instant's readings
+- [ ] Hovering a graph reveals Pause · history · mode · expand in its top-right corner
+- [ ] Pause freezes the drawing without clearing history or stopping collection, and says `Paused`
+- [ ] Double-click or Expand opens an inspection view with current, minimum, maximum and average
+
+### Scales
+
+- [x] Fixed 0–100 % for CPU, GPU utilisation, disk active time and GPU power percentage
+- [x] Dynamic for network throughput and disk transfer rate
+- [ ] Scale hysteresis, so a dynamic scale does not rescale every second and make the shape unreadable
+- [ ] Temperature on a stable hardware-appropriate scale rather than a dynamic one
+
+## 45.5 Colour
+
+Each resource owns one accent, used for its sparkline, its main graph, its selection stripe and its
+numeric highlights — so the eye can follow one resource across the whole window.
+
+| Resource | Accent | | Resource | Accent |
+|---|---|---|---|---|
+| CPU | blue/cyan | | Temperature | red/coral |
+| Memory | purple | | Fan | magenta |
+| Disk | green | | Power | lime |
+| Network | orange | | I/O | yellow |
+| GPU | teal | | | |
+
+- [ ] The palette above, which is not the one in use — the plots are currently an instrument's
+      green-on-black throughout (§7.2), and the two ideas have to be reconciled rather than layered
+- [x] Every accent is overridable from the settings file (§67)
+
+## 45.6 Missing readings
+
+- [x] A sensor that cannot be read never shows a zero
+- [x] It carries a tooltip saying why, from `Humanize.Explain`
+- [ ] A category the hardware does not have at all has its graph hidden rather than emptied — a GPU
+      with no fan sensor shows no fan graph
+
+**Deliberately not a single `—`.** Five reasons a value is missing are five different situations, and
+collapsing them loses the one thing a reader needs: `n/a` means this OS cannot report it, `n/i` means
+it can and we do not read it yet, `—` means this user may not, `?` means the counter contradicted
+itself, `…` means one more sample is needed. "Not reported by this device" is only ever one of those
+five, and telling somebody to run as root reads very differently from telling them to wait a second
+(§5.3).
+
+## 45.7 Density
+
+- [ ] **Comfortable** — more spacing, larger graphs, advanced statistics collapsed
+- [ ] **Compact** — tighter rows, more graphs at once, advanced statistics left open
+
+## 45.8 Commands
+
+- [ ] Right-click a resource: copy current values · copy full diagnostics · pause · change graph ·
+      show kernel times · show logical processors · open hardware details
+- [ ] Copy diagnostics — a plain-text snapshot of the machine, which is what makes a support
+      conversation possible
+- [ ] `Ctrl+1`…`Ctrl+6` select overview, CPU, memory, disk, network and GPU
+- [ ] `Space` pauses, `F5` resumes, `Ctrl+C` copies the selected statistics
+
+## 45.9 Accessibility
+
+- [ ] Nothing is identified by colour alone — every graph carries a visible text heading
+- [ ] Keyboard navigation reaches every graph control
+- [ ] Screen-reader labels
+- [ ] High-contrast support, and lines that stay distinguishable in it
+- [ ] Colour-blind-safe differentiation
+- [ ] 100–200 % UI scaling
+
+## 45.10 Cost
+
+The monitor must not distort what it is monitoring (§71):
+
+- [x] Under 1 % CPU while idle
+- [ ] Under 150 MB resident — not measured
+- [x] No kernel driver required for anything here
 
 The page is modeless and refreshed from the main window's sample tick. It was modal and painted
 once — a performance page whose numbers never moved, which no screenshot of it would have shown as
@@ -1466,7 +1582,15 @@ wrong, and which the tests now catch.
 - [x] Uptime
 - [ ] Context switches per second
 - [ ] Interrupts per second
+- [ ] System calls per second
 - [ ] DPC-like kernel activity
+
+The three rate counters, plus their cumulative totals, belong in the collapsed **system counters**
+section of §45.2 level 4 rather than beside the utilisation — they are diagnostics, not status.
+
+Layout (§45.1): utilisation and speed are the two largest figures on the page, with processes,
+threads, handles and uptime beside them in the live column, and everything from base speed down to
+the cache sizes in the hardware column.
 - [x] Load averages
 
 Read once and cached: none of it changes between samples, and walking the cache directories every
@@ -1537,12 +1661,19 @@ in a way a window is not (§58).
 
 Graphs:
 
-- [ ] Physical-memory usage
+- [x] Physical-memory usage — 60 seconds, scaled to installed memory rather than to 100 %
 - [ ] Committed memory
-- [ ] Composition bar
+- [ ] **Composition bar** — a single horizontal bar under the graph, split into in-use, modified,
+      cached and free, each segment in its own shade of the memory accent, each naming its exact
+      value on hover. It is the one picture that explains why a machine with "no free memory" is
+      fine, and the reason people open a memory page at all
 - [ ] Memory pressure
 - [ ] Swap
 - [ ] Cache
+
+Advanced counters, collapsed (§45.2 level 4): commit current/peak/limit · file cache
+current/peak/minimum/maximum · page faults by kind — total, copy-on-write, transition, demand-zero,
+cache · kernel pools, paged and non-paged, with their allocation and free counts.
 
 # 48. Disk performance
 
@@ -1563,6 +1694,13 @@ decides which is which, because the name cannot — `nvme0n1` ends in a digit an
 
 Windows needs `IOCTL_STORAGE_QUERY_PROPERTY` and the disk performance counters, and has neither.
 
+Graphs — two, not one:
+
+- [x] **Active time**, fixed 0–100 %
+- [ ] **Transfer rate**, reads and writes as separate lines on a dynamic scale whose unit follows the
+      traffic (KB/s → MB/s → GB/s). Active time says a disk is busy; only the transfer rate says
+      whether that is a hundred large reads or a hundred thousand small ones
+
 - [ ] Optional hardware-health plugin: temperature · wear · SMART/NVMe health · remaining life
 - [ ] Hardware health is **separately permissioned**, because platform coverage varies too much for
       it to be a baseline promise
@@ -1576,7 +1714,9 @@ Windows needs `IOCTL_STORAGE_QUERY_PROPERTY` and the disk performance counters, 
 - [ ] 🟡 MTU ✔ · MAC address ✔ · the addresses and the gateway are not
 - [ ] DNS servers where readable
 - [ ] Wi-Fi SSID and signal strength where permitted
-- [ ] Graph modes: total · send vs receive
+- [ ] Graph modes: total · send vs receive — receive and send drawn as distinguishable lines within
+      the one network accent, on a dynamic scale that reads Kbps, Mbps or Gbps as the traffic requires
+- [ ] Wi-Fi pages additionally carry SSID · protocol · signal strength · channel · band
 
 Sources: `/sys/class/net/*` and `/proc/net/dev`; `GetIfTable2` and `GetAdaptersAddresses`.
 
@@ -1627,6 +1767,27 @@ one tells people their new card is unknown hardware.
 
 ROCm SMI for AMD and the i915 perf counter for Intel are the two remaining gaps; Windows and macOS
 report no adapters yet, which is a gap and not a claim that the machine has none.
+
+## 50.1 Layout
+
+The GPU page is deliberately the most graph-heavy in the program, because a GPU is the one component
+whose six readings genuinely move independently — a card can be at full utilisation and cold, or idle
+and hot, and only seeing both at once explains either. Stacked, in this order, each with its own
+60-second history:
+
+- [ ] **Utilisation**, 0–100 %, with an optional selector for 3D · compute · copy · decode · encode
+- [ ] **Dedicated memory**, scaled to the card's VRAM — `7.2 GB / 16.0 GB`
+- [ ] **Shared memory**, in a lighter shade of the GPU accent — `134 MB / 31.9 GB`
+- [ ] **Power**, 0–100 % of the ceiling, labelled with the absolute figure too — `28 % · 89 W`
+- [ ] **Temperature**, on the red accent so it never reads as another utilisation figure
+- [ ] **Fan**, in RPM, one line per fan where the card exposes several. Zero RPM is a flat line at
+      the bottom and not an error: it is what a modern card does when it is cool
+
+A card that exposes no fan sensor shows **no fan graph** (§45.6) rather than an empty one.
+
+Statistics below, in the two columns of §45.1 — live: utilisation, dedicated and shared memory,
+temperature, fan, power. Hardware: model, driver version and date, PCI location, resizable BAR, and
+where supported the core and memory clocks, voltage, power limit and temperature limit.
 
 # 51. System activity view — expert
 

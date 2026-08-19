@@ -85,10 +85,20 @@ public static class DesktopApp {
         var description = window.DescribeForCapture();
         if (OperatingSystem.IsLinux()) {
           var png = Path.Combine(directory, "desktop.png");
-          var size = GtkCapture.Window(png, out var failure);
+          var size = GtkCapture.Window(png, out var failure, window.Text);
           description += size is { } taken
             ? $"capture:      {taken.Width}x{taken.Height} -> {png}\n"
             : $"capture:      none — {failure}\n";
+
+          // And the performance page, which is where most of §45 lives and none of it was ever
+          // photographed. Opened last so it is the active window the capture finds.
+          var performance = window.OpenPerformance();
+          description += performance.DescribeForCapture();
+          var pagePng = Path.Combine(directory, "performance.png");
+          var pageSize = GtkCapture.Window(pagePng, out var pageFailure, performance.Text);
+          description += pageSize is { } page
+            ? $"page capture: {page.Width}x{page.Height} -> {pagePng}\n"
+            : $"page capture: none — {pageFailure}\n";
         } else
           description += "capture:      not implemented on this platform\n";
 

@@ -226,6 +226,144 @@ public sealed class PerformanceWindowTests {
     Assert.That(PlotsShowing(window), Is.EqualTo(1));
   }
 
+  #region the rail carries its own history (PRD §45.1)
+
+  /// <summary>
+  /// A row of text answers "which of these is busy" and not "how long has it been", which is the
+  /// second of the three questions the page exists to answer. The sparkline is that answer, and it
+  /// has to be the same history the main graph draws or the two disagree.
+  /// </summary>
+  [Test]
+  public void EveryRailRowCarriesTheHistoryItsGraphDraws() {
+    var (window, _, _) = Open();
+
+    var row = RowFor(window, "Processor");
+    Assert.That(row.History, Is.Not.Null);
+    Assert.That(row.History!.Count, Is.GreaterThan(0));
+    Assert.That(row.Maximum, Is.EqualTo(100), "a percentage is on a fixed scale");
+  }
+
+  [Test]
+  public void TheRailRowsCarryASecondReadingWhereThereIsOneWorthHaving() {
+    var (window, _, _) = Open();
+
+    Assert.That(RowFor(window, "Memory").Secondary, Does.Contain("/"), "used of installed");
+    Assert.That(RowFor(window, "Processor").Primary, Does.Contain("%"));
+  }
+
+  /// <summary>A resource with nothing extra to say says nothing rather than repeating itself.</summary>
+  [Test]
+  public void ARowWithNoSecondReadingLeavesItEmpty() {
+    var (window, _, _) = Open();
+
+    Assert.That(RowFor(window, "System").Secondary, Is.Empty);
+  }
+
+  /// <summary>
+  /// Each resource owns one colour across the whole window, so the eye can follow it from the rail
+  /// to the graph (§45.5).
+  /// </summary>
+  [Test]
+  public void ARowsColourIsItsResourcesColour() {
+    var (window, _, _) = Open();
+
+    Assert.That(RowFor(window, "Processor").Accent, Is.Not.EqualTo(RowFor(window, "Memory").Accent));
+    Assert.That(RowFor(window, "Disk — sda").Accent, Is.EqualTo(RowFor(window, "Disk — sdb").Accent));
+  }
+
+  /// <summary>
+  /// The rail is 230 pixels wide and "GPU — NVIDIA RTX A5000 Laptop GPU" is not. The rail names the
+  /// resource and the header names the hardware; one truncated string in the rail says less than the
+  /// two of them do (§45.1).
+  /// </summary>
+  [Test]
+  public void TheRailShowsAShortNameAndKeepsTheLongOneToItself() {
+    var (window, _, _) = Open();
+
+    Assert.That(Displayed(window), Does.Contain("Disk sda"));
+    Assert.That(Titles(window), Does.Contain("Disk — sda"), "and the section is still identified in full");
+
+    foreach (var shown in Displayed(window))
+      Assert.That(shown.Length, Is.LessThanOrEqualTo(24), shown);
+  }
+
+  #endregion
+
+  #region the page opens on what is busy (PRD §45.3)
+
+  /// <summary>
+  /// A page that always opens on the processor makes somebody find the busy resource themselves,
+  /// which is the one thing the rail was supposed to save them.
+  /// </summary>
+  [Test]
+  public void ThePageOpensOnWhateverIsUnderTheGreatestLoad() {
+    var probe = new StubProbe();
+    var sampler = new Sampler(probe);
+    sampler.Sample();
+
+    // The disks climb hard while the processor idles.
+    probe.DiskBytes += 100 * 1024 * 1024;
+    sampler.Sample();
+    var window = new PerformanceWindow(probe, sampler);
+
+    Assert.That(Titles(window)[SelectedIndex(window)], Does.StartWith("Disk"));
+  }
+
+  /// <summary>
+  /// Bytes per second are not percent. Eleven thousand of the former is not busier than eleven of
+  /// the latter — it is a different quantity wearing a larger number.
+  /// </summary>
+  [Test]
+  public void AThroughputIsNeverMistakenForALoad() {
+    var (window, _, _) = Open();
+
+    Assert.That(Titles(window)[SelectedIndex(window)], Does.Not.StartWith("Network"));
+  }
+
+  #endregion
+
+  #region two columns, not one list (PRD §45.1)
+
+  [Test]
+  public void TheLiveMeasurementsAndTheHardwareFactsAreSeparated() {
+    var (window, _, _) = Open();
+    Select(window, Titles(window).IndexOf("Processor"));
+
+    var live = LabelsAt(window, hardware: false);
+    var hardware = LabelsAt(window, hardware: true);
+
+    Assert.That(live, Does.Contain("Utilisation"));
+    Assert.That(live, Does.Not.Contain("L3"), "a cache size is not a measurement");
+    Assert.That(hardware, Does.Contain("L3"));
+    Assert.That(hardware, Does.Not.Contain("Utilisation"));
+  }
+
+  /// <summary>The header says what this is on the left and what it actually is on the right.</summary>
+  [Test]
+  public void TheHeaderNamesTheResourceAndTheHardwareSeparately() {
+    var (window, _, _) = Open();
+    Select(window, Titles(window).IndexOf("Disk — sda"));
+
+    Assert.That(Heading(window).Text, Is.EqualTo("Disk"), "not the device — that is the model");
+    Assert.That(Model(window).Text, Is.EqualTo("Fixture Disk"));
+  }
+
+  /// <summary>
+  /// Moving from a section with fourteen rows to one with four must not leave the last ten painted
+  /// under it.
+  /// </summary>
+  [Test]
+  public void MovingToAShorterPageLeavesNothingBehind() {
+    var (window, _, _) = Open();
+    Select(window, Titles(window).IndexOf("Processor"));
+    Select(window, Titles(window).IndexOf("System"));
+
+    Assert.That(LabelsAt(window, hardware: true), Does.Not.Contain("L3"));
+    Assert.That(LabelsAt(window, hardware: false), Does.Not.Contain("Kernel time"));
+  }
+
+  #endregion
+
   [Test]
   public void SelectingAResourceShowsItsOwnFigures() {
     var (window, _, _) = Open();
@@ -261,22 +399,49 @@ public sealed class PerformanceWindowTests {
     return entries;
   }
 
+  /// <summary>
+  /// What each rail row is <em>about</em>, which is the section's full title — not what the row
+  /// displays, which is deliberately shorter (§45.1).
+  /// </summary>
   private static List<string> Titles(PerformanceWindow window) {
     var titles = new List<string>();
-    foreach (var entry in Entries(window)) {
-      var gap = entry.IndexOf("   ", StringComparison.Ordinal);
-      titles.Add(gap < 0 ? entry : entry[..gap]);
-    }
+    foreach (var item in Rail(window).Items)
+      if (item is ResourceRow row)
+        titles.Add(row.Key);
+      else {
+        var entry = item?.ToString() ?? string.Empty;
+        var gap = entry.IndexOf("   ", StringComparison.Ordinal);
+        titles.Add(gap < 0 ? entry : entry[..gap]);
+      }
 
     return titles;
   }
 
-  private static NativeForms.ListBox Rail(PerformanceWindow window) {
+  /// <summary>What each rail row actually shows.</summary>
+  private static List<string> Displayed(PerformanceWindow window) {
+    var shown = new List<string>();
+    foreach (var item in Rail(window).Items)
+      if (item is ResourceRow row)
+        shown.Add(row.Title);
+
+    return shown;
+  }
+
+  private static ResourceRail Rail(PerformanceWindow window) {
     foreach (var control in window.Controls)
-      if (control is NativeForms.ListBox rail)
+      if (control is ResourceRail rail)
         return rail;
 
     Assert.Fail("the window has no rail");
+    return null!;
+  }
+
+  private static ResourceRow RowFor(PerformanceWindow window, string title) {
+    foreach (var item in Rail(window).Items)
+      if (item is ResourceRow row && row.Key == title)
+        return row;
+
+    Assert.Fail($"no rail row for {title}");
     return null!;
   }
 
@@ -303,6 +468,35 @@ public sealed class PerformanceWindowTests {
   }
 
   private static void Select(PerformanceWindow window, int index) => Rail(window).SelectedIndex = index;
+
+  private static NativeForms.Label Heading(PerformanceWindow window) => LabelAt(window, 0);
+
+  private static NativeForms.Label Model(PerformanceWindow window) => LabelAt(window, 1);
+
+  private static NativeForms.Label LabelAt(PerformanceWindow window, int index) {
+    var seen = 0;
+    foreach (var control in window.Controls)
+      if (control is NativeForms.Label label && seen++ == index)
+        return label;
+
+    Assert.Fail($"no label {index}");
+    return null!;
+  }
+
+  /// <summary>
+  /// The labels in one of the two statistic columns, told apart by which side of the page they are
+  /// on — which is the only thing a reader can go by either.
+  /// </summary>
+  private static List<string> LabelsAt(PerformanceWindow window, bool hardware) {
+    var middle = 230 + 24 + 330;
+    var labels = new List<string>();
+    foreach (var control in window.Controls)
+      if (control is NativeForms.Label label && label.Text.Length > 0 && label.Bounds.Y > 280
+          && (label.Bounds.X >= middle) == hardware)
+        labels.Add(label.Text);
+
+    return labels;
+  }
 
   /// <summary>The labels of the figures currently shown, blank ones left out.</summary>
   private static List<string> Rows(PerformanceWindow window) {
