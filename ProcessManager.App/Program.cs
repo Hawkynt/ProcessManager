@@ -173,49 +173,35 @@ internal static class Program {
     return _ExitOk;
   }
 
+  /// <summary>
+  /// <c>--find</c>: which process is using this (PRD §33).
+  /// </summary>
   private static int RunFind(Sampler sampler, ISystemProbe probe, CommandLineOptions options) {
     sampler.Sample();
+
     var pattern = options.Pattern ?? string.Empty;
-    var snapshot = sampler.Current;
-    var matches = 0;
+    var matches = ResourceSearch.Find(probe, sampler.Current, pattern);
+    foreach (var match in matches)
+      Console.WriteLine(
+        $"{match.Pid,7} {match.UserName ?? "?",-12} {match.ProcessName,-24} {Describe(match.Kind)}  {match.Detail}"
+      );
 
-    foreach (var process in snapshot.Processes) {
-      var reasons = new List<string>();
-      if (process.Name.Contains(pattern, StringComparison.OrdinalIgnoreCase))
-        reasons.Add("name");
-      if (process.CommandLine?.Contains(pattern, StringComparison.OrdinalIgnoreCase) == true)
-        reasons.Add("command line");
-
-      // The expensive half — every open file and every mapping of every process — runs only when
-      // the cheap half has not already answered, and reports as it goes rather than at the end
-      // (PRD §6.5).
-      if (reasons.Count == 0) {
-        foreach (var handle in probe.GetHandles(process.Key))
-          if (handle.Name?.Contains(pattern, StringComparison.OrdinalIgnoreCase) == true) {
-            reasons.Add($"open file {handle.Name}");
-            break;
-          }
-
-        if (reasons.Count == 0)
-          foreach (var module in probe.GetModules(process.Key))
-            if (module.Path.Contains(pattern, StringComparison.OrdinalIgnoreCase)) {
-              reasons.Add($"mapped {module.Path}");
-              break;
-            }
-      }
-
-      if (reasons.Count == 0)
-        continue;
-
-      ++matches;
-      Console.WriteLine($"{process.Pid,7} {Owner(process),-12} {process.Name,-24} {string.Join(", ", reasons)}");
-    }
-
-    if (matches == 0)
+    if (matches.Count == 0)
       Console.Error.WriteLine($"procman: nothing matched '{pattern}'");
 
-    return matches > 0 ? _ExitOk : _ExitNoMatch;
+    return matches.Count > 0 ? _ExitOk : _ExitNoMatch;
   }
+
+  private static string Describe(ResourceKind kind) => kind switch {
+    ResourceKind.Name => "name        ",
+    ResourceKind.CommandLine => "command line",
+    ResourceKind.ImagePath => "image       ",
+    ResourceKind.OpenFile => "open file   ",
+    ResourceKind.MappedModule => "mapped      ",
+    ResourceKind.Socket => "socket      ",
+    ResourceKind.Service => "service     ",
+    _ => "            ",
+  };
 
   private static int RunKill(Sampler sampler, IProcessActions? actions, CommandLineOptions options) {
     if (actions is null) {

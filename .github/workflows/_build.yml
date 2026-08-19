@@ -78,8 +78,14 @@ jobs:
             done
             return 1
           }
-          retry apt-get update
-          retry apt-get install -y clang zlib1g-dev
+          # apt-get update is the step that stalls, and the runner image already has package lists.
+          # Install first; fall back to updating only when something genuinely cannot be found.
+          install() {
+            retry apt-get -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 -o Acquire::Retries=3 install -y "$@" && return 0
+            retry apt-get -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 -o Acquire::Retries=3 update || true
+            retry apt-get -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 -o Acquire::Retries=3 install -y "$@"
+          }
+          install clang zlib1g-dev
       - name: Stamp per-project versions
         shell: bash
         run: perl .github/workflows/scripts/version.pl --stamp

@@ -185,11 +185,17 @@ jobs:
             done
             return 1
           }
-          retry apt-get update
           # `wine64` was folded into `wine` in Ubuntu 24.04, and --no-install-recommends leaves the
           # metapackage without the binary it is supposed to provide — which is how the first version
           # of this step ended at "wine: command not found" with a green install.
-          retry apt-get install -y wine || retry apt-get install -y wine-stable
+          # apt-get update is the step that stalls, and the runner image already has package lists.
+          # Install first; fall back to updating only when something genuinely cannot be found.
+          install() {
+            retry apt-get -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 -o Acquire::Retries=3 install -y "$@" && return 0
+            retry apt-get -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 -o Acquire::Retries=3 update || true
+            retry apt-get -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 -o Acquire::Retries=3 install -y "$@"
+          }
+          install wine || install wine-stable
           wine --version
       - name: Publish win-x64
         run: >
@@ -241,8 +247,14 @@ jobs:
             done
             return 1
           }
-          retry apt-get update
-          retry apt-get install -y --no-install-recommends libgtk-3-0 xvfb
+          # apt-get update is the step that stalls, and the runner image already has package lists.
+          # Install first; fall back to updating only when something genuinely cannot be found.
+          install() {
+            retry apt-get -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 -o Acquire::Retries=3 install -y "$@" && return 0
+            retry apt-get -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 -o Acquire::Retries=3 update || true
+            retry apt-get -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 -o Acquire::Retries=3 install -y "$@"
+          }
+          install --no-install-recommends libgtk-3-0 xvfb
       - name: Build
         run: dotnet build ProcessManager.slnx --configuration Release
       # PRD §9.6: bring the whole window up against a fixture probe and photograph it. A plot control
@@ -307,8 +319,14 @@ jobs:
             done
             return 1
           }
-          retry apt-get update
-          retry apt-get install -y clang zlib1g-dev
+          # apt-get update is the step that stalls, and the runner image already has package lists.
+          # Install first; fall back to updating only when something genuinely cannot be found.
+          install() {
+            retry apt-get -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 -o Acquire::Retries=3 install -y "$@" && return 0
+            retry apt-get -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 -o Acquire::Retries=3 update || true
+            retry apt-get -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 -o Acquire::Retries=3 install -y "$@"
+          }
+          install clang zlib1g-dev
       # PRD §9.5. TreatWarningsAsErrors makes any trim/AOT (IL2xxx/IL3xxx) warning fail the build, so
       # the reflection-free rule of §2 can never silently regress — and it regresses the moment
       # anybody reaches for reflection to enumerate columns.

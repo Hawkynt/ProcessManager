@@ -103,7 +103,8 @@ procman --host                # what this machine is: processor, cache, memory, 
 procman --startup             # what will run when you log in, and what will not, and why
 procman --users               # who is logged in, and what their processes cost
 procman --services            # which services exist and which are running
-procman --find "libssl"       # which processes have a handle/mapping matching this?
+procman --find "libssl"       # which process is using this? files, mappings, sockets, services
+procman --find '/^kwin/'      # …by regular expression
 procman --kill 1234 --tree    # end a process and its descendants
 
 # Filtering. The same syntax in the window, the terminal and here.
