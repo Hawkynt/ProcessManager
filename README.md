@@ -102,6 +102,7 @@ procman --tui                 # full-screen terminal UI
 procman --host                # what this machine is: processor, cache, memory, uptime
 procman --startup             # what will run when you log in, and what will not, and why
 procman --users               # who is logged in, and what their processes cost
+procman --services            # which services exist and which are running
 procman --find "libssl"       # which processes have a handle/mapping matching this?
 procman --kill 1234 --tree    # end a process and its descendants
 
@@ -257,9 +258,10 @@ These are consequences of the design, not a to-do list; the to-do list is the PR
   Measured and written down in PRD §71 rather than left as a number nobody intends to meet.
 - **Per-process property windows are not implemented.** The detail pane shows one process at a time;
   Process Explorer opens several at once, which is what makes it good at comparing two of them.
-- **No services view, and startup and users are lists rather than pages.** `--startup` reads the XDG
-  autostart entries and `--users` the login records, both on Linux only and neither with a view in
-  either front-end. Services are missing entirely. PRD §41–§43, and the largest remaining gap.
+- **Services, startup and users are lists rather than pages.** `--services`, `--startup` and
+  `--users` answer all three of Task Manager's missing tabs on Linux, and none of them has a view in
+  either front-end. Windows has none of the three, and nothing can be started, stopped or disabled
+  from here yet. PRD §41–§43.
 - **Only some things are persisted.** Columns, sort order, tree mode and the sample interval survive
   a restart, in a `key=value` file meant to be edited by hand. Window size, the highlight colours and
   everything else in PRD §67 do not.

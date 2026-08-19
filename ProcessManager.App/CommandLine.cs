@@ -5,7 +5,7 @@ using Hawkynt.ProcessManager.Settings;
 namespace Hawkynt.ProcessManager.App;
 
 /// <summary>Which face of the program the arguments asked for.</summary>
-internal enum RunMode : byte { Desktop, Terminal, List, Find, Kill, SelfTest, HelperCheck, Help, HelpFields, Host, Startup, Users, Version }
+internal enum RunMode : byte { Desktop, Terminal, List, Find, Kill, SelfTest, HelperCheck, Help, HelpFields, Host, Startup, Users, Services, Version }
 
 /// <summary>
 /// The whole command line, parsed once into a value.
@@ -365,6 +365,11 @@ internal sealed record CommandLineOptions {
           options = options with { Mode = RunMode.HelperCheck };
           explicitMode = true;
           break;
+        case "--services":
+          options = options with { Mode = RunMode.Services };
+          explicitMode = true;
+          break;
+
         case "--users":
           options = options with { Mode = RunMode.Users };
           explicitMode = true;
@@ -436,6 +441,7 @@ internal sealed record CommandLineOptions {
       procman --host                 what this machine is: processor, memory, cache, uptime
       procman --startup              what is configured to start when you log in
       procman --users                who is logged in, and what their processes cost
+      procman --services             which services exist and which are running
       procman --help-fields          every field that can be sorted, filtered or shown
       procman --kill <pid> [--tree]  end a process, optionally with its descendants
 

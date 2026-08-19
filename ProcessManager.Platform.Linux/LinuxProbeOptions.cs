@@ -36,6 +36,15 @@ public sealed record LinuxProbeOptions {
   /// <summary>Where the login records live. /var/run is a symlink to /run on any current system.</summary>
   public string UtmpPath { get; init; } = "/run/utmp";
 
+  /// <summary>Unit directories, least specific first; null uses the systemd defaults (PRD §41).</summary>
+  public IReadOnlyList<string>? UnitDirectories { get; init; }
+
+  /// <summary>The .wants directories that say which units start at boot.</summary>
+  public IReadOnlyList<string>? WantsDirectories { get; init; }
+
+  /// <summary>Where a service's processes live; null uses the whole /sys/fs/cgroup tree.</summary>
+  public string? ServiceCgroupRoot { get; init; }
+
   /// <summary>Where the password file is, for uid → name.</summary>
   public string PasswdPath { get; init; } = "/etc/passwd";
 
