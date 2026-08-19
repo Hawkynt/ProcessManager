@@ -33,6 +33,10 @@ public sealed class ProcessPropertiesWindow : Form {
     this._pane = new(probe);
 
     this.Text = $"{name} ({key.Pid})";
+    // A secondary window closing must not take the program with it. Form.QuitsOnClose defaults to
+    // true because the first window shown owns the message loop; every window that is not that one
+    // has to say so.
+    this.QuitsOnClose = false;
     this.Bounds = new(0, 0, 900, 560);
 
     this._pane.Control.Dock = DockStyle.Fill;

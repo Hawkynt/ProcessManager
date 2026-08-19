@@ -16,6 +16,10 @@ public sealed class LegendWindow : Form {
 
   public LegendWindow() {
     this.Text = "Colour legend";
+    // A secondary window closing must not take the program with it. Form.QuitsOnClose defaults to
+    // true because the first window shown owns the message loop; every window that is not that one
+    // has to say so.
+    this.QuitsOnClose = false;
     this.Bounds = new(0, 0, 460, 330);
 
     var y = 12;
