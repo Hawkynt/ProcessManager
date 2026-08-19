@@ -338,6 +338,12 @@ public sealed class LinuxProbe : ISystemProbe {
     return info;
   }
 
+  /// <summary>How the cores are arranged, read once — the machine will not rearrange them.</summary>
+  public CpuTopology DescribeTopology()
+    => this._topology ??= LinuxHostReader.ReadTopology(this._options.SysRoot);
+
+  private CpuTopology? _topology;
+
   /// <summary>
   /// Every graphics adapter, read fresh: unlike a disk's model, a GPU's utilisation is the point.
   /// </summary>

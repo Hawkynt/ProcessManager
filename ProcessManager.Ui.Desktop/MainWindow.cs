@@ -24,7 +24,7 @@ public sealed class MainWindow : Form {
   private readonly TreeListView _tree = new();
   private readonly HistoryPlot _cpuPlot = new();
   private readonly HistoryPlot _memoryPlot = new();
-  private readonly CoreMeterStrip _cores = new();
+  private readonly CoreHeatmap _cores = new();
   private readonly DetailPane _details;
   private readonly SplitContainer _split = new();
   private readonly Panel _plots = new();
@@ -148,6 +148,7 @@ public sealed class MainWindow : Form {
     builder.AppendLine($"columns:      {this._tree.Columns.Count}");
     builder.AppendLine($"split at:     {this._split.SplitterDistance}");
     builder.AppendLine($"plots:        cpu {this._cpuPlot.Bounds}, memory {this._memoryPlot.Bounds}, cores {this._cores.Bounds}");
+    builder.AppendLine($"topology:     {this._cores.Topology.Cores.Count} logical, {this._cores.Topology.Packages.Count} socket(s), hybrid {this._cores.Topology.IsHybrid}");
     builder.AppendLine($"status:       {this._status.Text}");
     return builder.ToString();
   }
@@ -166,6 +167,8 @@ public sealed class MainWindow : Form {
 
   public void Start() {
     this._binder.CurrentUserId = CurrentUserId();
+    // Read once, before the first paint: the machine will not rearrange its cores while we watch.
+    this._cores.Topology = this._probe.DescribeTopology();
     this.Refresh();
     this._timer.Start();
   }
