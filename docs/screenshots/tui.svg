@@ -4,24 +4,26 @@
   <g font-family="ui-monospace,SFMono-Regular,Menlo,DejaVu Sans Mono,Consolas,monospace" font-size="13" xml:space="preserve">
     <text x="10" y="23" fill="#2aa198">  0</text>
     <text x="34" y="23" fill="#8a8a8a">[</text>
-    <text x="42" y="23" fill="#c8a02c">||||||||||||||||||||||||||||||||||||||||||</text>
-    <text x="378" y="23" fill="#d8d8d8">      </text>
-    <text x="426" y="23" fill="#8a8a8a">80.0%]</text>
+    <text x="42" y="23" fill="#3fbf3f">|||</text>
+    <text x="66" y="23" fill="#d8d8d8">                                              </text>
+    <text x="434" y="23" fill="#8a8a8a">4.9%]</text>
     <text x="474" y="23" fill="#d8d8d8">  </text>
     <text x="490" y="23" fill="#2aa198">  1</text>
     <text x="514" y="23" fill="#8a8a8a">[</text>
-    <text x="522" y="23" fill="#3fbf3f">|||||||||||</text>
-    <text x="610" y="23" fill="#d8d8d8">                                     </text>
-    <text x="906" y="23" fill="#8a8a8a">20.0%]</text>
+    <text x="522" y="23" fill="#3fbf3f">|||||||||||||</text>
+    <text x="626" y="23" fill="#d8d8d8">                                   </text>
+    <text x="906" y="23" fill="#8a8a8a">24.4%]</text>
     <text x="10" y="40" fill="#2aa198">  2</text>
     <text x="34" y="40" fill="#8a8a8a">[</text>
-    <text x="42" y="40" fill="#d8d8d8">                                                 </text>
-    <text x="434" y="40" fill="#8a8a8a">0.0%]</text>
+    <text x="42" y="40" fill="#c8a02c">||||||||||||||||||||||||||||||||||||||</text>
+    <text x="346" y="40" fill="#d8d8d8">          </text>
+    <text x="426" y="40" fill="#8a8a8a">72.5%]</text>
     <text x="474" y="40" fill="#d8d8d8">  </text>
     <text x="490" y="40" fill="#2aa198">  3</text>
     <text x="514" y="40" fill="#8a8a8a">[</text>
-    <text x="522" y="40" fill="#d8d8d8">                                                 </text>
-    <text x="914" y="40" fill="#8a8a8a">0.0%]</text>
+    <text x="522" y="40" fill="#3fbf3f">|</text>
+    <text x="530" y="40" fill="#d8d8d8">                                                </text>
+    <text x="914" y="40" fill="#8a8a8a">2.4%]</text>
     <text x="10" y="57" fill="#2aa198">  4</text>
     <text x="34" y="57" fill="#8a8a8a">[</text>
     <text x="42" y="57" fill="#3fbf3f">|</text>
@@ -34,9 +36,8 @@
     <text x="914" y="57" fill="#8a8a8a">0.0%]</text>
     <text x="10" y="74" fill="#2aa198">  6</text>
     <text x="34" y="74" fill="#8a8a8a">[</text>
-    <text x="42" y="74" fill="#3fbf3f">|</text>
-    <text x="50" y="74" fill="#d8d8d8">                                                </text>
-    <text x="434" y="74" fill="#8a8a8a">2.4%]</text>
+    <text x="42" y="74" fill="#d8d8d8">                                                 </text>
+    <text x="434" y="74" fill="#8a8a8a">0.0%]</text>
     <text x="474" y="74" fill="#d8d8d8">  </text>
     <text x="490" y="74" fill="#2aa198">  7</text>
     <text x="514" y="74" fill="#8a8a8a">[</text>
@@ -44,9 +45,8 @@
     <text x="914" y="74" fill="#8a8a8a">0.0%]</text>
     <text x="10" y="91" fill="#2aa198">  8</text>
     <text x="34" y="91" fill="#8a8a8a">[</text>
-    <text x="42" y="91" fill="#3fbf3f">|||</text>
-    <text x="66" y="91" fill="#d8d8d8">                                              </text>
-    <text x="434" y="91" fill="#8a8a8a">4.8%]</text>
+    <text x="42" y="91" fill="#d8d8d8">                                                 </text>
+    <text x="434" y="91" fill="#8a8a8a">0.0%]</text>
     <text x="474" y="91" fill="#d8d8d8">  </text>
     <text x="490" y="91" fill="#2aa198">  9</text>
     <text x="514" y="91" fill="#8a8a8a">[</text>
@@ -55,9 +55,9 @@
     <text x="906" y="91" fill="#8a8a8a">77.5%]</text>
     <text x="10" y="108" fill="#2aa198"> 10</text>
     <text x="34" y="108" fill="#8a8a8a">[</text>
-    <text x="42" y="108" fill="#3fbf3f">|||||||||||||</text>
-    <text x="146" y="108" fill="#d8d8d8">                                   </text>
-    <text x="426" y="108" fill="#8a8a8a">24.4%]</text>
+    <text x="42" y="108" fill="#3fbf3f">|||</text>
+    <text x="66" y="108" fill="#d8d8d8">                                              </text>
+    <text x="434" y="108" fill="#8a8a8a">4.8%]</text>
     <text x="474" y="108" fill="#d8d8d8">  </text>
     <text x="490" y="108" fill="#2aa198"> 11</text>
     <text x="514" y="108" fill="#8a8a8a">[</text>
@@ -70,32 +70,35 @@
     <text x="474" y="125" fill="#d8d8d8">  </text>
     <text x="490" y="125" fill="#2aa198"> 13</text>
     <text x="514" y="125" fill="#8a8a8a">[</text>
-    <text x="522" y="125" fill="#d8d8d8">                                                 </text>
-    <text x="914" y="125" fill="#8a8a8a">0.0%]</text>
+    <text x="522" y="125" fill="#3fbf3f">|||||</text>
+    <text x="562" y="125" fill="#d8d8d8">                                            </text>
+    <text x="914" y="125" fill="#8a8a8a">9.5%]</text>
     <text x="10" y="142" fill="#2aa198"> 14</text>
     <text x="34" y="142" fill="#8a8a8a">[</text>
-    <text x="42" y="142" fill="#d8d8d8">                                                 </text>
-    <text x="434" y="142" fill="#8a8a8a">0.0%]</text>
+    <text x="42" y="142" fill="#3fbf3f">|||||||||||||||</text>
+    <text x="162" y="142" fill="#d8d8d8">                                 </text>
+    <text x="426" y="142" fill="#8a8a8a">27.5%]</text>
     <text x="474" y="142" fill="#d8d8d8">  </text>
     <text x="490" y="142" fill="#2aa198"> 15</text>
     <text x="514" y="142" fill="#8a8a8a">[</text>
-    <text x="522" y="142" fill="#d8d8d8">                                                 </text>
-    <text x="914" y="142" fill="#8a8a8a">0.0%]</text>
+    <text x="522" y="142" fill="#3fbf3f">|</text>
+    <text x="530" y="142" fill="#d8d8d8">                                                </text>
+    <text x="914" y="142" fill="#8a8a8a">2.4%]</text>
     <text x="10" y="159" fill="#2aa198">Mem</text>
     <text x="34" y="159" fill="#8a8a8a">[</text>
     <text x="42" y="159" fill="#3fbf3f">|||||||||||||||||||||</text>
     <text x="210" y="159" fill="#d8d8d8">                      </text>
-    <text x="386" y="159" fill="#8a8a8a">49.1G/125G]</text>
+    <text x="386" y="159" fill="#8a8a8a">49.2G/125G]</text>
     <text x="474" y="159" fill="#d8d8d8">  </text>
     <text x="490" y="159" fill="#2aa198">Swp</text>
     <text x="514" y="159" fill="#8a8a8a">[</text>
     <text x="522" y="159" fill="#d8d8d8">                                            </text>
     <text x="874" y="159" fill="#8a8a8a">0 B/64.0G]</text>
-    <text x="10" y="176" fill="#8a8a8a">Tasks: 409, 5 running</text>
+    <text x="10" y="176" fill="#8a8a8a">Tasks: 417, 4 running</text>
     <text x="178" y="176" fill="#d8d8d8">           </text>
-    <text x="266" y="176" fill="#8a8a8a">Load average: 1.02 0.75 0.69</text>
+    <text x="266" y="176" fill="#8a8a8a">Load average: 0.84 0.62 0.66</text>
     <text x="490" y="176" fill="#d8d8d8">        </text>
-    <text x="554" y="176" fill="#8a8a8a">Uptime: 15:35:41</text>
+    <text x="554" y="176" fill="#8a8a8a">Uptime: 15:41:53</text>
     <rect x="10" y="197" width="912" height="17" fill="#2aa198"/>
     <text x="10" y="210" fill="#0c2b2b">    PID User       S     CPU%▾ CPU hist     Private Mem hist       Read/s  Write/s I/O hist      Thr   Hnd Process</text>
     <rect x="10" y="214" width="928" height="17" fill="#d8d8d8"/>
@@ -114,24 +117,24 @@
     <text x="522" y="261" fill="#d8d8d8">        —        — </text>
     <text x="674" y="261" fill="#c8a02c">            </text>
     <text x="770" y="261" fill="#d8d8d8">    1     …   + systemd-u</text>
-    <text x="10" y="278" fill="#d8d8d8"> 553305 root       sleep   0.0 </text>
+    <text x="10" y="278" fill="#d8d8d8"> 562008 root       sleep   0.0 </text>
     <text x="258" y="278" fill="#3fbf3f">            </text>
     <text x="354" y="278" fill="#d8d8d8">    240K </text>
     <text x="426" y="278" fill="#2aa198">▁▁▁▁▁▁▁▁▁▁▁▁</text>
     <text x="522" y="278" fill="#d8d8d8">        —        — </text>
     <text x="674" y="278" fill="#c8a02c">            </text>
     <text x="770" y="278" fill="#d8d8d8">    1     …       systemd</text>
-    <text x="10" y="295" fill="#d8d8d8"> 555389 root       sleep   0.0 </text>
+    <text x="10" y="295" fill="#d8d8d8"> 563485 root       sleep   0.0 </text>
     <text x="258" y="295" fill="#3fbf3f">            </text>
     <text x="354" y="295" fill="#d8d8d8">    240K </text>
     <text x="426" y="295" fill="#2aa198">▁▁▁▁▁▁▁▁▁▁▁▁</text>
     <text x="522" y="295" fill="#d8d8d8">        —        — </text>
     <text x="674" y="295" fill="#c8a02c">            </text>
     <text x="770" y="295" fill="#d8d8d8">    1     …       systemd</text>
-    <text x="10" y="312" fill="#d8d8d8"> 556853 root       sleep   0.0 </text>
+    <text x="10" y="312" fill="#d8d8d8"> 566306 root       sleep   0.0 </text>
     <text x="258" y="312" fill="#3fbf3f">            </text>
     <text x="354" y="312" fill="#d8d8d8">    240K </text>
-    <text x="426" y="312" fill="#2aa198">▁▁▁▁▁▁▁▁▁▁▁▁</text>
+    <text x="426" y="312" fill="#2aa198">          ▁▁</text>
     <text x="522" y="312" fill="#d8d8d8">        —        — </text>
     <text x="674" y="312" fill="#c8a02c">            </text>
     <text x="770" y="312" fill="#d8d8d8">    1     …       systemd</text>
@@ -164,7 +167,7 @@
     <text x="674" y="380" fill="#c8a02c">            </text>
     <text x="770" y="380" fill="#d8d8d8">    1     …       dbus-br</text>
     <text x="10" y="397" fill="#d8d8d8">    978 root       sleep   0.0 </text>
-    <text x="258" y="397" fill="#3fbf3f">            </text>
+    <text x="258" y="397" fill="#3fbf3f">       ▁    </text>
     <text x="354" y="397" fill="#d8d8d8">   43.8M </text>
     <text x="426" y="397" fill="#2aa198">▁▁▁▁▁▁▁▁▁▁▁▁</text>
     <text x="522" y="397" fill="#d8d8d8">        —        — </text>

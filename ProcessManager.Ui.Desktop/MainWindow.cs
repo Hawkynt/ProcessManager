@@ -244,6 +244,44 @@ public sealed class MainWindow : Form {
         TextAlign = info.RightAligned ? ContentAlignment.MiddleRight : ContentAlignment.MiddleLeft,
       });
     }
+
+    this.StretchLastColumn();
+  }
+
+  private int _stretchedTo;
+
+  /// <summary>
+  /// Widens the last column so the columns fill the list.
+  /// </summary>
+  /// <remarks>
+  /// Without it the area past the final column still takes each row's colour but has no cell in it,
+  /// so a wide window ends in a band of stripes belonging to nothing — the one part of the list that
+  /// looked unfinished beside the tools it copies (PRD §93).
+  /// <para>
+  /// Only the last column moves, and only when the width it should have changes: resizing a window
+  /// must not silently rewrite the widths somebody chose for the columns before it.
+  /// </para>
+  /// </remarks>
+  private void StretchLastColumn() {
+    var count = this._tree.Columns.Count;
+    if (count == 0)
+      return;
+
+    var available = this._tree.Width;
+    if (available <= 0)
+      return;
+
+    var used = 0;
+    for (var i = 0; i < count - 1; ++i)
+      used += this._tree.Columns[i].Width;
+
+    var last = this._columns.Count == count ? ColumnSet.Info(this._columns[count - 1]).DesktopWidth : 120;
+    var wanted = Math.Max(last, available - used - 2);
+    if (wanted == this._stretchedTo)
+      return;
+
+    this._stretchedTo = wanted;
+    this._tree.Columns[count - 1].Width = wanted;
   }
 
   private void OnCellPaint(object? sender, TreeListViewCellPaintEventArgs e) {
@@ -458,6 +496,7 @@ public sealed class MainWindow : Form {
     this._rowHistory.Update(snapshot, delta, this._view, this._tree.TopIndex, this._tree.VisibleNodeCount + 8);
     this._binder.Sync(snapshot, delta, this._view);
     this._cores.Bind(delta);
+    this.StretchLastColumn();
     this._performance?.UpdateFromSample();
     this._cpuPlot.Invalidate();
     this._memoryPlot.Invalidate();
