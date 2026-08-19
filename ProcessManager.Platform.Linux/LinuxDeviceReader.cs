@@ -1,5 +1,6 @@
 using System.Globalization;
 using Hawkynt.ProcessManager.Model;
+using Hawkynt.ProcessManager.Query;
 
 namespace Hawkynt.ProcessManager.Platform.Linux;
 
@@ -66,6 +67,116 @@ internal static class LinuxDeviceReader {
     var isLoopback = Read(Path.Combine(root, "type")) == "772";
 
     return new(name, Read(Path.Combine(root, "address")), speed, Read(Path.Combine(root, "operstate")), mtu, isLoopback);
+  }
+
+  /// <summary>
+  /// Every graphics adapter the kernel knows about (PRD §50).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// <c>/sys/class/drm</c> holds one entry per card and one per connector — <c>card0</c> beside
+  /// <c>card0-HDMI-A-1</c> — and only the cards are adapters. The connectors are filtered by shape
+  /// rather than by asking each one what it is, because a laptop with a dock has a dozen of them.
+  /// </para>
+  /// <para>
+  /// What comes back depends entirely on the driver, and mostly it is nothing. AMD publishes
+  /// <c>gpu_busy_percent</c> and the VRAM figures; Intel's i915 publishes neither, because its
+  /// engine busyness lives in a perf counter that needs a privileged open; NVIDIA's proprietary
+  /// driver publishes nothing at all here and wants NVML. Each missing reading carries its own
+  /// reason rather than a zero, so the page says "not implemented here" about the adapter it cannot
+  /// read and stays honest about the one it can (PRD §5.3).
+  /// </para>
+  /// </remarks>
+  public static IReadOnlyList<GpuInfo> DescribeGpus(string sysRoot) {
+    var drm = Path.Combine(sysRoot, "class", "drm");
+    if (!Directory.Exists(drm))
+      return [];
+
+    var cards = new List<GpuInfo>();
+    foreach (var entry in Directory.EnumerateDirectories(drm)) {
+      var name = Path.GetFileName(entry);
+      if (!IsCard(name))
+        continue;
+
+      cards.Add(DescribeGpu(entry, name));
+    }
+
+    // The kernel enumerates in whatever order the filesystem hands back; card0 before card1 is what
+    // a reader expects, and what the numbers in the names already promise.
+    cards.Sort(static (a, b) => string.CompareOrdinal(a.Name, b.Name));
+    return cards;
+  }
+
+  /// <summary>
+  /// <c>card0</c> yes, <c>card0-HDMI-A-1</c> no: a card's name is the word and a run of digits, and
+  /// nothing else.
+  /// </summary>
+  internal static bool IsCard(string name) {
+    if (!name.StartsWith("card", StringComparison.Ordinal) || name.Length == 4)
+      return false;
+
+    for (var i = 4; i < name.Length; ++i)
+      if (!char.IsAsciiDigit(name[i]))
+        return false;
+
+    return true;
+  }
+
+  private static GpuInfo DescribeGpu(string cardPath, string name) {
+    var device = Path.Combine(cardPath, "device");
+    var uevent = Read(Path.Combine(device, "uevent")) ?? string.Empty;
+    var driver = UeventParser.Value(uevent, "DRIVER");
+    var model = PciNames.Describe(UeventParser.Value(uevent, "PCI_ID"));
+
+    return new(
+      name,
+      model,
+      driver.IsEmpty ? null : new string(driver),
+      // Percent, and only AMD writes it. Anything above 100 is a driver bug rather than a busy card.
+      ReadCounter(Path.Combine(device, "gpu_busy_percent"), 1, 100),
+      ReadCounter(Path.Combine(device, "mem_info_vram_used"), 1),
+      ReadCounter(Path.Combine(device, "mem_info_vram_total"), 1),
+      ReadHwmon(device, "temp1_input"),
+      ReadHwmon(device, "power1_average"),
+      Read(Path.Combine(device, "power_state"))
+    );
+  }
+
+  /// <summary>
+  /// A number from one sysfs file, scaled, or the reason it is not there.
+  /// </summary>
+  /// <remarks>
+  /// A file that does not exist is <see cref="UnknownReason.NotImplementedHere"/> and not
+  /// <see cref="UnknownReason.NotSupportedOnPlatform"/>: Linux can report this, and does on other
+  /// hardware. It is this driver that does not, which is a different sentence and the one that tells
+  /// a reader whether a different machine would answer (PRD §5.3).
+  /// </remarks>
+  private static Counter ReadCounter(string path, ulong scale, ulong ceiling = ulong.MaxValue) {
+    var text = Read(path);
+    if (text is null)
+      return Counter.Unknown(UnknownReason.NotImplementedHere);
+
+    return ulong.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value) && value <= ceiling
+      ? Counter.Of(value * scale)
+      : Counter.Unknown(UnknownReason.CounterInvalid);
+  }
+
+  /// <summary>
+  /// A reading from whichever hwmon node the driver hung off this card, since the number in
+  /// <c>hwmon/hwmonN</c> is assigned in probe order and is not the card's to choose.
+  /// </summary>
+  private static Counter ReadHwmon(string devicePath, string file) {
+    var hwmon = Path.Combine(devicePath, "hwmon");
+    if (!Directory.Exists(hwmon))
+      return Counter.Unknown(UnknownReason.NotImplementedHere);
+
+    foreach (var node in Directory.EnumerateDirectories(hwmon)) {
+      var counter = ReadCounter(Path.Combine(node, file), 1);
+      if (counter.HasValue)
+        return counter;
+    }
+
+    return Counter.Unknown(UnknownReason.NotImplementedHere);
   }
 
   private static string? Read(string path) {

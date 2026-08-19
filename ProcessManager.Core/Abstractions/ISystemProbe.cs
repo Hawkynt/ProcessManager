@@ -66,6 +66,20 @@ public interface ISystemProbe : IDisposable {
   IReadOnlyList<ServiceRecord> GetServices();
 
   /// <summary>
+  /// Every graphics adapter this machine has, with whatever its driver is willing to say (PRD §50).
+  /// </summary>
+  /// <remarks>
+  /// Read on demand by the page that shows it and never from the sample loop, whose allocation
+  /// budget is a build gate (PRD §5.4).
+  /// <para>
+  /// The default is no adapters, which is what a probe that has not learnt to look yet honestly
+  /// knows. It is not a promise that the machine has none — a page that showed "0 GPUs" on Windows
+  /// would be stating something false rather than admitting a gap.
+  /// </para>
+  /// </remarks>
+  IReadOnlyList<GpuInfo> DescribeGpus() => [];
+
+  /// <summary>
   /// Who is logged in (PRD §43), or an empty list where that is not read yet.
   /// </summary>
   IReadOnlyList<SessionRecord> GetSessions();
