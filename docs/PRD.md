@@ -521,12 +521,19 @@ everybody's settings could never be improved again.
 
 Refresh preserves:
 
-- [ ] 🟡 Scroll position
+- [x] Scroll position
 - [x] Expanded process nodes
 - [x] Selected entities
 - [x] Sort order
-- [ ] Open property page (none exist yet)
+- [x] Open property page
 - [ ] Lower-pane mode (none exists yet)
+
+A row index is not a place. The window held its scroll position by keeping `TopIndex` across a
+rebuild, which is exactly wrong: the number survives and the rows underneath it do not, so twenty
+processes exiting above the viewport slide twenty rows of different content under the reader's eyes,
+once a second. What is held now is the *node* at the top — noted before the rebuild, found again
+afterwards, and put back — and a node that has exited leaves the view where the rebuild put it,
+because there is nowhere better for it to be.
 
 - [ ] Dead processes remain visible for one cycle with terminated styling, if enabled
 - [x] New processes are optionally highlighted
@@ -1868,20 +1875,28 @@ which would turn "we could not read this" into the literal string "—" in a col
 
 # 67. Settings
 
-Nothing here is implemented: **no setting survives a restart today.** Persisted settings are a
-prerequisite for §11's column sets, §57.3's custom bindings and §23's colours.
+The file is `key=value` lines at the platform's own config location — `$XDG_CONFIG_HOME/procman/`
+or `~/.config/procman/` on Unix, `%APPDATA%\procman\` on Windows — and it is meant to be edited by
+hand: every value in it is a field key, a plain number or a `#rrggbb`, and `--help-fields` lists the
+field keys. Two rules make that safe — a line that cannot be parsed leaves its setting at the default
+rather than failing the file, and a key this build does not understand is written back out untouched
+so an older build cannot eat a newer one's settings.
 
-The file is `key=value` lines at the platform's own config location, and it is meant to be edited by
-hand: every value in it is a field key or a plain number, and `--help-fields` lists them all. Two
-rules make that safe — a line that cannot be parsed leaves its setting at the default rather than
-failing the file, and a key this build does not understand is written back out untouched so an older
-build cannot eat a newer one's settings.
+**It saves itself.** The window used to require `--save-settings` from a terminal, which meant every
+preference set through the window was gone by the next start. The saver runs from the sample tick
+rather than from each change, so a window being dragged is one write and not a hundred, and it
+renders the settings and compares them with what was last written, so a tick that changed nothing
+touches no disk at all. A write that fails is retried on the next tick and never reported: somebody
+diagnosing a machine whose disk is full is exactly the person who must not be interrupted by a dialog
+about a preferences file (§81).
 
 - [ ] **General** — launch behaviour · start minimised · start at login · default page ·
       confirm destructive actions · auto-elevation behaviour
-- [ ] **Appearance** — theme · density · font · icon size · row height · graph grid · highlighting
-- [ ] 🟡 **Refresh** — the interval persists; paused-on-start, history length and refresh behaviour do not
-- [ ] 🟡 **Processes** — tree-or-flat persists; the rest do not
+- [ ] 🟡 **Appearance** — every colour of §7.1's categories and of the plots is a `color.<name>` line,
+      and the window's size and splitter are remembered; theme, density, font, icon size and row
+      height are not
+- [x] **Refresh** — the interval persists, and the window writes it back when it is changed
+- [x] **Processes** — tree-or-flat, the sort column and its direction all persist
 - [x] **Columns** — saved column sets, and the columns each front-end opens with
 - [ ] **Symbols** — enable resolution · search paths · cache directory
 - [ ] **Reputation** — disabled by default · provider configuration · privacy disclosure
@@ -2199,8 +2214,14 @@ dependencies to be missing on a broken machine.
 - [ ] Configurable new-process highlight duration
 - [ ] Configurable exited-process highlight duration
 - [ ] Scroll to new process
-- [ ] Do not move the selected process during transient sorting
-- [ ] "Stable sort while interacting" for fast-changing lists
+- [x] Do not move the selected process during transient sorting
+- [ ] 🟡 "Stable sort while interacting" for fast-changing lists — the scroll anchor and the
+      selection are held across every rebuild (§12); the sort itself still runs each sample
+
+A subtree somebody collapsed now stays collapsed. It used to be reopened whenever a child appeared
+under it — Process Explorer's gesture for "this process just forked" — which on a machine that forks
+steadily meant the tree reopening itself every second and everything below it sliding down the
+screen. The behaviour is still available as `ProcessTreeBinder.ExpandOnNewChild`.
 
 # 88. Error handling
 
@@ -2341,6 +2362,15 @@ three of the widest columns in the catalogue and they push the numbers people re
 
 The rules are shaded from each row's own colour rather than being a fixed grey, so a rule over a
 green "just started" row is a darker green and the category colour survives the grid.
+
+Every secondary window — system information, a process's properties, the colour legend, the column
+chooser — is a window and not the program. `Form.QuitsOnClose` defaults to true because the first
+window shown owns the message loop, so each of these has to say otherwise; until it did, closing a
+properties window closed the whole program. The plots and the core meters open the system information
+window when clicked, which is where a reader who wants the detail behind a graph looks first — wired
+to `MouseUp`, because the toolkit raises `Click` only from `PerformClick` and nothing a mouse does
+ever reaches it. The column chooser follows its own frame when resized, and both owner-drawn lists
+now draw a scrollbar when they have more rows than they can show.
 - [x] Original branding and original icons
 - [x] No Microsoft, Sysinternals or System Informer trademarks as navigation labels
 - [x] No pixel-perfect clone of a copyrighted UI

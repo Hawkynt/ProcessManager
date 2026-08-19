@@ -2,6 +2,7 @@ using Hawkynt.NativeForms;
 using Hawkynt.NativeForms.Backends;
 using Hawkynt.ProcessManager.Abstractions;
 using Hawkynt.ProcessManager.Sampling;
+using Hawkynt.ProcessManager.Settings;
 
 namespace Hawkynt.ProcessManager.Ui.Desktop;
 
@@ -25,7 +26,9 @@ public static class DesktopApp {
     IProcessActions? actions,
     string? shootPath = null,
     double holdSeconds = 0,
-    bool flat = false
+    bool flat = false,
+    UserSettings? settings = null,
+    string? settingsPath = null
   ) {
     try {
       if (OperatingSystem.IsWindows())
@@ -35,7 +38,13 @@ public static class DesktopApp {
       else
         return $"there is no UI backend for {Environment.OSVersion.Platform}";
 
-      var window = new MainWindow(sampler, probe, actions) { FlatMode = flat };
+      var window = new MainWindow(sampler, probe, actions);
+
+      // Before FlatMode, so an explicit --flat still wins over what the file remembered.
+      window.ApplySettings(settings ?? new(), updated => SettingsStore.Save(updated, settingsPath));
+      if (flat)
+        window.FlatMode = true;
+
       window.Start();
 
       if (shootPath is not null)
