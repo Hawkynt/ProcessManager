@@ -739,6 +739,22 @@ public sealed class LinuxProbe : ISystemProbe {
   }
 
   /// <summary>
+  /// Who is logged in, from utmp (PRD §43).
+  /// </summary>
+  /// <remarks>
+  /// Read on request rather than sampled: logins are rare, and the file is a fixed-size array whose
+  /// length is the number of slots rather than the number of people.
+  /// </remarks>
+  public IReadOnlyList<SessionRecord> GetSessions() {
+    if (!this._reader.TryRead(this._options.UtmpPath, out var content, out _))
+      return [];
+
+    var buffer = new SessionRecord[Math.Max(1, content.Length / UtmpParser.RecordSize)];
+    var count = UtmpParser.Parse(content, buffer);
+    return buffer[..count];
+  }
+
+  /// <summary>
   /// XDG autostart entries, user files overriding system ones of the same name (PRD §42).
   /// </summary>
   public IReadOnlyList<StartupEntry> GetStartupEntries() => XdgAutostartReader.Read(

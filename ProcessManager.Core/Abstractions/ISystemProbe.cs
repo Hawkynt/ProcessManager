@@ -60,6 +60,11 @@ public interface ISystemProbe : IDisposable {
   /// <summary>Sockets owned by one process.</summary>
   IReadOnlyList<ConnectionRecord> GetConnections(ProcessKey key);
 
+  /// <summary>
+  /// Who is logged in (PRD §43), or an empty list where that is not read yet.
+  /// </summary>
+  IReadOnlyList<SessionRecord> GetSessions();
+
   /// <summary>What a storage device is, by name (PRD §48).</summary>
   DiskInfo DescribeDisk(string name);
 

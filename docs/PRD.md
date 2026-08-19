@@ -31,8 +31,8 @@ shorthand:
 it is not known*. An unticked box must never become a zero on screen. This is restated here because
 it is the single requirement most likely to be broken while filling the tables in.
 
-**Counting, as of the last update:** **455 of 1252 boxes are ticked** — 62 of 189 in the field
-registry (§14–22), 393 of 1063 across the capabilities. A further 125 are marked 🟡, meaning some of
+**Counting, as of the last update:** **456 of 1253 boxes are ticked** — 62 of 189 in the field
+registry (§14–22), 394 of 1064 across the capabilities. A further 130 are marked 🟡, meaning some of
 the work behind them is already done. §100 tracks the phases; §101 defines when this may be called
 finished.
 
@@ -422,7 +422,7 @@ Primary navigation:
 - [ ] 🟡 Performance — a system overview exists; the resource selector does not (§45)
 - [ ] Applications / usage history (§44)
 - [ ] 🟡 Startup — `--startup` lists them; there is no view (§42)
-- [ ] Users / sessions (§43)
+- [ ] 🟡 Users / sessions — `--users` lists them; there is no view (§43)
 - [ ] Services (§41)
 - [ ] 🟡 Network — connections are collected and shown per process, not as a view (§40)
 - [ ] System activity (§51)
@@ -1343,11 +1343,20 @@ Actions:
 
 # 43. Users and sessions
 
-- [ ] Columns: user · full name · session ID · session type · state · login time · idle time ·
-      last input · terminal · remote host · CPU · memory · disk · network · GPU · process count
-- [ ] Rows expand to the processes owned by that user
+- [ ] 🟡 Columns — user ✔ · login time ✔ · terminal ✔ · remote host ✔ · CPU ✔ · memory ✔ ·
+      process count ✔. Full name, session id and type, state, idle time, last input, and the disk,
+      network and GPU totals are not read
+- [ ] Rows expand to the processes owned by that user — the totals are summed, but there is no
+      tree to open
 - [ ] Actions: disconnect session · log off · send notification where native · view processes ·
       copy session information
+
+Reachable as `procman --users`, which answers two questions in one table: the sessions come from the
+login records and the totals from the process list. A user with a session and no processes is a stale
+login, and processes with no session belong to services.
+
+An empty remote host means a login at the machine itself, which is a different answer from not
+knowing where it came from — so it reads "local" rather than leaving the column blank.
 - [ ] Destructive session actions require confirmation (§90)
 
 # 44. Application / usage history
@@ -1738,6 +1747,7 @@ drag and drop.
 - [ ] `procman net`
 - [x] `procman --host` — the §96 summary, which is `perf cpu` without the graph
 - [x] `procman --startup` — what will run at login
+- [x] `procman --users` — who is logged in, and what their processes cost
 - [ ] `procman perf cpu`
 
 Output formats:
@@ -2183,7 +2193,7 @@ be lost."*
 - [ ] 🟡 Performance
 - [ ] App / usage history
 - [ ] 🟡 Startup
-- [ ] Users
+- [ ] 🟡 Users
 - [x] Details
 - [ ] Services
 - [ ] Run new task
@@ -2475,7 +2485,7 @@ Windows parsing on Linux.
 - [ ] Network view
 - [ ] Services read and control
 - [ ] 🟡 Startup
-- [ ] Users / sessions
+- [ ] 🟡 Users / sessions — `--users`
 - [x] GUI
 - [x] TUI
 - [ ] 🟡 CLI
@@ -2533,7 +2543,7 @@ v1 does not ship unless every one of these is true:
 - [ ] 🟡 The user can inspect active network endpoints
 - [ ] The user can inspect, start and stop supported services
 - [ ] The user can manage common startup items
-- [ ] The user can inspect logged-in sessions
+- [ ] 🟡 The user can inspect logged-in sessions — from the CLI; neither front-end has the view
 - [ ] 🟡 The user can view CPU, memory, disk and network performance
 - [ ] 🟡 The user can create and restore column presets — restoring works from the file and from
       `--columns @name`; creating one means editing the file, not a dialog

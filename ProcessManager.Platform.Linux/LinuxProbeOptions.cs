@@ -33,6 +33,9 @@ public sealed record LinuxProbeOptions {
   /// <summary>Overrides XDG_CURRENT_DESKTOP, so the desktop-specific rules are testable.</summary>
   public string? CurrentDesktop { get; init; }
 
+  /// <summary>Where the login records live. /var/run is a symlink to /run on any current system.</summary>
+  public string UtmpPath { get; init; } = "/run/utmp";
+
   /// <summary>Where the password file is, for uid → name.</summary>
   public string PasswdPath { get; init; } = "/etc/passwd";
 
