@@ -95,7 +95,14 @@ public sealed class ProcessRow(ProcessKey key) {
   public string Started => this.TextOf(ProcessField.StartTime);
   public string CommandLine => this.TextOf(ProcessField.CommandLine);
 
-  /// <summary>The text the tree column shows in the name column, with the pid appended.</summary>
-  public string Label => $"{this.Name} ({this.Pid})";
+  /// <summary>
+  /// What the tree column shows.
+  /// </summary>
+  /// <remarks>
+  /// The name alone. It used to carry the pid as well, which put the same number on the row twice
+  /// whenever the PID column was visible — and it is visible by default, as it is in every tool
+  /// this imitates (PRD §93).
+  /// </remarks>
+  public string Label => this.Name;
 
 }

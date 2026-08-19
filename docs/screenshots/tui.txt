@@ -1,40 +1,40 @@
-  0[||||||||                                        14.3%]    1[|||||||||||||||||||||||||||||||||||||||||||||||||100%]
-  2[||||                                             7.1%]    3[||                                               4.7%]
-  4[||||                                             7.3%]    5[                                                 0.0%]
+  0[||||||||||||||||||||||||||||||||||||||||||      80.0%]    1[|||||||||||                                     20.0%]
+  2[                                                 0.0%]    3[                                                 0.0%]
+  4[|                                                2.5%]    5[                                                 0.0%]
   6[|                                                2.4%]    7[                                                 0.0%]
-  8[                                                 0.0%]    9[                                                 0.0%]
- 10[|                                                2.5%]   11[|||||||||||||||||||||||||||||||||||||||||||||||||100%]
- 12[                                                 0.0%]   13[|||||||||||||||||||||||||||||||||||||||||||||||||100%]
- 14[|||                                              4.8%]   15[|                                                2.4%]
-Mem[||||||||||||||||                           36.8G/125G]  Swp[|||||||||||||||                           18.5G/64.0G]
-Tasks: 652, 5 running           Load average: 11.80 11.38 11.36     Uptime: 16d 19:01:16
+  8[|||                                              4.8%]    9[|||||||||||||||||||||||||||||||||||||||||       77.5%]
+ 10[|||||||||||||                                   24.4%]   11[|||||||||||||||||||||||||||||||||||||||||||||||||100%]
+ 12[                                                 0.0%]   13[                                                 0.0%]
+ 14[                                                 0.0%]   15[                                                 0.0%]
+Mem[|||||||||||||||||||||                      49.1G/125G]  Swp[                                            0 B/64.0G]
+Tasks: 409, 5 running           Load average: 1.02 0.75 0.69        Uptime: 15:35:41
 
     PID User       S     CPU%▾ CPU hist     Private Mem hist       Read/s  Write/s I/O hist      Thr   Hnd Process
-1575053 hawky      run     6.4 ████████████    304K ▁▁▁▁▁▁▁▁▁▁▁▁        0        0                 1     … bash
-1575050 hawky      run     6.2 ████████████    304K ▁▁▁▁▁▁▁▁▁▁▁▁        0        0                 1     … bash
-1575054 hawky      run     6.2 ████████████    304K ▁▁▁▁▁▁▁▁▁▁▁▁        0        0                 1     … bash
-3953102 hawky      sleep   0.8 ▁▁▅▁▁▁▁▁▁▁▁▁    5.4G ████████████        0        0                43     … claude
-  92579 hawky      run     0.6 ▁▁▁▁▁▁▁▁▁▁▁▁    151M ▁▁▁▁▁▁▁▁▁▁▁▁        0        0                 8     … xfce4-termina
-   1329 hawky      sleep   0.3 ▁▁▁▁▁▁▁▁▁▁▁▁    818M ▁▁▁▁▁▁▁▁▁▁▁▁        —        —                21     … kwin_wayland
-1575052 hawky      run     0.3 ▁▁▁▁▁▁▁▁▁▁▁▁   65.3M ▁▁▁▁▁▁▁▁▁▁▁▁        0        0                 7     … procman
-1569248 hawky      sleep   0.2            ▁   14.7M            ▁        0        0                 1     … wineserver
-1569280 hawky      sleep   0.2     ▁▁▁▁▁▁▁▁   95.6M     ▁▁▁▁▁▁▁▁        0        0                12     … winedevice.ex
-1768210 hawky      sleep   0.2            ▁    1.4G            ▂        0        0                81     … plasmashell
-      1 root       sleep   0.0                 4.9M ▁▁▁▁▁▁▁▁▁▁▁▁        —        —                 1     … systemd
-      2 root       sleep   0.0                  n/a                     —        —                 1     … kthreadd
-      3 root       sleep   0.0                  n/a                     —        —                 1     … pool_workqueu
-      4 root       idle    0.0                  n/a                     —        —                 1     … kworker/R-rcu
-      5 root       idle    0.0                  n/a                     —        —                 1     … kworker/R-syn
-      6 root       idle    0.0                  n/a                     —        —                 1     … kworker/R-kvf
-      7 root       idle    0.0                  n/a                     —        —                 1     … kworker/R-slu
-      8 root       idle    0.0                  n/a                     —        —                 1     … kworker/R-net
-     13 root       idle    0.0                  n/a                     —        —                 1     … kworker/R-mm_
-     15 root       sleep   0.0                  n/a                     —        —                 1     … ksoftirqd/0
-     16 root       idle    0.0       ▁          n/a                     —        —                 1     … rcu_preempt
-     17 root       sleep   0.0                  n/a                     —        —                 1     … rcub/0
-     18 root       sleep   0.0                  n/a                     —        —                 1     … rcu_exp_par_g
-     19 root       sleep   0.0                  n/a                     —        —                 1     … rcu_exp_gp_kt
-     20 root       sleep   0.0                  n/a                     —        —                 1     … migration/0
-     21 root       sleep   0.0                  n/a                     —        —                 1     … kprobe-optimi
-     22 root       sleep   0.0                  n/a                     —        —                 1     … idle_inject/0
+      1 root       sleep   0.0                 4.1M ▁▁▁▁▁▁▁▁▁▁▁▁        —        —                 1     … + systemd
+    609 root       sleep   0.0                17.9M ▁▁▁▁▁▁▁▁▁▁▁▁        —        —                 1     …     systemd-j
+    627 root       sleep   0.0                 232K ▁▁▁▁▁▁▁▁▁▁▁▁        —        —                 1     …   + systemd-u
+ 553305 root       sleep   0.0                 240K ▁▁▁▁▁▁▁▁▁▁▁▁        —        —                 1     …       systemd
+ 555389 root       sleep   0.0                 240K ▁▁▁▁▁▁▁▁▁▁▁▁        —        —                 1     …       systemd
+ 556853 root       sleep   0.0                 240K ▁▁▁▁▁▁▁▁▁▁▁▁        —        —                 1     …       systemd
+    731 systemd-ti sleep   0.0                 8.6M ▁▁▁▁▁▁▁▁▁▁▁▁        —        —                 2     …     systemd-t
+    736 root       sleep   0.0                 4.2M ▁▁▁▁▁▁▁▁▁▁▁▁        —        —                 1     …     systemd-u
+    974 dbus       sleep   0.0                 1.4M ▁▁▁▁▁▁▁▁▁▁▁▁        —        —                 1     …   + dbus-brok
+    976 dbus       sleep   0.0                 2.7M ▁▁▁▁▁▁▁▁▁▁▁▁        —        —                 1     …       dbus-br
+    978 root       sleep   0.0                43.8M ▁▁▁▁▁▁▁▁▁▁▁▁        —        —                 4     …     NetworkMa
+    979 root       sleep   0.0                 432K ▁▁▁▁▁▁▁▁▁▁▁▁        —        —                 1     …     bluetooth
+    980 root       sleep   0.0                33.0M ▁▁▁▁▁▁▁▁▁▁▁▁        —        —                 4     …     boltd
+    981 root       sleep   0.0                36.7M ▁▁▁▁▁▁▁▁▁▁▁▁        —        —                17     …     cosmic-gr
+    983 root       sleep   0.0                 436K ▁▁▁▁▁▁▁▁▁▁▁▁        —        —                 1     …   + bash
+   1014 root       sleep   0.0                 436K ▁▁▁▁▁▁▁▁▁▁▁▁        —        —                 1     …     + bash
+   1088 root       sleep   0.0                 468K ▁▁▁▁▁▁▁▁▁▁▁▁        —        —                 1     …         inoti
+    986 root       sleep   0.0                 1.1M ▁▁▁▁▁▁▁▁▁▁▁▁        —        —                 1     …     systemd-l
+   1020 polkitd    sleep   0.0                44.6M ▁▁▁▁▁▁▁▁▁▁▁▁        —        —                 4     …     polkitd
+   1089 root       sleep   0.0                 1.6M ▁▁▁▁▁▁▁▁▁▁▁▁        —        —                 1     …     wpa_suppl
+   1090 root       sleep   0.0                 2.4M ▁▁▁▁▁▁▁▁▁▁▁▁        —        —                 1     …     cupsd
+   1095 root       sleep   0.0                 772K ▁▁▁▁▁▁▁▁▁▁▁▁        —        —                 1     …     crond
+   1098 colord     sleep   0.0                37.4M ▁▁▁▁▁▁▁▁▁▁▁▁        —        —                 4     …     colord
+   1109 root       sleep   0.0                 300K ▁▁▁▁▁▁▁▁▁▁▁▁        —        —                 1     …   + greetd
+   1234 root       sleep   0.0                 956K ▁▁▁▁▁▁▁▁▁▁▁▁        —        —                 1     …     + greetd
+   1288 hawky      sleep   0.0                14.1M ▁▁▁▁▁▁▁▁▁▁▁▁        0        0                 2     …         start
+   1110 root       sleep   0.0                33.5M ▁▁▁▁▁▁▁▁▁▁▁▁        —        —                 4     …     power-pro
 F5 tree  F6 sort  F9 kill  Enter details  / search  u user  h handles  C cpu%  q quit

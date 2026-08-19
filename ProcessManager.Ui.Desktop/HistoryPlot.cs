@@ -44,6 +44,15 @@ public sealed class HistoryPlot : OwnerDrawnControl {
   /// <summary>Drawn in the top-left corner, so a wall of plots is readable without a legend.</summary>
   public string Caption { get; set; } = string.Empty;
 
+  /// <summary>
+  /// Drops every series.
+  /// </summary>
+  /// <remarks>
+  /// For a plot whose subject changes — the performance page swaps one series for another as the
+  /// selection moves, rather than building a plot per resource.
+  /// </remarks>
+  public void ClearSeries() => this._series.Clear();
+
   public void AddSeries(HistoryRing<Rate> values, Color color, string label = "") {
     ArgumentNullException.ThrowIfNull(values);
     this._series.Add(new(values, color, label));
