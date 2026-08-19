@@ -11,4 +11,10 @@
     <ProjectReference Include="..\ProcessManager.Core\ProcessManager.Core.csproj" />
   </ItemGroup>
 
+  <!-- The parsers are internal and are tested directly against recorded text, the same way the
+       Windows project exposes its bulk-query walk (PRD 9.4). -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Hawkynt.ProcessManager.Tests" />
+  </ItemGroup>
+
 </Project>

@@ -172,11 +172,24 @@ jobs:
       # that survives a Windows runner queue, and it caught the missing owner resolution.
       - name: Install wine
         run: |
-          sudo apt-get update
+          # apt has stalled on an unresponsive mirror twice in this repository's short life, and a
+          # hung install burns the whole job's timeout without ever saying why. Each attempt is
+          # bounded and retried, so a bad mirror costs seconds rather than the build.
+          retry() {
+            for attempt in 1 2 3; do
+              if sudo timeout 180 "$@"; then
+                return 0
+              fi
+              echo "::warning::'$*' failed or stalled (attempt $attempt of 3); retrying"
+              sleep 5
+            done
+            return 1
+          }
+          retry apt-get update
           # `wine64` was folded into `wine` in Ubuntu 24.04, and --no-install-recommends leaves the
           # metapackage without the binary it is supposed to provide — which is how the first version
           # of this step ended at "wine: command not found" with a green install.
-          sudo apt-get install -y wine || sudo apt-get install -y wine-stable
+          retry apt-get install -y wine || retry apt-get install -y wine-stable
           wine --version
       - name: Publish win-x64
         run: >
@@ -215,8 +228,21 @@ jobs:
       # the smoke run drives itself in-process rather than through the X server.
       - name: Install GTK and a virtual display
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libgtk-3-0 xvfb
+          # apt has stalled on an unresponsive mirror twice in this repository's short life, and a
+          # hung install burns the whole job's timeout without ever saying why. Each attempt is
+          # bounded and retried, so a bad mirror costs seconds rather than the build.
+          retry() {
+            for attempt in 1 2 3; do
+              if sudo timeout 180 "$@"; then
+                return 0
+              fi
+              echo "::warning::'$*' failed or stalled (attempt $attempt of 3); retrying"
+              sleep 5
+            done
+            return 1
+          }
+          retry apt-get update
+          retry apt-get install -y --no-install-recommends libgtk-3-0 xvfb
       - name: Build
         run: dotnet build ProcessManager.slnx --configuration Release
       # PRD §9.6: bring the whole window up against a fixture probe and photograph it. A plot control
@@ -267,7 +293,22 @@ jobs:
           dotnet-version: '10.0.x'
       - name: Install NativeAOT prerequisites (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev
+        run: |
+          # apt has stalled on an unresponsive mirror twice in this repository's short life, and a
+          # hung install burns the whole job's timeout without ever saying why. Each attempt is
+          # bounded and retried, so a bad mirror costs seconds rather than the build.
+          retry() {
+            for attempt in 1 2 3; do
+              if sudo timeout 180 "$@"; then
+                return 0
+              fi
+              echo "::warning::'$*' failed or stalled (attempt $attempt of 3); retrying"
+              sleep 5
+            done
+            return 1
+          }
+          retry apt-get update
+          retry apt-get install -y clang zlib1g-dev
       # PRD §9.5. TreatWarningsAsErrors makes any trim/AOT (IL2xxx/IL3xxx) warning fail the build, so
       # the reflection-free rule of §2 can never silently regress — and it regresses the moment
       # anybody reaches for reflection to enumerate columns.

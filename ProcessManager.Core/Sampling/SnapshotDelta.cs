@@ -123,6 +123,7 @@ public sealed class SnapshotDelta {
     this.HasPrevious = previous is not null;
 
     if (previous is null) {
+      this.UpdateDevices(null, current, double.NaN);
       this.ElapsedNanoseconds = double.NaN;
       this.SystemCpuPercent = Rate.NotSampledYet;
       this.PerCoreCount = 0;
@@ -193,6 +194,7 @@ public sealed class SnapshotDelta {
     foreach (var (key, _) in this._previousIndex)
       this._exited.Add(key);
 
+    this.UpdateDevices(previous, current, elapsed);
     this.SystemCpuPercent = RateCalculator.BusyPercent(previous.System.Cpu, current.System.Cpu);
 
     var coreCount = Math.Min(previous.PerCoreCount, current.PerCoreCount);
@@ -203,6 +205,117 @@ public sealed class SnapshotDelta {
     for (var i = 0; i < coreCount; ++i)
       this._perCoreBusy[i] = RateCalculator.BusyPercent(previousCores[i], currentCores[i]);
   }
+
+  #region devices
+
+  private readonly Dictionary<string, DiskCounters> _previousDisks = new(StringComparer.Ordinal);
+  private readonly Dictionary<string, NetworkCounters> _previousNetworks = new(StringComparer.Ordinal);
+  private readonly Dictionary<string, DiskRates> _diskRates = new(StringComparer.Ordinal);
+  private readonly Dictionary<string, NetworkRates> _networkRates = new(StringComparer.Ordinal);
+
+  /// <param name="BusyPercent">
+  /// Share of the interval the device had at least one request in flight — what Task Manager calls
+  /// active time. Saturates at 100 and says nothing about queue depth.
+  /// </param>
+  public readonly record struct DiskRates(
+    Rate ReadBytesPerSecond,
+    Rate WriteBytesPerSecond,
+    Rate ReadOperationsPerSecond,
+    Rate WriteOperationsPerSecond,
+    Rate BusyPercent
+  );
+
+  public readonly record struct NetworkRates(
+    Rate ReceivedBytesPerSecond,
+    Rate SentBytesPerSecond,
+    Rate ReceivedPacketsPerSecond,
+    Rate SentPacketsPerSecond
+  );
+
+  // Not default(DiskRates): a default Rate carries UnknownReason.None, which means "the value is
+  // present and it is zero". A device plugged in a moment ago would report a confident zero for
+  // every rate it has (PRD §72.3).
+  private static readonly DiskRates _NoDiskRates = new(
+    Rate.NotSampledYet, Rate.NotSampledYet, Rate.NotSampledYet, Rate.NotSampledYet, Rate.NotSampledYet
+  );
+
+  private static readonly NetworkRates _NoNetworkRates = new(
+    Rate.NotSampledYet, Rate.NotSampledYet, Rate.NotSampledYet, Rate.NotSampledYet
+  );
+
+  /// <summary>Rates for one disk, by name. Unknown for a device that has only just appeared.</summary>
+  public DiskRates DiskRatesOf(string name)
+    => this._diskRates.TryGetValue(name, out var rates) ? rates : _NoDiskRates;
+
+  public NetworkRates NetworkRatesOf(string name)
+    => this._networkRates.TryGetValue(name, out var rates) ? rates : _NoNetworkRates;
+
+  /// <summary>
+  /// Matches devices between the two snapshots by name.
+  /// </summary>
+  /// <remarks>
+  /// By name rather than by position: a USB disk appearing or an interface going away renumbers
+  /// everything after it, and matching by index would attribute one device's traffic to another —
+  /// the same reason processes are matched by identity rather than by their place in the array.
+  /// </remarks>
+  private void UpdateDevices(SystemSnapshot? previous, SystemSnapshot current, double elapsed) {
+    this._diskRates.Clear();
+    this._networkRates.Clear();
+
+    this._previousDisks.Clear();
+    if (previous is not null)
+      foreach (var disk in previous.Disks)
+        this._previousDisks[disk.Name] = disk;
+
+    foreach (var disk in current.Disks) {
+      if (!this._previousDisks.TryGetValue(disk.Name, out var before))
+        continue;
+
+      this._diskRates[disk.Name] = new(
+        RateCalculator.PerSecond(before.ReadBytes, disk.ReadBytes, elapsed),
+        RateCalculator.PerSecond(before.WriteBytes, disk.WriteBytes, elapsed),
+        RateCalculator.PerSecond(before.ReadOperations, disk.ReadOperations, elapsed),
+        RateCalculator.PerSecond(before.WriteOperations, disk.WriteOperations, elapsed),
+        BusyPercent(before.BusyMilliseconds, disk.BusyMilliseconds, elapsed)
+      );
+    }
+
+    this._previousNetworks.Clear();
+    if (previous is not null)
+      foreach (var network in previous.Networks)
+        this._previousNetworks[network.Name] = network;
+
+    foreach (var network in current.Networks) {
+      if (!this._previousNetworks.TryGetValue(network.Name, out var before))
+        continue;
+
+      this._networkRates[network.Name] = new(
+        RateCalculator.PerSecond(before.ReceivedBytes, network.ReceivedBytes, elapsed),
+        RateCalculator.PerSecond(before.SentBytes, network.SentBytes, elapsed),
+        RateCalculator.PerSecond(before.ReceivedPackets, network.ReceivedPackets, elapsed),
+        RateCalculator.PerSecond(before.SentPackets, network.SentPackets, elapsed)
+      );
+    }
+  }
+
+  /// <summary>
+  /// Busy milliseconds against wall-clock nanoseconds, as a percentage.
+  /// </summary>
+  /// <remarks>
+  /// Clamped at 100 unlike the CPU figure, and for a different reason: a device cannot be busy for
+  /// more than the interval, so anything above it is the counter and the clock disagreeing by a
+  /// millisecond or two rather than something worth seeing.
+  /// </remarks>
+  private static Rate BusyPercent(Counter before, Counter now, double elapsedNanoseconds) {
+    var perSecond = RateCalculator.PerSecond(before, now, elapsedNanoseconds);
+    if (!perSecond.HasValue)
+      return perSecond;
+
+    // The counter is in milliseconds, so a device busy the whole time gains 1000 of them a second.
+    return Rate.Of(Math.Min(100, perSecond.Value / 10));
+  }
+
+  #endregion
 
   private static void EnsureLength<T>(ref T[] array, int length) {
     if (array.Length < length)

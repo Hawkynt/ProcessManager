@@ -30,19 +30,114 @@ public static class PerformanceReport {
   /// May be <see langword="null"/> before a second sample, in which case the rates say so rather
   /// than reading zero.
   /// </param>
+  /// <param name="describeDisk">
+  /// What a disk is, by name. Optional: without it the devices still appear with their rates, just
+  /// without a model or a capacity.
+  /// </param>
   public static IReadOnlyList<PerformanceSection> Build(
     HostInfo host,
     SystemSnapshot snapshot,
-    SnapshotDelta? delta = null
+    SnapshotDelta? delta = null,
+    Func<string, DiskInfo>? describeDisk = null,
+    Func<string, NetworkInterfaceInfo>? describeInterface = null
   ) {
     ArgumentNullException.ThrowIfNull(host);
     ArgumentNullException.ThrowIfNull(snapshot);
 
-    return [
+    var sections = new List<PerformanceSection> {
       new("System", BuildSystem(host, snapshot)),
       new("Processor", BuildProcessor(host, snapshot, delta)),
       new("Memory", BuildMemory(host, snapshot)),
-    ];
+    };
+
+    // One section per device, so a machine with three disks gets three headings rather than one
+    // heading with everything in it — which is the rail §45 asks for, in the shape a page can hold.
+    foreach (var disk in snapshot.Disks)
+      sections.Add(new($"Disk — {disk.Name}", BuildDisk(in disk, delta, describeDisk)));
+
+    foreach (var network in snapshot.Networks) {
+      var info = describeInterface?.Invoke(network.Name);
+      // Loopback carries real traffic and is not the network; listing it beside the adapters
+      // reports a machine talking to itself as bandwidth.
+      if (info is { IsLoopback: true })
+        continue;
+
+      sections.Add(new($"Network — {network.Name}", BuildNetwork(in network, delta, info)));
+    }
+
+    return sections;
+  }
+
+  private static PerformanceRow[] BuildDisk(
+    in DiskCounters disk,
+    SnapshotDelta? delta,
+    Func<string, DiskInfo>? describe
+  ) {
+    var info = describe?.Invoke(disk.Name);
+    var rates = delta?.DiskRatesOf(disk.Name);
+
+    var rows = new List<PerformanceRow>();
+    if (info?.Model is { Length: > 0 } model)
+      rows.Add(new("Model", model));
+
+    if (info is not null) {
+      rows.Add(new("Capacity", Humanize.Bytes(info.CapacityBytes)));
+      rows.Add(new("Media", info.Rotational switch {
+        true => "rotational",
+        false => "solid state",
+        // The kernel not saying is not the same as "no", and a machine that reports neither should
+        // not be described as a hard disk by default.
+        null => Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform),
+      }));
+    }
+
+    rows.Add(new("Active time", rates is { } active ? Percent(active.BusyPercent) : Pending));
+    rows.Add(new("Read rate", rates is { } read ? Humanize.BytesPerSecond(read.ReadBytesPerSecond) : Pending));
+    rows.Add(new("Write rate", rates is { } write ? Humanize.BytesPerSecond(write.WriteBytesPerSecond) : Pending));
+    rows.Add(new("Read IOPS", rates is { } readOps ? Humanize.Rate(readOps.ReadOperationsPerSecond) : Pending));
+    rows.Add(new("Write IOPS", rates is { } writeOps ? Humanize.Rate(writeOps.WriteOperationsPerSecond) : Pending));
+    rows.Add(new("Total read", Humanize.Bytes(disk.ReadBytes)));
+    rows.Add(new("Total written", Humanize.Bytes(disk.WriteBytes)));
+    return [.. rows];
+  }
+
+  private static PerformanceRow[] BuildNetwork(
+    in NetworkCounters network,
+    SnapshotDelta? delta,
+    NetworkInterfaceInfo? info
+  ) {
+    var rates = delta?.NetworkRatesOf(network.Name);
+    var rows = new List<PerformanceRow>();
+
+    if (info is not null) {
+      rows.Add(new("State", info.State ?? Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform)));
+      rows.Add(new("Link speed", Bits(info.LinkSpeedBitsPerSecond)));
+      rows.Add(new("MAC address", info.MacAddress ?? Humanize.Placeholder(UnknownReason.NotPermitted)));
+      rows.Add(new("MTU", Humanize.Count(info.MaximumTransmissionUnit)));
+    }
+
+    rows.Add(new("Receive rate", rates is { } received ? Humanize.BytesPerSecond(received.ReceivedBytesPerSecond) : Pending));
+    rows.Add(new("Send rate", rates is { } sent ? Humanize.BytesPerSecond(sent.SentBytesPerSecond) : Pending));
+    rows.Add(new("Received", Humanize.Bytes(network.ReceivedBytes)));
+    rows.Add(new("Sent", Humanize.Bytes(network.SentBytes)));
+
+    // Errors and drops are two different failures, and both are almost always zero — which is why
+    // they are worth a row: a non-zero one is the whole reason somebody opened this page.
+    rows.Add(new("Errors", $"{Humanize.Count(network.ReceiveErrors)} in, {Humanize.Count(network.SendErrors)} out"));
+    rows.Add(new("Dropped", $"{Humanize.Count(network.ReceiveDropped)} in, {Humanize.Count(network.SendDropped)} out"));
+    return [.. rows];
+  }
+
+  private static string Pending => Humanize.Placeholder(UnknownReason.NotSampledYet);
+
+  private static string Bits(Counter counter) {
+    if (!counter.HasValue)
+      return Humanize.Placeholder(counter.Reason);
+
+    var bits = (double)counter.Value;
+    return bits >= 1_000_000_000
+      ? (bits / 1_000_000_000).ToString("0.#", CultureInfo.InvariantCulture) + " Gb/s"
+      : (bits / 1_000_000).ToString("0", CultureInfo.InvariantCulture) + " Mb/s";
   }
 
   private static PerformanceRow[] BuildSystem(HostInfo host, SystemSnapshot snapshot) {

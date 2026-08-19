@@ -75,6 +75,35 @@ public sealed class SystemSnapshot {
     return this._processes.AsSpan(0, count);
   }
 
+  private DiskCounters[] _disks = [];
+  private NetworkCounters[] _networks = [];
+
+  /// <summary>Storage devices, whole ones rather than partitions (PRD §48).</summary>
+  public ReadOnlySpan<DiskCounters> Disks => this._disks.AsSpan(0, this.DiskCount);
+
+  public int DiskCount { get; private set; }
+
+  /// <summary>Network interfaces (PRD §49).</summary>
+  public ReadOnlySpan<NetworkCounters> Networks => this._networks.AsSpan(0, this.NetworkCount);
+
+  public int NetworkCount { get; private set; }
+
+  internal Span<DiskCounters> PrepareDisks(int count) {
+    if (this._disks.Length < count)
+      Array.Resize(ref this._disks, Math.Max(count, Math.Max(8, this._disks.Length * 2)));
+
+    this.DiskCount = count;
+    return this._disks.AsSpan(0, count);
+  }
+
+  internal Span<NetworkCounters> PrepareNetworks(int count) {
+    if (this._networks.Length < count)
+      Array.Resize(ref this._networks, Math.Max(count, Math.Max(8, this._networks.Length * 2)));
+
+    this.NetworkCount = count;
+    return this._networks.AsSpan(0, count);
+  }
+
   internal Span<CpuTimes> PrepareCores(int count) {
     if (this._perCore.Length < count)
       Array.Resize(ref this._perCore, Math.Max(count, this._perCore.Length * 2));

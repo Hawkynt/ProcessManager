@@ -25,7 +25,15 @@ internal static class HostReport {
     sampler.Sample();
 
     var first = true;
-    foreach (var section in PerformanceReport.Build(host, sampler.Current, sampler.Delta)) {
+    var sections = PerformanceReport.Build(
+      host,
+      sampler.Current,
+      sampler.Delta,
+      probe.DescribeDisk,
+      probe.DescribeInterface
+    );
+
+    foreach (var section in sections) {
       if (!first)
         Console.WriteLine();
 

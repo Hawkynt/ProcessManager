@@ -31,8 +31,8 @@ shorthand:
 it is not known*. An unticked box must never become a zero on screen. This is restated here because
 it is the single requirement most likely to be broken while filling the tables in.
 
-**Counting, as of the last update:** **452 of 1252 boxes are ticked** — 62 of 189 in the field
-registry (§14–22), 390 of 1063 across the capabilities. A further 119 are marked 🟡, meaning some of
+**Counting, as of the last update:** **455 of 1252 boxes are ticked** — 62 of 189 in the field
+registry (§14–22), 393 of 1063 across the capabilities. A further 125 are marked 🟡, meaning some of
 the work behind them is already done. §100 tracks the phases; §101 defines when this may be called
 finished.
 
@@ -1366,7 +1366,8 @@ Actions:
 
 A system overview exists with per-core meters and totals, and a performance view behind it.
 
-- [ ] Vertical resource selector — one page for the whole machine so far, not a rail of devices
+- [ ] 🟡 Vertical resource selector — the devices each get their own section on the page; a rail
+      that switches between them, showing one at a time, is still to come
 - [ ] 🟡 Large detailed graph — the CPU and memory histories are enlarged on the page; a single
       selected-resource graph needs the rail above
 - [x] Summary cards with compact sparklines and current values — the plots along the top of the
@@ -1376,8 +1377,8 @@ Resources:
 
 - [x] CPU (§46)
 - [x] Memory (§47)
-- [ ] Each disk (§48)
-- [ ] Each network adapter (§49)
+- [x] Each disk (§48) — one section per device
+- [x] Each network adapter (§49) — one section per interface
 - [ ] Each GPU (§50)
 - [ ] Battery
 - [ ] Optional sensors and devices
@@ -1479,13 +1480,20 @@ Graphs:
 
 For each physical disk or device:
 
-- [ ] Friendly name · model · serial where permitted · media type · SSD/HDD/NVMe · bus/interface ·
+- [ ] 🟡 Friendly name ✔ · model ✔ · media type ✔ (rotational or solid state, and *unknown* when
+      the kernel does not say) · capacity ✔ · serial, bus/interface, volumes and the system-disk and
+      page-file indicators are not read ·
       capacity · formatted capacity · mounted volumes · system-disk indicator · page/swap indicator
-- [ ] Active time · read rate · write rate · read IOPS · write IOPS · average response time ·
+- [ ] 🟡 Active time ✔ · read rate ✔ · write rate ✔ · read IOPS ✔ · write IOPS ✔ · cumulative reads
+      and writes ✔ · average response time, queue length and per-direction latency are not ·
       queue length · read latency · write latency · cumulative reads · cumulative writes
 
-Sources: `/proc/diskstats`, `/sys/block/*/queue/rotational`, `/sys/block/*/device/model`;
-`IOCTL_STORAGE_QUERY_PROPERTY` and the disk performance counters on Windows.
+Sources: `/proc/diskstats` — one file for the whole machine, which is what makes this affordable on
+the sampling path where the per-process figures of §18 are not. Whole devices only: a partition is
+charged the same I/O as the disk holding it, so counting both reports twice the traffic. `/sys/block`
+decides which is which, because the name cannot — `nvme0n1` ends in a digit and is a whole disk.
+
+Windows needs `IOCTL_STORAGE_QUERY_PROPERTY` and the disk performance counters, and has neither.
 
 - [ ] Optional hardware-health plugin: temperature · wear · SMART/NVMe health · remaining life
 - [ ] Hardware health is **separately permissioned**, because platform coverage varies too much for
@@ -1493,10 +1501,11 @@ Sources: `/proc/diskstats`, `/sys/block/*/queue/rotational`, `/sys/block/*/devic
 
 # 49. Network adapter performance
 
-- [ ] Name · description · type · interface index · state
-- [ ] Link speed · negotiated speed · utilisation
-- [ ] Send rate · receive rate · packets/sec · errors · drops
-- [ ] MTU · MAC address · IPv4 addresses · IPv6 addresses · gateway
+- [ ] 🟡 Name ✔ · state ✔ · description, type and interface index are not
+- [ ] 🟡 Link speed ✔ where the kernel reports one — absent on Wi-Fi and on anything virtual, and
+      reported as unknown rather than as a dead link. Utilisation needs the link speed, so it is not
+- [x] Send rate · receive rate · errors · drops — packets are counted and their rate is computed
+- [ ] 🟡 MTU ✔ · MAC address ✔ · the addresses and the gateway are not
 - [ ] DNS servers where readable
 - [ ] Wi-Fi SSID and signal strength where permitted
 - [ ] Graph modes: total · send vs receive
