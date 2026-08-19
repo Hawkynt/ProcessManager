@@ -13,34 +13,58 @@ namespace Hawkynt.ProcessManager.Ui.Desktop;
 /// </remarks>
 public sealed class ColumnChooser : Form {
 
+  private const int _Margin = 12;
+  private const int _ButtonHeight = 28;
+
   private readonly CheckedListBox _list = new();
   private readonly List<ProcessField> _order = [];
+  private readonly Button _ok = new() { Text = "OK" };
+  private readonly Button _cancel = new() { Text = "Cancel" };
 
   public ColumnChooser(IReadOnlyCollection<ProcessField> visible) {
     ArgumentNullException.ThrowIfNull(visible);
 
     this.Text = "Select columns";
-    this.Bounds = new(0, 0, 380, 460);
+    // A secondary window closing must not take the program with it. Form.QuitsOnClose defaults to
+    // true because the first window shown owns the message loop; every window that is not that one
+    // has to say so.
+    this.QuitsOnClose = false;
+    this.Bounds = new(0, 0, 380, 560);
 
-    this._list.Bounds = new(12, 12, 344, 372);
     foreach (var info in ColumnSet.All) {
       this._order.Add(info.Id);
       this._list.Items.Add(info.Header);
       this._list.SetItemChecked(this._list.Items.Count - 1, visible.Contains(info.Id));
     }
 
-    var ok = new Button { Text = "OK", Bounds = new(180, 394, 80, 28) };
-    var cancel = new Button { Text = "Cancel", Bounds = new(270, 394, 80, 28) };
-    ok.Click += (_, _) => {
+    this._ok.Click += (_, _) => {
       this.Accepted = true;
       this.Close();
     };
 
-    cancel.Click += (_, _) => this.Close();
+    this._cancel.Click += (_, _) => this.Close();
 
     this.Controls.Add(this._list);
-    this.Controls.Add(ok);
-    this.Controls.Add(cancel);
+    this.Controls.Add(this._ok);
+    this.Controls.Add(this._cancel);
+
+    // The dialog is resizable, so the list has to be told to follow. Without this it stayed at the
+    // size it was built at while the window grew around it, which made resizing look broken and left
+    // the list showing a fraction of the columns it holds.
+    this.Resize += (_, _) => this.ApplyLayout();
+    this.ApplyLayout();
+  }
+
+  /// <summary>
+  /// The list fills the dialog above the buttons, which sit at the bottom right.
+  /// </summary>
+  public void ApplyLayout() {
+    var width = Math.Max(200, this.Width - (2 * _Margin));
+    var buttonTop = Math.Max(_Margin + 40, this.Height - _Margin - _ButtonHeight);
+
+    this._list.Bounds = new(_Margin, _Margin, width, buttonTop - _Margin - 10);
+    this._cancel.Bounds = new(this.Width - _Margin - 80, buttonTop, 80, _ButtonHeight);
+    this._ok.Bounds = new(this._cancel.Bounds.X - 90, buttonTop, 80, _ButtonHeight);
   }
 
   /// <summary>True when the dialog was closed with OK.</summary>
