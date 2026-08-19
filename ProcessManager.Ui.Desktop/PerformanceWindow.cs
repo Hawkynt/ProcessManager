@@ -52,6 +52,10 @@ public sealed class PerformanceWindow : Form {
     this._sampler = sampler;
 
     this.Text = "System information";
+    // A secondary window closing must not take the program with it. Form.QuitsOnClose defaults to
+    // true because the first window shown owns the message loop; every window that is not that one
+    // has to say so.
+    this.QuitsOnClose = false;
     this.Bounds = new(0, 0, 940, 700);
 
     this._rail.Bounds = new(10, 10, _RailWidth, 650);

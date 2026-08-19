@@ -6,6 +6,7 @@ using Hawkynt.ProcessManager.Abstractions;
 using Hawkynt.ProcessManager.Model;
 using Hawkynt.ProcessManager.Query;
 using Hawkynt.ProcessManager.Sampling;
+using Hawkynt.ProcessManager.Settings;
 
 namespace Hawkynt.ProcessManager.Ui.Desktop;
 
@@ -36,6 +37,8 @@ public sealed class MainWindow : Form {
   private bool _splitPlaced;
   private ITheme _theme = DefaultTheme.Instance;
   private int _laidOutWidth = -1;
+  private UserSettings _settings = new();
+  private SettingsAutoSaver? _autoSaver;
 
   public MainWindow(Sampler sampler, ISystemProbe probe, IProcessActions? actions) {
     ArgumentNullException.ThrowIfNull(sampler);
@@ -63,6 +66,73 @@ public sealed class MainWindow : Form {
     this._timer.Interval = 1000;
     this._timer.Tick += (_, _) => this.Refresh();
   }
+
+  #region what survives a restart (PRD §11)
+
+  /// <summary>
+  /// Opens the window the way it was left, and keeps it that way.
+  /// </summary>
+  /// <remarks>
+  /// Called before <see cref="Start"/>. Everything the file did not say is left at the default, so a
+  /// fresh install and a settings file with one line in it both work.
+  /// <para>
+  /// The saver is handed a description of the window rather than a copy of it, so what gets written
+  /// is what is on screen at the moment of the write — not what was on screen when something last
+  /// changed.
+  /// </para>
+  /// </remarks>
+  public void ApplySettings(UserSettings settings, Func<UserSettings, bool>? save = null) {
+    ArgumentNullException.ThrowIfNull(settings);
+
+    this._settings = settings;
+    RowPalette.Apply(settings.Colours);
+
+    this._view.SortColumn = settings.SortField;
+    this._view.SortDescending = settings.SortDescending;
+    this._view.TreeMode = settings.TreeMode;
+    this._sampler.CpuPercentMode = settings.CpuMode;
+    this.Interval = (int)Math.Round(settings.IntervalSeconds * 1000);
+
+    if (settings.DesktopColumns.Length > 0) {
+      this._columns.Clear();
+      this._columns.AddRange(settings.DesktopColumns);
+    }
+
+    if (settings.WindowWidth > 0 && settings.WindowHeight > 0)
+      this.Bounds = new(this.Bounds.X, this.Bounds.Y, settings.WindowWidth, settings.WindowHeight);
+
+    this.RebuildColumns();
+
+    this._autoSaver = new(this.DescribeSettings, save);
+    this._autoSaver.Prime(settings);
+  }
+
+  /// <summary>
+  /// The settings as the window currently stands, over whatever the file already held.
+  /// </summary>
+  /// <remarks>
+  /// Everything unrecognised is carried through untouched — including column sets somebody wrote by
+  /// hand and keys a newer build wrote. A program that rewrites a settings file every second is the
+  /// worst possible one to be careless about what it drops.
+  /// </remarks>
+  public UserSettings DescribeSettings() {
+    var updated = this._settings with {
+      IntervalSeconds = this.Interval / 1000d,
+      SortField = this._view.SortColumn,
+      SortDescending = this._view.SortDescending,
+      TreeMode = this._view.TreeMode,
+      CpuMode = this._sampler.CpuPercentMode,
+      DesktopColumns = [.. this._columns],
+      WindowWidth = this.Width,
+      WindowHeight = this.Height,
+    };
+
+    return this._split.Height > 0
+      ? updated with { SplitPercent = Math.Clamp(this._split.SplitterDistance * 100 / this._split.Height, 10, 90) }
+      : updated;
+  }
+
+  #endregion
 
 
   /// <summary>
@@ -150,9 +220,12 @@ public sealed class MainWindow : Form {
 
     // Clicking a total is how somebody asks for the detail behind it, so all three plots open the
     // performance view. The menu item stays, for people who would rather not find that by accident.
-    this._cpuPlot.Click += (_, _) => this.ShowPerformance();
-    this._memoryPlot.Click += (_, _) => this.ShowPerformance();
-    this._cores.Click += (_, _) => this.ShowPerformance();
+    //
+    // MouseUp rather than Click: the toolkit raises Click only from PerformClick, so nothing a mouse
+    // does ever reaches it. Wiring Click here compiled, read correctly, and did nothing at all.
+    this._cpuPlot.MouseUp += (_, _) => this.ShowPerformance();
+    this._memoryPlot.MouseUp += (_, _) => this.ShowPerformance();
+    this._cores.MouseUp += (_, _) => this.ShowPerformance();
 
     this._plots.Controls.Add(this._cpuPlot);
     this._plots.Controls.Add(this._memoryPlot);
@@ -228,7 +301,7 @@ public sealed class MainWindow : Form {
     this._tree.ColumnClick += this.OnColumnClick;
     this._tree.AfterSelect += (_, _) => this.UpdateDetails();
     // Double-click is how every tool of this kind opens a process, and the gesture people try first.
-    this._tree.DoubleClick += (_, _) => this.ShowProperties();
+    this._tree.MouseDoubleClick += (_, _) => this.ShowProperties();
     this._tree.ContextMenuStrip = this.BuildContextMenu();
   }
 
@@ -486,6 +559,9 @@ public sealed class MainWindow : Form {
 
   private new void Refresh() {
     this.ApplyLayout();
+    // Once a tick rather than once a change: a window being dragged would otherwise be a write per
+    // frame, and the saver writes nothing when nothing actually differs.
+    this._autoSaver?.Flush();
     this._sampler.Sample();
     var snapshot = this._sampler.Current;
     var delta = this._sampler.Delta;
@@ -526,7 +602,8 @@ public sealed class MainWindow : Form {
       return;
 
     this._splitPlaced = true;
-    this._split.SplitterDistance = this._split.Height * 55 / 100;
+    var percent = this._settings.SplitPercent > 0 ? this._settings.SplitPercent : 55;
+    this._split.SplitterDistance = this._split.Height * percent / 100;
   }
 
   private static Rate MemoryPercent(in SystemCounters system) {

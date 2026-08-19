@@ -23,8 +23,45 @@ namespace Hawkynt.ProcessManager.Ui.Desktop;
 /// </remarks>
 public static class RowPalette {
 
+  /// <summary>
+  /// The colours the settings file overrides, by the names <see cref="Settings.UserSettings.ColourNames"/>
+  /// lists. Empty until <see cref="Apply"/> is called, which is what makes the built-ins the
+  /// defaults rather than the only option.
+  /// </summary>
+  private static IReadOnlyDictionary<string, uint> _overrides =
+    new Dictionary<string, uint>(StringComparer.OrdinalIgnoreCase);
+
+  /// <summary>Takes the palette from a settings file. Names it does not know are ignored.</summary>
+  public static void Apply(IReadOnlyDictionary<string, uint> colours) {
+    ArgumentNullException.ThrowIfNull(colours);
+    _overrides = colours;
+  }
+
+  /// <summary>An override by name, or the built-in when the file is silent about it.</summary>
+  private static Color Pick(string name, Color builtIn)
+    => _overrides.TryGetValue(name, out var argb) ? Color.FromArgb(unchecked((int)argb)) : builtIn;
+
+  private static Color? Pick(string name, Color? builtIn)
+    => _overrides.TryGetValue(name, out var argb) ? Color.FromArgb(unchecked((int)argb)) : builtIn;
+
+  /// <summary>The name a category's colour goes by in the settings file.</summary>
+  public static string NameOf(ProcessCategory category) => category switch {
+    ProcessCategory.New => "new",
+    ProcessCategory.Exited => "exited",
+    ProcessCategory.Zombie => "zombie",
+    ProcessCategory.Suspended => "suspended",
+    ProcessCategory.System => "system",
+    ProcessCategory.Elevated => "elevated",
+    ProcessCategory.Service => "service",
+    ProcessCategory.Own => "own",
+    _ => string.Empty,
+  };
+
   /// <summary>The row background for a category, or null to leave the theme's alone.</summary>
-  public static Color? BackColorOf(ProcessCategory category, ITheme theme) {
+  public static Color? BackColorOf(ProcessCategory category, ITheme theme)
+    => Pick(NameOf(category), BuiltInBackColorOf(category, theme));
+
+  private static Color? BuiltInBackColorOf(ProcessCategory category, ITheme theme) {
     var dark = IsDark(theme.FieldBackground);
     return category switch {
       ProcessCategory.New => dark ? Color.FromArgb(0xFF, 0x1E, 0x3E, 0x24) : Color.FromArgb(0xFF, 0xD6, 0xF5, 0xD6),
@@ -42,18 +79,18 @@ public static class RowPalette {
   }
 
   /// <summary>The colour of the plot series and meters, so the whole window agrees with itself.</summary>
-  public static Color Cpu => Color.FromArgb(0xFF, 0x28, 0xC8, 0x28);
+  public static Color Cpu => Pick("cpu", Color.FromArgb(0xFF, 0x28, 0xC8, 0x28));
 
-  public static Color CpuKernel => Color.FromArgb(0xFF, 0xD0, 0x30, 0x30);
+  public static Color CpuKernel => Pick("cpu.kernel", Color.FromArgb(0xFF, 0xD0, 0x30, 0x30));
 
-  public static Color Memory => Color.FromArgb(0xFF, 0x28, 0xB4, 0xB4);
+  public static Color Memory => Pick("memory", Color.FromArgb(0xFF, 0x28, 0xB4, 0xB4));
 
-  public static Color Io => Color.FromArgb(0xFF, 0xE0, 0xC0, 0x30);
+  public static Color Io => Pick("io", Color.FromArgb(0xFF, 0xE0, 0xC0, 0x30));
 
   /// <summary>The plot background and grid: black with a green graticule, as the reference tools use.</summary>
-  public static Color PlotBackground => Color.FromArgb(0xFF, 0x0A, 0x0A, 0x0A);
+  public static Color PlotBackground => Pick("plot.background", Color.FromArgb(0xFF, 0x0A, 0x0A, 0x0A));
 
-  public static Color PlotGrid => Color.FromArgb(0xFF, 0x14, 0x3C, 0x14);
+  public static Color PlotGrid => Pick("plot.grid", Color.FromArgb(0xFF, 0x14, 0x3C, 0x14));
 
   /// <summary>
   /// Whether a background is dark enough to need the dark palette. Perceptual weights, because a

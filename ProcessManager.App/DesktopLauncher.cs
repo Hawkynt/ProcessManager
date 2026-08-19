@@ -1,5 +1,6 @@
 using Hawkynt.ProcessManager.Abstractions;
 using Hawkynt.ProcessManager.Sampling;
+using Hawkynt.ProcessManager.Settings;
 
 namespace Hawkynt.ProcessManager.App;
 
@@ -19,7 +20,9 @@ internal static class DesktopLauncher {
     IProcessActions? actions,
     string? shootPath,
     double holdSeconds = 0,
-    bool flat = false
-  ) => Ui.Desktop.DesktopApp.Run(sampler, probe, actions, shootPath, holdSeconds, flat);
+    bool flat = false,
+    UserSettings? settings = null,
+    string? settingsPath = null
+  ) => Ui.Desktop.DesktopApp.Run(sampler, probe, actions, shootPath, holdSeconds, flat, settings, settingsPath);
 
 }

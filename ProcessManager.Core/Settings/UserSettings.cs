@@ -44,6 +44,31 @@ public sealed record UserSettings {
   /// <summary>The columns the terminal opens with.</summary>
   public ProcessField[] TerminalColumns { get; init; } = [];
 
+  /// <summary>
+  /// The window's size, so it opens where it was left (PRD §11).
+  /// </summary>
+  /// <remarks>
+  /// Size and not position: a window restored to a screen that is no longer plugged in opens
+  /// off-screen, and there is no way to ask this program's toolkit where the monitors are.
+  /// </remarks>
+  public int WindowWidth { get; init; }
+
+  public int WindowHeight { get; init; }
+
+  /// <summary>Where the splitter between the process list and the detail pane sat, in percent.</summary>
+  public int SplitPercent { get; init; }
+
+  /// <summary>
+  /// Colours the file overrides, by the names <see cref="ColourNames"/> lists.
+  /// </summary>
+  /// <remarks>
+  /// A sparse map rather than a full palette: a file that names one colour must keep following the
+  /// program for the other twelve, and a palette written out whole in version four would pin every
+  /// colour of it forever.
+  /// </remarks>
+  public IReadOnlyDictionary<string, uint> Colours { get; init; }
+    = new Dictionary<string, uint>(StringComparer.OrdinalIgnoreCase);
+
   /// <summary>Named column sets, as PRD §11 requires and §94 names.</summary>
   public IReadOnlyDictionary<string, ProcessField[]> ColumnSets { get; init; }
     = new Dictionary<string, ProcessField[]>(StringComparer.OrdinalIgnoreCase);
@@ -120,6 +145,7 @@ public sealed record UserSettings {
   #region reading and writing
 
   private const string _ColumnSetPrefix = "columnset.";
+  private const string _ColourPrefix = "color.";
 
   /// <summary>
   /// Parses a settings file. A line that cannot be understood is kept verbatim and never thrown
@@ -131,6 +157,7 @@ public sealed record UserSettings {
 
     var settings = new UserSettings();
     var sets = new Dictionary<string, ProcessField[]>(StringComparer.OrdinalIgnoreCase);
+    var colours = new Dictionary<string, uint>(StringComparer.OrdinalIgnoreCase);
     var unknown = new List<string>();
 
     foreach (var raw in text.Split('\n')) {
@@ -146,6 +173,16 @@ public sealed record UserSettings {
 
       var key = line[..separator].Trim();
       var value = line[(separator + 1)..].Trim();
+
+      if (key.StartsWith(_ColourPrefix, StringComparison.OrdinalIgnoreCase)) {
+        var name = key[_ColourPrefix.Length..];
+        if (name.Length > 0 && TryParseColour(value, out var argb))
+          colours[name] = argb;
+        else
+          unknown.Add(line);
+
+        continue;
+      }
 
       if (key.StartsWith(_ColumnSetPrefix, StringComparison.OrdinalIgnoreCase)) {
         var name = key[_ColumnSetPrefix.Length..];
@@ -210,13 +247,31 @@ public sealed record UserSettings {
 
           break;
 
+        case "window.width":
+          if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var width) && width is >= 320 and <= 30000)
+            settings = settings with { WindowWidth = width };
+
+          break;
+
+        case "window.height":
+          if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var height) && height is >= 240 and <= 30000)
+            settings = settings with { WindowHeight = height };
+
+          break;
+
+        case "window.split":
+          if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var split) && split is >= 10 and <= 90)
+            settings = settings with { SplitPercent = split };
+
+          break;
+
         default:
           unknown.Add(line);
           break;
       }
     }
 
-    return settings with { ColumnSets = sets, Unknown = unknown };
+    return settings with { ColumnSets = sets, Colours = colours, Unknown = unknown };
   }
 
   public string Write() {
@@ -236,6 +291,23 @@ public sealed record UserSettings {
 
     if (this.TerminalColumns.Length > 0)
       text.Append("columns.terminal=").AppendLine(Join(this.TerminalColumns));
+
+    if (this.WindowWidth > 0 && this.WindowHeight > 0) {
+      text.AppendLine();
+      text.Append("window.width=").AppendLine(this.WindowWidth.ToString(CultureInfo.InvariantCulture));
+      text.Append("window.height=").AppendLine(this.WindowHeight.ToString(CultureInfo.InvariantCulture));
+    }
+
+    if (this.SplitPercent > 0)
+      text.Append("window.split=").AppendLine(this.SplitPercent.ToString(CultureInfo.InvariantCulture));
+
+    if (this.Colours.Count > 0) {
+      text.AppendLine();
+      text.AppendLine("# Colours, as #rrggbb. Only the ones named here are overridden; the rest follow");
+      text.AppendLine($"# the program. The names are: {string.Join(", ", ColourNames)}");
+      foreach (var (name, argb) in this.Colours)
+        text.Append(_ColourPrefix).Append(name).Append("=#").AppendLine((argb & 0xFFFFFFu).ToString("x6", CultureInfo.InvariantCulture));
+    }
 
     if (this.ColumnSets.Count > 0) {
       text.AppendLine();
@@ -273,6 +345,39 @@ public sealed record UserSettings {
 
     fields = [.. parsed];
     return fields.Length > 0;
+  }
+
+  /// <summary>
+  /// Every colour the file may name. Written into the file's own comment, so somebody editing it by
+  /// hand is told what can go there rather than having to guess (PRD §67).
+  /// </summary>
+  public static IReadOnlyList<string> ColourNames { get; } = [
+    "new", "exited", "zombie", "suspended", "system", "elevated", "service", "own",
+    "cpu", "cpu.kernel", "memory", "io", "plot.background", "plot.grid",
+  ];
+
+  /// <summary>
+  /// <c>#rrggbb</c>, with or without the hash, and <c>#rgb</c> for the people who write CSS. The
+  /// alpha is never taken from the file: a half-transparent row colour is a bug report, not a preference.
+  /// </summary>
+  private static bool TryParseColour(string text, out uint argb) {
+    argb = 0;
+    var digits = text.StartsWith('#') ? text[1..] : text;
+    if (digits.Length == 3) {
+      Span<char> expanded = stackalloc char[6];
+      for (var i = 0; i < 3; ++i) {
+        expanded[i * 2] = digits[i];
+        expanded[(i * 2) + 1] = digits[i];
+      }
+
+      digits = new(expanded);
+    }
+
+    if (digits.Length != 6 || !uint.TryParse(digits, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var rgb))
+      return false;
+
+    argb = 0xFF000000u | rgb;
+    return true;
   }
 
   private static bool TryParseBool(string text, out bool value) {

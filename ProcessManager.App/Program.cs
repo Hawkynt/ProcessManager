@@ -68,7 +68,7 @@ internal static class Program {
         RunMode.SelfTest => SelfTest.Run(sampler, probe.Description, probe),
         RunMode.HelperCheck => HelperCheck.Run(),
         RunMode.Terminal => RunTerminal(sampler, probe, actions, options),
-        _ => RunDesktop(sampler, probe, actions, options),
+        _ => RunDesktop(sampler, probe, actions, options, settings, settingsPath),
       };
     }
   }
@@ -127,14 +127,36 @@ internal static class Program {
     static string Normalize(string text) => text.Replace("\r\n", "\n", StringComparison.Ordinal).TrimEnd();
   }
 
-  private static int RunDesktop(Sampler sampler, ISystemProbe probe, IProcessActions? actions, CommandLineOptions options) {
+  private static int RunDesktop(
+    Sampler sampler,
+    ISystemProbe probe,
+    IProcessActions? actions,
+    CommandLineOptions options,
+    Settings.UserSettings settings,
+    string? settingsPath
+  ) {
+    // The command line layered over the file, which is the order CommandLineOptions already parsed
+    // them in — so the window opens as the file left it unless this run said otherwise. Until now
+    // none of --sort, --interval or --columns reached the window at all; it used its own defaults
+    // and the flags were quietly ignored outside --list and --tui.
+    var effective = settings with {
+      IntervalSeconds = options.Interval.TotalSeconds,
+      SortField = options.SortColumn,
+      SortDescending = options.SortDescending,
+      TreeMode = options.TreeMode,
+      CpuMode = options.CpuMode,
+      DesktopColumns = options.Fields is { Length: > 0 } fields ? fields : settings.DesktopColumns,
+    };
+
     var result = DesktopLauncher.TryRun(
       sampler,
       probe,
       actions,
       options.ShootPath,
       options.ShootHoldSeconds,
-      options.FlatRequested
+      options.FlatRequested,
+      effective,
+      settingsPath ?? options.SettingsPath
     );
     if (result is null)
       return _ExitOk;

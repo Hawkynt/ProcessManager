@@ -55,9 +55,26 @@ public sealed class ProcessTreeBinder {
   /// <summary>The uid of whoever is running this, so rows can be coloured "mine" (PRD §7.1).</summary>
   public int CurrentUserId { get; set; } = -1;
 
+  /// <summary>
+  /// Whether a subtree the user collapsed may be reopened by the program.
+  /// </summary>
+  /// <remarks>
+  /// Off. A parent used to be expanded whenever a child appeared under it, which on a machine that
+  /// forks steadily meant the tree reopening itself every second and everything below it sliding
+  /// down the screen — including whatever was being read (PRD §87).
+  /// </remarks>
+  public bool ExpandOnNewChild { get; set; }
+
   public void Sync(SystemSnapshot snapshot, SnapshotDelta delta, ProcessView view) {
     ArgumentNullException.ThrowIfNull(snapshot);
     ArgumentNullException.ThrowIfNull(view);
+
+    // The node under the top of the viewport, and the one that is selected. Both are put back at the
+    // end: the scroll position is an index into a list that is about to be rewritten, so keeping the
+    // number keeps a different row (PRD §12).
+    var anchor = this._tree.NodeAt(this._tree.TopIndex);
+
+    var selected = this._tree.SelectedNode;
 
     ++this._generation;
     var processes = snapshot.Processes;
@@ -114,9 +131,9 @@ public sealed class ProcessTreeBinder {
         this._tree.Nodes.Add(node);
       else {
         desiredParent.Nodes.Add(node);
-        // A new child under a collapsed parent would be invisible with no hint that anything
-        // happened; expanding the parent is how Process Explorer shows a process that just forked.
-        if (!desiredParent.IsExpanded)
+        // A new child under a collapsed parent is invisible, which is a real cost — but reopening a
+        // subtree somebody closed, every second, is a larger one.
+        if (this.ExpandOnNewChild && !desiredParent.IsExpanded)
           desiredParent.Expand();
       }
 
@@ -125,7 +142,33 @@ public sealed class ProcessTreeBinder {
 
     this.RemoveStale();
     this.ReorderToMatch(processes, rows, view);
+    Restore(this._tree, anchor, selected);
   }
+
+  /// <summary>
+  /// Puts the view back where it was, by node rather than by number.
+  /// </summary>
+  /// <remarks>
+  /// The selection first: a node that survived the rebuild is still the same object, so re-assigning
+  /// it costs nothing and re-establishes it when the control dropped it. Then the scroll, last,
+  /// because assigning a selection can scroll to it.
+  /// <para>
+  /// A node that is gone — its process exited, or its parent collapsed around it — leaves the view
+  /// where the rebuild put it. There is nowhere better to be.
+  /// </para>
+  /// </remarks>
+  private static void Restore(TreeListView tree, TreeNode? anchor, TreeNode? selected) {
+    if (selected is not null && !ReferenceEquals(tree.SelectedNode, selected) && tree.RowOf(selected) >= 0)
+      tree.SelectedNode = selected;
+
+    if (anchor is null)
+      return;
+
+    var row = tree.RowOf(anchor);
+    if (row >= 0)
+      tree.TopIndex = row;
+  }
+
 
   /// <summary>
   /// Puts each sibling group into the order the view says.

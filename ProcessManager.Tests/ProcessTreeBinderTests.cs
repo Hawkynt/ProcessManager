@@ -203,6 +203,117 @@ public sealed class ProcessTreeBinderTests {
     }
   }
 
+  #region holding the view still
+
+  /// <summary>
+  /// The complaint the anchoring was written for: the list scrolled away under whoever was reading
+  /// it. A row's index is not a place — twenty processes exiting above the viewport slides twenty
+  /// rows of different content under the same number, once a second (PRD §12).
+  /// </summary>
+  [Test]
+  public void ProcessesExitingAboveTheViewportDoNotSlideTheListUnderTheReader() {
+    var tree = new TreeListView { Bounds = new(0, 0, 400, 100) };
+    var binder = new ProcessTreeBinder(tree);
+
+    var all = new (int, int)[30];
+    for (var i = 0; i < all.Length; ++i)
+      all[i] = (i + 1, 0);
+
+    var (snapshot, delta, view) = Build(all);
+    binder.Sync(snapshot, delta, view);
+
+    tree.TopIndex = 20;
+    var watched = tree.NodeAt(20);
+    Assert.That(watched, Is.Not.Null);
+
+    // Ten of the processes above it exit.
+    var survivors = new (int, int)[20];
+    for (var i = 0; i < survivors.Length; ++i)
+      survivors[i] = (i + 11, 0);
+
+    var (after, afterDelta, afterView) = Build(survivors);
+    binder.Sync(after, afterDelta, afterView);
+
+    Assert.That(tree.NodeAt(tree.TopIndex), Is.SameAs(watched), "the same row is still under the reader's eyes");
+    Assert.That(tree.TopIndex, Is.EqualTo(10), "even though it is ten rows further up the list");
+  }
+
+  [Test]
+  public void TheSelectionSurvivesARebuildThatMovesIt() {
+    var tree = new TreeListView { Bounds = new(0, 0, 400, 400) };
+    var binder = new ProcessTreeBinder(tree);
+
+    var (snapshot, delta, view) = Build((1, 0), (2, 0), (3, 0), (4, 0));
+    binder.Sync(snapshot, delta, view);
+
+    var chosen = tree.NodeAt(3);
+    tree.SelectedNode = chosen;
+
+    var (after, afterDelta, afterView) = Build((3, 0), (4, 0));
+    binder.Sync(after, afterDelta, afterView);
+
+    Assert.That(tree.SelectedNode, Is.SameAs(chosen));
+  }
+
+  /// <summary>
+  /// A watched process exiting leaves the view wherever the rebuild put it, because there is nowhere
+  /// better for it to be — and, above all, without throwing.
+  /// </summary>
+  [Test]
+  public void AnAnchorThatExitsIsNotAnError() {
+    var tree = new TreeListView { Bounds = new(0, 0, 400, 100) };
+    var binder = new ProcessTreeBinder(tree);
+
+    var (snapshot, delta, view) = Build((1, 0), (2, 0), (3, 0), (4, 0), (5, 0), (6, 0), (7, 0), (8, 0));
+    binder.Sync(snapshot, delta, view);
+    tree.TopIndex = 5;
+    tree.SelectedNode = tree.NodeAt(5);
+
+    var (after, afterDelta, afterView) = Build((1, 0), (2, 0));
+    Assert.That(() => binder.Sync(after, afterDelta, afterView), Throws.Nothing);
+    Assert.That(tree.TopIndex, Is.InRange(0, 1), "clamped into a list that is now two rows long");
+    Assert.That(CountNodes(tree), Is.EqualTo(2), "and the rebuild itself still happened");
+  }
+
+  /// <summary>
+  /// A subtree somebody collapsed stays collapsed. It used to reopen whenever a child appeared under
+  /// it, which on a machine that forks steadily is every second, sliding everything below it down the
+  /// screen (PRD §87).
+  /// </summary>
+  [Test]
+  public void ANewChildDoesNotReopenASubtreeSomebodyClosed() {
+    var tree = new TreeListView();
+    var binder = new ProcessTreeBinder(tree);
+
+    var (snapshot, delta, view) = Build((1, 0), (2, 1));
+    binder.Sync(snapshot, delta, view);
+    tree.Nodes[0].Collapse();
+
+    var (after, afterDelta, afterView) = Build((1, 0), (2, 1), (3, 1));
+    binder.Sync(after, afterDelta, afterView);
+
+    Assert.That(tree.Nodes[0].IsExpanded, Is.False);
+    Assert.That(CountNodes(tree), Is.EqualTo(3), "the child is there, it is just not shown");
+  }
+
+  /// <summary>The old behaviour is still available, for anybody who wants it.</summary>
+  [Test]
+  public void ExpandOnNewChildRestoresTheOldBehaviour() {
+    var tree = new TreeListView();
+    var binder = new ProcessTreeBinder(tree) { ExpandOnNewChild = true };
+
+    var (snapshot, delta, view) = Build((1, 0), (2, 1));
+    binder.Sync(snapshot, delta, view);
+    tree.Nodes[0].Collapse();
+
+    var (after, afterDelta, afterView) = Build((1, 0), (2, 1), (3, 1));
+    binder.Sync(after, afterDelta, afterView);
+
+    Assert.That(tree.Nodes[0].IsExpanded, Is.True);
+  }
+
+  #endregion
+
   private static (SystemSnapshot Snapshot, SnapshotDelta Delta, ProcessView View) Build(
     params (int Pid, int ParentPid)[] processes
   ) {
