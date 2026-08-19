@@ -95,6 +95,9 @@ public static class DesktopApp {
           // have a history to draw: opened at capture time it has exactly one sample, and every
           // plot on it is an empty grid — a picture that proves the layout and nothing else.
           var performance = window.OpenPerformance();
+          // Memory rather than whatever is busiest: it is the page with the composition bar on it,
+          // and a capture that photographs a different page every run is not a regression detector.
+          performance.Show("Memory");
           description += performance.DescribeForCapture();
           var pagePng = Path.Combine(directory, "performance.png");
           var pageSize = GtkCapture.Window(pagePng, out var pageFailure, performance.Text);

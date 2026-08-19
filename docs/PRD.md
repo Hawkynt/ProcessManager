@@ -1637,17 +1637,20 @@ socket and cache topology.
 - [ ] Usable memory
 - [x] Used / in use
 - [x] Available
-- [ ] Free (as distinct from available)
+- [x] Free (as distinct from available) — and the distinction matters more than any other figure
+      here: a healthy machine keeps almost nothing free because it caches with the rest, and reading
+      free as "how much you can use" is the most misread number in memory
 - [x] Cached
-- [ ] 🟡 Buffers
+- [x] Buffers
 - [x] Committed
-- [ ] Commit limit
+- [x] Commit limit — shown against the committed figure, because neither means much alone
 - [x] Swap / pagefile used
 - [x] Swap / pagefile total
 - [ ] Compressed
-- [ ] Kernel memory
-- [ ] Paged pool total
-- [ ] Nonpaged pool total
+- [x] Kernel memory — reclaimable and fixed, which are what Linux has instead of paged and non-paged
+      pools, plus page tables and kernel stacks
+- [ ] 🟡 Paged pool total — `SReclaimable`, which is the nearest true equivalent
+- [ ] 🟡 Nonpaged pool total — `SUnreclaim`, likewise
 - [ ] Hardware reserved
 - [ ] Memory pressure
 - [ ] **Memory speed** — refused rather than guessed: `—`, with the reason
@@ -1666,15 +1669,35 @@ in a way a window is not (§58).
 
 Graphs:
 
-- [x] Physical-memory usage — 60 seconds, scaled to installed memory rather than to 100 %
-- [ ] Committed memory
-- [ ] **Composition bar** — a single horizontal bar under the graph, split into in-use, modified,
-      cached and free, each segment in its own shade of the memory accent, each naming its exact
-      value on hover. It is the one picture that explains why a machine with "no free memory" is
-      fine, and the reason people open a memory page at all
+- [x] Physical-memory usage — 60 seconds, scaled to installed memory rather than to 100 %, because
+      the useful question is how much is gone and not what fraction: 60 % means nothing until you
+      know whether the machine has 8 GB or 128
+- [x] Committed memory — its own series and not a second line on the first, because it counts what
+      has been asked for rather than what has been taken, routinely exceeds physical memory, and on
+      one axis would either be clipped or squash the physical line into the floor
+- [x] **Composition bar** — one horizontal bar under the graphs, split into in use, modified, cached
+      and free, each in its own shade of the memory accent, each naming its value in place and
+      explaining itself on hover
 - [ ] Memory pressure
 - [ ] Swap
 - [ ] Cache
+
+**The bands are a partition and sum to the total exactly.** That is what makes it a bar rather than
+four numbers, and every definition here is bent to fit it:
+
+- **In use** is total less available — the same figure the statistics beside it show, so the bar and
+  the numbers cannot disagree
+- **Modified** is dirty plus in-writeback: cache whose contents differ from the disk, so it cannot
+  simply be dropped. Carved *out of* the cache rather than added beside it, which is what it is on
+  both operating systems
+- **Free** is physically unallocated, which on a healthy machine is nearly nothing
+- **Cached** is the remainder — deliberately the remainder and not `Cached + Buffers + SReclaimable`,
+  because that sum counts pages the kernel does not consider reclaimable and the four bands would
+  overrun the total by a few percent, so the bar would lie about its own scale
+
+Every band is clamped, because `meminfo`'s lines are read one after another without a lock: a machine
+that allocated a gigabyte between two of them can report a set that does not add up, which is
+ordinary. A band of negative width is not (§5.3).
 
 Advanced counters, collapsed (§45.2 level 4): commit current/peak/limit · file cache
 current/peak/minimum/maximum · page faults by kind — total, copy-on-write, transition, demand-zero,

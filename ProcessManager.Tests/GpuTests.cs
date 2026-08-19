@@ -299,19 +299,22 @@ public sealed class GpuTests {
     Assert.Fail("no memory graph");
   }
 
-  /// <summary>Everything else has one graph, and must not be made to look like it has more.</summary>
+  /// <summary>
+  /// A resource that named no series still has one — the one its own primary describes — so a caller
+  /// never has to ask which shape it is dealing with.
+  /// </summary>
   [Test]
   public void AResourceThatNamedNoGraphsStillHasOne() {
     foreach (var section in Sections()) {
-      if (section.Title != "Memory")
+      if (section.Title != "System")
         continue;
 
       Assert.That(section.Series, Has.Count.EqualTo(1));
-      Assert.That(section.Series[0].Label, Is.EqualTo("Memory"));
+      Assert.That(section.Series[0].Label, Is.EqualTo("System"));
       return;
     }
 
-    Assert.Fail("no memory section");
+    Assert.Fail("no system section");
   }
 
   #endregion

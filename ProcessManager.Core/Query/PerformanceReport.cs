@@ -62,6 +62,10 @@ public readonly record struct PerformanceGraph(
 /// idle and hot, and only seeing both at once explains either (PRD §50.1). Null means the resource
 /// has the one graph its primary describes.
 /// </param>
+/// <param name="Composition">
+/// How the resource divides up, where that is a question worth a picture. Memory only: the bar that
+/// explains why a machine with no free memory is healthy (PRD §14).
+/// </param>
 /// <param name="RailTitle">
 /// What the rail calls this, where the full title is too long for a 230-pixel column. "GPU 0" in
 /// the rail and "NVIDIA RTX A5000 Laptop GPU" in the header says more than one truncated string
@@ -91,7 +95,8 @@ public readonly record struct PerformanceSection(
   string PartOf = "",
   string RailDetail = "",
   string RailTitle = "",
-  IReadOnlyList<PerformanceGraph>? Graphs = null
+  IReadOnlyList<PerformanceGraph>? Graphs = null,
+  MemoryComposition Composition = default
 ) {
 
   /// <summary>Whether there is a second series worth plotting.</summary>
@@ -174,7 +179,9 @@ public static class PerformanceReport {
         memory,
         100,
         Percent(memory),
-        RailDetail: MemoryDetail(snapshot)
+        RailDetail: MemoryDetail(snapshot),
+        Graphs: MemoryGraphs(snapshot),
+        Composition: MemoryComposition.Of(in snapshot.System)
       ),
     };
 
@@ -586,6 +593,51 @@ public static class PerformanceReport {
       ? string.Format(CultureInfo.InvariantCulture, "{0:0.0} W", microwatts.Value / 1_000_000d)
       : Humanize.Placeholder(microwatts.Reason);
 
+  /// <summary>
+  /// The memory page's two series (PRD §47).
+  /// </summary>
+  /// <remarks>
+  /// Physical memory is scaled to what the machine has rather than to a hundred, because the useful
+  /// question is how much of it is gone and not what fraction — 60 % means nothing until you know
+  /// whether the machine has 8 GB or 128.
+  /// <para>
+  /// Commit is its own series and not a second line on the first: it counts what has been asked for
+  /// rather than what has been taken, routinely exceeds physical memory, and drawn on the same axis
+  /// would either be clipped or would squash the physical line into the floor.
+  /// </para>
+  /// </remarks>
+  private static PerformanceGraph[] MemoryGraphs(SystemSnapshot snapshot) {
+    var system = snapshot.System;
+    if (!system.TotalMemoryBytes.HasValue)
+      return [new("Memory", MemoryPercent(snapshot), 100, Percent(MemoryPercent(snapshot)), "memory")];
+
+    var total = system.TotalMemoryBytes.Value;
+    var used = system.AvailableMemoryBytes.HasValue
+      ? Rate.Of(total - Math.Min(system.AvailableMemoryBytes.Value, total))
+      : Rate.Unknown(system.AvailableMemoryBytes.Reason);
+
+    var graphs = new List<PerformanceGraph> {
+      new(
+        "Physical memory",
+        used,
+        total,
+        used.HasValue ? $"{Humanize.Bytes(Counter.Of((ulong)used.Value))} of {Humanize.Bytes(system.TotalMemoryBytes)}" : Pending,
+        "memory"
+      ),
+    };
+
+    if (system.CommittedBytes.HasValue)
+      graphs.Add(new(
+        "Committed",
+        Rate.Of(system.CommittedBytes.Value),
+        system.CommitLimitBytes.HasValue ? system.CommitLimitBytes.Value : 0,
+        Pair(system.CommittedBytes, system.CommitLimitBytes),
+        "memory"
+      ));
+
+    return [.. graphs];
+  }
+
   private static PerformanceRow[] BuildMemory(HostInfo host, SystemSnapshot snapshot) {
     var system = snapshot.System;
     var used = system.TotalMemoryBytes.HasValue && system.AvailableMemoryBytes.HasValue
@@ -593,17 +645,34 @@ public static class PerformanceReport {
       : Counter.Unknown(system.TotalMemoryBytes.HasValue ? system.AvailableMemoryBytes.Reason : system.TotalMemoryBytes.Reason);
 
     return [
-      new("Total", Humanize.Bytes(system.TotalMemoryBytes), IsHardware: true),
       new("In use", Humanize.Bytes(used)),
       new("Available", Humanize.Bytes(system.AvailableMemoryBytes)),
+      new("Free", Humanize.Bytes(system.FreeMemoryBytes)),
       new("Cached", Humanize.Bytes(system.CachedMemoryBytes)),
-      new("Swap used", Humanize.Bytes(system.UsedSwapBytes)),
-      new("Swap total", Humanize.Bytes(system.TotalSwapBytes)),
+      new("Buffers", Humanize.Bytes(system.BufferMemoryBytes)),
+      new("Modified", Humanize.Bytes(system.ModifiedMemoryBytes)),
+      new("Shared", Humanize.Bytes(system.SharedMemoryBytes)),
+      // Committed against its limit on one line: how much every process together has asked for,
+      // against how much the kernel will ever agree to. Either alone says very little (PRD §16).
+      new("Committed", Pair(system.CommittedBytes, system.CommitLimitBytes)),
+      new("Swap", Pair(system.UsedSwapBytes, system.TotalSwapBytes)),
+      new("Kernel, reclaimable", Humanize.Bytes(system.ReclaimableKernelBytes)),
+      new("Kernel, fixed", Humanize.Bytes(system.UnreclaimableKernelBytes)),
+      new("Page tables", Humanize.Bytes(system.PageTableBytes)),
+      new("Kernel stacks", Humanize.Bytes(system.KernelStackBytes)),
+      new("Total", Humanize.Bytes(system.TotalMemoryBytes), IsHardware: true),
       new("Speed", Transfers(host.MemoryTransfersPerSecond), IsHardware: true),
       new("Form factor", host.MemoryFormFactor ?? Humanize.Placeholder(UnknownReason.NotPermitted), IsHardware: true),
       new("Slots used", Slots(host.MemorySlotsUsed, host.MemorySlotsTotal), IsHardware: true),
     ];
   }
+
+  /// <summary>
+  /// "28.9G of 126G" — a figure against its ceiling, or just the figure when there is no ceiling to
+  /// put it against.
+  /// </summary>
+  private static string Pair(Counter value, Counter limit)
+    => limit.HasValue ? $"{Humanize.Bytes(value)} of {Humanize.Bytes(limit)}" : Humanize.Bytes(value);
 
   #region formatting
 

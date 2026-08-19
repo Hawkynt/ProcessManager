@@ -14,6 +14,43 @@ public struct SystemCounters {
   public Counter TotalSwapBytes;
   public Counter UsedSwapBytes;
 
+  /// <summary>
+  /// Physically unallocated. Not the same as available, and much smaller on any machine that has
+  /// been up a while: a healthy Linux keeps almost nothing free because it caches with the rest, and
+  /// reporting free as "how much you can use" is the single most misread number in memory (PRD §47).
+  /// </summary>
+  public Counter FreeMemoryBytes;
+
+  /// <summary>Cache pages holding file data that has not been read into it yet — block buffers.</summary>
+  public Counter BufferMemoryBytes;
+
+  /// <summary>
+  /// Dirty and in-writeback pages: cache whose contents differ from the disk, so it cannot simply be
+  /// dropped. Windows calls this modified and shows it as its own band of the composition bar.
+  /// </summary>
+  public Counter ModifiedMemoryBytes;
+
+  /// <summary>Address space every process together has asked for, which may exceed what exists.</summary>
+  public Counter CommittedBytes;
+
+  /// <summary>The most the kernel will commit — RAM plus swap, adjusted by the overcommit policy.</summary>
+  public Counter CommitLimitBytes;
+
+  /// <summary>Kernel allocations it can hand back under pressure. The paged pool's counterpart.</summary>
+  public Counter ReclaimableKernelBytes;
+
+  /// <summary>Kernel allocations it cannot. The non-paged pool's counterpart.</summary>
+  public Counter UnreclaimableKernelBytes;
+
+  /// <summary>Memory spent on the page tables themselves, which on a large machine is not small.</summary>
+  public Counter PageTableBytes;
+
+  /// <summary>Kernel stacks, one per thread — a count of threads in another unit.</summary>
+  public Counter KernelStackBytes;
+
+  /// <summary>tmpfs and shared anonymous pages: counted as cache, but not reclaimable like cache.</summary>
+  public Counter SharedMemoryBytes;
+
   public Counter ContextSwitches;
   public Counter Interrupts;
   public Counter ProcessesCreated;

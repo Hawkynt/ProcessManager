@@ -51,6 +51,11 @@ public sealed class PerformanceWindow : Form {
   private readonly HistoryPlot _plot = new();
   private readonly CheckBox _perCore = new() { Text = "Per logical processor" };
 
+  /// <summary>Memory's composition bar, and the line under it that names what the pointer is over.</summary>
+  private readonly CompositionBar _composition = new() { Visible = false };
+
+  private readonly Label _compositionHint = new() { Visible = false };
+
   /// <summary>One small plot per core, built when the core count is first known.</summary>
   private readonly List<HistoryPlot> _corePlots = [];
   private readonly Label _heading = new();
@@ -111,6 +116,11 @@ public sealed class PerformanceWindow : Form {
     // twenty cores would bury the disks under them, and the question "overall or per core" is one
     // switch and not twenty destinations (PRD §46).
     this._perCore.Bounds = new(right, _PlotArea.Bottom + 6, 220, 20);
+
+    this._composition.Bounds = new(right, _PlotArea.Bottom + 6, _PlotArea.Width, 26);
+    this._compositionHint.Bounds = new(right, _PlotArea.Bottom + 36, _PlotArea.Width, 16);
+    this.Controls.Add(this._composition);
+    this.Controls.Add(this._compositionHint);
     this._perCore.CheckedChanged += (_, _) => this.ShowSelected(force: true);
     this._perCore.Visible = false;
     this.Controls.Add(this._perCore);
@@ -132,8 +142,25 @@ public sealed class PerformanceWindow : Form {
     }
 
     this.LayOutStatistics(_PlotArea.Bottom);
+    this.WatchComposition();
 
     this.UpdateFromSample();
+  }
+
+  /// <summary>
+  /// Selects a resource by name, for a capture run that wants to photograph a particular page.
+  /// </summary>
+  /// <returns>Whether there is such a resource.</returns>
+  public bool Show(string title) {
+    for (var i = 0; i < this._rail.Items.Count; ++i) {
+      if (!string.Equals(NameOf(this._rail.Items[i]), title, StringComparison.Ordinal))
+        continue;
+
+      this._rail.SelectedIndex = i;
+      return true;
+    }
+
+    return false;
   }
 
   /// <summary>
@@ -303,6 +330,34 @@ public sealed class PerformanceWindow : Form {
   }
 
   /// <summary>
+  /// Puts the composition bar under the plots, and takes it away for every resource that has none.
+  /// </summary>
+  /// <remarks>
+  /// It sits between the graphs and the statistics because that is where it is read: the graph says
+  /// how much memory is gone, the bar says what it went to, and the numbers underneath give the
+  /// exact figures for whichever band prompted the question.
+  /// </remarks>
+  private void ShowComposition(PerformanceSection chosen) {
+    var has = chosen.Composition.HasValue;
+    this._composition.Visible = has;
+    this._compositionHint.Visible = has;
+    if (!has)
+      return;
+
+    this._composition.Composition = chosen.Composition;
+    this._composition.Bounds = this._composition.Bounds with { Y = this._statisticsTop + 6 };
+    this._compositionHint.Bounds = this._compositionHint.Bounds with { Y = this._statisticsTop + 36 };
+    this._compositionHint.Text = this._composition.HoverText;
+  }
+
+  /// <summary>Keeps the line under the bar in step with the pointer, between sample ticks.</summary>
+  private void WatchComposition() =>
+    this._composition.MouseMove += (_, _) => {
+      if (this._compositionHint.Text != this._composition.HoverText)
+        this._compositionHint.Text = this._composition.HoverText;
+    };
+
+  /// <summary>
   /// Puts the two statistic columns under whatever height the plots ended up taking.
   /// </summary>
   private void LayOutStatistics(int plotBottom) {
@@ -311,7 +366,10 @@ public sealed class PerformanceWindow : Form {
 
     this._statisticsTop = plotBottom;
     var right = _RailWidth + 24;
-    var top = plotBottom + 34;
+    // Enough for the composition bar and the line that describes it, whether or not this resource
+    // has one — a page whose statistics jump up and down as the selection moves is harder to read
+    // than one with a gap in it.
+    var top = plotBottom + 62;
 
     this._liveHeading.Bounds = new(right, top, 200, 16);
     this._hardwareHeading.Bounds = new(right + _ColumnWidth, top, 200, 16);
@@ -376,6 +434,7 @@ public sealed class PerformanceWindow : Form {
     var stacked = !split && series.Count > 1;
     this.LayOutPlots(split ? parts : [], stacked ? (title, series) : default);
     this._plot.Visible = !split && !stacked;
+    this.ShowComposition(chosen);
 
     if (force || !string.Equals(this._shown, title, StringComparison.Ordinal)) {
       this._shown = title;
@@ -456,6 +515,12 @@ public sealed class PerformanceWindow : Form {
   private static string ModelOf(PerformanceSection section, string fallback) {
     foreach (var row in section.Rows)
       if (row.Label is "Model" or "Adapter" && row.Value.Length > 0)
+        return row.Value;
+
+    // Memory has no model to give — nothing readable without root says what the sticks are — so the
+    // header carries how much there is, which is the next most identifying thing about it.
+    foreach (var row in section.Rows)
+      if (row.Label == "Total" && row.Value.Length > 0)
         return row.Value;
 
     return fallback;

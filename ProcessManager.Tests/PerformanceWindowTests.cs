@@ -221,10 +221,12 @@ public sealed class PerformanceWindowTests {
     var (window, _, _) = Open();
     Select(window, Titles(window).IndexOf("Processor"));
     Toggle(window, true);
+    Assert.That(PlotsShowing(window), Is.EqualTo(4), "four cores");
 
-    Select(window, Titles(window).IndexOf("Memory"));
+    Select(window, Titles(window).IndexOf("Disk — sda"));
 
-    Assert.That(PlotsShowing(window), Is.EqualTo(1));
+    // A disk's own two, and none of the processor's four left painted underneath.
+    Assert.That(PlotsShowing(window), Is.EqualTo(2));
   }
 
   #region the rail carries its own history (PRD §45.1)
@@ -339,6 +341,52 @@ public sealed class PerformanceWindowTests {
 
   #endregion
 
+  #region the composition bar (PRD §14)
+
+  [Test]
+  public void TheMemoryPageCarriesACompositionBarAndNoOtherPageDoes() {
+    var (window, _, _) = Open();
+
+    Select(window, Titles(window).IndexOf("Memory"));
+    Assert.That(Bar(window).Visible, Is.True);
+
+    Select(window, Titles(window).IndexOf("Processor"));
+    Assert.That(Bar(window).Visible, Is.False);
+  }
+
+  [Test]
+  public void TheBarsBandsPartitionTheMachinesMemory() {
+    var (window, _, _) = Open();
+    Select(window, Titles(window).IndexOf("Memory"));
+
+    var composition = Bar(window).Composition;
+    var sum = 0ul;
+    foreach (var band in composition.Bands)
+      sum += band.Bytes;
+
+    Assert.That(composition.HasValue, Is.True);
+    Assert.That(sum, Is.EqualTo(composition.TotalBytes));
+  }
+
+  /// <summary>
+  /// Room for the bar is left whether or not the resource has one, so moving between two pages with
+  /// the same number of graphs does not shuffle their numbers up and down by thirty pixels.
+  /// </summary>
+  [Test]
+  public void RoomForTheBarIsLeftEvenOnPagesThatHaveNone() {
+    var (window, _, _) = Open();
+
+    // Both stack two graphs; only one of them has a bar.
+    Select(window, Titles(window).IndexOf("Memory"));
+    var withBar = HeadingNamed(window, "Live").Y;
+
+    Select(window, Titles(window).IndexOf("Disk — sda"));
+    Assert.That(Bar(window).Visible, Is.False);
+    Assert.That(HeadingNamed(window, "Live").Y, Is.EqualTo(withBar));
+  }
+
+  #endregion
+
   #region two columns, not one list (PRD §45.1)
 
   [Test]
@@ -442,6 +490,15 @@ public sealed class PerformanceWindowTests {
         shown.Add(row.Title);
 
     return shown;
+  }
+
+  private static CompositionBar Bar(PerformanceWindow window) {
+    foreach (var control in window.Controls)
+      if (control is CompositionBar bar)
+        return bar;
+
+    Assert.Fail("the window has no composition bar");
+    return null!;
   }
 
   private static ResourceRail Rail(PerformanceWindow window) {
