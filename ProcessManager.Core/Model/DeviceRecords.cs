@@ -74,3 +74,33 @@ public sealed record NetworkInterfaceInfo(
   Counter MaximumTransmissionUnit,
   bool IsLoopback
 );
+
+/// <summary>
+/// One graphics adapter, as one reading saw it (PRD §50).
+/// </summary>
+/// <remarks>
+/// <para>
+/// Identity and readings in one record rather than the disk's split between a cached description and
+/// sampled counters, because a GPU's readings come from the same handful of files as its name and
+/// are read on demand by the page that shows them — never from the sample loop, whose allocation
+/// budget is a build gate (PRD §5.4).
+/// </para>
+/// <para>
+/// Every reading is a <see cref="Counter"/> and most of them are unknown on most machines, which is
+/// the honest state of the world rather than a gap to be filled in later. AMD's driver publishes
+/// utilisation and VRAM through <c>sysfs</c>; Intel's exposes engine busyness only through a perf
+/// counter that needs a privileged open; NVIDIA's proprietary driver exposes nothing there at all
+/// and wants NVML. A page that showed 0 % for two of those three would be lying (PRD §5.3).
+/// </para>
+/// </remarks>
+public sealed record GpuInfo(
+  string Name,
+  string? Model,
+  string? Driver,
+  Counter BusyPercent,
+  Counter MemoryUsedBytes,
+  Counter MemoryTotalBytes,
+  Counter TemperatureMilliCelsius,
+  Counter PowerMicrowatts,
+  string? PowerState
+);

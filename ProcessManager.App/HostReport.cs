@@ -30,7 +30,8 @@ internal static class HostReport {
       sampler.Current,
       sampler.Delta,
       probe.DescribeDisk,
-      probe.DescribeInterface
+      probe.DescribeInterface,
+      probe.DescribeGpus
     );
 
     foreach (var section in sections) {

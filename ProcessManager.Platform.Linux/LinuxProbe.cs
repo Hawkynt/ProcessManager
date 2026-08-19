@@ -308,6 +308,11 @@ public sealed class LinuxProbe : ISystemProbe {
     return info;
   }
 
+  /// <summary>
+  /// Every graphics adapter, read fresh: unlike a disk's model, a GPU's utilisation is the point.
+  /// </summary>
+  public IReadOnlyList<GpuInfo> DescribeGpus() => LinuxDeviceReader.DescribeGpus(this._options.SysRoot);
+
   /// <summary>What each interface is, read once (PRD §49).</summary>
   public NetworkInterfaceInfo DescribeInterface(string name) {
     if (this._interfaceInfo.TryGetValue(name, out var known))
