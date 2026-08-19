@@ -176,11 +176,17 @@ jobs:
           # hung install burns the whole job's timeout without ever saying why. Each attempt is
           # bounded and retried, so a bad mirror costs seconds rather than the build.
           retry() {
+            local seconds=$1
+            shift
             for attempt in 1 2 3; do
-              if sudo timeout 180 "$@"; then
+              if sudo timeout "$seconds" "$@"; then
                 return 0
               fi
               echo "::warning::'$*' failed or stalled (attempt $attempt of 3); retrying"
+              # A killed apt can leave dpkg half way through a transaction, and every later attempt
+              # then fails on that rather than on whatever went wrong first — which is how a slow
+              # mirror turned into three identical "dpkg was interrupted" errors.
+              sudo dpkg --configure -a || true
               sleep 5
             done
             return 1
@@ -191,9 +197,9 @@ jobs:
           # apt-get update is the step that stalls, and the runner image already has package lists.
           # Install first; fall back to updating only when something genuinely cannot be found.
           install() {
-            retry apt-get -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 -o Acquire::Retries=3 install -y "$@" && return 0
-            retry apt-get -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 -o Acquire::Retries=3 update || true
-            retry apt-get -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 -o Acquire::Retries=3 install -y "$@"
+            retry 900 apt-get -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 -o Acquire::Retries=3 install -y "$@" && return 0
+            retry 180 apt-get -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 -o Acquire::Retries=3 update || true
+            retry 900 apt-get -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 -o Acquire::Retries=3 install -y "$@"
           }
           install wine || install wine-stable
           wine --version
@@ -238,11 +244,17 @@ jobs:
           # hung install burns the whole job's timeout without ever saying why. Each attempt is
           # bounded and retried, so a bad mirror costs seconds rather than the build.
           retry() {
+            local seconds=$1
+            shift
             for attempt in 1 2 3; do
-              if sudo timeout 180 "$@"; then
+              if sudo timeout "$seconds" "$@"; then
                 return 0
               fi
               echo "::warning::'$*' failed or stalled (attempt $attempt of 3); retrying"
+              # A killed apt can leave dpkg half way through a transaction, and every later attempt
+              # then fails on that rather than on whatever went wrong first — which is how a slow
+              # mirror turned into three identical "dpkg was interrupted" errors.
+              sudo dpkg --configure -a || true
               sleep 5
             done
             return 1
@@ -250,9 +262,9 @@ jobs:
           # apt-get update is the step that stalls, and the runner image already has package lists.
           # Install first; fall back to updating only when something genuinely cannot be found.
           install() {
-            retry apt-get -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 -o Acquire::Retries=3 install -y "$@" && return 0
-            retry apt-get -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 -o Acquire::Retries=3 update || true
-            retry apt-get -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 -o Acquire::Retries=3 install -y "$@"
+            retry 900 apt-get -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 -o Acquire::Retries=3 install -y "$@" && return 0
+            retry 180 apt-get -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 -o Acquire::Retries=3 update || true
+            retry 900 apt-get -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 -o Acquire::Retries=3 install -y "$@"
           }
           install --no-install-recommends libgtk-3-0 xvfb
       - name: Build
@@ -310,11 +322,17 @@ jobs:
           # hung install burns the whole job's timeout without ever saying why. Each attempt is
           # bounded and retried, so a bad mirror costs seconds rather than the build.
           retry() {
+            local seconds=$1
+            shift
             for attempt in 1 2 3; do
-              if sudo timeout 180 "$@"; then
+              if sudo timeout "$seconds" "$@"; then
                 return 0
               fi
               echo "::warning::'$*' failed or stalled (attempt $attempt of 3); retrying"
+              # A killed apt can leave dpkg half way through a transaction, and every later attempt
+              # then fails on that rather than on whatever went wrong first — which is how a slow
+              # mirror turned into three identical "dpkg was interrupted" errors.
+              sudo dpkg --configure -a || true
               sleep 5
             done
             return 1
@@ -322,9 +340,9 @@ jobs:
           # apt-get update is the step that stalls, and the runner image already has package lists.
           # Install first; fall back to updating only when something genuinely cannot be found.
           install() {
-            retry apt-get -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 -o Acquire::Retries=3 install -y "$@" && return 0
-            retry apt-get -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 -o Acquire::Retries=3 update || true
-            retry apt-get -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 -o Acquire::Retries=3 install -y "$@"
+            retry 900 apt-get -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 -o Acquire::Retries=3 install -y "$@" && return 0
+            retry 180 apt-get -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 -o Acquire::Retries=3 update || true
+            retry 900 apt-get -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 -o Acquire::Retries=3 install -y "$@"
           }
           install clang zlib1g-dev
       # PRD §9.5. TreatWarningsAsErrors makes any trim/AOT (IL2xxx/IL3xxx) warning fail the build, so
