@@ -64,7 +64,22 @@ jobs:
           dotnet-version: '10.0.x'
       - name: Install NativeAOT prerequisites (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev
+        run: |
+          # apt has stalled on an unresponsive mirror twice in this repository's short life, and a
+          # hung install burns the whole job's timeout without ever saying why. Each attempt is
+          # bounded and retried, so a bad mirror costs seconds rather than the build.
+          retry() {
+            for attempt in 1 2 3; do
+              if sudo timeout 180 "$@"; then
+                return 0
+              fi
+              echo "::warning::'$*' failed or stalled (attempt $attempt of 3); retrying"
+              sleep 5
+            done
+            return 1
+          }
+          retry apt-get update
+          retry apt-get install -y clang zlib1g-dev
       - name: Stamp per-project versions
         shell: bash
         run: perl .github/workflows/scripts/version.pl --stamp

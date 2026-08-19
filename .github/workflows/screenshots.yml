@@ -55,8 +55,21 @@ jobs:
       # without its X11 delegate exits zero having written nothing. See GtkCapture.
       - name: Install GTK and a virtual display
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libgtk-3-0 xvfb fonts-dejavu-core
+          # apt has stalled on an unresponsive mirror twice in this repository's short life, and a
+          # hung install burns the whole job's timeout without ever saying why. Each attempt is
+          # bounded and retried, so a bad mirror costs seconds rather than the build.
+          retry() {
+            for attempt in 1 2 3; do
+              if sudo timeout 180 "$@"; then
+                return 0
+              fi
+              echo "::warning::'$*' failed or stalled (attempt $attempt of 3); retrying"
+              sleep 5
+            done
+            return 1
+          }
+          retry apt-get update
+          retry apt-get install -y --no-install-recommends libgtk-3-0 xvfb fonts-dejavu-core
 
       - name: Build
         run: dotnet build ProcessManager.slnx --configuration Release
