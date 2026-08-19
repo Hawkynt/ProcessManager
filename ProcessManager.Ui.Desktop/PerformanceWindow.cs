@@ -1,4 +1,5 @@
 using System.Drawing;
+using Hawkynt.NativeForms.Drawing;
 using Hawkynt.NativeForms;
 using Hawkynt.ProcessManager.Abstractions;
 using Hawkynt.ProcessManager.Model;
@@ -32,15 +33,23 @@ public sealed class PerformanceWindow : Form {
 
   private static readonly Rectangle _PlotArea = new(0, 36, 660, 200);
 
+  private const int _ColumnWidth = 330;
+
   private readonly ISystemProbe _probe;
   private readonly Sampler _sampler;
-  private readonly ListBox _rail = new();
+  private readonly ResourceRail _rail = new();
   private readonly HistoryPlot _plot = new();
   private readonly CheckBox _perCore = new() { Text = "Per logical processor" };
 
   /// <summary>One small plot per core, built when the core count is first known.</summary>
   private readonly List<HistoryPlot> _corePlots = [];
   private readonly Label _heading = new();
+
+  /// <summary>The hardware this page is about, top right — §45.1's header.</summary>
+  private readonly Label _model = new();
+
+  private readonly Label _liveHeading = new() { Text = "Live" };
+  private readonly Label _hardwareHeading = new() { Text = "Hardware" };
   private readonly List<Label> _labels = [];
   private readonly List<Label> _values = [];
 
@@ -72,8 +81,14 @@ public sealed class PerformanceWindow : Form {
     this.Controls.Add(this._rail);
 
     var right = _RailWidth + 24;
-    this._heading.Bounds = new(right, 12, 660, 20);
+    this._heading.Bounds = new(right, 10, 300, 22);
     this.Controls.Add(this._heading);
+
+    // The model to the right of the name, which is where §45.1 puts it: what this is, then what it
+    // actually is. Right-aligned so a long part number grows away from the name rather than into it.
+    this._model.Bounds = new(right + 310, 12, 350, 20);
+    this._model.TextAlign = ContentAlignment.TopRight;
+    this.Controls.Add(this._model);
 
     this._plot.Bounds = _PlotArea with { X = right };
     this.Controls.Add(this._plot);
@@ -81,16 +96,25 @@ public sealed class PerformanceWindow : Form {
     // The processor's two views, as one box rather than as twenty rail entries: a machine with
     // twenty cores would bury the disks under them, and the question "overall or per core" is one
     // switch and not twenty destinations (PRD §46).
-    this._perCore.Bounds = new(right, 12, 200, 20);
+    this._perCore.Bounds = new(right, 240, 200, 20);
     this._perCore.CheckedChanged += (_, _) => this.ShowSelected(force: true);
     this._perCore.Visible = false;
     this.Controls.Add(this._perCore);
 
+    // Two columns, because the live measurements and the hardware facts answer different questions
+    // and reading them as one list is what makes a performance page look like a data dump (§45.1).
+    this._liveHeading.Bounds = new(right, 266, 200, 16);
+    this._hardwareHeading.Bounds = new(right + _ColumnWidth, 266, 200, 16);
+    this.Controls.Add(this._liveHeading);
+    this.Controls.Add(this._hardwareHeading);
+
     // Built once at the widest a section gets, then filled and blanked. Adding and removing controls
     // every tick would make a page somebody watches for a minute flicker once a second.
     for (var i = 0; i < _Rows; ++i) {
-      var label = new Label { Bounds = new(right, 250 + (i * 18), 200, 16) };
-      var value = new Label { Bounds = new(right + 210, 250 + (i * 18), 450, 16) };
+      var column = i >= _Rows / 2 ? _ColumnWidth : 0;
+      var row = i % (_Rows / 2);
+      var label = new Label { Bounds = new(right + column, 288 + (row * 18), 150, 16) };
+      var value = new Label { Bounds = new(right + column + 150, 288 + (row * 18), 175, 16) };
       this._labels.Add(label);
       this._values.Add(value);
       this.Controls.Add(label);
@@ -98,6 +122,30 @@ public sealed class PerformanceWindow : Form {
     }
 
     this.UpdateFromSample();
+  }
+
+  /// <summary>
+  /// What the page is showing, in text — the capture run's evidence that §45's layout survived.
+  /// </summary>
+  public string DescribeForCapture() {
+    var builder = new System.Text.StringBuilder();
+    builder.AppendLine($"page rail:    {this._rail.Items.Count} resources, showing '{this._shown}'");
+    builder.AppendLine($"page header:  {this._heading.Text} / {this._model.Text}");
+
+    var live = 0;
+    var hardware = 0;
+    for (var i = 0; i < this._labels.Count; ++i) {
+      if (this._labels[i].Text.Length == 0)
+        continue;
+
+      if (i < _Rows / 2)
+        ++live;
+      else
+        ++hardware;
+    }
+
+    builder.AppendLine($"page stats:   {live} live, {hardware} hardware");
+    return builder.ToString();
   }
 
   /// <summary>
@@ -181,7 +229,7 @@ public sealed class PerformanceWindow : Form {
 
       this._rail.SelectedIndex = this._rail.Items.Count == 0
         ? -1
-        : Math.Clamp(selected < 0 ? 0 : selected, 0, this._rail.Items.Count - 1);
+        : selected < 0 ? this.BusiestOf(wanted) : Math.Clamp(selected, 0, this._rail.Items.Count - 1);
 
       return;
     }
@@ -190,17 +238,63 @@ public sealed class PerformanceWindow : Form {
       this._rail.Items[i] = this.Entry(wanted[i]);
   }
 
-  /// <summary>A rail entry: what the resource is, and what it is doing right now.</summary>
-  private string Entry(string title) {
-    foreach (var section in this._sections)
-      if (section.Title == title)
-        return section.PrimaryLabel.Length > 0 ? $"{title}   {section.PrimaryLabel}" : title;
+  /// <summary>
+  /// Which resource to open on: whatever is under the greatest load (PRD §45.3).
+  /// </summary>
+  /// <remarks>
+  /// Only the ones on a fixed 0–100 scale are compared, because those are the only ones whose
+  /// numbers mean the same thing. A network adapter's headline is bytes per second, and eleven
+  /// thousand of those is not busier than a processor at eleven percent — it is a different quantity
+  /// wearing a larger number.
+  /// <para>
+  /// Ties go to the earlier entry, which puts the processor first when the machine is idle. Somebody
+  /// opening this page on a quiet machine expects the processor, not whichever disk happened to
+  /// round up.
+  /// </para>
+  /// </remarks>
+  private int BusiestOf(List<string> titles) {
+    var best = 0;
+    var highest = double.NegativeInfinity;
+    for (var i = 0; i < titles.Count; ++i) {
+      if (this.Find(titles[i]) is not { PrimaryMaximum: 100 } section || !section.Primary.HasValue)
+        continue;
 
-    return title;
+      if (section.Primary.Value <= highest)
+        continue;
+
+      highest = section.Primary.Value;
+      best = i;
+    }
+
+    return best;
   }
 
-  /// <summary>The resource's name, without the reading appended to it.</summary>
+  /// <summary>A rail entry: what the resource is, what it is doing, and how long it has been.</summary>
+  private ResourceRow Entry(string title) {
+    foreach (var section in this._sections) {
+      if (section.Title != title)
+        continue;
+
+      this._history.TryGetValue(title, out var ring);
+      return new(
+        section.RailName,
+        section.PrimaryLabel,
+        section.RailDetail,
+        ring,
+        section.PrimaryMaximum > 0 ? section.PrimaryMaximum : this.Ceiling(title),
+        ColourFor(title),
+        title
+      );
+    }
+
+    return new(title, string.Empty, string.Empty, null, 100, ColourFor(title), title);
+  }
+
+  /// <summary>The resource's name, without the readings beside it.</summary>
   private static string NameOf(object? entry) {
+    if (entry is ResourceRow row)
+      return row.Key;
+
     var text = entry?.ToString() ?? string.Empty;
     var gap = text.IndexOf("   ", StringComparison.Ordinal);
     return gap < 0 ? text : text[..gap];
@@ -224,7 +318,11 @@ public sealed class PerformanceWindow : Form {
 
     if (force || !string.Equals(this._shown, title, StringComparison.Ordinal)) {
       this._shown = title;
-      this._heading.Text = title;
+      // The name without whatever device it names — "Disk", not "Disk — nvme0n1" — because the
+      // device is the model, and the model belongs on the right (§45.1).
+      var dash = title.IndexOf(" — ", StringComparison.Ordinal);
+      this._heading.Text = dash < 0 ? title : title[..dash];
+      this._model.Text = ModelOf(chosen, dash < 0 ? string.Empty : title[(dash + 3)..]);
 
       // One plot whose series is swapped, rather than a plot per resource: the page shows one
       // resource at a time, which is what the rail is for.
@@ -249,11 +347,57 @@ public sealed class PerformanceWindow : Form {
       plot.Invalidate();
     }
 
-    for (var i = 0; i < this._labels.Count; ++i) {
-      var has = i < chosen.Rows.Count;
-      this._labels[i].Text = has ? chosen.Rows[i].Label : string.Empty;
-      this._values[i].Text = has ? chosen.Rows[i].Value : string.Empty;
+    this.FillColumns(chosen);
+  }
+
+  /// <summary>
+  /// The live measurements down the left column and the hardware facts down the right.
+  /// </summary>
+  /// <remarks>
+  /// Both columns are as long as the page has slots for, and every unused slot is blanked rather
+  /// than removed: a page whose controls come and go once a second flickers even when nothing on it
+  /// has changed.
+  /// </remarks>
+  private void FillColumns(PerformanceSection chosen) {
+    var perColumn = _Rows / 2;
+    var live = 0;
+    var hardware = 0;
+
+    foreach (var row in chosen.Rows) {
+      var slot = row.IsHardware
+        ? hardware < perColumn ? perColumn + hardware++ : -1
+        : live < perColumn ? live++ : -1;
+
+      if (slot < 0)
+        continue;
+
+      this._labels[slot].Text = row.Label;
+      this._values[slot].Text = row.Value;
     }
+
+    for (var i = live; i < perColumn; ++i) {
+      this._labels[i].Text = string.Empty;
+      this._values[i].Text = string.Empty;
+    }
+
+    for (var i = perColumn + hardware; i < this._labels.Count; ++i) {
+      this._labels[i].Text = string.Empty;
+      this._values[i].Text = string.Empty;
+    }
+
+    this._hardwareHeading.Text = hardware > 0 ? "Hardware" : string.Empty;
+  }
+
+  /// <summary>
+  /// What the header's right-hand side says: the model where the section names one, and otherwise
+  /// whatever came after the dash in the title.
+  /// </summary>
+  private static string ModelOf(PerformanceSection section, string fallback) {
+    foreach (var row in section.Rows)
+      if (row.Label is "Model" or "Adapter" && row.Value.Length > 0)
+        return row.Value;
+
+    return fallback;
   }
 
   /// <summary>

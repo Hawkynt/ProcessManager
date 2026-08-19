@@ -7,7 +7,13 @@ namespace Hawkynt.ProcessManager.Query;
 /// <summary>One labelled figure on the performance page.</summary>
 /// <param name="Label">What it is called.</param>
 /// <param name="Value">What it says, already formatted and including the reason when there is none.</param>
-public readonly record struct PerformanceRow(string Label, string Value);
+/// <param name="IsHardware">
+/// Whether this describes the hardware rather than what it is doing. The two go in different columns
+/// (PRD §45.1): a reader glancing at a page wants the live measurements, and the specifications are
+/// what they look at once, when they first meet the machine. Reading them as one list is what makes
+/// a performance page look like a data dump.
+/// </param>
+public readonly record struct PerformanceRow(string Label, string Value, bool IsHardware = false);
 
 /// <summary>
 /// A group of figures under one heading, and the one number that stands for the whole group.
@@ -31,6 +37,17 @@ public readonly record struct PerformanceRow(string Label, string Value);
 /// <param name="PartOf">
 /// The section this one belongs under, or empty when it stands on its own.
 /// </param>
+/// <param name="RailTitle">
+/// What the rail calls this, where the full title is too long for a 230-pixel column. "GPU 0" in
+/// the rail and "NVIDIA RTX A5000 Laptop GPU" in the header says more than one truncated string
+/// does — the rail is for finding the resource, the header for identifying the hardware (PRD §45.1).
+/// Empty means the title serves.
+/// </param>
+/// <param name="RailDetail">
+/// A second reading for the rail, where one is worth having: the clock beside the processor's
+/// utilisation, the total beside the memory in use, the temperature beside the GPU's load
+/// (PRD §45.1). Short — it shares a line with the headline figure.
+/// </param>
 /// <remarks>
 /// <paramref name="PartOf"/> is what keeps the window's rail readable: a machine with twenty cores
 /// would otherwise put twenty entries in it and bury the disks below them. The cores belong under
@@ -46,7 +63,9 @@ public readonly record struct PerformanceSection(
   string PrimaryLabel = "",
   Rate Secondary = default,
   string SecondaryLabel = "",
-  string PartOf = ""
+  string PartOf = "",
+  string RailDetail = "",
+  string RailTitle = ""
 ) {
 
   /// <summary>Whether there is a second series worth plotting.</summary>
@@ -54,6 +73,9 @@ public readonly record struct PerformanceSection(
 
   /// <summary>Whether this stands on its own in a list of resources.</summary>
   public bool IsTopLevel => this.PartOf.Length == 0;
+
+  /// <summary>What to put in the rail: the short name where there is one.</summary>
+  public string RailName => this.RailTitle.Length > 0 ? this.RailTitle : this.Title;
 
 }
 
@@ -102,9 +124,17 @@ public static class PerformanceReport {
         100,
         Percent(utilisation),
         delta?.SystemKernelPercent ?? Rate.NotSampledYet,
-        "kernel"
+        "kernel",
+        RailDetail: host.CpuCurrentHertz.HasValue ? Hertz(host.CpuCurrentHertz) : string.Empty
       ),
-      new("Memory", BuildMemory(host, snapshot), memory, 100, Percent(memory)),
+      new(
+        "Memory",
+        BuildMemory(host, snapshot),
+        memory,
+        100,
+        Percent(memory),
+        RailDetail: MemoryDetail(snapshot)
+      ),
     };
 
     // One section per logical processor, which is what §46's "logical processors" graph mode asks
@@ -127,6 +157,7 @@ public static class PerformanceReport {
 
     // One per adapter, and only where there is an adapter: a machine with no discrete graphics gets
     // no heading rather than an empty one (PRD §50).
+    var adapter = 0;
     foreach (var gpu in describeGpus?.Invoke() ?? []) {
       var busy = gpu.BusyPercent.HasValue
         ? Rate.Of(gpu.BusyPercent.Value)
@@ -137,7 +168,9 @@ public static class PerformanceReport {
         BuildGpu(gpu),
         busy,
         100,
-        Percent(busy)
+        Percent(busy),
+        RailDetail: gpu.TemperatureMilliCelsius.HasValue ? Celsius(gpu.TemperatureMilliCelsius) : string.Empty,
+        RailTitle: $"GPU {adapter++}"
       ));
     }
 
@@ -151,7 +184,11 @@ public static class PerformanceReport {
         BuildDisk(in disk, delta, describeDisk),
         busy,
         100,
-        Percent(busy)
+        Percent(busy),
+        // Reads and writes together: which one a disk is doing is a question for its own page, and
+        // the rail has room for one number.
+        RailDetail: rates is { } r ? Humanize.BytesPerSecond(Sum(r.ReadBytesPerSecond, r.WriteBytesPerSecond)) : string.Empty,
+        RailTitle: $"Disk {disk.Name}"
       ));
     }
 
@@ -176,7 +213,9 @@ public static class PerformanceReport {
         // No ceiling: an adapter's link speed is often unknown, and a graph scaled to a guess is
         // worse than one scaled to what it has actually seen.
         0,
-        Humanize.BytesPerSecond(throughput)
+        Humanize.BytesPerSecond(throughput),
+        RailDetail: rates is { } n ? $"↓ {Humanize.BytesPerSecond(n.ReceivedBytesPerSecond)}" : string.Empty,
+        RailTitle: $"Net {network.Name}"
       ));
     }
 
@@ -193,11 +232,11 @@ public static class PerformanceReport {
 
     var rows = new List<PerformanceRow>();
     if (info?.Model is { Length: > 0 } model)
-      rows.Add(new("Model", model));
+      rows.Add(new("Model", model, IsHardware: true));
 
     if (info is not null) {
-      rows.Add(new("Capacity", Humanize.Bytes(info.CapacityBytes)));
-      rows.Add(new("Media", info.Rotational switch {
+      rows.Add(new("Capacity", Humanize.Bytes(info.CapacityBytes), IsHardware: true));
+      rows.Add(new("Media", IsHardware: true, Value: info.Rotational switch {
         true => "rotational",
         false => "solid state",
         // The kernel not saying is not the same as "no", and a machine that reports neither should
@@ -225,10 +264,10 @@ public static class PerformanceReport {
     var rows = new List<PerformanceRow>();
 
     if (info is not null) {
-      rows.Add(new("State", info.State ?? Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform)));
-      rows.Add(new("Link speed", Bits(info.LinkSpeedBitsPerSecond)));
-      rows.Add(new("MAC address", info.MacAddress ?? Humanize.Placeholder(UnknownReason.NotPermitted)));
-      rows.Add(new("MTU", Humanize.Count(info.MaximumTransmissionUnit)));
+      rows.Add(new("State", info.State ?? Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform), IsHardware: true));
+      rows.Add(new("Link speed", Bits(info.LinkSpeedBitsPerSecond), IsHardware: true));
+      rows.Add(new("MAC address", info.MacAddress ?? Humanize.Placeholder(UnknownReason.NotPermitted), IsHardware: true));
+      rows.Add(new("MTU", Humanize.Count(info.MaximumTransmissionUnit), IsHardware: true));
     }
 
     rows.Add(new("Receive rate", rates is { } received ? Humanize.BytesPerSecond(received.ReceivedBytesPerSecond) : Pending));
@@ -295,21 +334,24 @@ public static class PerformanceReport {
 
   private static PerformanceRow[] BuildProcessor(HostInfo host, SystemSnapshot snapshot, SnapshotDelta? delta) {
     var rows = new List<PerformanceRow> {
-      new("Model", host.CpuModel ?? Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform)),
-      new("Vendor", host.CpuVendor ?? Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform)),
+      // Live: what it is doing. Utilisation and speed are the two largest figures on the page.
       new("Utilisation", Percent(delta?.SystemCpuPercent)),
+      new("Current speed", Hertz(host.CpuCurrentHertz)),
       new("User time", Percent(delta?.SystemUserPercent)),
       new("Kernel time", Percent(delta?.SystemKernelPercent)),
-      new("Base speed", Hertz(host.CpuBaseHertz)),
-      new("Current speed", Hertz(host.CpuCurrentHertz)),
-      new("Sockets", Humanize.Count(host.Sockets)),
-      new("Physical cores", Humanize.Count(host.PhysicalCores)),
-      new("Logical processors", Humanize.Count(host.LogicalProcessors)),
-      new("NUMA nodes", Humanize.Count(host.NumaNodes)),
-      new("L1 data", Humanize.Bytes(host.L1DataBytes)),
-      new("L1 instruction", Humanize.Bytes(host.L1InstructionBytes)),
-      new("L2", Humanize.Bytes(host.L2Bytes)),
-      new("L3", Humanize.Bytes(host.L3Bytes)),
+      new("Processes", Humanize.Count(Counter.Of((ulong)snapshot.ProcessCount))),
+      // Hardware: what it is.
+      new("Model", host.CpuModel ?? Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform), IsHardware: true),
+      new("Vendor", host.CpuVendor ?? Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform), IsHardware: true),
+      new("Base speed", Hertz(host.CpuBaseHertz), IsHardware: true),
+      new("Sockets", Humanize.Count(host.Sockets), IsHardware: true),
+      new("Physical cores", Humanize.Count(host.PhysicalCores), IsHardware: true),
+      new("Logical processors", Humanize.Count(host.LogicalProcessors), IsHardware: true),
+      new("NUMA nodes", Humanize.Count(host.NumaNodes), IsHardware: true),
+      new("L1 data", Humanize.Bytes(host.L1DataBytes), IsHardware: true),
+      new("L1 instruction", Humanize.Bytes(host.L1InstructionBytes), IsHardware: true),
+      new("L2", Humanize.Bytes(host.L2Bytes), IsHardware: true),
+      new("L3", Humanize.Bytes(host.L3Bytes), IsHardware: true),
     };
 
     // Load average is a Unix idea and reads as three numbers or not at all; a machine that does not
@@ -353,25 +395,48 @@ public static class PerformanceReport {
   /// <c>n/i</c> beside its name and its driver, which is a truthful page — and a better one than a
   /// row of confident zeros for a card that is busy.
   /// </remarks>
+  /// <summary>
+  /// What the memory rail row says beside its percentage: how much of how much, which is the figure
+  /// people actually check.
+  /// </summary>
+  /// <summary>
+  /// Two rates added, which is only possible when both were measured — an unknown plus a number is
+  /// an unknown, not the number (PRD §5.3).
+  /// </summary>
+  private static Rate Sum(Rate first, Rate second)
+    => first.HasValue && second.HasValue
+      ? Rate.Of(first.Value + second.Value)
+      : Rate.Unknown(first.HasValue ? second.Reason : first.Reason);
+
+  private static string MemoryDetail(SystemSnapshot snapshot) {
+    var system = snapshot.System;
+    if (!system.TotalMemoryBytes.HasValue || !system.AvailableMemoryBytes.HasValue)
+      return string.Empty;
+
+    var total = system.TotalMemoryBytes.Value;
+    var used = total - Math.Min(system.AvailableMemoryBytes.Value, total);
+    return $"{Humanize.Bytes(used)} / {Humanize.Bytes(total)}";
+  }
+
   private static PerformanceRow[] BuildGpu(GpuInfo gpu) {
     var rows = new List<PerformanceRow> {
-      new("Adapter", gpu.Model ?? gpu.Name),
-      new("Driver", gpu.Driver ?? Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform)),
       new("Utilisation", AsPercent(gpu.BusyPercent)),
       new("Memory bus", AsPercent(gpu.MemoryBusyPercent)),
-      new("Dedicated memory", Humanize.Bytes(gpu.MemoryTotalBytes)),
       new("Memory in use", Humanize.Bytes(gpu.MemoryUsedBytes)),
       new("Temperature", Celsius(gpu.TemperatureMilliCelsius)),
       // Draw and cap on one line, because neither means much alone.
       new("Power", PowerDraw(gpu.PowerMicrowatts, gpu.PowerLimitMicrowatts)),
-      new("Power cap", Watts(gpu.PowerCapMicrowatts)),
       new("Core clock", Hertz(gpu.CoreClockHertz)),
       new("Memory clock", Hertz(gpu.MemoryClockHertz)),
       new("Fan", AsPercent(gpu.FanPercent)),
+      new("Adapter", gpu.Model ?? gpu.Name, IsHardware: true),
+      new("Driver", gpu.Driver ?? Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform), IsHardware: true),
+      new("Dedicated memory", Humanize.Bytes(gpu.MemoryTotalBytes), IsHardware: true),
+      new("Power cap", Watts(gpu.PowerCapMicrowatts), IsHardware: true),
     };
 
     if (gpu.PowerState is { } state)
-      rows.Add(new("Power state", state));
+      rows.Add(new("Power state", state, IsHardware: true));
 
     return [.. rows];
   }
@@ -409,15 +474,15 @@ public static class PerformanceReport {
       : Counter.Unknown(system.TotalMemoryBytes.HasValue ? system.AvailableMemoryBytes.Reason : system.TotalMemoryBytes.Reason);
 
     return [
-      new("Total", Humanize.Bytes(system.TotalMemoryBytes)),
+      new("Total", Humanize.Bytes(system.TotalMemoryBytes), IsHardware: true),
       new("In use", Humanize.Bytes(used)),
       new("Available", Humanize.Bytes(system.AvailableMemoryBytes)),
       new("Cached", Humanize.Bytes(system.CachedMemoryBytes)),
       new("Swap used", Humanize.Bytes(system.UsedSwapBytes)),
       new("Swap total", Humanize.Bytes(system.TotalSwapBytes)),
-      new("Speed", Transfers(host.MemoryTransfersPerSecond)),
-      new("Form factor", host.MemoryFormFactor ?? Humanize.Placeholder(UnknownReason.NotPermitted)),
-      new("Slots used", Slots(host.MemorySlotsUsed, host.MemorySlotsTotal)),
+      new("Speed", Transfers(host.MemoryTransfersPerSecond), IsHardware: true),
+      new("Form factor", host.MemoryFormFactor ?? Humanize.Placeholder(UnknownReason.NotPermitted), IsHardware: true),
+      new("Slots used", Slots(host.MemorySlotsUsed, host.MemorySlotsTotal), IsHardware: true),
     ];
   }
 

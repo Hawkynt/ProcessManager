@@ -733,6 +733,18 @@ public sealed class MainWindow : Form {
   /// Modeless and refreshed from the sample tick below, so its numbers move. It was modal and drawn
   /// once — a performance page that never updated, which is worse than not having one.
   /// </remarks>
+  /// <summary>
+  /// Opens the performance page and returns it, so a capture run can photograph it too.
+  /// </summary>
+  /// <remarks>
+  /// §45 is almost entirely about what the page looks like, and the only evidence of that in CI is
+  /// a picture of it. A page nobody photographs is one whose layout regressions ship.
+  /// </remarks>
+  public PerformanceWindow OpenPerformance() {
+    this.ShowPerformance();
+    return this._performance!;
+  }
+
   private void ShowPerformance() {
     if (this._performance is not null) {
       this._performance.UpdateFromSample();
