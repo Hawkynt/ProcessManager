@@ -31,8 +31,8 @@ shorthand:
 it is not known*. An unticked box must never become a zero on screen. This is restated here because
 it is the single requirement most likely to be broken while filling the tables in.
 
-**Counting, as of the last update:** **458 of 1254 boxes are ticked** — 62 of 189 in the field
-registry (§14–22), 396 of 1065 across the capabilities. A further 136 are marked 🟡, meaning some of
+**Counting, as of the last update:** **460 of 1254 boxes are ticked** — 62 of 189 in the field
+registry (§14–22), 398 of 1065 across the capabilities. A further 138 are marked 🟡, meaning some of
 the work behind them is already done. §100 tracks the phases; §101 defines when this may be called
 finished.
 
@@ -868,7 +868,7 @@ guessing: a colour claiming "unsigned" without having checked a signature is wor
 - [x] Set priority
 - [x] Set nice value
 - [ ] Set scheduling class
-- [ ] Set processor affinity
+- [x] Set processor affinity — through the helper where it needs privilege
 - [ ] Set CPU set
 - [ ] Set I/O priority
 - [ ] Set page priority
@@ -1131,11 +1131,22 @@ Actions:
 The question this answers — "which process is using this file?" — is one of the two or three reasons
 people install Process Explorer at all.
 
-- [ ] Search targets: resource/handle names · file descriptors · executable paths · loaded modules ·
+- [x] Search targets: resource/handle names · file descriptors · executable paths · loaded modules ·
       memory mappings · sockets · service names · process names · command lines
-- [ ] Modes: substring · wildcard · regex · exact · case-sensitive
-- [ ] Results: process · PID · resource type · identifier · name/path · access · user
-- [ ] Double-click navigates to the process **and** the resource
+- [ ] 🟡 Modes — substring ✔ (case-insensitive) and regex ✔ as `/pattern/`; wildcard, exact and a
+      case-sensitive toggle are not
+- [ ] 🟡 Results — process ✔ · PID ✔ · resource type ✔ · name/path ✔ · user ✔; the access mask is
+      not reported
+- [ ] Double-click navigates to the process **and** the resource — there is no view to click in;
+      `procman --find` is the whole interface
+
+Reported one reason per process for the three that are really one thing. A pattern matching a name
+usually matches the command line and the path too, so the most specific one that answered wins:
+three rows saying the same thing is noise, not information.
+
+The expensive half — every descriptor, every mapping and every socket of every process — runs only
+for the processes the cheap fields did not already answer for (§5.4), which a test asserts by
+counting the reads.
 
 ---
 
