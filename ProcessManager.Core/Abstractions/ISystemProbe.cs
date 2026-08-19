@@ -61,6 +61,11 @@ public interface ISystemProbe : IDisposable {
   IReadOnlyList<ConnectionRecord> GetConnections(ProcessKey key);
 
   /// <summary>
+  /// The machine's services (PRD §41), or an empty list where they are not read yet.
+  /// </summary>
+  IReadOnlyList<ServiceRecord> GetServices();
+
+  /// <summary>
   /// Who is logged in (PRD §43), or an empty list where that is not read yet.
   /// </summary>
   IReadOnlyList<SessionRecord> GetSessions();

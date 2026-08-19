@@ -31,8 +31,8 @@ shorthand:
 it is not known*. An unticked box must never become a zero on screen. This is restated here because
 it is the single requirement most likely to be broken while filling the tables in.
 
-**Counting, as of the last update:** **456 of 1253 boxes are ticked** — 62 of 189 in the field
-registry (§14–22), 394 of 1064 across the capabilities. A further 130 are marked 🟡, meaning some of
+**Counting, as of the last update:** **458 of 1254 boxes are ticked** — 62 of 189 in the field
+registry (§14–22), 396 of 1065 across the capabilities. A further 136 are marked 🟡, meaning some of
 the work behind them is already done. §100 tracks the phases; §101 defines when this may be called
 finished.
 
@@ -423,7 +423,7 @@ Primary navigation:
 - [ ] Applications / usage history (§44)
 - [ ] 🟡 Startup — `--startup` lists them; there is no view (§42)
 - [ ] 🟡 Users / sessions — `--users` lists them; there is no view (§43)
-- [ ] Services (§41)
+- [ ] 🟡 Services — `--services` lists them; there is no view and no control verbs (§41)
 - [ ] 🟡 Network — connections are collected and shown per process, not as a view (§40)
 - [ ] System activity (§51)
 - [ ] Search / find resources (§33)
@@ -1287,13 +1287,13 @@ Actions:
 
 # 41. Services view
 
-Unbuilt on every platform, and the largest single gap in this document.
+Read on Linux; unbuilt on Windows and macOS. Control — start, stop, enable — is unbuilt everywhere.
 
 Shared columns:
 
-- [ ] Name · display name · description · state · startup type · enabled · PID · process ·
-      user/account · service type · binary/command · arguments · dependencies · dependents ·
-      failure state · start time · last state change · platform provider · unit/domain
+- [ ] 🟡 Name ✔ · description ✔ (which is systemd's display name) · state ✔ · enabled ✔ · PID ✔ ·
+      binary/command ✔. User/account, service type, arguments, dependencies, dependents, failure
+      state, start time and last state change are not read
 
 Windows-specific:
 
@@ -1303,8 +1303,9 @@ Windows-specific:
 
 systemd-specific:
 
-- [ ] Unit name · load state · active state · sub-state · unit file state · main PID · control PID ·
-      fragment path · description · activation timestamp · restart policy
+- [ ] 🟡 Unit name ✔ · main PID ✔ · fragment path ✔ · description ✔ · restart policy ✔ · masked ✔.
+      Load state, sub-state, control PID and the activation timestamp are not — those need systemd
+      itself to answer
 
 launchd-specific:
 
@@ -1317,8 +1318,24 @@ Actions:
       inspect dependencies
 - [ ] Creating and editing services — deferred to a later release
 
-systemd is reachable over D-Bus without a helper for read-only queries; the control verbs go through
-the privileged helper (§68).
+**Read without D-Bus and without spawning `systemctl`.** Everything the columns need is on disk: the
+unit files say what a service is, the `*.wants` symlinks say whether it starts at boot, and the
+cgroup tree says what is running and with which main process. A D-Bus client is a substantial piece
+of machinery, and shelling out to read state is the thing that stops working on the machine you most
+need it on.
+
+Three shapes of running service had to be handled, and each was found by comparing against
+`systemctl` rather than by reading the documentation:
+
+- a service **nested in a slice of its own** — cups lives at `system.slice/system-cups.slice/`
+- a service whose **own cgroup is empty because its processes are in a child** — systemd-udevd
+- an **instance of a template**, whose file on disk is named for the template — `user@1000.service`
+  from `user@.service`, and under `user.slice` rather than the system one
+
+With all three handled, the list matches `systemctl list-units --state=running` exactly on this
+machine: 22 against 22, with no difference in either direction.
+
+The control verbs still need the privileged helper (§68), and none of them is written.
 
 # 42. Startup applications
 
@@ -1743,11 +1760,12 @@ drag and drop.
 - [x] `procman kill 1234`
 - [x] `procman suspend 1234`
 - [x] `procman resume 1234`
-- [ ] `procman service list`
+- [x] `procman service list` — as `--services`
 - [ ] `procman net`
 - [x] `procman --host` — the §96 summary, which is `perf cpu` without the graph
 - [x] `procman --startup` — what will run at login
 - [x] `procman --users` — who is logged in, and what their processes cost
+- [x] `procman --services` — which services exist and which are running
 - [ ] `procman perf cpu`
 
 Output formats:
@@ -2416,8 +2434,8 @@ Windows parsing on Linux.
 - [x] Termination
 - [x] Priority
 - [ ] Affinity
-- [ ] Services
-- [ ] Startup
+- [ ] 🟡 Services
+- [ ] 🟡 Startup
 - [x] Network
 - [x] Modules
 - [x] Descriptors
@@ -2541,7 +2559,7 @@ v1 does not ship unless every one of these is true:
 - [x] The user can inspect process path and command line
 - [x] The user can inspect the process tree
 - [ ] 🟡 The user can inspect active network endpoints
-- [ ] The user can inspect, start and stop supported services
+- [ ] 🟡 The user can inspect services — starting and stopping them is not written
 - [ ] The user can manage common startup items
 - [ ] 🟡 The user can inspect logged-in sessions — from the CLI; neither front-end has the view
 - [ ] 🟡 The user can view CPU, memory, disk and network performance

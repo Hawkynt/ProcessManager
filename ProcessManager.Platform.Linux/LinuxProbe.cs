@@ -739,6 +739,26 @@ public sealed class LinuxProbe : ISystemProbe {
   }
 
   /// <summary>
+  /// systemd services, from the unit files and the cgroups (PRD §41).
+  /// </summary>
+  /// <remarks>
+  /// On request only: it walks a few hundred unit files, which is nothing once and far too much
+  /// every second.
+  /// </remarks>
+  public IReadOnlyList<ServiceRecord> GetServices() => SystemdServiceReader.Read(
+    this._options.UnitDirectories ?? ["/usr/lib/systemd/system", "/etc/systemd/system"],
+    this._options.WantsDirectories ?? [
+      "/etc/systemd/system/multi-user.target.wants",
+      "/etc/systemd/system/graphical.target.wants",
+      "/etc/systemd/system/sysinit.target.wants",
+      "/etc/systemd/system/default.target.wants",
+    ],
+    // The whole tree, not just system.slice: a user's manager runs as user@1000.service under
+    // user.slice, and starting at the system slice reports it as stopped.
+    this._options.ServiceCgroupRoot ?? "/sys/fs/cgroup"
+  );
+
+  /// <summary>
   /// Who is logged in, from utmp (PRD §43).
   /// </summary>
   /// <remarks>
