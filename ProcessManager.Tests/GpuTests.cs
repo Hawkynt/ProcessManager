@@ -128,14 +128,22 @@ public sealed class GpuTests {
     public void Dispose() { }
   }
 
-  private static GpuInfo Adapter(string name, string? model, Counter busy)
+  // Counter? and not Counter: default(Counter) is a confident zero, so it cannot be a sentinel for
+  // "the caller said nothing" — which is the very bug the tests below are about.
+  private static GpuInfo Adapter(string name, string? model, Counter busy, Counter? limit = null)
     => new(
       name, model, "amdgpu", busy,
-      Counter.Of(2ul * 1024 * 1024 * 1024),
-      Counter.Of(8ul * 1024 * 1024 * 1024),
-      Counter.Of(52_000),
-      Counter.Of(31_500_000),
-      "D0"
+      MemoryUsedBytes: Counter.Of(2ul * 1024 * 1024 * 1024),
+      MemoryTotalBytes: Counter.Of(8ul * 1024 * 1024 * 1024),
+      TemperatureMilliCelsius: Counter.Of(52_000),
+      PowerMicrowatts: Counter.Of(31_500_000),
+      PowerState: "D0",
+      PowerLimitMicrowatts: limit ?? Counter.Unknown(UnknownReason.NotImplementedHere),
+      PowerCapMicrowatts: Counter.Unknown(UnknownReason.NotImplementedHere),
+      MemoryBusyPercent: Counter.Unknown(UnknownReason.NotImplementedHere),
+      CoreClockHertz: Counter.Unknown(UnknownReason.NotImplementedHere),
+      MemoryClockHertz: Counter.Unknown(UnknownReason.NotImplementedHere),
+      FanPercent: Counter.Unknown(UnknownReason.NotImplementedHere)
     );
 
   private static IReadOnlyList<PerformanceSection> Sections(params GpuInfo[] gpus) {
@@ -180,7 +188,31 @@ public sealed class GpuTests {
     var section = Find(Sections(Adapter("card0", "AMD 73ff", Counter.Of(42))));
 
     Assert.That(Value(section, "Temperature"), Is.EqualTo("52.0 °C"));
-    Assert.That(Value(section, "Power"), Is.EqualTo("31.5 W"));
+    Assert.That(Value(section, "Power"), Is.EqualTo("31.5 W"), "no ceiling to compare against");
+  }
+
+  /// <summary>
+  /// The draw is shown against the ceiling, because thirty watts means something entirely different
+  /// at a forty-watt cap than at a four-hundred-watt one.
+  /// </summary>
+  [Test]
+  public void PowerIsShownAgainstTheCeilingWhenThereIsOne() {
+    var section = Find(Sections(Adapter("card0", "AMD 73ff", Counter.Of(42), Counter.Of(130_000_000))));
+
+    Assert.That(Value(section, "Power"), Is.EqualTo("31.5 W of 130.0 W"));
+  }
+
+  /// <summary>
+  /// The trap this record has no defaults for: default(Counter) is a reading of nought that was
+  /// never taken, so a ceiling nobody supplied would render as "of 0.0 W" beside a card drawing
+  /// thirty.
+  /// </summary>
+  [Test]
+  public void AnUnknownCeilingIsNotAZeroWattCeiling() {
+    var section = Find(Sections(Adapter("card0", "AMD 73ff", Counter.Of(42))));
+
+    Assert.That(Value(section, "Power"), Does.Not.Contain("0.0 W"));
+    Assert.That(Value(section, "Power cap"), Is.EqualTo("n/i"));
   }
 
   [Test]

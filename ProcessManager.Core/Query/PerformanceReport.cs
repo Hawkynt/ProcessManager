@@ -342,17 +342,37 @@ public static class PerformanceReport {
     var rows = new List<PerformanceRow> {
       new("Adapter", gpu.Model ?? gpu.Name),
       new("Driver", gpu.Driver ?? Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform)),
-      new("Utilisation", Percent(gpu.BusyPercent.HasValue ? Rate.Of(gpu.BusyPercent.Value) : Rate.Unknown(gpu.BusyPercent.Reason))),
+      new("Utilisation", AsPercent(gpu.BusyPercent)),
+      new("Memory bus", AsPercent(gpu.MemoryBusyPercent)),
       new("Dedicated memory", Humanize.Bytes(gpu.MemoryTotalBytes)),
       new("Memory in use", Humanize.Bytes(gpu.MemoryUsedBytes)),
       new("Temperature", Celsius(gpu.TemperatureMilliCelsius)),
-      new("Power", Watts(gpu.PowerMicrowatts)),
+      // Draw and cap on one line, because neither means much alone.
+      new("Power", PowerDraw(gpu.PowerMicrowatts, gpu.PowerLimitMicrowatts)),
+      new("Power cap", Watts(gpu.PowerCapMicrowatts)),
+      new("Core clock", Hertz(gpu.CoreClockHertz)),
+      new("Memory clock", Hertz(gpu.MemoryClockHertz)),
+      new("Fan", AsPercent(gpu.FanPercent)),
     };
 
     if (gpu.PowerState is { } state)
       rows.Add(new("Power state", state));
 
     return [.. rows];
+  }
+
+  /// <summary>A counter that is already a percentage, rendered like every other percentage.</summary>
+  private static string AsPercent(Counter counter)
+    => Percent(counter.HasValue ? Rate.Of(counter.Value) : Rate.Unknown(counter.Reason));
+
+  /// <summary>
+  /// The draw against the cap: "30.2 W of 130.0 W". A card drawing thirty watts is doing something
+  /// very different at a forty-watt ceiling than at a four-hundred-watt one, and the number on its
+  /// own cannot say which.
+  /// </summary>
+  private static string PowerDraw(Counter microwatts, Counter limit) {
+    var draw = Watts(microwatts);
+    return limit.HasValue ? $"{draw} of {Watts(limit)}" : draw;
   }
 
   /// <summary>hwmon counts temperature in thousandths of a degree, which nobody wants to read.</summary>

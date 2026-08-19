@@ -127,8 +127,9 @@ internal static class LinuxDeviceReader {
     var uevent = Read(Path.Combine(device, "uevent")) ?? string.Empty;
     var driver = UeventParser.Value(uevent, "DRIVER");
     var model = PciNames.Describe(UeventParser.Value(uevent, "PCI_ID"));
+    var slot = UeventParser.Value(uevent, "PCI_SLOT_NAME");
 
-    return new(
+    var card = new GpuInfo(
       name,
       model,
       driver.IsEmpty ? null : new string(driver),
@@ -138,8 +139,43 @@ internal static class LinuxDeviceReader {
       ReadCounter(Path.Combine(device, "mem_info_vram_total"), 1),
       ReadHwmon(device, "temp1_input"),
       ReadHwmon(device, "power1_average"),
-      Read(Path.Combine(device, "power_state"))
+      Read(Path.Combine(device, "power_state")),
+      // The cap is what makes the draw mean anything: 30 W says nothing until you know whether the
+      // ceiling is 40 or 400.
+      ReadHwmon(device, "power1_cap_max"),
+      PowerCapMicrowatts: ReadHwmon(device, "power1_cap"),
+      MemoryBusyPercent: Counter.Unknown(UnknownReason.NotImplementedHere),
+      CoreClockHertz: ReadClock(cardPath),
+      MemoryClockHertz: Counter.Unknown(UnknownReason.NotImplementedHere),
+      FanPercent: ReadFan(device)
     );
+
+    // The vendor's own library last, because it knows more than sysfs does about every card it
+    // recognises — and about NVIDIA's, sysfs knows nothing at all.
+    return NvmlReader.Describe(card, slot.IsEmpty ? null : new string(slot)) ?? card;
+  }
+
+  /// <summary>
+  /// Intel's i915 publishes its render clock and nothing else useful.
+  /// </summary>
+  /// <remarks>
+  /// <c>gt_act_freq_mhz</c> is what the hardware is actually running at and reads 0 when the render
+  /// engine is parked; <c>gt_cur_freq_mhz</c> is what the driver has requested and keeps its last
+  /// value. The requested one is the one that matches what other tools show, and a zero here would
+  /// be read as "no clock" rather than "idle".
+  /// </remarks>
+  private static Counter ReadClock(string cardPath) {
+    var actual = ReadCounter(Path.Combine(cardPath, "gt_act_freq_mhz"), 1_000_000);
+    if (actual.HasValue && actual.Value > 0)
+      return actual;
+
+    return ReadCounter(Path.Combine(cardPath, "gt_cur_freq_mhz"), 1_000_000);
+  }
+
+  /// <summary>Percent, from whichever of hwmon's two spellings the driver uses.</summary>
+  private static Counter ReadFan(string devicePath) {
+    var percent = ReadHwmon(devicePath, "fan1_input");
+    return percent.HasValue ? percent : ReadHwmon(devicePath, "pwm1");
   }
 
   /// <summary>

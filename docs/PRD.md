@@ -1581,11 +1581,11 @@ Sources: `/sys/class/net/*` and `/proc/net/dev`; `GetIfTable2` and `GetAdaptersA
 
 - [x] Adapter name · vendor · device · driver
 - [ ] 🟡 Memory totals · dedicated memory · shared memory · current dedicated usage · current shared
-      usage — dedicated total and in-use where the driver publishes them; shared memory is not read
-- [ ] 🟡 Overall utilisation — where the driver publishes it, which in practice means AMD
+      usage — dedicated total and in-use, plus how busy the memory bus is; shared memory is not read
+- [x] Overall utilisation
 - [ ] Per-engine utilisation: compute · graphics · copy · encode · decode
-- [ ] 🟡 Temperature, power and clock where available — temperature and power from the card's own
-      hwmon node; clock is not read
+- [x] Temperature, power and clock where available — draw against the ceiling, the momentary cap
+      beside it, core and memory clocks, and the fan
 - [x] **OS-provided data is separated from vendor-specific sensor extensions**, and vendor plugins
       cannot stall a sample or crash the sampler
 
@@ -1593,19 +1593,37 @@ Sources: `/sys/class/net/*` and `/proc/net/dev`; `GetIfTable2` and `GetAdaptersA
 and only the cards are adapters. Each becomes its own section, read on demand by the page that shows
 it and never from the sample loop, whose allocation budget is a build gate (§5.4).
 
-**Most of these readings are blank on most machines, and saying so is the point.** AMD publishes
-`gpu_busy_percent` and the VRAM figures; Intel's `i915` publishes neither, because its engine
-busyness lives behind a perf counter that needs a privileged open; NVIDIA's proprietary driver
-publishes nothing there at all and wants NVML. Each missing reading carries `NotImplementedHere` and
-renders `n/i` rather than a zero — a row of confident zeros beside a card that is busy would be worse
-than an empty one (§5.3).
+**sysfs alone answers almost nothing, and concluding from that that the numbers do not exist was a
+mistake.** AMD publishes `gpu_busy_percent`, the VRAM figures and a hwmon node; Intel's `i915`
+publishes its render clock and nothing else, its engine busyness living behind a perf counter that
+needs a privileged open; NVIDIA's driver publishes nothing there at all. It is the **vendors' own
+libraries** that hold the readings, which is why every tool with a real GPU page loads one — a card
+that rendered here as a column of `n/i` was at the time sitting at 100 % with 15.9 of its 16 GB in
+use, 54 °C and 27 W.
 
-The vendor is named and the device is not. The full PCI id database is megabytes of names that go
-stale the month after a build, and a program that ships one tells people their new card is unknown
-hardware; "NVIDIA 24b6" beside the driver name answers the question that is actually being asked,
-which is which adapter this is.
+`libnvidia-ml.so.1` is therefore loaded the way GTK is: optional, tried once, and remembered as
+absent when the first call throws. Devices are matched by **PCI address** and not by index — NVML's
+enumeration order is its own and need not match the kernel's `cardN` numbering, so matching by
+position would confidently attribute one card's readings to another on any machine with two.
 
-Windows and macOS report no adapters yet, which is a gap and not a claim that the machine has none.
+**Power is shown as draw against the ceiling**, because thirty watts means something entirely
+different at a forty-watt cap than at a four-hundred-watt one. The ceiling is the card's maximum and
+not the enforced limit: a laptop's dynamic boost moves the enforced figure around constantly and the
+instantaneous draw routinely exceeds it, so using it as the denominator renders "28.5 W of 20.0 W"
+and reads as a bug. The enforced cap gets its own row, because a card clamped to 20 W of a possible
+130 W is the entire explanation for a 210 MHz clock at full utilisation.
+
+Where a reading still cannot be had it carries `NotImplementedHere` and renders `n/i`. None of the
+readings on `GpuInfo` has a default value, deliberately: `default(Counter)` is a *confident zero*, so
+a caller allowed to leave one out would claim a card draws no power and has a nought-watt ceiling
+(§5.3).
+
+The vendor is named from the PCI id and the device is not, for cards no library recognises. The full
+PCI id database is megabytes of names that go stale the month after a build, and a program that ships
+one tells people their new card is unknown hardware.
+
+ROCm SMI for AMD and the i915 perf counter for Intel are the two remaining gaps; Windows and macOS
+report no adapters yet, which is a gap and not a claim that the machine has none.
 
 # 51. System activity view — expert
 
