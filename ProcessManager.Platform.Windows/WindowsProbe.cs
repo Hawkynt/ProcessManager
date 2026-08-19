@@ -273,6 +273,12 @@ public sealed class WindowsProbe : ISystemProbe {
   public IReadOnlyList<StartupEntry> GetStartupEntries() => [];
 
   /// <summary>
+  /// Not read yet: Windows sessions come from the terminal-services API (WTSEnumerateSessions),
+  /// which is not written (PRD §43).
+  /// </summary>
+  public IReadOnlyList<SessionRecord> GetSessions() => [];
+
+  /// <summary>
   /// Not read yet: the per-device counters come from the performance-counter API or from
   /// IOCTL_STORAGE_QUERY_PROPERTY, and neither is written (PRD §48, §49). The snapshot carries no
   /// devices on Windows, so nothing calls these.

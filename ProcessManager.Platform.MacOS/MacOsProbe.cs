@@ -26,6 +26,8 @@ public sealed class MacOsProbe : ISystemProbe {
 
   public IReadOnlyList<StartupEntry> GetStartupEntries() => throw new PlatformNotSupportedException(_Message);
 
+  public IReadOnlyList<SessionRecord> GetSessions() => throw new PlatformNotSupportedException(_Message);
+
   public DiskInfo DescribeDisk(string name) => throw new PlatformNotSupportedException(_Message);
 
   public NetworkInterfaceInfo DescribeInterface(string name) => throw new PlatformNotSupportedException(_Message);
