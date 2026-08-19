@@ -1483,10 +1483,18 @@ a machine.
 Graph modes:
 
 - [x] Overall
-- [x] Logical processors
+- [x] Logical processors — one rail entry per core, each with its own history
 - [ ] Physical cores
 - [ ] NUMA nodes
-- [ ] User vs kernel / system
+- [x] User vs kernel / system — plotted together, total in green with kernel over it in red, on the
+      processor page and on every core
+
+Kernel time is system time **plus hard IRQ plus soft IRQ**, not system time alone: a saturated
+network adapter is almost entirely soft IRQ, and counting only system time would show a nearly idle
+kernel beside a fully busy core. User and kernel deliberately do not add up to utilisation — steal
+time is busy from this machine's point of view and belongs to neither, so a guest losing a third of
+its core to the hypervisor shows it as the gap rather than hidden in one of the two. I/O wait is in
+none of the three, because nothing is running during it.
 
 `/proc/cpuinfo` and `CPUID`/registry supply make, model and speed; DMI (`/sys/class/dmi`) supplies
 socket and cache topology.
@@ -1571,13 +1579,33 @@ Sources: `/sys/class/net/*` and `/proc/net/dev`; `GetIfTable2` and `GetAdaptersA
 
 # 50. GPU performance
 
-- [ ] Adapter name · vendor · device · driver
-- [ ] Memory totals · dedicated memory · shared memory · current dedicated usage · current shared usage
-- [ ] Overall utilisation
+- [x] Adapter name · vendor · device · driver
+- [ ] 🟡 Memory totals · dedicated memory · shared memory · current dedicated usage · current shared
+      usage — dedicated total and in-use where the driver publishes them; shared memory is not read
+- [ ] 🟡 Overall utilisation — where the driver publishes it, which in practice means AMD
 - [ ] Per-engine utilisation: compute · graphics · copy · encode · decode
-- [ ] Temperature, power and clock where available
-- [ ] **OS-provided data is separated from vendor-specific sensor extensions**, and vendor plugins
+- [ ] 🟡 Temperature, power and clock where available — temperature and power from the card's own
+      hwmon node; clock is not read
+- [x] **OS-provided data is separated from vendor-specific sensor extensions**, and vendor plugins
       cannot stall a sample or crash the sampler
+
+`/sys/class/drm` holds one entry per card and one per connector — `card0` beside `card0-HDMI-A-1` —
+and only the cards are adapters. Each becomes its own section, read on demand by the page that shows
+it and never from the sample loop, whose allocation budget is a build gate (§5.4).
+
+**Most of these readings are blank on most machines, and saying so is the point.** AMD publishes
+`gpu_busy_percent` and the VRAM figures; Intel's `i915` publishes neither, because its engine
+busyness lives behind a perf counter that needs a privileged open; NVIDIA's proprietary driver
+publishes nothing there at all and wants NVML. Each missing reading carries `NotImplementedHere` and
+renders `n/i` rather than a zero — a row of confident zeros beside a card that is busy would be worse
+than an empty one (§5.3).
+
+The vendor is named and the device is not. The full PCI id database is megabytes of names that go
+stale the month after a build, and a program that ships one tells people their new card is unknown
+hardware; "NVIDIA 24b6" beside the driver name answers the question that is actually being asked,
+which is which adapter this is.
+
+Windows and macOS report no adapters yet, which is a gap and not a claim that the machine has none.
 
 # 51. System activity view — expert
 
