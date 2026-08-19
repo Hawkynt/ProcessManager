@@ -206,6 +206,10 @@ public sealed class MainWindow : Form {
   private void BuildTree() {
     this._tree.Dock = DockStyle.Fill;
     this._tree.ShowColumnHeaders = true;
+    // Dense, the way the tools this imitates are: seventeen pixels fits about forty processes on a
+    // laptop screen where the toolkit's default fits twenty-five, and forty is the difference
+    // between scrolling to find a process and seeing it (PRD §93).
+    this._tree.ItemHeight = 17;
 
     this.RebuildColumns();
 
@@ -247,6 +251,10 @@ public sealed class MainWindow : Form {
     if ((uint)e.ColumnIndex >= (uint)this._columns.Count)
       return;
 
+    // Under everything else, and for every cell: this runs before the control draws its text, so a
+    // rule laid down here is a rule the text sits on rather than one drawn over it.
+    DrawGridLines(e);
+
     var info = ColumnSet.Info(this._columns[e.ColumnIndex]);
     if (info.Series is not { } series || e.Node.Tag is not ProcessRow row)
       return;
@@ -261,6 +269,49 @@ public sealed class MainWindow : Form {
     // Handled: the cell has no text, and letting the control draw an empty string over the plot
     // would only cost a measure.
     e.Handled = true;
+  }
+
+  /// <summary>
+  /// The faint rules that make a dense table readable across a row (PRD §93).
+  /// </summary>
+  /// <remarks>
+  /// Process Explorer and Process Hacker both draw them, and at seventeen pixels a row they are what
+  /// stops the eye sliding onto the line below while it crosses fifteen columns. Derived from the
+  /// row's own colour rather than fixed, so a rule over a green "new process" row is a darker green
+  /// and not a grey stripe — the category colour has to survive the grid.
+  /// </remarks>
+  private static void DrawGridLines(TreeListViewCellPaintEventArgs e) {
+    var ground = e.Selected
+      ? e.Theme.SelectionBackground
+      : e.Node.Tag is ProcessRow row
+        ? RowPalette.BackColorOf(row.Category, e.Theme) ?? e.Theme.FieldBackground
+        : e.Theme.FieldBackground;
+
+    var line = Shade(ground);
+    var bounds = e.Bounds;
+
+    // Bottom of the cell, and the right edge: horizontal rules separate rows, and the vertical ones
+    // keep a wide numeric column from reading as part of its neighbour.
+    e.Graphics.FillRectangle(line, new(bounds.X, bounds.Bottom - 1, bounds.Width, 1));
+    e.Graphics.FillRectangle(line, new(bounds.Right - 1, bounds.Y, 1, bounds.Height - 1));
+  }
+
+  /// <summary>
+  /// A colour a little away from its ground, in whichever direction there is room for.
+  /// </summary>
+  /// <remarks>
+  /// Darkening a light row and lightening a dark one keeps the rule visible in both themes without
+  /// a second palette, and keeps it subordinate to the text in either.
+  /// </remarks>
+  private static Color Shade(Color ground) {
+    var luminance = (0.299 * ground.R) + (0.587 * ground.G) + (0.114 * ground.B);
+    var shift = luminance > 128 ? -34 : 34;
+    return Color.FromArgb(
+      ground.A,
+      Math.Clamp(ground.R + shift, 0, 255),
+      Math.Clamp(ground.G + shift, 0, 255),
+      Math.Clamp(ground.B + shift, 0, 255)
+    );
   }
 
   private void OnColumnClick(object? sender, ColumnClickEventArgs e) {
@@ -407,6 +458,7 @@ public sealed class MainWindow : Form {
     this._rowHistory.Update(snapshot, delta, this._view, this._tree.TopIndex, this._tree.VisibleNodeCount + 8);
     this._binder.Sync(snapshot, delta, this._view);
     this._cores.Bind(delta);
+    this._performance?.UpdateFromSample();
     this._cpuPlot.Invalidate();
     this._memoryPlot.Invalidate();
 
@@ -521,12 +573,26 @@ public sealed class MainWindow : Form {
   /// list, and a modeless one would need its own timer and its own lifetime. The plots share the
   /// main window's rings, so it opens showing the last sixty seconds rather than starting blank.
   /// </remarks>
+  private PerformanceWindow? _performance;
+
+  /// <summary>
+  /// Opens the system information window (PRD §45), or brings the open one forward.
+  /// </summary>
+  /// <remarks>
+  /// Modeless and refreshed from the sample tick below, so its numbers move. It was modal and drawn
+  /// once — a performance page that never updated, which is worse than not having one.
+  /// </remarks>
   private void ShowPerformance() {
-    // Not disposed: the toolkit's Form is not IDisposable, and ShowDialog owns the window's
-    // lifetime the same way the colour legend above does.
-    var window = new PerformanceWindow(this._probe, this._sampler, this._cpuHistory, this._memoryHistory);
-    window.Update(100);
-    window.ShowDialog();
+    if (this._performance is not null) {
+      this._performance.UpdateFromSample();
+      return;
+    }
+
+    var window = new PerformanceWindow(this._probe, this._sampler);
+    // Forgetting it on close is what keeps the tick from refreshing a window that is gone.
+    window.FormClosed += (_, _) => this._performance = null;
+    this._performance = window;
+    window.Show();
   }
 
 }

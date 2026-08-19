@@ -9,8 +9,26 @@ namespace Hawkynt.ProcessManager.Query;
 /// <param name="Value">What it says, already formatted and including the reason when there is none.</param>
 public readonly record struct PerformanceRow(string Label, string Value);
 
-/// <summary>A group of figures under one heading.</summary>
-public readonly record struct PerformanceSection(string Title, IReadOnlyList<PerformanceRow> Rows);
+/// <summary>
+/// A group of figures under one heading, and the one number that stands for the whole group.
+/// </summary>
+/// <param name="Primary">
+/// What the resource's graph plots and what its entry in the rail reads — utilisation for a
+/// processor, active time for a disk, throughput for an adapter. Unknown for a section that is a
+/// description rather than a measurement.
+/// </param>
+/// <param name="PrimaryMaximum">
+/// The top of the scale, or 0 to scale to whatever has been seen. Percentages are fixed at 100 so
+/// two machines' graphs mean the same thing; throughput has no natural ceiling and cannot be.
+/// </param>
+/// <param name="PrimaryLabel">How the primary reads in the rail, already formatted.</param>
+public readonly record struct PerformanceSection(
+  string Title,
+  IReadOnlyList<PerformanceRow> Rows,
+  Rate Primary = default,
+  double PrimaryMaximum = 0,
+  string PrimaryLabel = ""
+);
 
 /// <summary>
 /// The performance page's content, as data (PRD §45, §46, §47, §96).
@@ -44,16 +62,28 @@ public static class PerformanceReport {
     ArgumentNullException.ThrowIfNull(host);
     ArgumentNullException.ThrowIfNull(snapshot);
 
+    var utilisation = delta?.SystemCpuPercent ?? Rate.NotSampledYet;
+    var memory = MemoryPercent(snapshot);
+
     var sections = new List<PerformanceSection> {
       new("System", BuildSystem(host, snapshot)),
-      new("Processor", BuildProcessor(host, snapshot, delta)),
-      new("Memory", BuildMemory(host, snapshot)),
+      new("Processor", BuildProcessor(host, snapshot, delta), utilisation, 100, Percent(utilisation)),
+      new("Memory", BuildMemory(host, snapshot), memory, 100, Percent(memory)),
     };
 
     // One section per device, so a machine with three disks gets three headings rather than one
     // heading with everything in it — which is the rail §45 asks for, in the shape a page can hold.
-    foreach (var disk in snapshot.Disks)
-      sections.Add(new($"Disk — {disk.Name}", BuildDisk(in disk, delta, describeDisk)));
+    foreach (var disk in snapshot.Disks) {
+      var rates = delta?.DiskRatesOf(disk.Name);
+      var busy = rates?.BusyPercent ?? Rate.NotSampledYet;
+      sections.Add(new(
+        $"Disk — {disk.Name}",
+        BuildDisk(in disk, delta, describeDisk),
+        busy,
+        100,
+        Percent(busy)
+      ));
+    }
 
     foreach (var network in snapshot.Networks) {
       var info = describeInterface?.Invoke(network.Name);
@@ -62,7 +92,22 @@ public static class PerformanceReport {
       if (info is { IsLoopback: true })
         continue;
 
-      sections.Add(new($"Network — {network.Name}", BuildNetwork(in network, delta, info)));
+      // Both directions together: the rail answers "is this adapter busy", and one number does
+      // that where two compete for the same line.
+      var rates = delta?.NetworkRatesOf(network.Name);
+      var throughput = rates is { } moving && moving.ReceivedBytesPerSecond.HasValue && moving.SentBytesPerSecond.HasValue
+        ? Rate.Of(moving.ReceivedBytesPerSecond.Value + moving.SentBytesPerSecond.Value)
+        : Rate.NotSampledYet;
+
+      sections.Add(new(
+        $"Network — {network.Name}",
+        BuildNetwork(in network, delta, info),
+        throughput,
+        // No ceiling: an adapter's link speed is often unknown, and a graph scaled to a guess is
+        // worse than one scaled to what it has actually seen.
+        0,
+        Humanize.BytesPerSecond(throughput)
+      ));
     }
 
     return sections;
@@ -138,6 +183,26 @@ public static class PerformanceReport {
     return bits >= 1_000_000_000
       ? (bits / 1_000_000_000).ToString("0.#", CultureInfo.InvariantCulture) + " Gb/s"
       : (bits / 1_000_000).ToString("0", CultureInfo.InvariantCulture) + " Mb/s";
+  }
+
+  /// <summary>How much of the machine's memory is in use, as a percentage.</summary>
+  private static Rate MemoryPercent(SystemSnapshot snapshot) {
+    var total = snapshot.System.TotalMemoryBytes;
+    var available = snapshot.System.AvailableMemoryBytes;
+    if (!total.HasValue)
+      return Rate.Unknown(total.Reason);
+
+    if (!available.HasValue)
+      return Rate.Unknown(available.Reason);
+
+    // A machine that reports zero total memory has a broken counter rather than an unknown one, and
+    // it is also the denominator — so it is refused here rather than divided by. Asking for the
+    // reason of a counter that has a value would itself throw, which is how this was found.
+    if (total.Value == 0)
+      return Rate.Unknown(UnknownReason.CounterInvalid);
+
+    var used = total.Value - Math.Min(available.Value, total.Value);
+    return Rate.Of(used * 100d / total.Value);
   }
 
   private static PerformanceRow[] BuildSystem(HostInfo host, SystemSnapshot snapshot) {

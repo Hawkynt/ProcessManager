@@ -139,8 +139,14 @@ details and `h` to read handle counts for the visible rows. The desktop UI keeps
 Explorer users already have in their eyes: plots and per-core meters on top, the process tree below
 them, and a tabbed detail pane under that — overview, threads, modules, handles, environment,
 network. Click a header to sort by it, click it again to reverse; **View → Select columns** chooses
-from forty-five, **View → Performance** (or clicking any plot) opens what the machine is and what it
-is doing, and **View → Colour legend** says what every row colour means.
+from forty-five, **View → Performance** (or clicking any plot) opens the system information window —
+a rail of every processor, disk and adapter with its current reading, and a large graph of whichever
+is selected — and **View → Colour legend** says what every row colour means.
+
+The list opens with Process Hacker's own columns (process, PID, CPU, I/O total rate, private bytes,
+user) at seventeen pixels a row, with faint rules between rows and columns. The three drawn histories
+are in the column chooser rather than the default set: they are the widest columns there are, and
+they push the numbers people read off the right-hand edge.
 
 ### The colours
 

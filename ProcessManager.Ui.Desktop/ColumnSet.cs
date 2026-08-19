@@ -17,19 +17,22 @@ internal static class ColumnSet {
   public static FieldDescriptor[] All => FieldRegistry.All;
 
   /// <summary>
-  /// What the window opens with: the Process Explorer set plus the three graphs, which are the point
-  /// of having them.
+  /// What the window opens with.
   /// </summary>
+  /// <remarks>
+  /// Process Hacker's own default set, in its order: the process, its identity, what it is using and
+  /// who owns it. The three drawn histories are deliberately <em>not</em> here — they are three of
+  /// the widest columns in the catalogue and they push the numbers people actually read off the
+  /// right-hand edge. They are one click away in View ▸ Select columns, which is where that tool
+  /// keeps them too (PRD §93, §94).
+  /// </remarks>
   public static readonly ProcessField[] Default = [
     ProcessField.Name,
     ProcessField.Pid,
-    ProcessField.UserName,
     ProcessField.CpuPercent,
-    ProcessField.CpuHistory,
+    ProcessField.IoTotalRate,
     ProcessField.PrivateBytes,
-    ProcessField.MemoryHistory,
-    ProcessField.IoHistory,
-    ProcessField.ThreadCount,
+    ProcessField.UserName,
   ];
 
   public static FieldDescriptor Info(ProcessField field) => FieldRegistry.Get(field);

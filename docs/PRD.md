@@ -31,8 +31,8 @@ shorthand:
 it is not known*. An unticked box must never become a zero on screen. This is restated here because
 it is the single requirement most likely to be broken while filling the tables in.
 
-**Counting, as of the last update:** **460 of 1254 boxes are ticked** — 62 of 189 in the field
-registry (§14–22), 398 of 1065 across the capabilities. A further 138 are marked 🟡, meaning some of
+**Counting, as of the last update:** **462 of 1254 boxes are ticked** — 62 of 189 in the field
+registry (§14–22), 400 of 1065 across the capabilities. A further 136 are marked 🟡, meaning some of
 the work behind them is already done. §100 tracks the phases; §101 defines when this may be called
 finished.
 
@@ -1403,10 +1403,12 @@ knowing where it came from — so it reads "local" rather than leaving the colum
 
 A system overview exists with per-core meters and totals, and a performance view behind it.
 
-- [ ] 🟡 Vertical resource selector — the devices each get their own section on the page; a rail
-      that switches between them, showing one at a time, is still to come
-- [ ] 🟡 Large detailed graph — the CPU and memory histories are enlarged on the page; a single
-      selected-resource graph needs the rail above
+- [x] Vertical resource selector — a rail down the left with one entry per processor, disk and
+      adapter, each carrying its own current reading so it answers "which of these is busy" before
+      anything is clicked
+- [x] Large detailed graph — one plot, whose series follows the selection. Every resource's history
+      is recorded whether or not it is on screen, so selecting a disk that has been idle for a minute
+      shows that minute rather than starting blank
 - [x] Summary cards with compact sparklines and current values — the plots along the top of the
       main window
 
@@ -1419,6 +1421,10 @@ Resources:
 - [ ] Each GPU (§50)
 - [ ] Battery
 - [ ] Optional sensors and devices
+
+The page is modeless and refreshed from the main window's sample tick. It was modal and painted
+once — a performance page whose numbers never moved, which no screenshot of it would have shown as
+wrong, and which the tests now catch.
 
 - [x] Reachable by clicking any of the plots along the top — which is where somebody looking at a
       total goes for the detail behind it — and from View ▸ Performance for people who would rather
@@ -2316,8 +2322,18 @@ be lost."*
 
 # 93. Design requirements
 
-- [ ] 🟡 Left navigation · resource summary cards · clear table headers · restrained toolbar ·
-      large readable performance graphs · optional lower pane · compact expert density
+- [ ] 🟡 Left navigation ✔ (on the performance page) · resource summary cards ✔ · clear table
+      headers ✔ · restrained toolbar ✔ · large readable performance graphs ✔ · compact expert
+      density ✔ · the lower pane is still a tabbed detail area rather than a switchable pane
+
+The process list is dense the way the tools it imitates are: seventeen-pixel rows, faint rules
+between them and between columns, the tree in the first column with the pid in its own, and Process
+Hacker's own default column set — process, PID, CPU, I/O total rate, private bytes, user. The three
+drawn histories are one click away in the column chooser rather than in the default set: they are
+three of the widest columns in the catalogue and they push the numbers people read off the edge.
+
+The rules are shaded from each row's own colour rather than being a fixed grey, so a rule over a
+green "just started" row is a darker green and the category colour survives the grid.
 - [x] Original branding and original icons
 - [x] No Microsoft, Sysinternals or System Informer trademarks as navigation labels
 - [x] No pixel-perfect clone of a copyrighted UI
