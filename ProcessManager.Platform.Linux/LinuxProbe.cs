@@ -162,6 +162,12 @@ public sealed class LinuxProbe : ISystemProbe {
     if (!this._reader.TryRead(ProcPath.Build(pathBuffer, this._procRootUtf8, "meminfo"u8), out var content, out _))
       return;
 
+    // Dirty and Writeback are two stages of one thing — changed and not yet on disk, and changed
+    // and on its way — and a reader cares about the sum. Accumulated in a local rather than into the
+    // counter, so this stays right whether or not the caller zeroed the snapshot first.
+    var dirty = 0ul;
+    var writeback = 0ul;
+
     var scanner = new AsciiScanner(content);
     while (!scanner.IsEmpty) {
       var line = scanner.NextLine();
@@ -175,6 +181,28 @@ public sealed class LinuxProbe : ISystemProbe {
         system.AvailableMemoryBytes = Counter.Of(value * 1024);
       else if (TryValue(line, "Cached:"u8, out value))
         system.CachedMemoryBytes = Counter.Of(value * 1024);
+      else if (TryValue(line, "MemFree:"u8, out value))
+        system.FreeMemoryBytes = Counter.Of(value * 1024);
+      else if (TryValue(line, "Buffers:"u8, out value))
+        system.BufferMemoryBytes = Counter.Of(value * 1024);
+      else if (TryValue(line, "Dirty:"u8, out value))
+        dirty = value * 1024;
+      else if (TryValue(line, "Writeback:"u8, out value))
+        writeback = value * 1024;
+      else if (TryValue(line, "Committed_AS:"u8, out value))
+        system.CommittedBytes = Counter.Of(value * 1024);
+      else if (TryValue(line, "CommitLimit:"u8, out value))
+        system.CommitLimitBytes = Counter.Of(value * 1024);
+      else if (TryValue(line, "SReclaimable:"u8, out value))
+        system.ReclaimableKernelBytes = Counter.Of(value * 1024);
+      else if (TryValue(line, "SUnreclaim:"u8, out value))
+        system.UnreclaimableKernelBytes = Counter.Of(value * 1024);
+      else if (TryValue(line, "PageTables:"u8, out value))
+        system.PageTableBytes = Counter.Of(value * 1024);
+      else if (TryValue(line, "KernelStack:"u8, out value))
+        system.KernelStackBytes = Counter.Of(value * 1024);
+      else if (TryValue(line, "Shmem:"u8, out value))
+        system.SharedMemoryBytes = Counter.Of(value * 1024);
       else if (TryValue(line, "SwapTotal:"u8, out value))
         system.TotalSwapBytes = Counter.Of(value * 1024);
       else if (TryValue(line, "SwapFree:"u8, out value)) {
@@ -183,6 +211,8 @@ public sealed class LinuxProbe : ISystemProbe {
         system.UsedSwapBytes = Counter.Of(total >= free ? total - free : 0);
       }
     }
+
+    system.ModifiedMemoryBytes = Counter.Of(dirty + writeback);
   }
 
   private static bool TryValue(ReadOnlySpan<byte> line, ReadOnlySpan<byte> key, out ulong value) {

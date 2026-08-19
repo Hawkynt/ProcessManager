@@ -83,7 +83,12 @@ public static class RowPalette {
 
   public static Color CpuKernel => Pick("cpu.kernel", Color.FromArgb(0xFF, 0xD0, 0x30, 0x30));
 
-  public static Color Memory => Pick("memory", Color.FromArgb(0xFF, 0x28, 0xB4, 0xB4));
+  /// <summary>
+  /// Purple, per §45.5's table — and the same family the composition bar's four bands are shaded
+  /// from, so a memory page agrees with itself. It was teal, which put a memory sparkline in one
+  /// colour and the bar below it in another.
+  /// </summary>
+  public static Color Memory => Pick("memory", Color.FromArgb(0xFF, 0x9E, 0x86, 0xC8));
 
   public static Color Io => Pick("io", Color.FromArgb(0xFF, 0xE0, 0xC0, 0x30));
 
