@@ -252,10 +252,70 @@ public sealed class LinuxProbe : ISystemProbe {
     // is shortened rather than carrying a half-filled record.
     snapshot.PrepareProcesses(written);
 
+    this.ReadDevices(snapshot);
+
     // Summed here rather than left at zero. Windows gets this free from its bulk query and Linux
     // never set it, so the machine-wide thread count read as a confident zero — which is the one
     // thing this program is not allowed to do (PRD §72.3).
     snapshot.System.TotalThreads = totalThreads;
+  }
+
+  private readonly Dictionary<string, DiskInfo> _diskInfo = [];
+  private readonly Dictionary<string, NetworkInterfaceInfo> _interfaceInfo = [];
+  private readonly Dictionary<string, bool> _wholeDevice = [];
+
+  /// <summary>
+  /// Per-device disk and network counters — one file each for the whole machine (PRD §48, §49).
+  /// </summary>
+  // Reused between samples rather than stack-allocated: both carry a name, and a span of a managed
+  // type cannot live on the stack. Sized once at 64, which is more disks and interfaces than any
+  // machine this will meet — and the parsers stop at the span's length rather than overrunning it.
+  private readonly DiskCounters[] _diskScratch = new DiskCounters[64];
+  private readonly NetworkCounters[] _networkScratch = new NetworkCounters[64];
+  private readonly DeviceNameCache _deviceNames = new();
+
+  private void ReadDevices(SystemSnapshot snapshot) {
+    var diskCount = 0;
+    if (this._reader.TryRead($"{this._procRoot}/diskstats", out var diskstats, out _))
+      diskCount = DeviceStatParser.ParseDiskStats(diskstats, this.IsWholeDevice, this._diskScratch, this._deviceNames);
+
+    this._diskScratch.AsSpan(0, diskCount).CopyTo(snapshot.PrepareDisks(diskCount));
+
+    var networkCount = 0;
+    if (this._reader.TryRead($"{this._procRoot}/net/dev", out var netdev, out _))
+      networkCount = DeviceStatParser.ParseNetDev(netdev, this._networkScratch, this._deviceNames);
+
+    this._networkScratch.AsSpan(0, networkCount).CopyTo(snapshot.PrepareNetworks(networkCount));
+  }
+
+  /// <summary>Cached: /sys/block is walked once per device name, not once per sample.</summary>
+  private bool IsWholeDevice(string name) {
+    if (this._wholeDevice.TryGetValue(name, out var known))
+      return known;
+
+    var whole = LinuxDeviceReader.IsWholeDevice(this._options.SysRoot, name);
+    this._wholeDevice[name] = whole;
+    return whole;
+  }
+
+  /// <summary>What each disk is, read once (PRD §48).</summary>
+  public DiskInfo DescribeDisk(string name) {
+    if (this._diskInfo.TryGetValue(name, out var known))
+      return known;
+
+    var info = LinuxDeviceReader.Describe(this._options.SysRoot, name);
+    this._diskInfo[name] = info;
+    return info;
+  }
+
+  /// <summary>What each interface is, read once (PRD §49).</summary>
+  public NetworkInterfaceInfo DescribeInterface(string name) {
+    if (this._interfaceInfo.TryGetValue(name, out var known))
+      return known;
+
+    var info = LinuxDeviceReader.DescribeInterface(this._options.SysRoot, name);
+    this._interfaceInfo[name] = info;
+    return info;
   }
 
   private bool ReadProcess(int pid, ref ProcessRecord record) {

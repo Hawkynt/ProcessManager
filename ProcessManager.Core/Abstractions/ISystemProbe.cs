@@ -60,6 +60,12 @@ public interface ISystemProbe : IDisposable {
   /// <summary>Sockets owned by one process.</summary>
   IReadOnlyList<ConnectionRecord> GetConnections(ProcessKey key);
 
+  /// <summary>What a storage device is, by name (PRD §48).</summary>
+  DiskInfo DescribeDisk(string name);
+
+  /// <summary>What a network interface is, by name (PRD §49).</summary>
+  NetworkInterfaceInfo DescribeInterface(string name);
+
   /// <summary>
   /// What is configured to start at login (PRD §42), or an empty list where that is not read yet.
   /// </summary>

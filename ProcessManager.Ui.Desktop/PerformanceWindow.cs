@@ -62,7 +62,7 @@ public sealed class PerformanceWindow : Form {
   /// </remarks>
   private void BuildSections() {
     var y = 148;
-    foreach (var section in PerformanceReport.Build(this._probe.DescribeHost(), this._sampler.Current, this._sampler.Delta)) {
+    foreach (var section in this.Sections()) {
       // Upper case rather than bold: the toolkit's Label has no font of its own, and a heading that
       // reads differently is worth more than one that is merely heavier.
       this.Controls.Add(new Label {
@@ -83,10 +83,18 @@ public sealed class PerformanceWindow : Form {
     }
   }
 
+  private IReadOnlyList<PerformanceSection> Sections() => PerformanceReport.Build(
+    this._probe.DescribeHost(),
+    this._sampler.Current,
+    this._sampler.Delta,
+    this._probe.DescribeDisk,
+    this._probe.DescribeInterface
+  );
+
   /// <summary>Refreshes the values from the latest sample. The plots read their rings themselves.</summary>
   public void Update(double memoryScale) {
     var rows = new List<PerformanceRow>();
-    foreach (var section in PerformanceReport.Build(this._probe.DescribeHost(), this._sampler.Current, this._sampler.Delta))
+    foreach (var section in this.Sections())
       rows.AddRange(section.Rows);
 
     // The shape is fixed, so the two lists line up. If they ever did not, showing the first n is

@@ -272,6 +272,23 @@ public sealed class WindowsProbe : ISystemProbe {
   /// </summary>
   public IReadOnlyList<StartupEntry> GetStartupEntries() => [];
 
+  /// <summary>
+  /// Not read yet: the per-device counters come from the performance-counter API or from
+  /// IOCTL_STORAGE_QUERY_PROPERTY, and neither is written (PRD §48, §49). The snapshot carries no
+  /// devices on Windows, so nothing calls these.
+  /// </summary>
+  public DiskInfo DescribeDisk(string name)
+    => new(name, null, null, Counter.Unknown(UnknownReason.NotImplementedHere));
+
+  public NetworkInterfaceInfo DescribeInterface(string name) => new(
+    name,
+    null,
+    Counter.Unknown(UnknownReason.NotImplementedHere),
+    null,
+    Counter.Unknown(UnknownReason.NotImplementedHere),
+    IsLoopback: false
+  );
+
   public IReadOnlyList<ThreadRecord> GetThreads(ProcessKey key)
     => this._bufferLength == 0
       ? []
