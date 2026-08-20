@@ -82,7 +82,14 @@ public static class DesktopApp {
         // The picture, taken on the UI thread because that is the only thread allowed to ask a
         // widget to draw itself.
         window.SelectFirstRow();
-        var description = window.DescribeForCapture();
+
+        // What the content says its smallest size is, which a window manager turns into the floor
+        // somebody dragging an edge cannot cross. It must not track the window's own size: when it
+        // did, the window could be grown and never shrunk, and every growth ratcheted the floor up
+        // again. Nothing else in the run would notice that coming back (PRD §45.1).
+        var floor = OperatingSystem.IsLinux() ? GtkCapture.MinimumOf(window.Text) : null;
+        var description = $"content floor:{(floor is { } f ? $" {f.Width}x{f.Height}" : " unknown")}\n"
+          + window.DescribeForCapture();
         if (OperatingSystem.IsLinux()) {
           var png = Path.Combine(directory, "desktop.png");
           var size = GtkCapture.Window(png, out var failure, window.Text);
