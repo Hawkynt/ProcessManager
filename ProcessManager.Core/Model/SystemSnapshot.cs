@@ -51,6 +51,19 @@ public struct SystemCounters {
   /// <summary>tmpfs and shared anonymous pages: counted as cache, but not reclaimable like cache.</summary>
   public Counter SharedMemoryBytes;
 
+  /// <summary>
+  /// How much each resource is stalling the machine (PRD §46).
+  /// </summary>
+  /// <remarks>
+  /// A different question from utilisation, and usually the better one. A processor at 100 % is not
+  /// in trouble if nothing is waiting for it; a processor at 60 % with things queued behind it is.
+  /// </remarks>
+  public PressureReading CpuPressure;
+
+  public PressureReading MemoryPressure;
+
+  public PressureReading IoPressure;
+
   public Counter ContextSwitches;
   public Counter Interrupts;
   public Counter ProcessesCreated;

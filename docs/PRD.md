@@ -1654,9 +1654,30 @@ wrong, and which the tests now catch.
 - [x] Thread count
 - [ ] Handle / resource count
 - [x] Uptime
+- [x] **Pressure stall information** — how much of the last ten, sixty and three hundred seconds
+      something was stalled waiting for the processor
 - [ ] Context switches per second
 - [ ] Interrupts per second
 - [ ] System calls per second
+
+**Pressure is a different question from utilisation, and usually the better one.** A processor at
+100 % is not in trouble if nothing is waiting for it; a processor at 60 % with things queued behind
+it is. Pressure measures the second, which is what a person means when they say the machine feels
+slow — and it is the one figure none of the tools this replaces shows well.
+
+`some` is any task stalled; `full` is every task stalled at once, so nothing ran. Full is the serious
+one: a machine above a few percent of full memory pressure is thrashing rather than busy.
+
+All three windows are shown together because the shape between them is the information — ten above
+sixty is a spike starting, ten below sixty is one ending, and all three alike is a machine that has
+been like this for a while.
+
+A kernel built without `CONFIG_PSI` or booted with `psi=0` has no such files, which leaves the
+readings **unknown rather than zero**: a machine under no pressure and a machine that cannot say look
+identical otherwise, and one of them may be thrashing (§5.3).
+
+Three small files for the whole machine, so this costs three reads a sample however many processes
+there are — unlike the per-process figures of §5.4.
 - [ ] DPC-like kernel activity
 
 The three rate counters, plus their cumulative totals, belong in the collapsed **system counters**
@@ -1796,7 +1817,7 @@ Graphs:
 - [x] **Composition bar** — one horizontal bar under the graphs, split into in use, modified, cached
       and free, each in its own shade of the memory accent, each naming its value in place and
       explaining itself on hover
-- [ ] Memory pressure
+- [x] Memory pressure — both halves; `full` is the one that says the machine is thrashing
 - [ ] Swap
 - [ ] Cache
 
