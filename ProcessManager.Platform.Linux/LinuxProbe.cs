@@ -345,6 +345,12 @@ public sealed class LinuxProbe : ISystemProbe {
     return info;
   }
 
+  /// <summary>The desktop's windows, if this session has a desktop willing to say (PRD §39).</summary>
+  public WindowList GetWindows() => X11Windows.Enumerate();
+
+  /// <summary>The window under the pointer, for picking a process by pointing at it.</summary>
+  public WindowRecord? WindowUnderPointer() => X11Windows.UnderPointer();
+
   /// <summary>How the cores are arranged, read once — the machine will not rearrange them.</summary>
   public CpuTopology DescribeTopology()
     => this._topology ??= LinuxHostReader.ReadTopology(this._options.SysRoot);
