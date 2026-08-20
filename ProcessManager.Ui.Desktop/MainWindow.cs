@@ -534,6 +534,69 @@ public sealed class MainWindow : Form {
     return menu;
   }
 
+  /// <summary>
+  /// "Which process is using this?" — and then goes there (PRD §33).
+  /// </summary>
+  private void FindResource() {
+    var dialog = new FindResourceDialog(this._probe);
+    dialog.ShowDialog();
+    this.SelectPid(dialog.ChosenPid);
+  }
+
+  /// <summary>
+  /// Points at a window and selects the process behind it (PRD §39).
+  /// </summary>
+  /// <remarks>
+  /// A window whose owner cannot be found in the list is worth saying so about rather than silently
+  /// doing nothing: on a Wayland session the answer is usually that the window is not an X11 one,
+  /// and a program that just shrugs leaves somebody clicking the menu item again.
+  /// </remarks>
+  private void PickWindow() {
+    var picker = new WindowPickerDialog(this._probe);
+    picker.ShowDialog();
+    if (this.SelectPid(picker.ChosenPid))
+      return;
+
+    var windows = this._probe.GetWindows();
+    MessageBox.Show(
+      picker.Picked is null
+        ? $"No window could be identified under the pointer. {windows.Explain()}".TrimEnd()
+        : $"The window belongs to pid {picker.Picked.Value.Pid}, which is not in the list.",
+      "Process Manager"
+    );
+  }
+
+  /// <summary>Selects a process by pid, if it is in the list.</summary>
+  /// <returns>Whether it was found.</returns>
+  private bool SelectPid(int pid) {
+    if (pid < 0)
+      return false;
+
+    foreach (var process in this._sampler.Current.Processes) {
+      if (process.Key.Pid != pid)
+        continue;
+
+      if (this._binder.RowFor(process.Key) is null)
+        continue;
+
+      // Expanding every ancestor first: a process nested under a collapsed parent cannot be
+      // selected into view, and the whole point of finding it was to look at it.
+      this._tree.SelectedNode = this.NodeFor(process.Key);
+      this.UpdateDetails();
+      return this._tree.SelectedNode is not null;
+    }
+
+    return false;
+  }
+
+  private TreeNode? NodeFor(ProcessKey key) {
+    var node = this._binder.NodeFor(key);
+    for (var parent = node?.Parent; parent is not null; parent = parent.Parent)
+      parent.Expand();
+
+    return node;
+  }
+
   /// <summary>Which cores the selected process may run on.</summary>
   private void ChooseAffinity() {
     if (this._binder.SelectedRow is not { } row)
@@ -627,6 +690,8 @@ public sealed class MainWindow : Form {
     view.DropDownItems.Add(Item("Select columns…", this.ChooseColumns));
     view.DropDownItems.Add(Item("Performance…", this.ShowPerformance));
     view.DropDownItems.Add(Item("Colour legend…", () => new LegendWindow().ShowDialog()));
+    view.DropDownItems.Add(Item("Find handles or files…", this.FindResource));
+    view.DropDownItems.Add(Item("Find window…", this.PickWindow));
 
     var process = new ToolStripMenuItem("Process");
     process.DropDownItems.Add(Item("End process", () => this.Act("end", key => this._actions!.Terminate(key))));

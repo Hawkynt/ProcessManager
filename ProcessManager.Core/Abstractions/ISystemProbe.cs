@@ -91,6 +91,19 @@ public interface ISystemProbe : IDisposable {
   CpuTopology DescribeTopology() => CpuTopology.Empty;
 
   /// <summary>
+  /// The desktop's windows and the processes behind them (PRD §39).
+  /// </summary>
+  /// <remarks>
+  /// Carries why it could not answer rather than only an empty list. "No windows" and "this session
+  /// will not tell you about windows" look identical to a caller that only gets a list, and on a
+  /// Wayland desktop — half of all Linux users — the second is the true one (PRD §5.3).
+  /// </remarks>
+  WindowList GetWindows() => WindowList.NotImplemented;
+
+  /// <summary>The window under the pointer, for picking a process by pointing at it.</summary>
+  WindowRecord? WindowUnderPointer() => null;
+
+  /// <summary>
   /// Who is logged in (PRD §43), or an empty list where that is not read yet.
   /// </summary>
   IReadOnlyList<SessionRecord> GetSessions();

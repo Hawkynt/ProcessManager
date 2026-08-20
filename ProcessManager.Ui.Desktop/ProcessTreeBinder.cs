@@ -49,6 +49,9 @@ public sealed class ProcessTreeBinder {
   /// <summary>The row for one process, or null once it has gone.</summary>
   public ProcessRow? RowFor(ProcessKey key) => this._rows.TryGetValue(key, out var row) ? row : null;
 
+  /// <summary>The tree node a process occupies, for a caller that wants to select it.</summary>
+  public TreeNode? NodeFor(ProcessKey key) => this._nodes.TryGetValue(key, out var node) ? node : null;
+
   /// <summary>The row behind the selected node, or null.</summary>
   public ProcessRow? SelectedRow => this._tree.SelectedNode?.Tag as ProcessRow;
 

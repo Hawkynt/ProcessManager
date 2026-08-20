@@ -1171,8 +1171,11 @@ people install Process Explorer at all.
       case-sensitive toggle are not
 - [ ] 🟡 Results — process ✔ · PID ✔ · resource type ✔ · name/path ✔ · user ✔; the access mask is
       not reported
-- [ ] Double-click navigates to the process **and** the resource — there is no view to click in;
-      `procman --find` is the whole interface
+- [x] 🟡 Double-click navigates to the process — from **View ▸ Find handles or files…**, which is the
+      window's half of what `--find` always did from a terminal. Navigating to the *resource* still
+      has nowhere to go: there is no handle view to land in
+- [x] The tree expands every ancestor of the process it selects, because a process nested under a
+      collapsed parent cannot be brought into view and looking at it was the entire point
 
 Reported one reason per process for the three that are really one thing. A pattern matching a name
 usually matches the command line and the path too, so the most specific one that answered wins:
@@ -1268,15 +1271,28 @@ Containers:
 
 # 39. Windows / UI objects
 
-- [ ] Window title · native window ID/handle · process · thread · class · state · visible ·
-      minimized · maximized · responding · bounds · desktop/workspace · monitor · parent/owner
+- [ ] 🟡 Window title ✔ · native window ID ✔ · process ✔ · class ✔ · visible ✔ · bounds ✔ ·
+      thread, minimised/maximised, responding, workspace, monitor and parent/owner are not read
 - [ ] Actions: bring to foreground · minimize · maximize · restore · close · inspect properties
+- [x] **Find window** — point at a window and the process behind it is selected in the list
 
-Windows has `EnumWindows`. X11 has `_NET_CLIENT_LIST`. **Wayland has nothing** — by design, a Wayland
-client cannot enumerate other clients' surfaces.
+Windows has `EnumWindows`. X11 has `_NET_CLIENT_LIST`, and where a session has no window manager to
+maintain it — a bare X server, a minimal WM — the root's children are walked with `XQueryTree`
+instead, which is what `xwininfo` does and answers in both cases. **Wayland has nothing**: by design,
+a Wayland client cannot enumerate other clients' surfaces.
 
-- [ ] This page reports `n/a` with an explanation on a Wayland session rather than appearing
-      mysteriously empty for half of all Linux users
+- [x] A Wayland session says so rather than appearing mysteriously empty for half of all Linux users.
+      The distinction is carried in the data as `WindowSourceState`, not left for a caller to infer
+      from an empty list: "no windows" and "this session will not tell you about windows" are
+      different answers, and on Wayland the second is the true one (§5.3)
+- [x] XWayland's windows still appear there, so the sentence says that too — an unexplained short
+      list reads as a broken program
+
+**The picker does not grab the pointer.** Process Explorer drags a crosshair, which needs a grab: the
+pointer belongs to the picking program until the button comes up, and a grab left dangling by a crash
+takes the desktop with it. A countdown reads the pointer where it already is, gets the same answer,
+holds nothing hostage — and works when the target is modal, dragging or in a menu, none of which
+survive a grab.
 
 # 40. Network view
 
