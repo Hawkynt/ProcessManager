@@ -1,0 +1,16 @@
+5601a423b000-7ffc16c14000 ---p 00000000 00:00 0                          [rollup]
+Rss:               10048 kB
+Pss:                3072 kB
+Pss_Dirty:          2048 kB
+Pss_Anon:           2048 kB
+Pss_File:           1024 kB
+Pss_Shmem:             0 kB
+Shared_Clean:       7936 kB
+Shared_Dirty:          0 kB
+Private_Clean:      1024 kB
+Private_Dirty:      1088 kB
+Referenced:        10048 kB
+Anonymous:          8000 kB
+Swap:               2048 kB
+SwapPss:            1024 kB
+Locked:                0 kB

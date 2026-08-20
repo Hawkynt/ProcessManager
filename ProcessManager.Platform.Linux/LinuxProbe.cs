@@ -456,6 +456,12 @@ public sealed class LinuxProbe : ISystemProbe {
     record.UserId = -1;
     record.PrivateBytes = Counter.NotSupported;
     record.PrivateWorkingSetBytes = Counter.NotSupported;
+    // default(Counter) is a confident zero, so a field nobody fills claims the process has none of
+    // whatever it counts. Every one of these has to be stated (PRD §5.3).
+    record.FileBackedBytes = Counter.NotSupported;
+    record.SharedResidentBytes = Counter.NotSupported;
+    record.ProportionalBytes = Counter.NotSampledYet;
+    record.ProportionalSwapBytes = Counter.NotSampledYet;
     record.PeakWorkingSetBytes = Counter.NotSupported;
     record.PeakVirtualBytes = Counter.NotSupported;
     record.PagedPoolBytes = Counter.NotSupported;
@@ -514,6 +520,10 @@ public sealed class LinuxProbe : ISystemProbe {
 
     ulong rssAnon = 0, swap = 0, voluntary = 0, involuntary = 0, data = 0, peakVirtual = 0, peakRss = 0;
     var haveRssAnon = false;
+    var rssFile = 0ul;
+    var haveRssFile = false;
+    var rssShmem = 0ul;
+    var haveRssShmem = false;
     var haveData = false;
     var haveEffectiveUid = false;
     var scanner = new AsciiScanner(content);
@@ -545,6 +555,14 @@ public sealed class LinuxProbe : ISystemProbe {
       else if (TryValue(line, "RssAnon:"u8, out var value)) {
         rssAnon = value * 1024;
         haveRssAnon = true;
+      } else if (TryValue(line, "RssFile:"u8, out value)) {
+        // Free: the line is already in front of us. Worth splitting out because file-backed and
+        // anonymous pages behave completely differently under pressure (PRD §17).
+        rssFile = value * 1024;
+        haveRssFile = true;
+      } else if (TryValue(line, "RssShmem:"u8, out value)) {
+        rssShmem = value * 1024;
+        haveRssShmem = true;
       } else if (TryValue(line, "VmData:"u8, out value)) {
         // The closest thing Linux has to Windows' commit charge: private, writable, and counted
         // whether or not it is resident. .NET reports the same figure for PrivateMemorySize64.
@@ -576,6 +594,12 @@ public sealed class LinuxProbe : ISystemProbe {
     if (haveRssAnon)
       record.PrivateWorkingSetBytes = Counter.Of(rssAnon);
 
+    if (haveRssFile)
+      record.FileBackedBytes = Counter.Of(rssFile);
+
+    if (haveRssShmem)
+      record.SharedResidentBytes = Counter.Of(rssShmem);
+
     // A kernel too old to report the effective uid leaves this unknown rather than guessing that
     // the real uid is also the effective one, which is false for every setuid process there is.
     if (!haveEffectiveUid)
@@ -586,8 +610,18 @@ public sealed class LinuxProbe : ISystemProbe {
     else
       record.SecurityContextReason = UnknownReason.NotSampledYet;
 
-    if (this._options.UseProportionalSetSize && this.MayRead(record))
+    if (!this._options.UseProportionalSetSize) {
+      // Nobody asked for it, which is not the same as the machine having none.
+      record.ProportionalBytes = Counter.NotSampledYet;
+      record.ProportionalSwapBytes = Counter.NotSampledYet;
+    } else if (this.MayRead(record))
       this.ReadProportionalSetSize(cache, ref record);
+    else {
+      // smaps_rollup is 0400 for anybody else's process, so another user's proportional set is not
+      // a failure to report — it is the answer without the elevated helper (PRD §8.3).
+      record.ProportionalBytes = Counter.NotPermitted;
+      record.ProportionalSwapBytes = Counter.NotPermitted;
+    }
   }
 
   /// <summary>
@@ -627,10 +661,22 @@ public sealed class LinuxProbe : ISystemProbe {
     record.SecurityContext = text;
   }
 
+  /// <summary>
+  /// Proportional set size, from <c>smaps_rollup</c>.
+  /// </summary>
+  /// <remarks>
+  /// Its own field rather than an improvement to the working-set one. It used to overwrite
+  /// <see cref="ProcessRecord.PrivateWorkingSetBytes"/>, which meant a column headed "Private WS"
+  /// showed the anonymous resident set on one machine and a share of every mapping on another — two
+  /// different questions under one label, and no way for a reader to tell which they were looking at
+  /// (PRD §5.1).
+  /// </remarks>
   private void ReadProportionalSetSize(ProcessCache cache, ref ProcessRecord record) {
     if (!this._reader.TryRead(cache.SmapsRollupPath, out var content, out var errno)) {
-      if (errno is Native.EACCES or Native.EPERM)
-        record.PrivateWorkingSetBytes = Counter.NotPermitted;
+      if (errno is Native.EACCES or Native.EPERM) {
+        record.ProportionalBytes = Counter.NotPermitted;
+        record.ProportionalSwapBytes = Counter.NotPermitted;
+      }
 
       return;
     }
@@ -638,13 +684,12 @@ public sealed class LinuxProbe : ISystemProbe {
     var scanner = new AsciiScanner(content);
     while (!scanner.IsEmpty) {
       var line = scanner.NextLine();
-      if (!TryValue(line, "Pss:"u8, out var value))
-        continue;
-
-      // PSS is resident by definition, so it refines the working-set figure rather than the commit
-      // one — a process's share of what it maps, which is the honest "would I get this back".
-      record.PrivateWorkingSetBytes = Counter.Of(value * 1024);
-      return;
+      // Pss_Anon, Pss_File and Pss_Shmem all begin with "Pss" and would each match a prefix test on
+      // three characters; the colon is what makes "Pss:" mean the total and only the total.
+      if (TryValue(line, "Pss:"u8, out var value))
+        record.ProportionalBytes = Counter.Of(value * 1024);
+      else if (TryValue(line, "SwapPss:"u8, out value))
+        record.ProportionalSwapBytes = Counter.Of(value * 1024);
     }
   }
 

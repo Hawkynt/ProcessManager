@@ -19,4 +19,12 @@
     <ProjectReference Include="..\ProcessManager.Ui.Terminal\ProcessManager.Ui.Terminal.csproj" />
   </ItemGroup>
 
+
+  <!-- The command line decides which expensive reads the probe performs: naming a field is what
+       asks for it, and getting that wrong shows up as an empty column rather than as an error
+       (PRD 5.4). Nothing was testing it because nothing could see it. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Hawkynt.ProcessManager.Tests" />
+  </ItemGroup>
+
 </Project>

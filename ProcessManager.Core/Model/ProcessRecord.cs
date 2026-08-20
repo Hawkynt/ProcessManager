@@ -111,6 +111,40 @@ public struct ProcessRecord {
 
   public Counter SwapBytes;
 
+  /// <summary>
+  /// Resident memory backed by a file — executables, libraries, mapped data.
+  /// </summary>
+  /// <remarks>
+  /// Split out from the working set because the two halves behave completely differently under
+  /// pressure: file-backed pages can be dropped and read back, anonymous ones can only go to swap.
+  /// A process whose resident set is almost all file-backed costs the machine far less than one of
+  /// the same size that is almost all anonymous (PRD §17).
+  /// </remarks>
+  public Counter FileBackedBytes;
+
+  /// <summary>Resident memory in shared segments — tmpfs, shared anonymous, System V shm.</summary>
+  public Counter SharedResidentBytes;
+
+  /// <summary>
+  /// Proportional set size: private pages in full, plus each shared page divided by the number of
+  /// processes mapping it.
+  /// </summary>
+  /// <remarks>
+  /// The only per-process memory figure that adds up. Resident set counts every shared page in full
+  /// for every process that maps it, so summing it over a machine reports several times the memory
+  /// that exists; summing PSS gives back roughly what is actually in use. It is the honest answer to
+  /// "what does this process cost me" and the reason it is worth an extra file read to get.
+  /// <para>
+  /// Not sampled: it comes from <c>smaps_rollup</c>, which is one more file per process per second
+  /// and the kernel has to walk the page tables to answer. Read on demand for the process being
+  /// looked at (PRD §5.4).
+  /// </para>
+  /// </remarks>
+  public Counter ProportionalBytes;
+
+  /// <summary>Swapped-out memory, counted proportionally the way <see cref="ProportionalBytes"/> is.</summary>
+  public Counter ProportionalSwapBytes;
+
   /// <summary>Kernel memory charged to this process from the paged pool, and its peak.</summary>
   public Counter PagedPoolBytes;
   public Counter PeakPagedPoolBytes;
