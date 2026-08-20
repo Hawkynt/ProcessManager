@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Runtime.InteropServices;
 using Hawkynt.ProcessManager.Model;
 using Hawkynt.ProcessManager.Query;
 
@@ -53,6 +54,44 @@ internal static class LinuxHostReader {
     }
 
     return cores.Count > 0 ? new(cores) : CpuTopology.Empty;
+  }
+
+  /// <summary>
+  /// What this processor can do, from whichever source this architecture has.
+  /// </summary>
+  /// <remarks>
+  /// x86 has <c>CPUID</c>; ARM has no such instruction from user code and publishes the same
+  /// information as two words of bits in the auxiliary vector instead. Both decode into the same
+  /// shape, so nothing above this line has to know which machine it is describing (PRD §46).
+  /// </remarks>
+  private static IReadOnlyList<CpuFeature> LiveFeatures() {
+    if (CpuId.IsSupported)
+      return CpuId.Features;
+
+    if (RuntimeInformation.ProcessArchitecture is not (Architecture.Arm64 or Architecture.Arm))
+      return [];
+
+    var (hwcap, hwcap2) = Native.HardwareCapabilities();
+    return ArmFeatures.Decode(hwcap, hwcap2);
+  }
+
+  private static string? LiveSignature(string sysRoot) {
+    if (CpuId.IsSupported)
+      return CpuId.Signature;
+
+    if (RuntimeInformation.ProcessArchitecture is not (Architecture.Arm64 or Architecture.Arm))
+      return null;
+
+    // MIDR_EL1 is privileged, but the kernel publishes cpu0's copy of it here — the only way a user
+    // process can learn which part it is running on.
+    var text = TryReadText(Path.Combine(sysRoot, "devices", "system", "cpu", "cpu0", "regs", "identification", "midr_el1"));
+    if (text is null)
+      return null;
+
+    var digits = text.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? text[2..] : text;
+    return ulong.TryParse(digits, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var midr)
+      ? ArmFeatures.Signature(midr)
+      : null;
   }
 
   private static IReadOnlyList<int> ReadCpuList(string path) {
@@ -133,8 +172,8 @@ internal static class LinuxHostReader {
       // is silent, which is what a stripped container looks like.
       CpuModel = model ?? (live ? CpuId.Brand : null),
       CpuVendor = vendor ?? (live ? CpuId.Vendor : null),
-      CpuSignature = live ? CpuId.Signature : null,
-      CpuFeatures = live ? CpuId.Features : [],
+      CpuSignature = live ? LiveSignature(sysRoot) : null,
+      CpuFeatures = live ? LiveFeatures() : [],
       CpuBaseHertz = ReadBaseFrequency(cpuRoot, model),
       CpuCurrentHertz = megahertzCount > 0
         ? Counter.Of((ulong)(megahertzTotal / megahertzCount * 1_000_000))

@@ -312,6 +312,33 @@ internal static partial class Native {
   /// <summary>Whether this architecture's I/O priority syscall numbers are known at all.</summary>
   public static bool SupportsIoPriority => IoPrioSyscalls is not null;
 
+  /// <summary>AT_HWCAP and AT_HWCAP2 of the auxiliary vector, which is where ARM publishes its
+  /// feature bits.</summary>
+  private const int _AtHwCap = 16;
+
+  private const int _AtHwCap2 = 26;
+
+  [LibraryImport("libc", EntryPoint = "getauxval")]
+  private static partial ulong GetAuxVal(ulong type);
+
+  /// <summary>
+  /// The kernel's two hardware capability words.
+  /// </summary>
+  /// <remarks>
+  /// <c>getauxval</c> returns 0 both for "this entry is absent" and for "every bit is clear", and
+  /// does not distinguish them without <c>errno</c>. Both mean the same thing to a caller here —
+  /// nothing to report — so the ambiguity costs nothing and is not worth an errno dance.
+  /// </remarks>
+  public static (ulong HwCap, ulong HwCap2) HardwareCapabilities() {
+    try {
+      return (GetAuxVal(_AtHwCap), GetAuxVal(_AtHwCap2));
+    } catch (EntryPointNotFoundException) {
+      // A libc without getauxval predates every kernel this program supports, but a musl or uclibc
+      // build that lacks it should report no features rather than fail to start.
+      return (0, 0);
+    }
+  }
+
   public static int LastError => Marshal.GetLastPInvokeError();
 
 }
