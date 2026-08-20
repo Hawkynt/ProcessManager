@@ -1578,8 +1578,13 @@ wrong, and which the tests now catch.
       ids reports two cores on an eight-thread machine
 - [x] Logical processors
 - [x] NUMA nodes
-- [ ] 🟡 Virtualisation support / state — a hypervisor is detected and named from the DMI product
-      name; whether the CPU *supports* virtualisation is not read
+- [x] Virtualisation support **and** state — VMX or SVM from CPUID says the processor supports it;
+      the hypervisor bit says this machine is itself a guest. Two different bits, constantly confused
+- [x] **Feature sets** — instruction sets, cryptography, hardening and virtualisation, decoded from
+      CPUID and grouped into one line each. Sixty rows of one word is a data dump; five sentences is
+      a specification
+- [x] **Signature** — family, model and stepping. The name is marketing and two very different parts
+      can share one; the signature is what an erratum or a mitigation is written against
 - [x] L1 / L2 / L3 cache — data and instruction separately at L1
 - [x] Process count
 - [x] Thread count
@@ -1600,6 +1605,16 @@ the cache sizes in the hardware column.
 
 Read once and cached: none of it changes between samples, and walking the cache directories every
 second would be indefensible against §71.
+
+`CPUID` is read through `X86Base.CpuId`, which the runtime emits as the instruction itself: no native
+library, no `[LibraryImport]`, one implementation answering on Linux and Windows alike, and
+`IsSupported` false on ARM rather than an error there. The decoding is a pure function of the
+register values, so the whole table is exercised on every CI leg — including the ARM one, which has
+no such instruction to run.
+
+**It is read only when the files beside it are this machine's.** CPUID answers about the processor
+executing it and about no other, so a `--probe-root` replay must not consult it: mixing a fixture's
+core count with this laptop's feature list describes two machines in one table (§9.4).
 
 Windows answers the same questions by different means: `GetLogicalProcessorInformationEx` for cores,
 packages, NUMA nodes and caches, and `CPUID` leaves 0x80000002–4 for the brand string. Asking the
