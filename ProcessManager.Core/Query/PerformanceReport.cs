@@ -230,7 +230,7 @@ public static class PerformanceReport {
       var busy = rates?.BusyPercent ?? Rate.NotSampledYet;
       sections.Add(new(
         $"Disk — {disk.Name}",
-        BuildDisk(in disk, delta, describeDisk),
+        BuildDisk(in disk, delta, describeDisk, snapshot.System.IoPressure),
         busy,
         100,
         Percent(busy),
@@ -288,7 +288,8 @@ public static class PerformanceReport {
   private static PerformanceRow[] BuildDisk(
     in DiskCounters disk,
     SnapshotDelta? delta,
-    Func<string, DiskInfo>? describe
+    Func<string, DiskInfo>? describe,
+    PressureReading pressure
   ) {
     var info = describe?.Invoke(disk.Name);
     var rates = delta?.DiskRatesOf(disk.Name);
@@ -309,6 +310,8 @@ public static class PerformanceReport {
     }
 
     rows.Add(new("Active time", rates is { } active ? Percent(active.BusyPercent) : Pending));
+    // Machine-wide rather than this device's: the kernel does not attribute stall time per disk.
+    rows.Add(new("Stalled on I/O", Pressure(pressure.Some)));
     rows.Add(new("Read rate", rates is { } read ? Humanize.BytesPerSecond(read.ReadBytesPerSecond) : Pending));
     rows.Add(new("Write rate", rates is { } write ? Humanize.BytesPerSecond(write.WriteBytesPerSecond) : Pending));
     rows.Add(new("Read IOPS", rates is { } readOps ? Humanize.Rate(readOps.ReadOperationsPerSecond) : Pending));
@@ -403,6 +406,9 @@ public static class PerformanceReport {
       new("User time", Percent(delta?.SystemUserPercent)),
       new("Kernel time", Percent(delta?.SystemKernelPercent)),
       new("Processes", Humanize.Count(Counter.Of((ulong)snapshot.ProcessCount))),
+      // Pressure, not utilisation: a processor at 100 % is not in trouble if nothing is waiting for
+      // it, and one at 60 % with things queued behind it is (PRD §46).
+      new("Stalled on CPU", Pressure(snapshot.System.CpuPressure.Some)),
       // Hardware: what it is.
       new("Model", host.CpuModel ?? Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform), IsHardware: true),
       new("Vendor", host.CpuVendor ?? Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform), IsHardware: true),
@@ -684,6 +690,10 @@ public static class PerformanceReport {
       // against how much the kernel will ever agree to. Either alone says very little (PRD §16).
       new("Committed", Pair(system.CommittedBytes, system.CommitLimitBytes)),
       new("Swap", Pair(system.UsedSwapBytes, system.TotalSwapBytes)),
+      new("Stalled on memory", Pressure(system.MemoryPressure.Some)),
+      // Full pressure is the serious one: not "something waited" but "nothing ran at all". More
+      // than a few percent of it means the machine is thrashing rather than busy.
+      new("Stalled completely", Pressure(system.MemoryPressure.Full)),
       new("Kernel, reclaimable", Humanize.Bytes(system.ReclaimableKernelBytes)),
       new("Kernel, fixed", Humanize.Bytes(system.UnreclaimableKernelBytes)),
       new("Page tables", Humanize.Bytes(system.PageTableBytes)),
@@ -699,6 +709,21 @@ public static class PerformanceReport {
   /// "28.9G of 126G" — a figure against its ceiling, or just the figure when there is no ceiling to
   /// put it against.
   /// </summary>
+  /// <summary>
+  /// The three windows on one line — "37.8 % · 55.8 % · 48.4 %" for ten seconds, a minute and five.
+  /// </summary>
+  /// <remarks>
+  /// All three together because the shape between them is the information: ten above sixty is a
+  /// spike starting, ten below sixty is one ending, and all three alike is a machine that has been
+  /// like this for a while.
+  /// </remarks>
+  private static string Pressure(PressureShare share) {
+    if (!share.HasValue)
+      return Humanize.Placeholder(share.Average10.Reason);
+
+    return $"{Percent(share.Average10)} · {Percent(share.Average60)} · {Percent(share.Average300)}";
+  }
+
   private static string Pair(Counter value, Counter limit)
     => limit.HasValue ? $"{Humanize.Bytes(value)} of {Humanize.Bytes(limit)}" : Humanize.Bytes(value);
 

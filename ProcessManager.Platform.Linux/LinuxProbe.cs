@@ -1,6 +1,7 @@
 using System.Text;
 using Hawkynt.ProcessManager.Abstractions;
 using Hawkynt.ProcessManager.Model;
+using Hawkynt.ProcessManager.Query;
 
 namespace Hawkynt.ProcessManager.Platform.Linux;
 
@@ -91,6 +92,7 @@ public sealed class LinuxProbe : ISystemProbe {
     this.ReadStat(snapshot, ref system);
     this.ReadMemInfo(ref system);
     this.ReadLoadAverage(ref system);
+    this.ReadPressure(ref system);
     this.ReadUptime(ref system);
   }
 
@@ -230,6 +232,40 @@ public sealed class LinuxProbe : ISystemProbe {
     var scanner = new AsciiScanner(line[key.Length..]);
     value = scanner.NextUInt64();
     return true;
+  }
+
+  /// <summary>
+  /// Pressure stall information (PRD §46).
+  /// </summary>
+  /// <remarks>
+  /// Three small files for the whole machine rather than one per process, so this costs three reads
+  /// a sample however many processes there are — which is why it can be sampled at all, unlike the
+  /// per-process figures of §5.4.
+  /// <para>
+  /// A kernel built without <c>CONFIG_PSI</c>, or booted with <c>psi=0</c>, has no such files. That
+  /// leaves the readings unknown rather than zero: a machine under no pressure and a machine that
+  /// cannot say look identical otherwise, and one of them may be thrashing.
+  /// </para>
+  /// </remarks>
+  private void ReadPressure(ref SystemCounters system) {
+    system.CpuPressure = this.ReadPressureFile("pressure/cpu"u8);
+    system.MemoryPressure = this.ReadPressureFile("pressure/memory"u8);
+    system.IoPressure = this.ReadPressureFile("pressure/io"u8);
+  }
+
+  private PressureReading ReadPressureFile(ReadOnlySpan<byte> leaf) {
+    Span<byte> pathBuffer = stackalloc byte[ProcPath.MaxLength];
+    if (!this._reader.TryRead(ProcPath.Build(pathBuffer, this._procRootUtf8, leaf), out var content, out _))
+      return PressureReading.Unknown;
+
+    // The file is a few dozen ASCII bytes; decoding it is the one allocation on this path and is
+    // three per sample rather than three per process.
+    Span<char> text = stackalloc char[256];
+    var length = Math.Min(content.Length, text.Length);
+    for (var i = 0; i < length; ++i)
+      text[i] = (char)content[i];
+
+    return PressureParser.Parse(text[..length]);
   }
 
   private void ReadLoadAverage(ref SystemCounters system) {
