@@ -57,6 +57,96 @@ public sealed class LinuxProcessActions(LinuxProbeOptions? options = null) : IPr
       : Translate(errno, "could not set CPU affinity");
   }
 
+  public ActionResult SetIoPriority(ProcessKey key, IoPriority priority) {
+    var check = this.Verify(key);
+    if (!check.Succeeded)
+      return check;
+
+    if (!Native.SupportsIoPriority)
+      return ActionResult.Fail(
+        ActionOutcome.NotSupportedOnPlatform,
+        "the I/O priority syscall numbers for this architecture are not known"
+      );
+
+    if (Native.SetIoPriority(key.Pid, priority.Pack()) == 0)
+      return ActionResult.Ok;
+
+    // Deliberately not routed through the helper. Raising a process into the real-time I/O class
+    // starves every other reader on the machine until it finishes, which is a decision somebody
+    // should take at a root prompt rather than by picking a menu item (PRD §68).
+    var errno = Native.LastError;
+    return errno is Native.EPERM or Native.EACCES && priority.Class == IoPriorityClass.Realtime
+      ? ActionResult.Fail(ActionOutcome.NotPermitted, "the real-time I/O class needs CAP_SYS_ADMIN")
+      : Translate(errno, $"could not set I/O priority to {priority}");
+  }
+
+  /// <summary>
+  /// A thread's priority.
+  /// </summary>
+  /// <remarks>
+  /// <c>setpriority(PRIO_PROCESS, tid)</c> — the name is a lie inherited from before Linux had
+  /// threads, and the "process" it takes is a tid. That is why this is the same call as the
+  /// process-wide one with a different number in it.
+  /// <para>
+  /// The thread is checked to belong to the process the key names. Without that, a tid from one
+  /// process could be passed with another's key and the identity check would pass while the syscall
+  /// acted somewhere else entirely.
+  /// </para>
+  /// </remarks>
+  public ActionResult SetThreadPriority(ProcessKey key, int threadId, int priority) {
+    var check = this.VerifyThread(key, threadId);
+    if (!check.Succeeded)
+      return check;
+
+    if (Native.SetNice(threadId, priority) == 0)
+      return ActionResult.Ok;
+
+    var errno = Native.LastError;
+    // The rule nobody remembers: nice runs backwards, so *lowering* the number is asking for more
+    // CPU and needs CAP_SYS_NICE, while raising it is always allowed. "Not permitted" on its own
+    // sends people looking for a permission problem that is not there.
+    return errno is Native.EPERM or Native.EACCES
+      ? ActionResult.Fail(
+          ActionOutcome.NotPermitted,
+          $"lowering a nice value asks for more CPU and needs CAP_SYS_NICE; raising it to above {priority} is always allowed"
+        )
+      : Translate(errno, $"could not set thread {threadId} nice to {priority}");
+  }
+
+  public ActionResult SetThreadAffinity(ProcessKey key, int threadId, ulong mask) {
+    var check = this.VerifyThread(key, threadId);
+    if (!check.Succeeded)
+      return check;
+
+    if (mask == 0)
+      return ActionResult.Fail(ActionOutcome.Refused, "an affinity mask with no cores in it would leave nothing to run on");
+
+    return Native.SetAffinityMask(threadId, mask) == 0
+      ? ActionResult.Ok
+      : Translate(Native.LastError, $"could not set thread {threadId} affinity");
+  }
+
+  /// <summary>
+  /// The process is what the key says, and the thread belongs to it.
+  /// </summary>
+  /// <remarks>
+  /// Both halves matter. A tid is a number in the same space as a pid, so a stale one may name a
+  /// live thread of an unrelated process — checking only the process would let the syscall land
+  /// there.
+  /// </remarks>
+  private ActionResult VerifyThread(ProcessKey key, int threadId) {
+    var check = this.Verify(key);
+    if (!check.Succeeded)
+      return check;
+
+    var task = Path.Combine(this._options.ProcRoot, key.Pid.ToString(System.Globalization.CultureInfo.InvariantCulture), "task",
+      threadId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+
+    return Directory.Exists(task)
+      ? ActionResult.Ok
+      : ActionResult.Fail(ActionOutcome.IdentityMismatch, $"thread {threadId} does not belong to process {key.Pid}");
+  }
+
   private ActionResult Signal(ProcessKey key, int signal) {
     var check = this.Verify(key);
     if (!check.Succeeded)

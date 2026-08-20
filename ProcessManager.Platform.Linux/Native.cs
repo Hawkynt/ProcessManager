@@ -272,6 +272,46 @@ internal static partial class Native {
 
   public static int SetAffinityMask(int pid, ulong mask) => SchedSetAffinity(pid, sizeof(ulong), ref mask);
 
+  /// <summary>
+  /// <c>ioprio_get</c> and <c>ioprio_set</c>, which have no glibc wrappers and must be called as
+  /// raw syscalls.
+  /// </summary>
+  /// <remarks>
+  /// The numbers are architecture-specific — 251/250 on x86-64, 30/31 on arm64 — which is why this
+  /// is the only place in the program that hard-codes a syscall number. An architecture whose
+  /// numbers are not known reports that rather than calling something else by accident.
+  /// </remarks>
+  private static (int Get, int Set)? IoPrioSyscalls => RuntimeInformation.ProcessArchitecture switch {
+    Architecture.X64 => (252, 251),
+    Architecture.Arm64 => (31, 30),
+    Architecture.X86 => (290, 289),
+    _ => null,
+  };
+
+  /// <summary>IOPRIO_WHO_PROCESS: the "who" is a pid or, for a thread, a tid.</summary>
+  private const int _IoPrioWhoProcess = 1;
+
+  [LibraryImport("libc", EntryPoint = "syscall", SetLastError = true)]
+  private static partial long Syscall(long number, long a, long b, long c);
+
+  /// <summary>The packed I/O priority of a process or thread, or -1 with errno set.</summary>
+  public static int GetIoPriority(int pid) {
+    if (IoPrioSyscalls is not { } numbers)
+      return -1;
+
+    return (int)Syscall(numbers.Get, _IoPrioWhoProcess, pid, 0);
+  }
+
+  public static int SetIoPriority(int pid, int packed) {
+    if (IoPrioSyscalls is not { } numbers)
+      return -1;
+
+    return (int)Syscall(numbers.Set, _IoPrioWhoProcess, pid, packed);
+  }
+
+  /// <summary>Whether this architecture's I/O priority syscall numbers are known at all.</summary>
+  public static bool SupportsIoPriority => IoPrioSyscalls is not null;
+
   public static int LastError => Marshal.GetLastPInvokeError();
 
 }

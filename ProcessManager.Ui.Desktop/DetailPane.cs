@@ -31,7 +31,21 @@ public sealed class DetailPane {
   private ProcessKey _key;
   private bool _dirty = true;
 
+  /// <summary>
+  /// What may be done to a thread, or null in a read-only front-end.
+  /// </summary>
+  /// <remarks>
+  /// Optional for the same reason <see cref="Abstractions.IProcessActions"/> is a separate interface
+  /// from the probe: a pane that only shows things must be constructible without the ability to
+  /// change any of them.
+  /// </remarks>
+  public Abstractions.IProcessActions? Actions { get; set; }
+
+  /// <summary>The process the thread rows belong to, for the identity check the actions make.</summary>
+  private ProcessKey Key => this._key;
+
   public DetailPane(ISystemProbe probe) {
+    this._threads.ContextMenuStrip = this.BuildThreadMenu();
     ArgumentNullException.ThrowIfNull(probe);
     this._probe = probe;
 
@@ -136,6 +150,55 @@ public sealed class DetailPane {
   public void Invalidate() {
     this._dirty = true;
     this.Refresh();
+  }
+
+  /// <summary>
+  /// Priority and affinity for one thread (PRD §26).
+  /// </summary>
+  /// <remarks>
+  /// Built once and hung on the thread list. The tid comes from the selected row rather than being
+  /// captured when the menu was made, because the list is refilled while the menu exists.
+  /// </remarks>
+  private ContextMenuStrip BuildThreadMenu() {
+    var menu = new ContextMenuStrip();
+    var priority = new ToolStripMenuItem("Thread priority");
+    foreach (var (label, nice) in new[] { ("High (-10)", -10), ("Normal (0)", 0), ("Low (10)", 10), ("Idle (19)", 19) }) {
+      var value = nice;
+      priority.DropDownItems.Add(ThreadItem(label, tid => this.Actions!.SetThreadPriority(this.Key, tid, value)));
+    }
+
+    menu.Items.Add(priority);
+    menu.Items.Add(ThreadItem("Set thread affinity…", this.ChooseThreadAffinity));
+    return menu;
+  }
+
+  private ToolStripMenuItem ThreadItem(string text, Func<int, ActionResult> action) {
+    var item = new ToolStripMenuItem(text);
+    item.Click += (_, _) => {
+      if (this.Actions is null || this.SelectedThread is not { } tid)
+        return;
+
+      var result = action(tid);
+      if (!result.Succeeded)
+        MessageBox.Show(result.Detail ?? result.Outcome.ToString(), "Process Manager");
+    };
+
+    return item;
+  }
+
+  /// <summary>The tid of the selected thread row, or null when nothing is selected.</summary>
+  private int? SelectedThread
+    => this._threads.SelectedNode is { } node
+      && int.TryParse(node.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var tid)
+        ? tid
+        : null;
+
+  private ActionResult ChooseThreadAffinity(int tid) {
+    var chooser = new AffinityChooser($"thread {tid}", this._key.Pid, Math.Max(1, Environment.ProcessorCount), CpuTopology.Empty);
+    chooser.ShowDialog();
+    return chooser.Accepted
+      ? this.Actions!.SetThreadAffinity(this._key, tid, chooser.Mask)
+      : ActionResult.Ok;
   }
 
   private void FillThreads() {
