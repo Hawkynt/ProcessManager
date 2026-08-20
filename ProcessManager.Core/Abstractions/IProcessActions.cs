@@ -53,4 +53,30 @@ public interface IProcessActions {
   /// <summary>Sends a signal. Unix only; returns <see cref="ActionOutcome.NotSupportedOnPlatform"/> elsewhere.</summary>
   ActionResult SendSignal(ProcessKey key, int signal);
 
+  /// <summary>
+  /// Which class the process's disk requests are scheduled in (PRD §26).
+  /// </summary>
+  /// <remarks>
+  /// The control that makes a backup or an indexer stop making a machine unusable without slowing it
+  /// down much — moved to idle I/O it keeps running at full speed and yields the disk to anything
+  /// else that wants it. Raising into the real-time class needs privilege; lowering does not.
+  /// </remarks>
+  ActionResult SetIoPriority(ProcessKey key, IoPriority priority)
+    => ActionResult.Fail(ActionOutcome.NotSupportedOnPlatform, "this platform has no I/O priority");
+
+  /// <summary>
+  /// One thread's scheduling priority, rather than the whole process's.
+  /// </summary>
+  /// <remarks>
+  /// The process key is still required and still re-validated: a tid is only meaningful inside the
+  /// process that owns it, and a recycled pid would otherwise let a click land on a thread of
+  /// something else entirely (PRD §8.2).
+  /// </remarks>
+  ActionResult SetThreadPriority(ProcessKey key, int threadId, int priority)
+    => ActionResult.Fail(ActionOutcome.NotSupportedOnPlatform, "this platform has no per-thread priority");
+
+  /// <summary>One thread's CPU affinity, as a bit mask of logical cores.</summary>
+  ActionResult SetThreadAffinity(ProcessKey key, int threadId, ulong mask)
+    => ActionResult.Fail(ActionOutcome.NotSupportedOnPlatform, "this platform has no per-thread affinity");
+
 }

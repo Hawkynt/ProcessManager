@@ -687,7 +687,7 @@ Required of the CPU percentage:
 - [ ] 🟡 `io.other.ops` — Windows only
 - [x] `io.other.bytes` — Windows only
 - [x] `io.rate` — aggregate bytes/sec
-- [ ] `io.priority` — `ioprio_get` / `NtQueryInformationProcess`
+- [ ] 🟡 `io.priority` — `ioprio_set` is implemented and `ioprio_get` is not read into the table yet
 - [ ] `io.wait` — `/proc/pid/schedstat`, needs delayacct
 - ∅ `disk.latency` — requires eBPF/ETW tracing; see §52
 
@@ -875,11 +875,31 @@ guessing: a colour claiming "unsigned" without having checked a signature is wor
 - [x] Set priority
 - [x] Set nice value
 - [ ] Set scheduling class
-- [x] Set processor affinity — through the helper where it needs privilege
+- [x] Set processor affinity — through the helper where it needs privilege, and from a dialog whose
+      boxes name what each core *is*: on a hybrid part "CPU 14" says nothing and "CPU 14 (E)" says
+      which half of the machine is being pinned to (§46)
 - [ ] Set CPU set
-- [ ] Set I/O priority
+- [x] **Set I/O priority** — the control that makes a backup or an indexer stop making a machine
+      unusable without slowing it down much: left at normal CPU priority but moved to idle I/O, it
+      keeps running at full speed and yields the disk whenever anything else wants it
 - [ ] Set page priority
 - [ ] Enable/disable efficiency mode or platform QoS
+- [x] **Per-thread priority and affinity** — from the Threads tab
+
+All of it was unreachable until now: priority and affinity had been implemented in the actions layer
+for some time and appeared in no menu and no flag, which is the same as not existing.
+
+`ioprio_set` has no glibc wrapper and must be called as a raw syscall, so this is the one place in
+the program that hard-codes syscall numbers — and they are architecture-specific, so an architecture
+whose numbers are not known says so rather than calling something else by accident.
+
+**Raising into the real-time I/O class is deliberately not routed through the privileged helper.**
+It starves every other reader on the machine until the process finishes, which is a decision somebody
+should take at a root prompt rather than by picking a menu item (§68).
+
+A thread is checked to belong to the process the key names, not merely to exist. A tid is a number in
+the same space as a pid, so a stale one may name a live thread of an unrelated process — checking
+only the process would let the syscall land there (§8.2).
 
 ## 25.3 Navigation
 

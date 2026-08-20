@@ -48,7 +48,7 @@ public sealed class MainWindow : Form {
     this._probe = probe;
     this._actions = actions;
     this._binder = new(this._tree);
-    this._details = new(probe);
+    this._details = new(probe) { Actions = actions };
 
     this.Text = "Process Manager";
     this.Bounds = new(0, 0, 1240, 820);
@@ -472,10 +472,83 @@ public sealed class MainWindow : Form {
     menu.Items.Add(Item("Suspend", () => this.Act("suspend", key => this._actions!.Suspend(key))));
     menu.Items.Add(Item("Resume", () => this.Act("resume", key => this._actions!.Resume(key))));
     menu.Items.Add(new ToolStripSeparator());
+    menu.Items.Add(this.PriorityMenu());
+    menu.Items.Add(this.IoPriorityMenu());
+    menu.Items.Add(Item("Set affinity…", this.ChooseAffinity));
+    menu.Items.Add(new ToolStripSeparator());
     menu.Items.Add(Item("Read handle count", this.FillHandleCounts));
     menu.Items.Add(Item("Properties…", this.ShowProperties));
     menu.Items.Add(Item("Refresh details", () => this._details.Invalidate()));
     return menu;
+  }
+
+  /// <summary>
+  /// The nice values worth offering, named rather than numbered.
+  /// </summary>
+  /// <remarks>
+  /// Nice runs backwards — -20 is the most favourable and 19 the least — which almost nobody
+  /// remembers, so the menu says what each one does and keeps the number beside it for the people
+  /// who do. The five are the ones with names on every other tool; the whole range is available from
+  /// the command line for anyone who wants 7.
+  /// </remarks>
+  private static readonly (string Label, int Nice)[] _Priorities = [
+    ("Real-time (-20)", -20),
+    ("High (-10)", -10),
+    ("Normal (0)", 0),
+    ("Below normal (5)", 5),
+    ("Idle (19)", 19),
+  ];
+
+  private ToolStripMenuItem PriorityMenu() {
+    var menu = new ToolStripMenuItem("Priority");
+    foreach (var (label, nice) in _Priorities) {
+      var value = nice;
+      menu.DropDownItems.Add(Item(label, () => this.Act($"set priority to {value}", key => this._actions!.SetPriority(key, value))));
+    }
+
+    return menu;
+  }
+
+  /// <summary>
+  /// The I/O classes (PRD §26).
+  /// </summary>
+  /// <remarks>
+  /// Idle is the one worth having and the reason this menu exists: a backup or an indexer left at
+  /// normal CPU priority but moved to idle I/O keeps running at full speed and simply yields the
+  /// disk whenever anything else wants it. Real-time is offered and will usually be refused —
+  /// naming it and explaining the refusal is more use than hiding it.
+  /// </remarks>
+  private ToolStripMenuItem IoPriorityMenu() {
+    var menu = new ToolStripMenuItem("I/O priority");
+    foreach (var (label, priority) in new (string, IoPriority)[] {
+      ("Real-time", new(IoPriorityClass.Realtime, 0)),
+      ("High", new(IoPriorityClass.BestEffort, 0)),
+      ("Normal", new(IoPriorityClass.BestEffort, 4)),
+      ("Low", new(IoPriorityClass.BestEffort, 7)),
+      ("Idle", new(IoPriorityClass.Idle)),
+    }) {
+      var value = priority;
+      menu.DropDownItems.Add(Item(label, () => this.Act($"set I/O priority to {value}", key => this._actions!.SetIoPriority(key, value))));
+    }
+
+    return menu;
+  }
+
+  /// <summary>Which cores the selected process may run on.</summary>
+  private void ChooseAffinity() {
+    if (this._binder.SelectedRow is not { } row)
+      return;
+
+    var cores = this._cores.Topology.Cores.Count > 0
+      ? this._cores.Topology.Cores.Count
+      : Math.Max(1, this._sampler.Delta.PerCoreCount);
+
+    var chooser = new AffinityChooser(row.Name, row.Pid, cores, this._cores.Topology);
+    chooser.ShowDialog();
+    if (!chooser.Accepted)
+      return;
+
+    this.Act("set affinity", key => this._actions!.SetAffinity(key, chooser.Mask));
   }
 
   private static ToolStripMenuItem Item(string text, Action action) {
