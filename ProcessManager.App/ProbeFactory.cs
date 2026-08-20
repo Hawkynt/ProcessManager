@@ -26,7 +26,12 @@ internal static class ProbeFactory {
   /// Whether anything on this run actually asked for the LSM label. It costs a file per process, so
   /// it is read only when a column or a filter names it — which is §5.4 enforced rather than stated.
   /// </param>
-  public static ISystemProbe? Create(string? probeRoot, bool useHelper = true, bool wantSecurityContext = false) {
+  public static ISystemProbe? Create(
+    string? probeRoot,
+    bool useHelper = true,
+    bool wantSecurityContext = false,
+    bool wantProportionalSetSize = false
+  ) {
     if (OperatingSystem.IsLinux()) {
       // A recorded tree is somebody else's machine; asking a helper about pids in it would be asking
       // about whatever happens to hold those pids here.
@@ -35,7 +40,11 @@ internal static class ProbeFactory {
 
       return new Platform.Linux.LinuxProbe(
         probeRoot is null
-          ? new() { Elevated = Elevated, ReadSecurityContext = wantSecurityContext }
+          ? new() {
+            Elevated = Elevated,
+            ReadSecurityContext = wantSecurityContext,
+            UseProportionalSetSize = wantProportionalSetSize,
+          }
           // A recorded tree was captured by somebody else, so the live user's id would refuse every
           // file in it. Root reads everything, which is what a replay wants (PRD §9.1).
           : new() {

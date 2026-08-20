@@ -642,9 +642,20 @@ Required of the CPU percentage:
 - [ ] `mem.percent` — share of usable physical memory (derivable now)
 - [x] `ws` — working set / RSS
 - [x] `ws.peak`
-- [x] `ws.private` — `WorkingSetPrivateSize` (W), `RssAnon` or PSS (L)
-- [ ] 🟡 `ws.shared` — `RssFile + RssShmem` available on Linux, not surfaced
+- [x] `ws.private` — `WorkingSetPrivateSize` (W), `RssAnon` (L). **No longer "or PSS"**: the
+      proportional set used to overwrite this field when the option was on, so one column headed
+      "Private WS" showed the anonymous resident set on one machine and a share of every mapping on
+      another — two different questions under one label, with nothing to tell a reader which they
+      were looking at
+- [x] `ws.file` — `RssFile`. Split out because the halves behave completely differently under
+      pressure: file-backed pages can be dropped and read back, anonymous ones can only go to swap.
+      A process whose resident set is nearly all file-backed costs the machine far less than one of
+      the same size that is nearly all anonymous
+- [x] `ws.shared` — `RssShmem`: tmpfs, shared anonymous mappings, System V shared memory
 - [ ] `ws.shareable`
+
+The three add up to the working set exactly, which is what makes them a breakdown rather than three
+more numbers. All free: the lines are already in the `status` this program reads anyway.
 - [x] `private.bytes` — private committed virtual memory; `PrivatePageCount` (W), `VmData` (L).
       Both mean commit charge — this was `RssAnon` on Linux until it was corrected, which made the
       same column mean two different things on two platforms
@@ -653,7 +664,21 @@ Required of the CPU percentage:
 - [x] `virtual.size.peak`
 - [x] `commit.size` — same counter as `private.bytes`
 - [x] `pss` — Linux, opt-in; `smaps_rollup` costs 0.8–4 ms per process
+- [x] `swap.pss` — swapped-out memory divided the same way, from the same file, so asking for either
+      buys both
 - [ ] 🟡 `uss` — reported by `smaps_rollup`, not surfaced
+
+**PSS is the only per-process memory figure that adds up.** Working set counts every shared page in
+full for every process mapping it, so summing it over a machine reports several times the memory that
+exists; summing PSS gives back roughly what is really in use. Which is exactly why it is worth a file
+read, and why the read is asked for rather than always taken — the kernel walks the page tables to
+answer, and doing that for four hundred processes a second is indefensible against §71.
+
+Asked for by naming the column or filtering on it, the same rule the security context follows: a
+separate switch would only be a way to get an empty column by forgetting it (§5.4).
+
+Another user's `smaps_rollup` is 0400, so their proportional set reports *not permitted* rather than
+a zero — and a process nobody asked about reports *not sampled*. Neither is nought (§5.3).
 - [x] `swap`
 - [ ] `mem.compressed`
 - [x] `page.faults`
@@ -688,6 +713,9 @@ Required of the CPU percentage:
 - [x] `io.other.bytes` — Windows only
 - [x] `io.rate` — aggregate bytes/sec
 - [ ] 🟡 `io.priority` — `ioprio_set` is implemented and `ioprio_get` is not read into the table yet
+- [x] `cpu.time.user` / `cpu.time.kernel` — the per-process split, free from `stat`'s `utime` and
+      `stime`. A process that is mostly kernel time is usually waiting on something rather than
+      computing, and one number covering both cannot say so
 - [ ] `io.wait` — `/proc/pid/schedstat`, needs delayacct
 - ∅ `disk.latency` — requires eBPF/ETW tracing; see §52
 

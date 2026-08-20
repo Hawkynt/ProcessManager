@@ -53,19 +53,40 @@ internal sealed record CommandLineOptions {
   /// request for it, and a separate --security switch would only be a way to get an empty column
   /// by forgetting it (PRD §5.4).
   /// </remarks>
-  public bool WantsSecurityContext {
-    get {
-      if (this.Fields is { } fields)
-        // Not "field": in C# 14 that is a keyword inside a property accessor and binds to the
-        // synthesised backing field rather than to the loop variable.
-        foreach (var candidate in fields)
-          if (candidate == ProcessField.SecurityContext)
-            return true;
+  public bool WantsSecurityContext => this.Wants(ProcessField.SecurityContext);
 
-      var key = FieldRegistry.Get(ProcessField.SecurityContext).Key;
-      return this.Filter is { } filter
-        && filter.Contains(key, StringComparison.OrdinalIgnoreCase);
-    }
+  /// <summary>
+  /// Whether the proportional set size is worth the file read it costs (PRD §5.4).
+  /// </summary>
+  /// <remarks>
+  /// Same rule as the security context, and the same reasoning: <c>smaps_rollup</c> makes the kernel
+  /// walk a process's page tables, so it is not something to do for four hundred processes a second
+  /// unless somebody has said they want the number.
+  /// <para>
+  /// The swap figure comes from the same file, so asking for either buys both.
+  /// </para>
+  /// </remarks>
+  public bool WantsProportionalSetSize
+    => this.Wants(ProcessField.ProportionalSet) || this.Wants(ProcessField.ProportionalSwap);
+
+  /// <summary>
+  /// Whether a field was asked for, by column or by filter.
+  /// </summary>
+  /// <remarks>
+  /// Inferred rather than flagged: naming the field in --columns or in --filter is already a clear
+  /// request for it, and a separate switch would only be a way to get an empty column by forgetting
+  /// it (PRD §5.4).
+  /// </remarks>
+  private bool Wants(ProcessField wanted) {
+    if (this.Fields is { } fields)
+      // Not "field": in C# 14 that is a keyword inside a property accessor and binds to the
+      // synthesised backing field rather than to the loop variable.
+      foreach (var candidate in fields)
+        if (candidate == wanted)
+          return true;
+
+    var key = FieldRegistry.Get(wanted).Key;
+    return this.Filter is { } filter && filter.Contains(key, StringComparison.OrdinalIgnoreCase);
   }
 
   /// <summary>

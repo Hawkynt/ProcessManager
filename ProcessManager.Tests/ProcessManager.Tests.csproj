@@ -29,6 +29,10 @@
          node collection works unrealized, which is what makes the "the window showed nothing"
          regression catchable in a unit test rather than only in the CI screenshot leg. -->
     <ProjectReference Include="..\ProcessManager.Ui.Desktop\ProcessManager.Ui.Desktop.csproj" />
+    <!-- The command line is a big surface that nothing was testing: which fields a run asks for
+         decides which expensive reads the probe performs, and getting that wrong shows up as an
+         empty column rather than as an error (PRD 5.4). -->
+    <ProjectReference Include="..\ProcessManager.App\ProcessManager.App.csproj" />
   </ItemGroup>
 
 </Project>

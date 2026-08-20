@@ -36,6 +36,12 @@ public static class FieldAccessor {
       case ProcessField.CpuPercent: return Humanize.Percent(Rated(delta, index, field));
       case ProcessField.CpuPercentPerCore: return Humanize.Percent(Rated(delta, index, field));
       case ProcessField.CpuTime: return Humanize.Duration(process.CpuTimeNs);
+      case ProcessField.UserTime: return Humanize.Duration(process.UserTimeNs);
+      case ProcessField.KernelTime: return Humanize.Duration(process.KernelTimeNs);
+      case ProcessField.ProportionalSet: return Humanize.Bytes(process.ProportionalBytes);
+      case ProcessField.ProportionalSwap: return Humanize.Bytes(process.ProportionalSwapBytes);
+      case ProcessField.FileBackedSet: return Humanize.Bytes(process.FileBackedBytes);
+      case ProcessField.SharedSet: return Humanize.Bytes(process.SharedResidentBytes);
       case ProcessField.LastCpu:
         // -1 is the platform declining to say, not processor number minus one.
         return process.LastCpu >= 0
@@ -141,6 +147,12 @@ public static class FieldAccessor {
       case ProcessField.Capabilities: return Number(process.EffectiveCapabilities);
 
       case ProcessField.CpuTime: return Number(process.CpuTimeNs);
+      case ProcessField.UserTime: return Number(process.UserTimeNs);
+      case ProcessField.KernelTime: return Number(process.KernelTimeNs);
+      case ProcessField.ProportionalSet: return Number(process.ProportionalBytes);
+      case ProcessField.ProportionalSwap: return Number(process.ProportionalSwapBytes);
+      case ProcessField.FileBackedSet: return Number(process.FileBackedBytes);
+      case ProcessField.SharedSet: return Number(process.SharedResidentBytes);
       case ProcessField.PrivateBytes: return Number(process.PrivateBytes);
       case ProcessField.PrivateWorkingSet: return Number(process.PrivateWorkingSetBytes);
       case ProcessField.WorkingSetBytes: return Number(process.WorkingSetBytes);

@@ -45,7 +45,12 @@ internal static class Program {
         return _ExitOk;
     }
 
-    var probe = ProbeFactory.Create(options.ProbeRoot, options.UseHelper, options.WantsSecurityContext);
+    var probe = ProbeFactory.Create(
+      options.ProbeRoot,
+      options.UseHelper,
+      options.WantsSecurityContext,
+      options.WantsProportionalSetSize
+    );
     if (probe is null) {
       Console.Error.WriteLine($"procman: there is no probe for this platform yet ({Environment.OSVersion.Platform}).");
       Console.Error.WriteLine("Linux and Windows are supported; macOS is PRD §10 M9.");
