@@ -1626,6 +1626,25 @@ the cache sizes in the hardware column.
 Read once and cached: none of it changes between samples, and walking the cache directories every
 second would be indefensible against §71.
 
+**ARM has no `CPUID`.** The identification registers exist but are privileged — `MRS` on
+`ID_AA64ISAR0_EL1` traps from user code — so the feature list comes from `AT_HWCAP` and `AT_HWCAP2`
+in the auxiliary vector instead, two words of bits that are an ABI between the kernel and userspace.
+The signature comes from `MIDR_EL1`, which the kernel publishes for cpu0 under
+`/sys/devices/system/cpu/cpu0/regs/identification/`. Both decode into the same shape as the x86
+table, so the page rendering them does not know which architecture it is describing.
+
+Nobody working on this has ARM hardware, which is precisely why the bit table is **held against the
+kernel's own `hwcap.h`** in a test rather than against anybody's memory — a wrong index produces a
+plausible feature list on a machine none of us can look at. Doing that caught two bits that were
+wrong on the first pass, `MTE3` and `SME`.
+
+- [x] arm64 instruction sets — NEON/ASIMD, SVE, SVE2, SVE2p1, SME, SME2, dot product, FP16, BF16, I8MM, MOPS
+- [x] arm64 cryptography — AES, PMULL, SHA1/2/3/512, SM3, SM4, CRC32, the SVE variants, RNG
+- [x] arm64 hardening — pointer authentication, BTI, MTE, MTE3, SSBS, SB, POE
+- [x] arm64 implementer and part, from `MIDR_EL1`
+- [ ] 32-bit arm — the capability words differ and are not read
+- [ ] Windows on ARM — needs `IsProcessorFeaturePresent`, which is not called
+
 `CPUID` is read through `X86Base.CpuId`, which the runtime emits as the instruction itself: no native
 library, no `[LibraryImport]`, one implementation answering on Linux and Windows alike, and
 `IsSupported` false on ARM rather than an error there. The decoding is a pure function of the
