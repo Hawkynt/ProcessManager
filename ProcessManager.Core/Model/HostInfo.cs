@@ -31,6 +31,23 @@ public sealed record HostInfo {
   public string? CpuVendor { get; init; }
 
   /// <summary>
+  /// Family, model and stepping, as <c>CPUID</c> encodes them — which silicon this is, as opposed to
+  /// what it is called (PRD §46).
+  /// </summary>
+  public string? CpuSignature { get; init; }
+
+  /// <summary>
+  /// What the processor reports it can do.
+  /// </summary>
+  /// <remarks>
+  /// Carried on the host record rather than read where it is rendered, so a report built from a
+  /// recorded machine describes that machine and not the one running the program. Reading
+  /// <c>CPUID</c> inside the renderer made <c>--probe-root</c> replay show this laptop's feature
+  /// list beside a fixture's core count, which is two machines in one table (PRD §9.4).
+  /// </remarks>
+  public IReadOnlyList<Query.CpuFeature> CpuFeatures { get; init; } = [];
+
+  /// <summary>
   /// The rated speed, which is the number on the box and the one Task Manager calls "Base speed".
   /// </summary>
   public Counter CpuBaseHertz { get; init; } = Counter.Unknown(UnknownReason.NotSampledYet);

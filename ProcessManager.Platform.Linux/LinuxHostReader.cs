@@ -64,7 +64,16 @@ internal static class LinuxHostReader {
   private static int ReadInt(string path)
     => int.TryParse(TryReadText(path), NumberStyles.Integer, CultureInfo.InvariantCulture, out var value) ? value : -1;
 
-  public static HostInfo Read(string procRoot, string sysRoot) {
+  /// <param name="live">
+  /// Whether this is the machine we are running on, rather than a recorded one.
+  /// </param>
+  /// <remarks>
+  /// <c>CPUID</c> answers about the processor executing the instruction, and there is no way to ask
+  /// it about anybody else's. So it may only be consulted when the files being read belong to this
+  /// machine too — a <c>--probe-root</c> replay that mixed a fixture's core count with this laptop's
+  /// feature list would be describing two machines in one table (PRD §9.4).
+  /// </remarks>
+  public static HostInfo Read(string procRoot, string sysRoot, bool live) {
     var cpuinfo = TryReadLines(Path.Combine(procRoot, "cpuinfo"));
 
     // "physical id" counts sockets and "core id" counts cores within one; a machine reporting
@@ -118,8 +127,14 @@ internal static class LinuxHostReader {
         ?? Environment.OSVersion.Version.ToString(),
       Architecture = System.Runtime.InteropServices.RuntimeInformation.OSArchitecture.ToString(),
 
-      CpuModel = model,
-      CpuVendor = vendor,
+      // /proc/cpuinfo first, because a fixture replay has to describe the fixture; CPUID fills in
+      // where the file is silent, which is what a stripped container looks like.
+      // /proc/cpuinfo first, because it is what the kernel believes; CPUID fills in where the file
+      // is silent, which is what a stripped container looks like.
+      CpuModel = model ?? (live ? CpuId.Brand : null),
+      CpuVendor = vendor ?? (live ? CpuId.Vendor : null),
+      CpuSignature = live ? CpuId.Signature : null,
+      CpuFeatures = live ? CpuId.Features : [],
       CpuBaseHertz = ReadBaseFrequency(cpuRoot, model),
       CpuCurrentHertz = megahertzCount > 0
         ? Counter.Of((ulong)(megahertzTotal / megahertzCount * 1_000_000))

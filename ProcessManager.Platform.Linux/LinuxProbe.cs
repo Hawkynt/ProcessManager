@@ -64,7 +64,14 @@ public sealed class LinuxProbe : ISystemProbe {
   private HostInfo? _host;
 
   /// <summary>Read once; nothing in it changes while the program runs, except the live clock speed.</summary>
-  public HostInfo DescribeHost() => this._host ??= LinuxHostReader.Read(this._options.ProcRoot, this._options.SysRoot);
+  public HostInfo DescribeHost()
+    => this._host ??= LinuxHostReader.Read(
+      this._options.ProcRoot,
+      this._options.SysRoot,
+      // CPUID answers about the processor running it and about no other, so it is only the truth
+      // when the files beside it are this machine's as well.
+      live: this._options.ProcRoot == "/proc" && this._options.SysRoot == "/sys"
+    );
 
   public void Sample(SystemSnapshot snapshot) {
     ArgumentNullException.ThrowIfNull(snapshot);

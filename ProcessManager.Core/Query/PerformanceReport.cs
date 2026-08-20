@@ -417,6 +417,17 @@ public static class PerformanceReport {
       new("L3", Humanize.Bytes(host.L3Bytes), IsHardware: true),
     };
 
+    if (host.CpuSignature is { } signature)
+      rows.Add(new("Signature", signature, IsHardware: true));
+
+    // What the silicon can actually do, from CPUID — grouped rather than listed, because sixty rows
+    // of one word each is a data dump and five sentences is a specification (PRD §46).
+    AddFeatures(rows, host, "Instruction sets", CpuFeatureKind.InstructionSet);
+    AddFeatures(rows, host, "Cryptography", CpuFeatureKind.Cryptography);
+    AddFeatures(rows, host, "Security", CpuFeatureKind.Security);
+    AddFeatures(rows, host, "Virtualisation", CpuFeatureKind.Virtualisation);
+    AddFeatures(rows, host, "Other features", CpuFeatureKind.Other);
+
     // Load average is a Unix idea and reads as three numbers or not at all; a machine that does not
     // publish it gets no row rather than three zeros.
     if (snapshot.System.LoadAverage1 > 0 || snapshot.System.LoadAverage15 > 0)
@@ -432,6 +443,23 @@ public static class PerformanceReport {
       ));
 
     return [.. rows];
+  }
+
+  /// <summary>
+  /// One line of features, or none at all where the processor reports none of that kind.
+  /// </summary>
+  /// <remarks>
+  /// An empty line is worse than no line: "Cryptography: " reads as a processor that has no crypto
+  /// instructions, when on a machine without CPUID it means nobody asked.
+  /// </remarks>
+  private static void AddFeatures(List<PerformanceRow> rows, HostInfo host, string label, CpuFeatureKind kind) {
+    var names = new List<string>();
+    foreach (var feature in host.CpuFeatures)
+      if (feature.Kind == kind)
+        names.Add(feature.Name);
+
+    if (names.Count > 0)
+      rows.Add(new(label, string.Join(", ", names), IsHardware: true));
   }
 
   /// <summary>
