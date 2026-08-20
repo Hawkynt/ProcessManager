@@ -53,6 +53,13 @@ public sealed class MainWindow : Form {
     this.Text = "Process Manager";
     this.Bounds = new(0, 0, 1240, 820);
 
+    // Without this the window can be grown and never shrunk, which reads as one that does not
+    // resize at all. GTK advertises a minimum to the window manager, and with no explicit limit it
+    // computes one from the content: every docked child asks for the width it currently has, so the
+    // floor is exactly the size the window opened at. Naming a real minimum replaces that computed
+    // one (PRD §45.1).
+    this.MinimumSize = new(900, 600);
+
     // Docked, in the order the layout is stacked: the menu on top, the plots under it, the status
     // line at the bottom, and the splitter taking everything that is left. Fixed bounds were the
     // first version and did not survive a resize.
@@ -65,6 +72,11 @@ public sealed class MainWindow : Form {
 
     this._timer.Interval = 1000;
     this._timer.Tick += (_, _) => this.Refresh();
+
+    // The layout runs on the sample tick as well, but a window being dragged has to follow the
+    // pointer rather than the second hand — a whole second of the plots being the old width while
+    // the frame is the new one is exactly what "it does not resize" looks like.
+    this.Resize += (_, _) => this.ApplyLayout();
   }
 
   #region what survives a restart (PRD §11)

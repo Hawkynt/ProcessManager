@@ -1442,8 +1442,8 @@ who is not an expert but is looking for the one thing that is unusual.
       right — the two answer different questions and reading them as one list is what makes a
       performance page look like a data dump
 - [ ] Engineering diagnostics collapsed below both, so the default state is not overwhelming
-- [ ] Reference size 1280×780, minimum 900×600, graphs growing horizontally rather than leaving
-      whitespace
+- [x] 🟡 Reference size 1280×780, minimum 900×600 — both windows now name a real minimum and relay
+      out as they are dragged; graphs grow horizontally, the statistics do not reflow into the space
 
 ## 45.2 Visual hierarchy
 

@@ -45,6 +45,31 @@ internal static partial class GtkCapture {
   [LibraryImport("libgtk-3.so.0")]
   private static partial nint gtk_window_get_title(nint window);
 
+  [LibraryImport("libgtk-3.so.0")]
+  private static partial void gtk_widget_get_preferred_width(nint widget, out int minimum, out int natural);
+
+  [LibraryImport("libgtk-3.so.0")]
+  private static partial void gtk_widget_get_preferred_height(nint widget, out int minimum, out int natural);
+
+  /// <summary>
+  /// The smallest a window says it can be, which is the hint a window manager enforces when
+  /// somebody drags its edge.
+  /// </summary>
+  /// <remarks>
+  /// Not the same question as "does a programmatic resize work". Under Xvfb there is no window
+  /// manager to enforce anything, so a window that reports a floor of its own full width still
+  /// shrinks when asked — and is immovable under a real desktop.
+  /// </remarks>
+  public static Size? MinimumOf(string title) {
+    var widget = MappedToplevel(title);
+    if (widget == 0)
+      return null;
+
+    gtk_widget_get_preferred_width(widget, out var width, out _);
+    gtk_widget_get_preferred_height(widget, out var height, out _);
+    return new(width, height);
+  }
+
   [LibraryImport(_Gtk)]
   private static partial int gtk_widget_get_mapped(nint widget);
 

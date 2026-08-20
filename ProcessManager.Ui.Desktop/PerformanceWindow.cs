@@ -93,6 +93,9 @@ public sealed class PerformanceWindow : Form {
     // §45.1's reference size, near enough: the rail plus a plot area wide enough that a minute of
     // history is a minute of pixels.
     this.Bounds = new(0, 0, 1180, 780);
+    // §45.1's floor. Without it the content's own size becomes the minimum and the page can only
+    // ever be made larger.
+    this.MinimumSize = new(900, 600);
 
     this._rail.Bounds = new(10, 10, _RailWidth, 730);
     this._rail.SelectedIndexChanged += (_, _) => this.ShowSelected(force: true);

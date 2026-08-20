@@ -44,6 +44,21 @@ public sealed class MainWindowSettingsTests {
     return new(new Sampler(probe), probe, null);
   }
 
+  /// <summary>
+  /// A window with no minimum of its own gets one computed from its content, and every docked child
+  /// asks for the width it currently has — so the window's own size becomes the smallest it can be.
+  /// It could be grown and never shrunk, which reads as one that does not resize at all (PRD §45.1).
+  /// </summary>
+  [Test]
+  public void TheWindowSaysHowSmallItMayBe() {
+    var window = Window();
+
+    Assert.That(window.MinimumSize.Width, Is.EqualTo(900));
+    Assert.That(window.MinimumSize.Height, Is.EqualTo(600));
+    Assert.That(window.MinimumSize.Width, Is.LessThan(window.Width), "or it can only ever grow");
+    Assert.That(window.MinimumSize.Height, Is.LessThan(window.Height));
+  }
+
   [Test]
   public void EverythingTheFileSaysReachesTheWindow() {
     var window = Window();
