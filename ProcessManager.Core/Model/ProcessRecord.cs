@@ -305,6 +305,47 @@ public struct ProcessRecord {
   public Counter FileCount;
   public Counter PipeCount;
 
+  /// <summary>
+  /// How many sockets of each kind this process holds a descriptor on (PRD §18, §40).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A count of endpoints and never of traffic. "This process holds forty TCP connections" is a fact
+  /// the socket tables can be joined to a descriptor list to establish; "this process has sent forty
+  /// megabytes" is not, and the four counters here are deliberately the ones that can be answered
+  /// (PRD §72.3).
+  /// </para>
+  /// <para>
+  /// Expensive, and therefore <see cref="UnknownReason.NotSampledYet"/> unless somebody asked for
+  /// them: filling them means listing every process's descriptors, which is the same 85 µs-per-process
+  /// read that keeps <see cref="HandleCount"/> off the sampling path (PRD §5.4).
+  /// </para>
+  /// </remarks>
+  public Counter TcpSocketCount;
+
+  /// <inheritdoc cref="TcpSocketCount"/>
+  public Counter UdpSocketCount;
+
+  /// <summary>
+  /// How many of this process's sockets are accepting connections rather than making them.
+  /// </summary>
+  /// <remarks>
+  /// TCP only. A UDP socket bound to a port is not listening in any sense the kernel records — it
+  /// has no such state — so counting one would be inventing a distinction the protocol does not
+  /// make (PRD §5.3).
+  /// </remarks>
+  public Counter ListeningSocketCount;
+
+  /// <summary>
+  /// How many distinct remote endpoints this process is connected to.
+  /// </summary>
+  /// <remarks>
+  /// Distinct addresses and ports rather than connections, because two connections to the same peer
+  /// are one correspondent — which is what the column is read for. A socket with no peer, which is
+  /// every listener and every unconnected datagram socket, counts towards none of it.
+  /// </remarks>
+  public Counter RemoteEndpointCount;
+
   public Counter ContextSwitches;
 
   /// <summary>Full command line, or <see langword="null"/> when it could not be read.</summary>

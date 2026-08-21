@@ -175,6 +175,28 @@ public static class FieldRegistry {
       FieldKind.Graph, FieldUnit.BytesPerSecond, _ALL, FieldCost.Derived, 90, 12, false, false,
       HistorySeries.Io),
 
+    // PRD §18. Counts of endpoints, and deliberately not counts of traffic: Linux attributes no
+    // bytes to a process without packet accounting or eBPF, so the byte and rate fields of §18 are
+    // absent rather than filled from the sockets a process happens to hold open at the moment
+    // somebody looked (PRD §72.3). All four are High for one reason — the join from a socket to a
+    // process is a readlink per open descriptor on the machine — and so none is default-visible.
+    new(ProcessField.TcpConnectionCount, "tcp.count", "TCP connections", "TCP",
+      "How many TCP sockets this process holds a descriptor on, listeners included.",
+      FieldKind.Instant, FieldUnit.Count, _LINUX, FieldCost.High, 116, 5, true, true,
+      Aliases: "tcp connections"),
+    new(ProcessField.UdpSocketCount, "udp.count", "UDP sockets", "UDP",
+      "How many UDP sockets this process holds a descriptor on. A datagram socket has no connection to count, so this counts the sockets themselves.",
+      FieldKind.Instant, FieldUnit.Count, _LINUX, FieldCost.High, 98, 5, true, true,
+      Aliases: "udp"),
+    new(ProcessField.ListeningSocketCount, "net.listening", "Listening", "Lstn",
+      "How many of this process's sockets are waiting for connections rather than making them. TCP only: a UDP socket bound to a port is not listening in any sense the kernel records.",
+      FieldKind.Instant, FieldUnit.Count, _LINUX, FieldCost.High, 92, 5, true, true,
+      Aliases: "listening"),
+    new(ProcessField.RemoteEndpointCount, "net.remote.count", "Remote endpoints", "Peers",
+      "How many distinct peers this process is connected to. Distinct addresses and ports rather than connections, because two connections to one machine are one correspondent.",
+      FieldKind.Instant, FieldUnit.Count, _LINUX, FieldCost.High, 128, 6, true, true,
+      Aliases: "peers remotes"),
+
     // PRD §19. Linux only so far: Windows reads its own performance counters and that is not
     // written yet, and a field claiming to work there would be worse than one that says it does not.
     // Expensive without exception — the kernel's accounting is a file per open descriptor and

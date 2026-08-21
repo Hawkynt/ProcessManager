@@ -160,6 +160,21 @@ public sealed record LinuxProbeOptions {
   /// </remarks>
   public bool ReadGpuUsage { get; init; }
 
+  /// <summary>
+  /// Count the sockets each process holds, for the connection columns (PRD §18, §40).
+  /// </summary>
+  /// <remarks>
+  /// Off, and the most expensive of the three: joining a socket to a process means a
+  /// <c>readlink</c> per open descriptor on the whole machine, which is the descriptor scan of
+  /// <see cref="CountFileDescriptors"/> plus a syscall for every entry it finds. Measured at 201 µs
+  /// per process against 45 µs for a sample that reads neither, on a machine with 820 processes —
+  /// 165 ms of a sample whose whole budget is 25 ms. The four columns it
+  /// fills are counts of endpoints and never of traffic — Linux attributes no bytes to a process
+  /// without packet accounting or eBPF, and a column that summed what it could reach would be a
+  /// model wearing a measurement's clothes (PRD §5.4, §72.3).
+  /// </remarks>
+  public bool ReadSocketCounts { get; init; }
+
   /// <summary>Read the cgroup path of each process, for the container column.</summary>
   public bool ReadCgroups { get; init; } = true;
 

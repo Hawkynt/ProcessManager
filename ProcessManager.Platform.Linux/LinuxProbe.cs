@@ -69,10 +69,15 @@ public sealed class LinuxProbe : ISystemProbe {
     this._effectiveUserId = options.EffectiveUserId;
     if (options.ReadGpuUsage)
       this._gpu = new(options, this._reader, this._io, this._procRootUtf8);
+    if (options.ReadSocketCounts)
+      this._sockets = new(this._reader, this._io, this._procRoot, this._procRootUtf8);
   }
 
   /// <summary>Per-process graphics accounting, or null when it was not asked for (PRD §5.4, §19).</summary>
   private readonly LinuxGpuAccounting? _gpu;
+
+  /// <summary>Per-process socket counts, or null when no column asked for them (PRD §5.4, §18).</summary>
+  private readonly LinuxSocketAccounting? _sockets;
 
   public string Description => $"linux:{this._procRoot}";
 
@@ -97,6 +102,9 @@ public sealed class LinuxProbe : ISystemProbe {
     // Once for the whole sample, before the loop: NVML answers about all of a card's clients in one
     // call, and asking it per process would put the same question six hundred times.
     this._gpu?.BeginSample();
+    // Likewise once for the whole sample: the socket tables answer about the whole machine, and the
+    // descriptor walk that joins them to processes visits every process exactly once.
+    this._sockets?.BeginSample();
     this.ReadSystem(snapshot);
     this.ReadProcesses(snapshot);
     this.PruneCache();
@@ -736,6 +744,9 @@ public sealed class LinuxProbe : ISystemProbe {
     // gathered a moment ago from the same instant, and nothing is carried over between samples, so a
     // pid that has been reused cannot inherit the readings of the process that had it before.
     this._gpu?.Fill(record.Key, ref record);
+    // Keyed on the pid alone for the same reason and with the same safety: the tally was built this
+    // sample, from the descriptors this pid held a moment ago.
+    this._sockets?.Fill(pid, ref record);
     cache.EnsureStatics(this._reader, this._options, this._procRootUtf8, this._procRoot);
 
     record.CommandLine = cache.CommandLine;
@@ -855,6 +866,13 @@ public sealed class LinuxProbe : ISystemProbe {
     record.SocketCount = Counter.NotSupported;
     record.FileCount = Counter.NotSupported;
     record.PipeCount = Counter.NotSupported;
+    // Sockets are off unless asked for, the same way graphics is, so the default is "nobody looked".
+    // A record that left these alone would report every process on the machine as holding no
+    // connections at all (PRD §18, §72.3).
+    record.TcpSocketCount = Counter.NotSampledYet;
+    record.UdpSocketCount = Counter.NotSampledYet;
+    record.ListeningSocketCount = Counter.NotSampledYet;
+    record.RemoteEndpointCount = Counter.NotSampledYet;
     record.ContextSwitches = Counter.NotSupported;
     record.MemoryLimitBytes = Counter.NotSupported;
     // Nobody has looked in the cgroup yet, and a nought here would say the group has never been

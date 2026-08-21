@@ -19,6 +19,10 @@ internal static class Breakdown {
     // kernel's own client accounting is a file per open descriptor, which is the same scan that had
     // to leave the sample loop, and NVIDIA's is a library call per card measured in milliseconds.
     Measure("with GPU", new LinuxProbeOptions { ReadGpuUsage = true });
+    // And the number that decides the same for §18's socket counts. Dearer than the descriptor count
+    // it builds on: that one is a directory listing per process, this adds a readlink for every
+    // entry the listing finds.
+    Measure("with sockets", new LinuxProbeOptions { ReadSocketCounts = true });
   }
 
   private static void Measure(string label, LinuxProbeOptions options) {

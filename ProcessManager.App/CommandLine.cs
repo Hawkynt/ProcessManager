@@ -219,6 +219,21 @@ internal sealed record CommandLineOptions {
     => this.Wants(ProcessField.ImageSha256) || this.Wants(ProcessField.ImageSha1);
 
   /// <summary>
+  /// Whether anything this run asked for needs the sockets each process holds counted (PRD §18).
+  /// </summary>
+  /// <remarks>
+  /// Dearer than the descriptor count and inferred the same way: the join from a socket to a process
+  /// is a <c>readlink</c> for every open descriptor on the machine, on top of the directory listing
+  /// that finds them. No switch of its own, because unlike the graphics columns these are asked for
+  /// by name or not at all — there is no "show me the network page" that implies them.
+  /// </remarks>
+  public bool WantsSocketCounts
+    => this.Wants(ProcessField.TcpConnectionCount)
+    || this.Wants(ProcessField.UdpSocketCount)
+    || this.Wants(ProcessField.ListeningSocketCount)
+    || this.Wants(ProcessField.RemoteEndpointCount);
+
+  /// <summary>
   /// Whether a field was asked for, by column or by filter.
   /// </summary>
   /// <remarks>

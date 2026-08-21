@@ -67,6 +67,11 @@ public enum ProcessField : byte {
   WriteBytesPerSecond,
   IoHistory,
 
+  TcpConnectionCount,
+  UdpSocketCount,
+  ListeningSocketCount,
+  RemoteEndpointCount,
+
   GpuPercent,
   GpuEngineName,
   GpuEnginePercent,
