@@ -1,0 +1,24 @@
+ Processes  Performance                                                  5 of 5
+  0[?                                ]    1[?                                ]
+  2[?                                ]    3[?                                ]
+Mem[||||||||||||||||       7.8G/15.6G]  Swp[||||||||                1.0G/4.0G]
+Tasks: 5, 3 running             Load average: 1.25 0.80 0.55
+
+    PID▴ User        CPU% Private Process
+       1 root         0.0   19.5M - systemd
+    1000 alice        0.0   11.7M   - bash
+    1001 alice        0.0   92.8M       foo) 0 (bar
+    1002 alice        0.0    2.0M       sleep
+       2 root         0.0     n/a   kthreadd
+
+
+
+
+
+
+
+
+
+
+
+? help  F5 tree  F6 sort  / search  x actions  e end task  k kill

@@ -496,30 +496,41 @@ shipped with its plots above its menu bar for exactly as long as nobody looked a
 Every table:
 
 - [x] Column show/hide
-- [ ] Column reorder
-- [ ] 🟡 Column resize
-- [ ] Column reset
+- [ ] 🟡 Column reorder — terminal only, `{` and `}`
+- [ ] 🟡 Column resize — terminal only, `,` and `.`
+- [ ] 🟡 Column reset — terminal only, `0`
 - [x] Ascending sort
 - [x] Descending sort
-- [ ] Multi-column sort
+- [ ] 🟡 Multi-column sort — the engine takes any number of tie-breaking keys and the terminal binds
+      `o` to add one; the window has no way to ask for a second column yet
 - [ ] 🟡 Keyboard sort — TUI only
-- [ ] Freeze / pin columns
-- [ ] Auto-size column / all columns
-- [ ] Copy cell
-- [ ] 🟡 Copy row
-- [ ] Copy selected rows / columns
-- [ ] Export table
+- [ ] 🟡 Freeze / pin columns — terminal only; the first column is pinned by default and `#` moves
+      the boundary
+- [ ] 🟡 Auto-size column / all columns — terminal only, `a` and `A`, measured against the rows on
+      screen rather than every process
+- [ ] 🟡 Copy cell — terminal only, `y`, over OSC 52
+- [ ] 🟡 Copy row — terminal only, `Y`
+- [ ] 🟡 Copy selected rows / columns — terminal only: `Y` copies every ticked row, with a header
+- [ ] 🟡 Export table — terminal only, `X`, in whichever of the six formats the file name asks for
 - [x] Text filter
 - [x] Advanced filter
 - [x] Regular-expression filter
 - [x] Numeric comparison filters
 - [x] Unit-aware comparison
-- [ ] Case-sensitive toggle — everything matches case-insensitively today
-- [ ] Highlight matched text
-- [ ] Multi-selection
-- [ ] Select all / invert selection
-- [ ] 🟡 Context menu
+- [ ] 🟡 Case-sensitive toggle — the query language takes the switch and the terminal binds `!`; the
+      window has no control for it
+- [ ] 🟡 Highlight matched text — terminal only
+- [ ] 🟡 Multi-selection — terminal only, `Space`; a bulk terminate names the count before it acts
+- [ ] 🟡 Select all / invert selection — terminal only, `Ctrl+A` and `v`
+- [x] Context menu
 - [x] Persist layout — columns, sort and interval survive a restart
+
+**Copying, over SSH.** The clipboard a terminal front-end can reach is the *terminal emulator's*,
+not the machine's: a process on the far end of an SSH session that wrote to an X selection would put
+the text on the server's clipboard, where nobody can paste it. So a copy is an OSC 52 sequence handed
+to the emulator. Nothing answers it — a terminal with the feature switched off looks exactly like one
+that took the text — which is why the status line says the text was *offered* and why every copy is
+also reachable through the export key, which writes a file no terminal setting can veto.
 
 Named **column sets**. Each stores its visible fields and their ordering; widths come from the
 registry, and sorting, grouping and pinned columns are not stored yet.
@@ -2732,57 +2743,72 @@ over SSH.
 ## 57.1 Layout
 
 - [x] Top status bar
-- [ ] 🟡 Left view selector or compact tab row
+- [x] Left view selector or compact tab row — a tab row: the process list and the performance page,
+      clickable, with the paused, case, ticked and filter state on the right of it
 - [x] Primary table / tree
-- [ ] Optional lower pane
+- [x] Optional lower pane — `Tab`, and it carries the figures a plot cannot be read for
 - [x] Bottom command / help bar
 
 Responsive breakpoints:
 
-- [x] Full desktop terminal
-- [x] Medium SSH terminal
-- [ ] 🟡 Narrow terminal
+- [x] Full desktop terminal — 140 columns and wider: every column
+- [x] Medium SSH terminal — 100 to 139: one history, and the numbers that pay for their width
+- [x] Narrow terminal — under 100: five columns, and one aggregate processor meter instead of
+      sixty-four bars four characters wide
+
+The boundaries are measurements, not preferences. Thirteen columns and their separators are 126
+characters before the process name has one, so the full set needs 140; the medium set is 70, which
+leaves an eighty-column terminal ten characters of name — enough to render every row as `kthread`.
+A layout somebody has changed by hand is never re-picked by a resize.
 
 ## 57.2 TUI process view
 
 - [x] Columns adapt automatically to width
-- [ ] Horizontal scroll
-- [ ] Column sets
+- [x] Horizontal scroll — `Ctrl+←`/`Ctrl+→`, or `(` and `)` where the terminal will not send those
+- [x] Column sets — in the column chooser, `c`, and from `--columns @name`
 - [x] Hide / show columns
-- [ ] Resize columns
-- [ ] Pin first column
+- [x] Resize columns
+- [x] Pin first column — and any number of them: `#` pins up to the column cursor
 - [ ] 🟡 Switch friendly / tree / flat mode — tree and flat only
+
+A column takes what it asks for, what is left, or what is left once the columns behind it have their
+share — whichever is smallest. The process name asks for 120 characters because the window has them,
+and a terminal that gave it all of them drew nothing at all of whatever was ordered after it.
 
 ## 57.3 Keyboard model
 
 - [x] `↑/↓` or `j/k` move
 - [x] `←/→` or `h/l` collapse/expand
 - [x] `Enter` properties / open
-- [ ] `Space` select
-- [x] `/` search
-- [ ] `f` advanced filter
-- [x] `s` sort
+- [x] `Space` select
+- [x] `/` search — finds the row and leaves the rest on screen
+- [x] `f` advanced filter — the query language of §56, with the parser's complaint on the status line
+- [ ] 🟡 `s` sort — sorting is `F6`, `<` and `>`; `s` is the scheduler class, and `keys.conf` can
+      swap them round
 - [x] `c` columns
 - [x] `p` pause
 - [x] `r` refresh
-- [ ] `x` action menu
+- [x] `x` action menu
 - [x] `t` terminate / end-task menu
 - [x] `S` suspend / resume
-- [ ] `n` network
-- [ ] `m` modules
-- [ ] `h` handles (contextual)
-- [ ] `T` threads
-- [ ] `g` graphs / performance
-- [x] `?` help
+- [x] `n` network
+- [x] `m` modules
+- [x] `h` handles (contextual)
+- [x] `T` threads
+- [x] `g` graphs / performance
+- [x] `?` help — generated from the binding table, so it lists the keys as they are bound now
 - [x] `q` close / back / quit according to depth
-- [ ] Bindings are customisable
+- [x] Bindings are customisable — `keys.conf` beside the settings file, one `action = key, key` a
+      line; a typo is reported on start-up and leaves the built-in binding alone
 
 ## 57.4 TUI graphs
 
 - [x] Block graphs — the U+2581–U+2588 eighth-block ramp
-- [ ] Braille graphs where supported
+- [x] Braille graphs where supported — `--graph-style braille`: two samples a cell at four levels,
+      against one at eight
 - [x] Sparklines
-- [ ] Textual min/avg/max/current fallback
+- [x] Textual min/avg/max/current fallback — the lower pane always, and `--graph-style numbers` puts
+      the figures in the columns themselves
 - [x] **No information exists only as graphical colour**
 - [x] ASCII fallback when the locale or terminal cannot show blocks
 
@@ -2792,12 +2818,18 @@ the capture and asserted by a test that checks both ramps differ *and* each is s
 
 ## 57.5 Mouse
 
-- [ ] Select
-- [ ] Scroll
-- [ ] Pane resizing
-- [ ] Tab selection
-- [ ] Context / action menu
+- [x] Select — a click picks the row *and* the column under it, which is what the copy and resize
+      keys then act on; the gutter ticks the row, as does Ctrl+click
+- [x] Scroll — the wheel, three rows at a time
+- [x] Pane resizing — dragging the divider above the lower pane
+- [x] Tab selection
+- [x] Context / action menu — the right button
 - [x] Keyboard functionality remains complete without a mouse
+
+Both report forms are read: SGR (`ESC [ < b ; x ; y M`), which is the one asked for and the only one
+that can name a column past 223, and the original X10 form for terminals that ignored the request. A
+click resolves through the same placement the drawing used, so a header that moved because a column
+was pinned is still the header that gets clicked. `--no-mouse` turns the whole thing off.
 
 ---
 

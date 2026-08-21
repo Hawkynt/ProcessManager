@@ -6,6 +6,9 @@ namespace Hawkynt.ProcessManager.Query;
 /// <summary>One visible row: where the process is in the snapshot, and how deep in the tree.</summary>
 public readonly record struct ViewRow(int Index, int Depth, bool HasChildren);
 
+/// <summary>A column the order is decided by, and which way round (PRD §11).</summary>
+public readonly record struct SortKey(ProcessField Field, bool Descending);
+
 /// <summary>
 /// Turns a snapshot into the ordered, filtered, optionally-nested list of rows a front-end draws.
 /// Both front-ends use this one, so tree building, sorting and filtering behave identically in the
@@ -24,6 +27,8 @@ public sealed class ProcessView {
   private bool[] _visible = [];
   private ViewRow[] _rows = [];
   private readonly Dictionary<int, int> _byPid = [];
+  private readonly HashSet<int> _collapsed = [];
+  private readonly List<SortKey> _secondary = [];
   private readonly Stack<int> _walk = new();
   private readonly IComparer<int> _comparer;
 
@@ -36,8 +41,62 @@ public sealed class ProcessView {
 
   public bool SortDescending { get; set; } = true;
 
+  /// <summary>
+  /// The columns that decide the order when the primary one ties (PRD §11).
+  /// </summary>
+  /// <remarks>
+  /// Sorting by state and then by memory is the request behind most of the two-column sorts anybody
+  /// asks for: a group whose rows have identical values in the first column is exactly where a
+  /// second one earns its place. Ties past the last key still fall through to the pid, so the order
+  /// remains total and rows never swap places between two identical samples.
+  /// </remarks>
+  public IReadOnlyList<SortKey> SecondarySort => this._secondary;
+
+  /// <summary>Adds a tie-breaking column, or moves it to the end if it is already one.</summary>
+  public void AddSortKey(ProcessField field, bool descending) {
+    if (field == this.SortColumn)
+      return;
+
+    this._secondary.RemoveAll(key => key.Field == field);
+    this._secondary.Add(new(field, descending));
+  }
+
+  /// <summary>Back to one sort column.</summary>
+  public void ClearSecondarySort() => this._secondary.Clear();
+
   /// <summary>Nest children under their parent instead of showing one flat sorted list.</summary>
   public bool TreeMode { get; set; }
+
+  /// <summary>
+  /// Whether text matching distinguishes case (PRD §11).
+  /// </summary>
+  /// <remarks>
+  /// Setting it re-parses the filter, because the comparison is baked into the parsed query rather
+  /// than read at every row: a filter is matched once per process per sample, and a branch per
+  /// comparison is a branch a thousand times a second.
+  /// </remarks>
+  public bool CaseSensitive {
+    get => this._caseSensitive;
+    set {
+      if (this._caseSensitive == value)
+        return;
+
+      this._caseSensitive = value;
+      this._query = ProcessQuery.ParseOrSubstring(this._filterText, value);
+    }
+  }
+
+  private bool _caseSensitive;
+
+  /// <summary>Whether this pid's children are hidden in tree mode.</summary>
+  public bool IsCollapsed(int pid) => this._collapsed.Contains(pid);
+
+  /// <summary>Hides or shows the children of a pid. Returns whether anything changed.</summary>
+  public bool SetCollapsed(int pid, bool collapsed)
+    => collapsed ? this._collapsed.Add(pid) : this._collapsed.Remove(pid);
+
+  /// <summary>Everything expanded again.</summary>
+  public void ExpandAll() => this._collapsed.Clear();
 
   /// <summary>Case-insensitive substring matched against name and command line; null for all.</summary>
   /// <summary>
@@ -53,7 +112,7 @@ public sealed class ProcessView {
     get => this._filterText;
     set {
       this._filterText = value;
-      this._query = ProcessQuery.ParseOrSubstring(value);
+      this._query = ProcessQuery.ParseOrSubstring(value, this._caseSensitive);
     }
   }
 
@@ -165,7 +224,9 @@ public sealed class ProcessView {
           ++visibleChildren;
 
       this._rows[this.RowCount++] = new(index, this._depth[index], visibleChildren > 0);
-      if (childCount == 0)
+      // A collapsed row still says it has children — that is the whole point of the marker — it just
+      // does not put them on screen (PRD §57.3).
+      if (childCount == 0 || this._collapsed.Contains(processes[index].Pid))
         continue;
 
       Array.Sort(this._children, start, childCount, this._comparer);
@@ -280,6 +341,19 @@ public sealed class ProcessView {
 
   private int Compare(int left, int right) {
     var result = this.CompareAscending(left, right);
+    if (result == 0 && this._secondary.Count > 0) {
+      var processes = this._snapshot!.Processes;
+      foreach (var key in this._secondary) {
+        var tie = FieldAccessor.Compare(key.Field, in processes[left], left, in processes[right], right, this._delta);
+        if (tie == 0)
+          continue;
+
+        // Each key carries its own direction, so "state ascending, memory descending" is one order
+        // and not two conflicting ones.
+        return key.Descending ? -tie : tie;
+      }
+    }
+
     if (result == 0)
       // Ties by pid, always ascending: an unstable order makes rows jump between samples for no
       // visible reason, and a row that jumps is a row somebody kills by accident (PRD §7.3).

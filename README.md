@@ -139,7 +139,14 @@ Write your own into the settings file and it replaces the preset of that name.
 
 The terminal UI keeps the keys htop users already have in their fingers — `F5` tree, `F6` sort,
 `F9` kill, `F10` quit, `/` search, `\` filter, `u` filter by user — plus `Enter` for a process's
-details and `h` to read handle counts for the visible rows. The desktop UI keeps the layout Process
+details, `x` for everything that can be done to it, `Space` to tick rows for a bulk action, `y` and
+`Y` to copy a cell or the ticked rows to the terminal's clipboard over OSC 52 (which works over SSH,
+where an X selection would not), `X` to write the table to a file, `c` to choose columns, `Tab` for a
+lower pane, `g` for the performance page and `?` for a help page generated from the bindings — which
+are yours to change, in `keys.conf` beside the settings file. The mouse works too where the terminal
+reports it: click a header to sort, shift-click to add a tie-breaker, drag the pane divider, right
+button for the action menu. The table re-picks its columns for the width it has, from thirteen on a
+maximised terminal down to five on a narrow one. The desktop UI keeps the layout Process
 Explorer users already have in their eyes: plots and per-core meters on top, the process tree below
 them, and a tabbed detail pane under that — overview, threads, modules, handles, environment,
 network — and double-clicking a row opens that process in a window of its own, so two of them can be

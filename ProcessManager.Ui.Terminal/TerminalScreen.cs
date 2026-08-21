@@ -90,6 +90,12 @@ public sealed class TerminalScreen {
 
   /// <summary>Writes text right-aligned in a field of <paramref name="width"/> ending at x+width.</summary>
   public void WriteRight(int x, int y, int width, ReadOnlySpan<char> text, byte attribute = Attributes.Normal) {
+    // A field with no width is a field nothing fits in, which a terminal narrower than its own
+    // furniture really does produce. Writing nothing is the answer; the alternative was an exception
+    // from the slice below.
+    if (width <= 0)
+      return;
+
     // A value too long for its column loses its head, not its tail: the significant digits of a
     // number and the file name of a path are both at the end.
     if (text.Length > width)

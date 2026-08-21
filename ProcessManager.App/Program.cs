@@ -96,8 +96,17 @@ internal static class Program {
 
   private static int RunTerminal(Sampler sampler, ISystemProbe probe, IProcessActions? actions, CommandLineOptions options) {
     if (options.CaptureFramePath is null && options.CaptureSvgPath is null) {
-      using var host = new TerminalHost();
-      host.Run(sampler, probe, actions, options.Interval);
+      using var host = new TerminalHost { UseMouse = options.UseMouse };
+      host.Run(sampler, probe, actions, options.Interval, new() {
+        SortColumn = options.SortColumn,
+        SortDescending = options.SortDescending,
+        TreeMode = options.TreeMode,
+        Columns = options.TerminalColumns,
+        // Only when this run said so: otherwise the terminal decides from the locale, which is the
+        // one thing a capture may not do and a person watching wants.
+        Graphs = options.AsciiOnly ? GraphStyle.Ascii : options.GraphStyle == GraphStyle.Blocks ? null : options.GraphStyle,
+      });
+
       return _ExitOk;
     }
 
@@ -106,13 +115,19 @@ internal static class Program {
     // Pinned, both of them: a captured frame is compared byte for byte, so neither the colour depth
     // nor the block characters may come from whatever the capturing machine's environment happens to
     // say. --ascii overrides for a picture of the fallback.
-    var ui = new TerminalUi(sampler, probe, actions, 120, 40, ColorDepth.None) {
+    var ui = new TerminalUi(sampler, probe, actions, options.CaptureWidth, options.CaptureHeight, ColorDepth.None) {
       ShowTiming = false,
-      UseBlockCharacters = !options.AsciiOnly,
+      GraphStyle = options.AsciiOnly ? GraphStyle.Ascii : options.GraphStyle,
     };
     ui.View.TreeMode = options.TreeMode;
     ui.View.SortColumn = options.SortColumn;
     ui.View.SortDescending = options.SortDescending;
+    // The same columns the interactive terminal would have opened with. Without this a capture could
+    // only ever photograph the set the width picked, which makes --columns untestable by the one
+    // test that looks at a whole frame (PRD §9.6).
+    if (options.TerminalColumns is { Length: > 0 } columns)
+      ui.Columns.Apply(columns);
+
     for (var i = 0; i < options.CaptureSamples; ++i) {
       ui.Update();
       // Only between samples, and only when more than the minimum were asked for: a golden frame is
@@ -120,6 +135,10 @@ internal static class Program {
       if (options.CaptureSamples > 2 && i < options.CaptureSamples - 1)
         Thread.Sleep(options.Interval);
     }
+
+    foreach (var key in ParseCaptureKeys(options.CaptureKeys))
+      if (ui.HandleKey(key))
+        ui.Refresh();
 
     var frame = ui.Screen.Capture();
     if (options.CaptureFramePath is not null)
@@ -144,6 +163,35 @@ internal static class Program {
     return _ExitError;
 
     static string Normalize(string text) => text.Replace("\r\n", "\n", StringComparison.Ordinal).TrimEnd();
+  }
+
+  /// <summary>
+  /// The keys of <c>--capture-keys</c>, as the UI receives them.
+  /// </summary>
+  /// <remarks>
+  /// Four of them have no printable form, so they are written the way a C programmer writes them.
+  /// Everything else is the character itself: a capture of the action menu is <c>--capture-keys x</c>.
+  /// </remarks>
+  private static IEnumerable<ConsoleKeyInfo> ParseCaptureKeys(string? keys) {
+    if (string.IsNullOrEmpty(keys))
+      yield break;
+
+    for (var i = 0; i < keys.Length; ++i) {
+      if (keys[i] == '\\' && i + 1 < keys.Length) {
+        var named = keys[++i] switch {
+          't' => new ConsoleKeyInfo('\t', ConsoleKey.Tab, false, false, false),
+          'n' => new ConsoleKeyInfo('\r', ConsoleKey.Enter, false, false, false),
+          'e' => new ConsoleKeyInfo('\u001b', ConsoleKey.Escape, false, false, false),
+          's' => new ConsoleKeyInfo(' ', ConsoleKey.Spacebar, false, false, false),
+          var other => new ConsoleKeyInfo(other, default, false, false, false),
+        };
+
+        yield return named;
+        continue;
+      }
+
+      yield return new(keys[i], default, false, false, false);
+    }
   }
 
   private static int RunDesktop(

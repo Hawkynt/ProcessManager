@@ -1,10 +1,36 @@
+using System.Text;
 using Hawkynt.ProcessManager.Abstractions;
+using Hawkynt.ProcessManager.Query;
 using Hawkynt.ProcessManager.Sampling;
 
 namespace Hawkynt.ProcessManager.Ui.Terminal;
 
 /// <summary>
-/// Owns the real terminal: alternate screen, cursor, resize, and the key loop.
+/// What the terminal opens with: the settings file, layered under whatever this run's flags said
+/// (PRD §11, §67).
+/// </summary>
+/// <remarks>
+/// Until this existed the interactive terminal ignored <c>--sort</c>, <c>--columns</c> and the
+/// settings file entirely — only the capture path read them — so a saved layout came back in the
+/// window and not in the terminal.
+/// </remarks>
+public sealed record TerminalStartup {
+
+  public ProcessField SortColumn { get; init; } = ProcessField.CpuPercent;
+
+  public bool SortDescending { get; init; } = true;
+
+  public bool TreeMode { get; init; }
+
+  /// <summary>The saved columns, or null to let the width decide (PRD §57.1).</summary>
+  public ProcessField[]? Columns { get; init; }
+
+  public GraphStyle? Graphs { get; init; }
+
+}
+
+/// <summary>
+/// Owns the real terminal: alternate screen, cursor, mouse, resize, and the key loop.
 /// </summary>
 /// <remarks>
 /// Separate from <see cref="TerminalUi"/> on purpose. Everything that composes a frame is in the UI
@@ -15,18 +41,40 @@ namespace Hawkynt.ProcessManager.Ui.Terminal;
 public sealed class TerminalHost : IDisposable {
 
   private readonly TextWriter _output;
+  private readonly List<ConsoleKeyInfo> _pending = [];
   private bool _entered;
+  private bool _mouse;
 
   public TerminalHost(TextWriter? output = null) => this._output = output ?? Console.Out;
+
+  /// <summary>Whether to ask the terminal for mouse reports (PRD §57.5).</summary>
+  public bool UseMouse { get; set; } = true;
 
   /// <summary>
   /// Runs until the user quits. Sampling happens on this thread between key waits, so a slow sample
   /// delays a keystroke by at most one sample — and the sample cost is on screen, so it is visible
   /// when it does.
   /// </summary>
-  public void Run(Sampler sampler, ISystemProbe probe, IProcessActions? actions, TimeSpan interval) {
+  public void Run(Sampler sampler, ISystemProbe probe, IProcessActions? actions, TimeSpan interval, TerminalStartup? startup = null) {
     var (width, height) = ReadSize();
-    var ui = new TerminalUi(sampler, probe, actions, width, height, DetectColorDepth());
+    var ui = new TerminalUi(sampler, probe, actions, width, height, DetectColorDepth()) {
+      Keys = KeyBindings.Load(),
+      ClipboardOutput = this._output,
+    };
+
+    if (startup is not null) {
+      ui.View.SortColumn = startup.SortColumn;
+      ui.View.SortDescending = startup.SortDescending;
+      ui.View.TreeMode = startup.TreeMode;
+      if (startup.Graphs is { } graphs)
+        ui.GraphStyle = graphs;
+
+      if (startup.Columns is { Length: > 0 } columns)
+        ui.Columns.Apply(columns);
+    }
+
+    foreach (var problem in ui.Keys.Errors)
+      Console.Error.WriteLine($"procman: {problem}");
 
     this.Enter();
     try {
@@ -47,14 +95,21 @@ public sealed class TerminalHost : IDisposable {
         }
 
         if (Console.KeyAvailable) {
-          if (ui.HandleKey(Console.ReadKey(intercept: true)))
-            ui.Refresh();
-
+          this.HandleInput(ui);
           ui.Flush(this._output);
           continue;
         }
 
-        if (DateTime.UtcNow >= nextSample) {
+        // An escape sequence that stopped arriving was not a mouse report: it was the Escape key.
+        // Nothing else can tell the difference, which is why every terminal program has this timeout
+        // — here it is one poll, so Escape takes at most 25 ms to close an overlay.
+        if (this._pending.Count > 0) {
+          this.ReplayPending(ui);
+          ui.Flush(this._output);
+          continue;
+        }
+
+        if (!ui.Paused && DateTime.UtcNow >= nextSample) {
           ui.Update();
           ui.Flush(this._output);
           nextSample = DateTime.UtcNow + interval;
@@ -69,6 +124,78 @@ public sealed class TerminalHost : IDisposable {
     } finally {
       this.Leave();
     }
+  }
+
+  /// <summary>
+  /// Reads one keypress, or reassembles the several that a mouse report arrives as.
+  /// </summary>
+  /// <remarks>
+  /// A mouse report is an escape sequence the console layer does not recognise, so it comes back one
+  /// character at a time: <c>Esc</c>, <c>[</c>, <c>&lt;</c>, then digits and a final letter. They are
+  /// collected until they decode or stop looking like a report, and anything that stops looking like
+  /// one is handed to the UI as the keys it always was — so a terminal that sends something else
+  /// entirely loses nothing.
+  /// </remarks>
+  private void HandleInput(TerminalUi ui) {
+    var key = Console.ReadKey(intercept: true);
+    if (this._pending.Count == 0 && key.KeyChar != '\u001b') {
+      if (ui.HandleKey(key))
+        ui.Refresh();
+
+      return;
+    }
+
+    this._pending.Add(key);
+    var text = Text(this._pending);
+    if (MouseInput.TryDecode(text, out var mouse)) {
+      this._pending.Clear();
+      if (ui.HandleMouse(mouse))
+        ui.Refresh();
+
+      return;
+    }
+
+    // Still might be one; nothing is drawn until it is known either way. A report is never longer
+    // than this, so a run of keys that happens to start with Escape cannot be buffered for ever.
+    if (MouseInput.IsPrefix(text) && this._pending.Count < 32)
+      return;
+
+    this.ReplayPending(ui);
+  }
+
+  /// <summary>
+  /// Hands the buffered keys to the UI as the keys they were.
+  /// </summary>
+  /// <remarks>
+  /// With one exception: a control sequence that is not a mouse report is dropped rather than
+  /// replayed. Some terminal describes some key with a sequence the console layer does not know —
+  /// Ctrl+arrow on half of them — and replaying it as an Escape followed by <c>[1;5D</c> would quit
+  /// the program because the user pressed Ctrl and an arrow. A lone Escape is still the Escape key.
+  /// </remarks>
+  private void ReplayPending(TerminalUi ui) {
+    var keys = this._pending.ToArray();
+    this._pending.Clear();
+    if (keys.Length > 2 && keys[0].KeyChar == '\u001b' && keys[1].KeyChar == '[')
+      return;
+
+    for (var i = 0; i < keys.Length; ++i) {
+      // The first one is the Escape itself, which arrives with no ConsoleKey attached because the
+      // console layer did not recognise what followed it.
+      var key = i == 0 && keys[i].KeyChar == '\u001b' && keys[i].Key == default
+        ? new ConsoleKeyInfo('\u001b', ConsoleKey.Escape, false, false, false)
+        : keys[i];
+
+      if (ui.HandleKey(key))
+        ui.Refresh();
+    }
+  }
+
+  private static string Text(List<ConsoleKeyInfo> keys) {
+    var builder = new StringBuilder(keys.Count);
+    foreach (var key in keys)
+      builder.Append(key.KeyChar);
+
+    return builder.ToString();
   }
 
   private static (int Width, int Height) ReadSize() {
@@ -96,7 +223,9 @@ public sealed class TerminalHost : IDisposable {
     if (term is null or "dumb")
       return ColorDepth.None;
 
-    return term.Contains("256", StringComparison.Ordinal) ? ColorDepth.Ansi256 : ColorDepth.Ansi16;
+    return term.Contains("256", StringComparison.Ordinal) || term.Contains("direct", StringComparison.Ordinal)
+      ? ColorDepth.Ansi256
+      : ColorDepth.Ansi16;
   }
 
   private void Enter() {
@@ -112,6 +241,11 @@ public sealed class TerminalHost : IDisposable {
     AppDomain.CurrentDomain.UnhandledException += this.OnUnhandled;
     this._output.Write(Ansi.EnterAlternateScreen);
     this._output.Write(Ansi.HideCursor);
+    if (this.UseMouse) {
+      this._mouse = true;
+      this._output.Write(Ansi.EnableMouse);
+    }
+
     this._output.Flush();
   }
 
@@ -123,6 +257,13 @@ public sealed class TerminalHost : IDisposable {
     Console.CancelKeyPress -= this.OnCancel;
     AppDomain.CurrentDomain.ProcessExit -= this.OnProcessExit;
     AppDomain.CurrentDomain.UnhandledException -= this.OnUnhandled;
+    if (this._mouse) {
+      this._mouse = false;
+      // Before anything else: a terminal left reporting the mouse turns every later click in that
+      // window into gibberish on the shell's command line.
+      this._output.Write(Ansi.DisableMouse);
+    }
+
     this._output.Write(Ansi.ShowCursor);
     this._output.Write(Ansi.Reset);
     this._output.Write(Ansi.LeaveAlternateScreen);

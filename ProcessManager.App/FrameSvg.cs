@@ -108,12 +108,16 @@ internal static class FrameSvg {
   /// meanings, in the same order, so a change to one is visible as a difference against the other.
   /// </summary>
   private static (string Fore, string? Back) Palette(byte attribute) {
+    if ((attribute & 64) != 0)
+      return ("#0c0c0c", "#dec43c");                       // the run a search matched
     if ((attribute & 8) != 0)
       return ("#3fbf3f", null);                            // a process that just started
     if ((attribute & 16) != 0)
       return ("#d04040", null);                            // one that just ended
+    if ((attribute & 32) != 0 && (attribute & 0x07) != 7)
+      return ("#eba03c", null);                            // a row somebody has ticked
 
-    return (attribute & 0x0F) switch {
+    return (attribute & 0x07) switch {
       1 => ("#8a8a8a", null),                              // dim
       2 => ("#2aa198", null),                              // accent
       3 => ("#3fbf3f", null),                              // good

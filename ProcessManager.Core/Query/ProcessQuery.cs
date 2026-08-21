@@ -46,7 +46,12 @@ public sealed class ProcessQuery {
   /// Parses a query. A query that does not parse is reported rather than silently matching nothing,
   /// because a filter that quietly hides every row looks exactly like a machine with no processes.
   /// </summary>
-  public static bool TryParse(string? text, out ProcessQuery query, out string? error) {
+  /// <param name="caseSensitive">
+  /// Whether text comparisons distinguish case. Off by default, because a filter box that misses
+  /// "Chrome" when "chrome" was typed is a filter box people stop trusting — and on when somebody
+  /// asks for it, because "Setup" and "setup" really are two programs (PRD §11).
+  /// </param>
+  public static bool TryParse(string? text, out ProcessQuery query, out string? error, bool caseSensitive = false) {
     error = null;
     if (string.IsNullOrWhiteSpace(text)) {
       query = Empty;
@@ -54,7 +59,7 @@ public sealed class ProcessQuery {
     }
 
     try {
-      var parser = new Parser(text);
+      var parser = new Parser(text, caseSensitive);
       var root = parser.ParseExpression();
       parser.ExpectEnd();
       query = new(root) { Text = text };
@@ -72,14 +77,18 @@ public sealed class ProcessQuery {
   /// they are halfway through writing a working one, and blanking the list at every keystroke would
   /// make the box unusable.
   /// </remarks>
-  public static ProcessQuery ParseOrSubstring(string? text) {
+  public static ProcessQuery ParseOrSubstring(string? text, bool caseSensitive = false) {
     if (string.IsNullOrWhiteSpace(text))
       return Empty;
 
-    return TryParse(text, out var query, out _)
+    return TryParse(text, out var query, out _, caseSensitive)
       ? query
-      : new(new FreeTextNode(text)) { Text = text };
+      : new(new FreeTextNode(text, Comparison(caseSensitive))) { Text = text };
   }
+
+  /// <summary>The one place the case switch turns into a comparison, so no node decides it alone.</summary>
+  private static StringComparison Comparison(bool caseSensitive)
+    => caseSensitive ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
 
   public bool Matches(in ProcessRecord process, SnapshotDelta? delta, int index)
     => this._root is null || this._root.Matches(in process, delta, index);
@@ -106,11 +115,11 @@ public sealed class ProcessQuery {
   }
 
   /// <summary>A bare word: matched against the fields somebody plausibly meant.</summary>
-  private sealed class FreeTextNode(string text) : Node {
+  private sealed class FreeTextNode(string text, StringComparison comparison) : Node {
     public override bool Matches(in ProcessRecord process, SnapshotDelta? delta, int index)
       => Has(process.Name) || Has(process.CommandLine) || Has(process.UserName) || Has(process.ImagePath);
 
-    private bool Has(string? value) => value is not null && value.Contains(text, StringComparison.OrdinalIgnoreCase);
+    private bool Has(string? value) => value is not null && value.Contains(text, comparison);
   }
 
   private sealed class RegexNode(Regex pattern, ProcessField? field) : Node {
@@ -124,7 +133,7 @@ public sealed class ProcessQuery {
     private bool Try(string? value) => value is not null && pattern.IsMatch(value);
   }
 
-  private sealed class TextComparisonNode(ProcessField field, QueryOperator op, string value) : Node {
+  private sealed class TextComparisonNode(ProcessField field, QueryOperator op, string value, StringComparison comparison) : Node {
     public override bool Matches(in ProcessRecord process, SnapshotDelta? delta, int index) {
       var text = FieldAccessor.RawText(field, in process, delta, index);
       if (text is null)
@@ -134,10 +143,10 @@ public sealed class ProcessQuery {
         return false;
 
       return op switch {
-        QueryOperator.Contains => text.Contains(value, StringComparison.OrdinalIgnoreCase),
-        QueryOperator.Equal => string.Equals(text, value, StringComparison.OrdinalIgnoreCase),
-        QueryOperator.NotEqual => !string.Equals(text, value, StringComparison.OrdinalIgnoreCase),
-        _ => string.Compare(text, value, StringComparison.OrdinalIgnoreCase) switch {
+        QueryOperator.Contains => text.Contains(value, comparison),
+        QueryOperator.Equal => string.Equals(text, value, comparison),
+        QueryOperator.NotEqual => !string.Equals(text, value, comparison),
+        _ => string.Compare(text, value, comparison) switch {
           var c => op switch {
             QueryOperator.Greater => c > 0,
             QueryOperator.GreaterOrEqual => c >= 0,
@@ -178,7 +187,7 @@ public sealed class ProcessQuery {
 
   private sealed class QueryException(string message) : Exception(message);
 
-  private sealed class Parser(string text) {
+  private sealed class Parser(string text, bool caseSensitive) {
 
     private int _position;
 
@@ -253,14 +262,14 @@ public sealed class ProcessQuery {
 
       // A quoted term is always free text: "chrome AND" searches for that string, not for a query.
       if (this._wasQuoted)
-        return new FreeTextNode(word);
+        return new FreeTextNode(word, Comparison(caseSensitive));
 
       if (!TrySplit(word, out var name, out var op, out var value)) {
         // The operator may be detached from its field — "threads > 1" is what people actually type,
         // and reading it as a search for the word "threads" would be silently wrong rather than
         // loudly wrong.
         if (!this.TryReadDetachedOperator(out op))
-          return new FreeTextNode(word);
+          return new FreeTextNode(word, Comparison(caseSensitive));
 
         name = word;
         value = string.Empty;
@@ -283,7 +292,7 @@ public sealed class ProcessQuery {
       }
 
       if (value.Length >= 2 && value[0] == '/' && value[^1] == '/')
-        return new RegexNode(Compile(value[1..^1]), field);
+        return new RegexNode(this.Compile(value[1..^1]), field);
 
       // Which comparison to use comes from the field's declared kind, not from guessing at the
       // value: "pid:1234" is a number because a pid is an identifier, and "name:1234" is text
@@ -301,7 +310,7 @@ public sealed class ProcessQuery {
             _ => value,
           };
 
-        return new TextComparisonNode(field, op, value);
+        return new TextComparisonNode(field, op, value, Comparison(caseSensitive));
       }
 
       if (!Quantity.TryParse(value, descriptor.Unit, out var number))
@@ -323,14 +332,15 @@ public sealed class ProcessQuery {
 
       var pattern = text[start..this._position];
       ++this._position;
-      return Compile(pattern);
+      return this.Compile(pattern);
     }
 
-    private static Regex Compile(string pattern) {
+    private Regex Compile(string pattern) {
       try {
         // Interpreted, never compiled: RegexOptions.Compiled emits IL at run time, which NativeAOT
         // cannot do (PRD §8.3). A timeout because a filter box is not a place to hang the UI.
-        return new(pattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(50));
+        var options = RegexOptions.CultureInvariant | (caseSensitive ? RegexOptions.None : RegexOptions.IgnoreCase);
+        return new(pattern, options, TimeSpan.FromMilliseconds(50));
       } catch (ArgumentException problem) {
         throw new QueryException($"'{pattern}' is not a valid regular expression: {problem.Message}");
       }
