@@ -609,10 +609,16 @@ public sealed class LinuxProbe : ISystemProbe {
     if (this._diskInfo.TryGetValue(name, out var known))
       return known;
 
-    var info = LinuxDeviceReader.Describe(this._options.SysRoot, name);
+    // Worked out once for the whole machine rather than per disk: the mount table and the swap list
+    // are one file each and answer about every device at once (PRD §48).
+    this._storage ??= new(this._options.SysRoot, this._options.ProcRoot);
+    var info = LinuxDeviceReader.Describe(this._options.SysRoot, name, this._storage);
     this._diskInfo[name] = info;
     return info;
   }
+
+  /// <summary>Which disk each mount and swap area is on, read the first time a disk is described.</summary>
+  private LinuxStorageLayout? _storage;
 
   /// <summary>
   /// The limits the process runs under, read fresh: a container's quota can be changed while it runs.
@@ -787,7 +793,7 @@ public sealed class LinuxProbe : ISystemProbe {
     if (this._interfaceInfo.TryGetValue(name, out var known))
       return known;
 
-    var info = LinuxDeviceReader.DescribeInterface(this._options.SysRoot, name);
+    var info = LinuxDeviceReader.DescribeInterface(this._options.SysRoot, name, this._options.ProcRoot);
     this._interfaceInfo[name] = info;
     return info;
   }

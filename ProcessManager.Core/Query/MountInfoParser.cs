@@ -31,7 +31,17 @@ public static class MountInfoParser {
   /// the hex notation <c>maps</c> uses for the same pair. Each column keeps the spelling of the file
   /// it came from, so that either can be found in its source by eye (PRD §5.3).
   /// </param>
-  public readonly record struct Mount(int Id, string Device, string MountPoint, string FileSystem);
+  /// <param name="Source">
+  /// What was mounted, as the mount was written: <c>/dev/mapper/vg-root</c>, <c>/dev/nvme0n1p2</c>,
+  /// a UUID path, or a word like <c>tmpfs</c> that names no device at all.
+  /// </param>
+  /// <remarks>
+  /// The source is not the same fact as <paramref name="Device"/> and cannot be derived from it. A
+  /// btrfs or a ZFS mount reports a synthetic <c>major:minor</c> of its own — 0:30 rather than the
+  /// disk's — so the device number cannot say which disk the mount is on, and the source path is the
+  /// only thing in this file that can (PRD §48).
+  /// </remarks>
+  public readonly record struct Mount(int Id, string Device, string MountPoint, string FileSystem, string Source = "");
 
   /// <summary>
   /// Every mount in the file, by its id.
@@ -88,6 +98,7 @@ public static class MountInfoParser {
     // Walk to the separator. It is a field of exactly one dash, and a mount option or a tag can
     // neither be empty nor be that.
     var fileSystem = string.Empty;
+    var source = string.Empty;
     while (true) {
       var field = scanner.NextField();
       if (field.IsEmpty)
@@ -95,11 +106,14 @@ public static class MountInfoParser {
 
       if (field.Length == 1 && field[0] == (byte)'-') {
         fileSystem = Text(scanner.NextField());
+        // The field after the type, escaped the same way the mount point is: a device node under a
+        // directory with a space in it is written with the same octal.
+        source = Unescape(Text(scanner.NextField()));
         break;
       }
     }
 
-    mount = new(mountId, device, mountPoint, fileSystem);
+    mount = new(mountId, device, mountPoint, fileSystem, source);
     return fileSystem.Length > 0;
   }
 

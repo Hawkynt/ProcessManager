@@ -49,12 +49,14 @@ internal static class DeviceStatParser {
       var reads = fields.NextUInt64();                   // 4 reads completed
       fields.Skip(1);                                    // 5 reads merged
       var sectorsRead = fields.NextUInt64();             // 6 sectors read
-      fields.Skip(1);                                    // 7 ms reading
+      var readWait = fields.NextUInt64();                // 7 ms reading
       var writes = fields.NextUInt64();                  // 8 writes completed
       fields.Skip(1);                                    // 9 writes merged
       var sectorsWritten = fields.NextUInt64();          // 10 sectors written
-      fields.Skip(2);                                    // 11 ms writing, 12 in flight
+      var writeWait = fields.NextUInt64();               // 11 ms writing
+      var queued = fields.NextUInt64();                  // 12 in flight
       var busy = fields.NextUInt64();                    // 13 ms doing I/O
+      var weighted = fields.NextUInt64();                // 14 weighted ms doing I/O
 
       destination[written++] = new() {
         Name = deviceName,
@@ -63,6 +65,10 @@ internal static class DeviceStatParser {
         ReadBytes = Counter.Of(sectorsRead * _SectorBytes),
         WriteBytes = Counter.Of(sectorsWritten * _SectorBytes),
         BusyMilliseconds = Counter.Of(busy),
+        ReadWaitMilliseconds = Counter.Of(readWait),
+        WriteWaitMilliseconds = Counter.Of(writeWait),
+        WeightedQueueMilliseconds = Counter.Of(weighted),
+        QueuedRequests = Counter.Of(queued),
       };
     }
 

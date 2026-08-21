@@ -606,4 +606,167 @@ internal static partial class Native {
 
   public static int LastError => Marshal.GetLastPInvokeError();
 
+  #region interface addresses (PRD §49)
+
+  /// <summary>
+  /// <c>struct ifaddrs</c>: one entry per address of one interface, as a linked list.
+  /// </summary>
+  /// <remarks>
+  /// The union of broadcast and destination address is one pointer whichever half is meant, so it
+  /// needs no discriminating here. <c>ifa_flags</c> is an <c>unsigned int</c> followed by four bytes
+  /// of padding on every 64-bit ABI, which the sequential layout of a struct containing pointers
+  /// produces by itself — declaring the padding by hand would be wrong on 32-bit.
+  /// </remarks>
+  [StructLayout(LayoutKind.Sequential)]
+  internal struct IfAddrs {
+    public nint Next;
+    public nint Name;
+    public uint Flags;
+    public nint Address;
+    public nint Netmask;
+    public nint Broadcast;
+    public nint Data;
+  }
+
+  /// <summary>AF_INET and AF_INET6 as Linux numbers them, which are not the BSD ones for IPv6.</summary>
+  public const ushort AF_INET = 2;
+
+  public const ushort AF_INET6 = 10;
+
+  [LibraryImport("libc", EntryPoint = "getifaddrs", SetLastError = true)]
+  private static partial int GetIfAddrs(out nint list);
+
+  [LibraryImport("libc", EntryPoint = "freeifaddrs")]
+  private static partial void FreeIfAddrs(nint list);
+
+  /// <summary>
+  /// Every address the machine's interfaces carry, handed one at a time to <paramref name="visit"/>.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// One call for the whole machine rather than an ioctl per interface, and the only way to get IPv6
+  /// and IPv4 from the same place: there is no <c>/proc</c> file listing an interface's IPv4
+  /// addresses, and <c>/proc/net/if_inet6</c> lists only the other half.
+  /// </para>
+  /// <para>
+  /// The list is freed in a <c>finally</c>: it is heap memory libc allocated, and a caller that
+  /// throws while walking it would leak the whole table.
+  /// </para>
+  /// </remarks>
+  /// <param name="visit">
+  /// Called with the interface name, the address family and the raw <c>sockaddr</c> bytes of the
+  /// address and of its netmask. The spans are only valid for the duration of the call.
+  /// </param>
+  public static unsafe bool ForEachInterfaceAddress(InterfaceAddressVisitor visit) {
+    ArgumentNullException.ThrowIfNull(visit);
+    if (!OperatingSystem.IsLinux())
+      return false;
+
+    nint list;
+    try {
+      if (GetIfAddrs(out list) != 0)
+        return false;
+    } catch (DllNotFoundException) {
+      return false;
+    } catch (EntryPointNotFoundException) {
+      return false;
+    }
+
+    try {
+      for (var entry = list; entry != 0;) {
+        ref var record = ref *(IfAddrs*)entry;
+        entry = record.Next;
+        if (record.Name == 0 || record.Address == 0)
+          continue;
+
+        var family = *(ushort*)record.Address;
+        if (family is not (AF_INET or AF_INET6))
+          continue;
+
+        // sockaddr_in is 16 bytes and sockaddr_in6 is 28; the whole of either is handed over so the
+        // reader can take the address out of the offset its own family puts it at.
+        var length = family == AF_INET ? 16 : 28;
+        var netmask = record.Netmask == 0
+          ? ReadOnlySpan<byte>.Empty
+          : new ReadOnlySpan<byte>((void*)record.Netmask, length);
+
+        visit(
+          Marshal.PtrToStringUTF8(record.Name) ?? string.Empty,
+          family,
+          new ReadOnlySpan<byte>((void*)record.Address, length),
+          netmask
+        );
+      }
+    } finally {
+      FreeIfAddrs(list);
+    }
+
+    return true;
+  }
+
+  /// <summary>What <see cref="ForEachInterfaceAddress"/> hands to its caller.</summary>
+  public delegate void InterfaceAddressVisitor(
+    string interfaceName,
+    ushort family,
+    ReadOnlySpan<byte> address,
+    ReadOnlySpan<byte> netmask
+  );
+
+  #endregion
+
+  #region wireless (PRD §49)
+
+  private const int AF_INET_DOMAIN = 2;
+  private const int SOCK_DGRAM = 2;
+
+  /// <summary>SIOCGIWESSID and SIOCGIWFREQ of the wireless extensions.</summary>
+  public const ulong SIOCGIWESSID = 0x8B1B;
+
+  public const ulong SIOCGIWFREQ = 0x8B05;
+
+  [LibraryImport("libc", EntryPoint = "socket", SetLastError = true)]
+  private static partial int SocketCore(int domain, int type, int protocol);
+
+  [LibraryImport("libc", EntryPoint = "ioctl", SetLastError = true)]
+  private static partial int IoctlCore(int fd, ulong request, ref byte argument);
+
+  /// <summary>
+  /// One <c>ioctl</c> on a throwaway datagram socket, which is how every wireless query is made.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// <c>ioctl</c> is variadic in C and is declared here with a fixed third argument. That is what
+  /// every caller of it does and what the ABI guarantees for an integer-class argument; a variadic
+  /// declaration would buy nothing and cannot be expressed by the source generator anyway.
+  /// </para>
+  /// <para>
+  /// The socket is a handle to the kernel's networking stack rather than a connection: nothing is
+  /// sent, the family is irrelevant, and it is closed immediately. It is the only way to reach these
+  /// requests, which are addressed to interfaces rather than to files.
+  /// </para>
+  /// </remarks>
+  /// <returns>False when the call failed, which for a wired interface is the ordinary answer.</returns>
+  public static bool TryInterfaceIoctl(ulong request, Span<byte> argument) {
+    if (!OperatingSystem.IsLinux() || argument.IsEmpty)
+      return false;
+
+    int fd;
+    try {
+      fd = SocketCore(AF_INET_DOMAIN, SOCK_DGRAM, 0);
+    } catch (DllNotFoundException) {
+      return false;
+    }
+
+    if (fd < 0)
+      return false;
+
+    try {
+      return IoctlCore(fd, request, ref MemoryMarshal.GetReference(argument)) >= 0;
+    } finally {
+      Close(fd);
+    }
+  }
+
+  #endregion
+
 }

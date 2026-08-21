@@ -680,8 +680,14 @@ public sealed class PerformanceWindow : Form {
 
       // One ring per series, so a GPU's six move independently and a disk's transfer rate is not
       // overwritten by its active time.
-      foreach (var graph in section.Series)
+      foreach (var graph in section.Series) {
         this.Ring(SeriesKey(section.Title, graph.Label)).Add(graph.Value);
+        // And one more for a second line where the series has one — a disk's writes under its
+        // reads, an adapter's send under its receive. Only where it was asked for: a ring fed
+        // default(Rate) would draw a confident nought along the floor (PRD §5.3).
+        if (graph.HasCompanion)
+          this.Ring(CompanionKey(section.Title, graph.Label)).Add(graph.Companion);
+      }
 
       this.Ring(section.Title).Add(section.Primary);
 
@@ -711,7 +717,16 @@ public sealed class PerformanceWindow : Form {
   /// A series is identified by its section and its label together, with a separator no label can
   /// contain — "Temperature" belongs to a GPU, and two GPUs each have one.
   /// </summary>
-  private static string SeriesKey(string section, string label) => $"{section} {label}";
+  private static string SeriesKey(string section, string label) => $"{section}\0{label}";
+
+  /// <summary>
+  /// And the second line of one, kept apart by the same separator.
+  /// </summary>
+  /// <remarks>
+  /// A key of its own rather than a second ring hanging off the first, because everything that reads
+  /// history here — the plot, the ceiling, the inspection view — takes a ring and a name.
+  /// </remarks>
+  private static string CompanionKey(string section, string label) => $"{section}\0{label}\0second";
 
   /// <summary>
   /// Keeps the rail in step with the sections.
@@ -1362,15 +1377,33 @@ public sealed class PerformanceWindow : Form {
     for (var i = 0; i < series.Count; ++i) {
       var plot = this._corePlots[i];
       plot.Bounds = new(this._plotArea.X, this._plotArea.Y + (i * height), this._plotArea.Width, height - 2);
-      plot.Caption = series[i].Label;
-      plot.AccessibleName = $"{title} — {series[i].Label}";
-      plot.Value = series[i].ValueLabel;
-      plot.Maximum = series[i].Maximum > 0 ? series[i].Maximum : this.Ceiling(SeriesKey(title, series[i].Label));
-      plot.Unit = series[i].Unit;
-      plot.ScaleLabel = ScaleLabelFor(series[i].Maximum == 100 ? 100 : 0, plot.Maximum);
+      var graph = series[i];
+      plot.Caption = graph.Label;
+      plot.AccessibleName = $"{title} — {graph.Label}";
+      plot.Value = graph.ValueLabel;
+      // Both lines share one scale, so the ceiling is the higher of the two: an adapter receiving a
+      // hundred times what it sends would otherwise draw its send line off the top of the plot.
+      plot.Maximum = graph.Maximum > 0
+        ? graph.Maximum
+        : graph.HasCompanion
+          ? Math.Max(this.Ceiling(SeriesKey(title, graph.Label)), this.Ceiling(CompanionKey(title, graph.Label)))
+          : this.Ceiling(SeriesKey(title, graph.Label));
+
+      plot.Unit = graph.Unit;
+      plot.ScaleLabel = ScaleLabelFor(graph.Maximum == 100 ? 100 : 0, plot.Maximum);
       plot.Visible = true;
       plot.ClearSeries();
-      plot.AddSeries(this.Ring(SeriesKey(title, series[i].Label)), AccentFor(series[i].Accent), series[i].Label);
+      var accent = AccentFor(graph.Accent);
+      plot.AddSeries(this.Ring(SeriesKey(title, graph.Label)), accent, graph.FirstLabel);
+      // The second line in a lighter shade of the same accent, not in another hue: they are two
+      // halves of one quantity, and §45.5 gives the whole resource one colour. Stroked rather than
+      // filled, because two filled areas on one axis hide each other.
+      if (graph.HasCompanion) {
+        plot.Filled = false;
+        plot.AddSeries(this.Ring(CompanionKey(title, graph.Label)), SeriesPainter.Lighten(accent, 110), graph.CompanionLabel);
+      } else
+        plot.Filled = true;
+
       plot.Invalidate();
     }
   }

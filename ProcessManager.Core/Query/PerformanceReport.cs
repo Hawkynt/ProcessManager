@@ -70,14 +70,37 @@ public readonly record struct PerformanceRow(
 /// reading under a hover cursor, an exported point. Without it a plot can only guess from its own
 /// scale, and guessing turns 1.2 MB/s into "1.2M" (PRD §45.4, §76).
 /// </param>
+/// <param name="Companion">
+/// A second line on the same axis, where one quantity is genuinely two — a disk's reads against its
+/// writes, an adapter's receive against its send (PRD §48, §49). Only ever read when
+/// <paramref name="CompanionLabel"/> names it, because <c>default(Rate)</c> is a confident zero and
+/// a graph that did not ask for a second line must not be given one drawn along the floor (§5.3).
+/// </param>
+/// <param name="CompanionLabel">What the second line is, and the flag that there is one.</param>
+/// <param name="SeriesLabel">
+/// What the <em>first</em> line is called where that differs from the graph's own heading. A plot
+/// headed "Transfer rate" has lines called "read" and "write"; one headed "Temperature" has one line
+/// and needs no other name for it.
+/// </param>
 public readonly record struct PerformanceGraph(
   string Label,
   Rate Value,
   double Maximum,
   string ValueLabel,
   string Accent,
-  PerformanceUnit Unit = PerformanceUnit.Percent
-);
+  PerformanceUnit Unit = PerformanceUnit.Percent,
+  Rate Companion = default,
+  string CompanionLabel = "",
+  string SeriesLabel = ""
+) {
+
+  /// <summary>Whether a second line was asked for, which is the only thing that makes one exist.</summary>
+  public bool HasCompanion => this.CompanionLabel.Length > 0;
+
+  /// <summary>What to call the first line: its own name where it has one, the heading otherwise.</summary>
+  public string FirstLabel => this.SeriesLabel.Length > 0 ? this.SeriesLabel : this.Label;
+
+}
 
 /// <summary>What a plotted sample is measured in (PRD §76).</summary>
 public enum PerformanceUnit {
@@ -378,15 +401,21 @@ public static class PerformanceReport {
         // that is a hundred large reads or a hundred thousand small ones (PRD §48).
         Graphs: [
           new("Active time", busy, 100, Percent(busy), "io"),
+          // Two lines rather than their sum: a disk reading at 500 MB/s and one writing at 500 MB/s
+          // draw the same combined line and are not the same machine, and the direction is most of
+          // what somebody looking at a busy disk wants to know (PRD §48).
           new(
             "Transfer rate",
-            rates is { } t ? Sum(t.ReadBytesPerSecond, t.WriteBytesPerSecond) : Rate.NotSampledYet,
+            rates is { } t ? t.ReadBytesPerSecond : Rate.NotSampledYet,
             0,
             rates is { } shown
               ? $"{Humanize.BytesPerSecond(shown.ReadBytesPerSecond)} read, {Humanize.BytesPerSecond(shown.WriteBytesPerSecond)} write"
               : Pending,
             "io",
-            PerformanceUnit.BytesPerSecond
+            PerformanceUnit.BytesPerSecond,
+            Companion: rates is { } w ? w.WriteBytesPerSecond : Rate.NotSampledYet,
+            CompanionLabel: "write",
+            SeriesLabel: "read"
           ),
         ]
       ));
@@ -415,7 +444,25 @@ public static class PerformanceReport {
         0,
         Humanize.BytesPerSecond(throughput),
         RailDetail: rates is { } n ? $"↓ {Humanize.BytesPerSecond(n.ReceivedBytesPerSecond)}" : string.Empty,
-        RailTitle: $"Net {network.Name}"
+        RailTitle: $"Net {network.Name}",
+        // Receive and send as two lines rather than their sum: an adapter pulling a hundred megabits
+        // and one pushing them are the same combined line and very different machines, and which
+        // direction is moving is the first thing anybody asks of a busy adapter (PRD §49).
+        Graphs: [
+          new(
+            "Throughput",
+            rates is { } r ? r.ReceivedBytesPerSecond : Rate.NotSampledYet,
+            0,
+            rates is { } shown
+              ? $"↓ {Humanize.BytesPerSecond(shown.ReceivedBytesPerSecond)}  ↑ {Humanize.BytesPerSecond(shown.SentBytesPerSecond)}"
+              : Pending,
+            "network",
+            PerformanceUnit.BytesPerSecond,
+            Companion: rates is { } s ? s.SentBytesPerSecond : Rate.NotSampledYet,
+            CompanionLabel: "send",
+            SeriesLabel: "receive"
+          ),
+        ]
       ));
     }
 
@@ -444,6 +491,17 @@ public static class PerformanceReport {
         // not be described as a hard disk by default.
         null => Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform),
       }));
+
+      if (info.Bus is { Length: > 0 } bus)
+        rows.Add(new("Interface", bus, Level: PerformanceRowLevel.Hardware));
+
+      if (info.Serial is { Length: > 0 } serial)
+        rows.Add(new("Serial", serial, Level: PerformanceRowLevel.Hardware));
+
+      // What this disk is to the machine, which is the pair of facts somebody about to unplug it
+      // wants: whether the system is on it, and whether it is swapping to it.
+      rows.Add(new("Role", Role(info), Level: PerformanceRowLevel.Hardware));
+      rows.Add(new("Mounted at", Mounted(info.Volumes), Level: PerformanceRowLevel.Hardware));
     }
 
     rows.Add(new("Active time", rates is { } active ? Percent(active.BusyPercent) : Pending));
@@ -453,6 +511,18 @@ public static class PerformanceReport {
     rows.Add(new("Write rate", rates is { } write ? Humanize.BytesPerSecond(write.WriteBytesPerSecond) : Pending));
     rows.Add(new("Read IOPS", rates is { } readOps ? Humanize.Rate(readOps.ReadOperationsPerSecond) : Pending));
     rows.Add(new("Write IOPS", rates is { } writeOps ? Humanize.Rate(writeOps.WriteOperationsPerSecond) : Pending));
+    // Active time says the disk is busy; only these say whether it is keeping up. A queue of one at
+    // full active time is a disk saturated by a single client, and a queue of thirty at the same
+    // active time is a disk being asked for far more than it can do (PRD §48).
+    rows.Add(new("Response time", rates is { } response ? Milliseconds(response.ResponseTimeMilliseconds) : Pending));
+    rows.Add(new("Queue length", rates is { } queue ? Depth(queue.QueueLength) : Pending));
+    rows.Add(new(
+      "Latency",
+      rates is { } latency
+        ? $"{Milliseconds(latency.ReadLatencyMilliseconds)} read, {Milliseconds(latency.WriteLatencyMilliseconds)} write"
+        : Pending
+    ));
+
     rows.Add(new("Total read", Humanize.Bytes(disk.ReadBytes)));
     rows.Add(new("Total written", Humanize.Bytes(disk.WriteBytes)));
     return [.. rows];
@@ -468,15 +538,40 @@ public static class PerformanceReport {
 
     if (info is not null) {
       rows.Add(new("State", info.State ?? Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform), Level: PerformanceRowLevel.Hardware));
+      rows.Add(new("Type", Description(info), Level: PerformanceRowLevel.Hardware));
       rows.Add(new("Link speed", Bits(info.LinkSpeedBitsPerSecond), Level: PerformanceRowLevel.Hardware));
       rows.Add(new("MAC address", info.MacAddress ?? Humanize.Placeholder(UnknownReason.NotPermitted), Level: PerformanceRowLevel.Hardware));
       rows.Add(new("MTU", Humanize.Count(info.MaximumTransmissionUnit), Level: PerformanceRowLevel.Hardware));
+      rows.Add(new(
+        "Index",
+        info.Index is { } index ? index.ToString(CultureInfo.InvariantCulture) : Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform),
+        Level: PerformanceRowLevel.Hardware
+      ));
+
+      rows.Add(new("Address", Addresses(info.Addresses), Level: PerformanceRowLevel.Hardware));
+      rows.Add(new("Gateway", info.Gateway ?? Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform), Level: PerformanceRowLevel.Hardware));
+      rows.Add(new("DNS", Addresses(info.DnsServers), Level: PerformanceRowLevel.Hardware));
     }
 
     rows.Add(new("Receive rate", rates is { } received ? Humanize.BytesPerSecond(received.ReceivedBytesPerSecond) : Pending));
     rows.Add(new("Send rate", rates is { } sent ? Humanize.BytesPerSecond(sent.SentBytesPerSecond) : Pending));
+    // Only where the link speed is known, which excludes Wi-Fi and everything virtual. A utilisation
+    // against a guessed denominator is worse than none at all (PRD §49).
+    if (info is not null && info.LinkSpeedBitsPerSecond.HasValue)
+      rows.Add(new("Utilisation", Percent(Utilisation(rates, info.LinkSpeedBitsPerSecond))));
+
     rows.Add(new("Received", Humanize.Bytes(network.ReceivedBytes)));
     rows.Add(new("Sent", Humanize.Bytes(network.SentBytes)));
+
+    // The four rows a wireless adapter has and a wired one does not (PRD §49).
+    if (info is { IsWireless: true }) {
+      rows.Add(new("Network", info.Ssid ?? "not associated"));
+      rows.Add(new("Signal", Signal(info.SignalDbm)));
+      rows.Add(new("Channel", Channel(info.FrequencyMegahertz), Level: PerformanceRowLevel.Hardware));
+      // 802.11n against 802.11ax is in the association's own rate table, which needs nl80211 and is
+      // not read: an adapter's own capability is not what it negotiated (PRD §5.3).
+      rows.Add(new("Protocol", Humanize.Placeholder(UnknownReason.NotImplementedHere), Level: PerformanceRowLevel.Hardware));
+    }
 
     // Errors and drops are two different failures, and both are almost always zero — which is why
     // they are worth a row: a non-zero one is the whole reason somebody opened this page.
@@ -485,7 +580,165 @@ public static class PerformanceReport {
     return [.. rows];
   }
 
+  /// <summary>
+  /// What the machine uses a disk for: "system, swap", "swap", or nothing much (PRD §48).
+  /// </summary>
+  /// <remarks>
+  /// One row for the two indicators, because a disk that is neither would otherwise carry two rows
+  /// reading "no". Unknown where the mount table could not be read at all — which is a machine
+  /// nobody asked rather than a disk nothing is on (§5.3).
+  /// </remarks>
+  private static string Role(DiskInfo info) {
+    if (info.IsSystemDisk is not { } system || info.HoldsSwap is not { } swap)
+      return Humanize.Placeholder(UnknownReason.NotPermitted);
+
+    return (system, swap) switch {
+      (true, true) => "system disk, swap",
+      (true, false) => "system disk",
+      (false, true) => "swap",
+      _ => "data",
+    };
+  }
+
+  /// <summary>
+  /// Where a disk is mounted, or the fact that it is not.
+  /// </summary>
+  /// <remarks>
+  /// A disk with a dozen subvolumes would fill the column, so the list stops at four and says how
+  /// many it did not name — the point of the row is to identify the disk, and four mount points do
+  /// that as well as twelve.
+  /// </remarks>
+  private static string Mounted(IReadOnlyList<string>? volumes) {
+    if (volumes is null)
+      return Humanize.Placeholder(UnknownReason.NotPermitted);
+
+    if (volumes.Count == 0)
+      return "not mounted";
+
+    const int Shown = 4;
+    var text = new System.Text.StringBuilder();
+    for (var i = 0; i < Math.Min(Shown, volumes.Count); ++i) {
+      if (text.Length > 0)
+        text.Append(", ");
+
+      text.Append(volumes[i]);
+    }
+
+    if (volumes.Count > Shown)
+      text.Append(", +").Append((volumes.Count - Shown).ToString(CultureInfo.InvariantCulture)).Append(" more");
+
+    return text.ToString();
+  }
+
+  /// <summary>A duration in the unit a disk's response times actually fall in.</summary>
+  /// <remarks>
+  /// Microseconds under a millisecond, because an NVMe device answers in about a hundred of them
+  /// and "0.1 ms" throws away the digit that distinguishes a fast device from a slow one.
+  /// </remarks>
+  private static string Milliseconds(Rate rate) {
+    if (!rate.HasValue)
+      return Humanize.Placeholder(rate.Reason);
+
+    return rate.Value < 1
+      ? (rate.Value * 1000).ToString("0", CultureInfo.InvariantCulture) + " µs"
+      : rate.Value.ToString(rate.Value >= 100 ? "0" : "0.0", CultureInfo.InvariantCulture) + " ms";
+  }
+
+  /// <summary>An average queue depth, which is a count and routinely a fraction of one.</summary>
+  private static string Depth(Rate rate)
+    => rate.HasValue
+      ? rate.Value.ToString(rate.Value >= 10 ? "0.0" : "0.00", CultureInfo.InvariantCulture)
+      : Humanize.Placeholder(rate.Reason);
+
   private static string Pending => Humanize.Placeholder(UnknownReason.NotSampledYet);
+
+  /// <summary>"wireless · iwlwifi" — what the interface is, and what is driving it.</summary>
+  private static string Description(NetworkInterfaceInfo info) {
+    var kind = info.Kind ?? Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform);
+    return info.Driver is { Length: > 0 } driver ? $"{kind} · {driver}" : kind;
+  }
+
+  /// <summary>
+  /// Addresses on one line, or the reason there are none to show.
+  /// </summary>
+  /// <remarks>
+  /// Three separate statements, and they must not collapse into one: null is nobody asked, empty is
+  /// an interface that genuinely carries none — an unconfigured adapter, a bridge port — and a list
+  /// is a list (PRD §5.3).
+  /// </remarks>
+  private static string Addresses(IReadOnlyList<string>? addresses) {
+    if (addresses is null)
+      return Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform);
+
+    return addresses.Count == 0 ? "none" : string.Join(", ", addresses);
+  }
+
+  /// <summary>
+  /// How much of the link the traffic is using, both directions against the one negotiated speed.
+  /// </summary>
+  /// <remarks>
+  /// Bytes into bits, because a link speed is quoted in bits and getting that wrong is a factor of
+  /// eight. Full duplex is not modelled: a gigabit link can carry a gigabit each way at once, so a
+  /// saturated pair would read 200 %, and every tool that shows this figure sums them anyway — the
+  /// question being asked is how loaded the link is.
+  /// </remarks>
+  private static Rate Utilisation(SnapshotDelta.NetworkRates? rates, Counter linkSpeedBits) {
+    if (rates is not { } moving)
+      return Rate.NotSampledYet;
+
+    if (!moving.ReceivedBytesPerSecond.HasValue)
+      return Rate.Unknown(moving.ReceivedBytesPerSecond.Reason);
+
+    if (!moving.SentBytesPerSecond.HasValue)
+      return Rate.Unknown(moving.SentBytesPerSecond.Reason);
+
+    if (!linkSpeedBits.HasValue || linkSpeedBits.Value == 0)
+      return Rate.Unknown(linkSpeedBits.HasValue ? UnknownReason.CounterInvalid : linkSpeedBits.Reason);
+
+    var bits = (moving.ReceivedBytesPerSecond.Value + moving.SentBytesPerSecond.Value) * 8;
+    return Rate.Of(bits * 100d / linkSpeedBits.Value);
+  }
+
+  /// <summary>"−61 dBm  (good)" — the number, and what it means to somebody who does not read dBm.</summary>
+  /// <remarks>
+  /// The thresholds are the ones every wireless tool uses: −50 and better is as good as it gets,
+  /// −70 is the edge of comfortable, and below −80 a connection drops under any load at all.
+  /// </remarks>
+  private static string Signal(int? dbm) {
+    if (dbm is not { } level)
+      return Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform);
+
+    var quality = level switch {
+      >= -50 => "excellent",
+      >= -60 => "good",
+      >= -70 => "fair",
+      >= -80 => "weak",
+      _ => "very weak",
+    };
+
+    // A typographic minus, like every other signed figure in the program: a hyphen in front of a
+    // number reads as a dash between two of them at small sizes.
+    return string.Format(
+      CultureInfo.InvariantCulture,
+      "{0}{1} dBm  ({2})",
+      level < 0 ? "−" : string.Empty,
+      Math.Abs(level),
+      quality
+    );
+  }
+
+  /// <summary>"6  (2.4 GHz, 2437 MHz)" — the channel, its band, and the frequency behind both.</summary>
+  private static string Channel(int? megahertz) {
+    if (megahertz is not { } frequency)
+      return Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform);
+
+    var placement = WirelessChannel.Of(frequency);
+    var band = placement is { } known
+      ? string.Format(CultureInfo.InvariantCulture, "{0}  ({1}, {2} MHz)", known.Channel, known.Band, frequency)
+      : string.Format(CultureInfo.InvariantCulture, "{0} MHz", frequency);
+
+    return band;
+  }
 
   private static string Bits(Counter counter) {
     if (!counter.HasValue)
