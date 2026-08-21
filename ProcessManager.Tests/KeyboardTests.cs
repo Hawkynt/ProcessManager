@@ -163,8 +163,11 @@ public sealed class KeyboardTests {
   public void NothingDestructiveIsAKeystrokeAway() {
     foreach (var (text, chord) in Accelerators(Window())) {
       var destructive = false;
-      foreach (var word in (string[])["End", "Kill", "Terminate", "Restart", "Signal", "Freeze", "Suspend"])
-        destructive |= text.Contains(word, StringComparison.OrdinalIgnoreCase);
+      // By prefix rather than by substring: every one of these labels begins with the verb, and
+      // "Send signal" contains "end" — a substring match would call it destructive for the wrong
+      // reason and go on passing after the reason stopped being true.
+      foreach (var verb in (string[])["End", "Kill", "Terminate", "Restart", "Send signal", "Freeze", "Suspend"])
+        destructive |= text.StartsWith(verb, StringComparison.OrdinalIgnoreCase);
 
       Assert.That(destructive, Is.False, $"'{text}' can be reached by pressing {chord}");
     }

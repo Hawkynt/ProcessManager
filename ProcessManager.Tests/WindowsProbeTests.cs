@@ -276,3 +276,57 @@ public sealed class WindowsProcessInformationReplayTests {
   #endregion
 
 }
+
+/// <summary>
+/// The Windows half of the port-name seam (PRD §40, §58).
+/// </summary>
+/// <remarks>
+/// Windows ships the same file Berkeley wrote, in the same format, at a different path — which is
+/// why the parser is shared with Linux and tested on every leg, and only the path is platform work.
+/// This runs on the Windows leg alone because it is the path that is being checked.
+/// </remarks>
+[TestFixture]
+[Platform("Win", Reason = "The file this reads only exists on Windows.")]
+public sealed class WindowsServiceNameTests {
+
+  /// <summary>
+  /// Derived from the system directory rather than spelled out from a drive letter: Windows is not
+  /// always on C:, and a 32-bit process under WOW64 does not see a directory called System32 where
+  /// one would look for it.
+  /// </summary>
+  [Test]
+  [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+  public void ThePathIsUnderTheSystemDirectory() {
+    var path = WindowsServiceNameReader.DefaultPath;
+
+    Assert.That(path, Does.EndWith(Path.Combine("drivers", "etc", "services")));
+    Assert.That(Path.IsPathRooted(path), Is.True, "an absolute path, not one relative to wherever this was started");
+  }
+
+  /// <summary>
+  /// A machine with no such file names no ports rather than failing. It is a file an administrator
+  /// can delete and a policy can lock, and the numbers underneath were always the fact the name was
+  /// standing in for (PRD §72.3).
+  /// </summary>
+  [Test]
+  [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+  public void AMissingFileNamesNothingRatherThanThrowing() {
+    var names = WindowsServiceNameReader.Read(Path.Combine(Path.GetTempPath(), $"no-such-services-{Guid.NewGuid():N}"));
+
+    Assert.That(names.Count, Is.Zero);
+    Assert.That(names.Describe(443, datagram: false), Is.EqualTo("443"));
+  }
+
+  /// <summary>The stock file names the ports everybody knows, which is the point of reading it.</summary>
+  [Test]
+  [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+  public void TheStockFileNamesTheUsualPorts() {
+    var names = WindowsServiceNameReader.Read();
+    if (names.Count == 0)
+      Assert.Ignore("this machine has no services file to read");
+
+    Assert.That(names.Find(80, datagram: false), Is.EqualTo("http"));
+    Assert.That(names.Find(443, datagram: false), Is.EqualTo("https"));
+  }
+
+}

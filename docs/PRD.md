@@ -2138,7 +2138,8 @@ Linux addition — what the kernel reports and Windows has no equivalent for:
       together are read as the switch being off rather than as a thread that has never been given a
       processor, which is not something that can be true of a thread there is a file to read (§72.3)
 
-Still unticked and why:
+Still unticked and why — each re-checked against a live `/proc/[pid]/task/[tid]/` rather than taken
+on trust, since a kernel that grew a file would turn a refusal into a gap without anything saying so:
 
 - **Cycles** and **cycles delta** — no file under `/proc` carries a per-thread cycle count. The only
   route is `perf_event_open`, which needs a descriptor held open per thread for the life of the view
@@ -2147,7 +2148,9 @@ Still unticked and why:
   ordinary desktop is not a column, and the process-wide `Cycles` counter has said `n/a` on Linux for
   the same reason since §8.
 - **Ideal processor** and **TEB / TLS information** — no Linux equivalent. The scheduler has no
-  notion of a thread's preferred processor that it will name, and the thread pointer is readable only
+  notion of a thread's preferred processor that it will name — the closest thing in
+  `/proc/[pid]/task/[tid]/sched` is `numa_preferred_nid`, which is a memory node rather than a
+  processor and reads `-1` on a machine with one node — and the thread pointer is readable only
   through `ptrace(ARCH_GET_FS)`, which means stopping the thread to ask.
 - **Wait duration** — deliberately left. `schedstat` reports cumulative time queued for a processor,
   which is not how long the current wait has lasted, and labelling it as such would be exactly the
@@ -2155,8 +2158,12 @@ Still unticked and why:
 - **Description** — Linux gives a thread one name, `comm`, and it is already the Name column. A
   Description column would repeat it.
 - **Service association** — a thread may be moved into its own cgroup under v2's threaded mode, so
-  `/proc/[pid]/task/[tid]/cgroup` is a real per-thread reading; it is one more file per thread for a
-  column that is the same value on every row of almost every process, and is not read yet.
+  `/proc/[pid]/task/[tid]/cgroup` is a real per-thread reading. Checked again rather than assumed:
+  the file is there for every task, and for an ordinary process it is byte for byte the process's
+  own. Reading it would be a *sixth* file per thread in the one view this section re-reads on every
+  tick — the five it already reads are the 78 µs a thread measured above — spent on a column that
+  says the same thing on every row of almost every process. That is the §5.4 trade this view is
+  built around, so it stays unread and the reason stays written down.
 - **AppDomain / runtime context** — needs the runtime's own introspection, not the kernel's (§80).
 
 Actions:
@@ -4662,7 +4669,7 @@ a naive parser hands the attacker the parse.
 
 # 99. Testing strategy
 
-**802 tests pass on every leg, under both a UTF-8 and a `C` locale.**
+**1894 tests pass on every leg, under both a UTF-8 and a `C` locale.**
 
 ## Unit tests
 
@@ -4783,7 +4790,7 @@ Windows parsing on Linux.
 
 ## Self-test
 
-- [x] `procman --self-test` — 21 checks against live data, cross-validated against the .NET runtime's
+- [x] `procman --self-test` — 37 checks against live data, cross-validated against the .NET runtime's
       own view of the current process. Green on Linux and on a real Windows runner (NT 10.0.26100:
       145 processes, 8 threads, 47 modules, 159 handles of which 42 named, 149 environment variables).
 
