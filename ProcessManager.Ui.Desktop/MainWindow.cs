@@ -174,9 +174,17 @@ public sealed class MainWindow : Form {
   }
 
   /// <summary>The refresh interval in milliseconds.</summary>
+  /// <remarks>
+  /// The two summary plots are told it as well as the timer. Their axis is a minute of wall clock
+  /// rather than a count of samples, and a machine sampled every four seconds would otherwise put
+  /// four minutes of history under a label reading sixty seconds (PRD §45.4).
+  /// </remarks>
   public int Interval {
     get => this._timer.Interval;
-    set => this._timer.Interval = Math.Clamp(value, 250, 60_000);
+    set {
+      this._timer.Interval = Math.Clamp(value, 250, 60_000);
+      this._cpuPlot.SecondsPerSample = this._memoryPlot.SecondsPerSample = this._timer.Interval / 1000d;
+    }
   }
 
   public void Start() {
@@ -741,7 +749,12 @@ public sealed class MainWindow : Form {
     this._binder.Sync(snapshot, delta, this._view);
     this._cores.Bind(delta);
     this.StretchLastColumn();
-    this._performance?.UpdateFromSample();
+    if (this._performance is { } performance) {
+      // The interval is a setting, and the page's time axis is drawn from it: a graph labelled sixty
+      // seconds on a machine sampled every four is wrong by a factor of four and looks fine.
+      performance.SecondsPerSample = this.Interval / 1000d;
+      performance.UpdateFromSample();
+    }
     foreach (var window in this._properties)
       window.UpdateFromSample(snapshot, this._binder.RowFor(window.Key));
 
@@ -915,7 +928,7 @@ public sealed class MainWindow : Form {
       return;
     }
 
-    var window = new PerformanceWindow(this._probe, this._sampler);
+    var window = new PerformanceWindow(this._probe, this._sampler) { SecondsPerSample = this.Interval / 1000d };
     // Forgetting it on close is what keeps the tick from refreshing a window that is gone.
     window.FormClosed += (_, _) => this._performance = null;
     this._performance = window;

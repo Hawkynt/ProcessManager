@@ -16,7 +16,20 @@ namespace Hawkynt.ProcessManager.Ui.Desktop;
 /// </remarks>
 internal static class Sparkline {
 
-  public static void Draw(IGraphics g, Rectangle bounds, HistoryRing<Rate>? history, double scale, Color color) {
+  /// <param name="samples">
+  /// How many samples wide the axis is. The rail's rows are given the same span as the main graph,
+  /// which is what §45.1 asks for: a row's sparkline is "over the same history the main graph uses",
+  /// and a sparkline drawing a pixel per sample would show four minutes beside a graph showing one.
+  /// </param>
+  public static void Draw(
+    IGraphics g,
+    Rectangle bounds,
+    HistoryRing<Rate>? history,
+    double scale,
+    Color color,
+    int samples = 60,
+    int skipNewest = 0
+  ) {
     var plot = new Rectangle(bounds.X + 2, bounds.Y + 2, Math.Max(4, bounds.Width - 4), Math.Max(4, bounds.Height - 4));
     g.FillRectangle(RowPalette.PlotBackground, plot);
 
@@ -26,23 +39,7 @@ internal static class Sparkline {
     if (history is null || history.Count == 0 || scale <= 0)
       return;
 
-    var visible = Math.Min(history.Count, plot.Width);
-    var first = history.Count - visible;
-    for (var i = 0; i < visible; ++i) {
-      var value = history[first + i];
-      if (!value.HasValue)
-        continue;
-
-      var fraction = Math.Clamp(value.Value / scale, 0, 1);
-      var height = (int)Math.Round(fraction * plot.Height);
-      if (height <= 0)
-        continue;
-
-      // Newest at the right, one pixel column per sample — the same direction as every other plot in
-      // the program, so "now" is always in the same place.
-      var x = plot.Right - visible + i;
-      g.FillRectangle(color, new(x, plot.Bottom - height, 1, height));
-    }
+    SeriesPainter.Draw(g, plot, history, scale, color, samples, skipNewest);
   }
 
 }

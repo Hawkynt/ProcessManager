@@ -306,11 +306,35 @@ public sealed class GpuTests {
   [Test]
   public void AResourceThatNamedNoGraphsStillHasOne() {
     foreach (var section in Sections()) {
-      if (section.Title != "System")
+      if (section.Title != "Processor")
         continue;
 
       Assert.That(section.Series, Has.Count.EqualTo(1));
-      Assert.That(section.Series[0].Label, Is.EqualTo("System"));
+      Assert.That(section.Series[0].Label, Is.EqualTo("Processor"));
+      return;
+    }
+
+    Assert.Fail("no processor section");
+  }
+
+  /// <summary>
+  /// A section that measures nothing plots nothing.
+  /// </summary>
+  /// <remarks>
+  /// This used to be the other way round, and it was a bug of the kind this program exists to avoid:
+  /// <c>default(Rate)</c> is a confident zero, so the host description and the activity lists each
+  /// reported a measurement of nought and were given a graph of it. The rail drew both a sparkline
+  /// flat along the floor — a picture of a machine at rest, of something nobody had measured
+  /// (PRD §5.3, §72.3).
+  /// </remarks>
+  [Test]
+  public void ASectionThatMeasuresNothingIsNotGivenAGraphOfZero() {
+    foreach (var section in Sections()) {
+      if (section.Title != "System")
+        continue;
+
+      Assert.That(section.HasPrimary, Is.False, "the host description is not a measurement");
+      Assert.That(section.Series, Is.Empty);
       return;
     }
 

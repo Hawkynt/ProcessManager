@@ -105,11 +105,15 @@ public sealed class CompositionBar : OwnerDrawnControl {
       g.FillRectangle(Shade(i, this._hot == i), cell);
       g.DrawRectangle(theme.FieldBackground, cell);
 
-      // Only where it fits: a two-pixel band with a word squeezed into it is worse than a
-      // two-pixel band, and the tooltip covers the ones that cannot say their own name.
-      var text = $"{band.Label}  {Humanize.Bytes(Model.Counter.Of(band.Bytes))}";
-      if (width > 96)
-        g.DrawText(text, theme.DefaultFont, _Ink, cell, ContentAlignment.MiddleCenter);
+      // Only where it fits, and the name is what goes first: a band too narrow for "Cached 10.8G"
+      // is still wide enough for "Cached", and a band with nothing on it at all is a block of
+      // colour whose meaning is behind a mouse gesture (PRD §45.9). The tooltip covers the ones
+      // that cannot say even their own name.
+      var value = Humanize.Bytes(Model.Counter.Of(band.Bytes));
+      if (width > 100)
+        g.DrawText($"{band.Label}  {value}", theme.DefaultFont, _Ink, cell, ContentAlignment.MiddleCenter);
+      else if (width > 52)
+        g.DrawText(band.Label, theme.DefaultFont, _Ink, cell, ContentAlignment.MiddleCenter);
     }
 
     g.DrawRectangle(theme.Border, new(0, 0, this.Width - 1, this.Height - 1));

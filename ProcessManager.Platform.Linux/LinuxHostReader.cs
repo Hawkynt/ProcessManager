@@ -183,6 +183,7 @@ internal static class LinuxHostReader {
       PhysicalCores = cores.Count > 0 ? Counter.Of((ulong)cores.Count) : Counter.NotSupported,
       LogicalProcessors = logical > 0 ? Counter.Of((ulong)logical) : Counter.NotSupported,
       NumaNodes = CountNumaNodes(sysRoot),
+      NumaMemoryBytes = ReadNumaMemory(sysRoot),
 
       L1DataBytes = ReadCache(cpuRoot, level: 1, "Data"),
       L1InstructionBytes = ReadCache(cpuRoot, level: 1, "Instruction"),
@@ -191,10 +192,14 @@ internal static class LinuxHostReader {
       Virtualisation = ReadVirtualisation(sysRoot),
 
       // The firmware tables are root-only on every distribution that ships them at all, so the
-      // module facts are a privileged read we do not do yet. Not permitted, rather than zero.
+      // module facts are a privileged read we do not do yet. Not permitted, rather than zero — and
+      // the installed total with them, because the difference between installed and usable is the
+      // hardware-reserved figure and a guess at it would be a claim about the machine (PRD §47).
+      InstalledMemoryBytes = Counter.NotPermitted,
       MemoryTransfersPerSecond = Counter.NotPermitted,
       MemorySlotsUsed = Counter.NotPermitted,
       MemorySlotsTotal = Counter.NotPermitted,
+      MemoryChannels = Counter.NotPermitted,
     };
   }
 
@@ -294,6 +299,59 @@ internal static class LinuxHostReader {
       ++count;
 
     return count > 0 ? Counter.Of((ulong)count) : Counter.NotSupported;
+  }
+
+  /// <summary>
+  /// How much memory sits on each NUMA node (PRD §47).
+  /// </summary>
+  /// <remarks>
+  /// One <c>meminfo</c> per node, read once when the machine is described rather than once a sample:
+  /// how much memory a node <em>has</em> does not change while it is running, and it is the
+  /// distribution that answers whether a thread pinned to node 1 can allocate at all.
+  /// <para>
+  /// Read in node order rather than in directory order, because a directory listing is not sorted
+  /// and <c>node10</c> sorts before <c>node2</c> as text — which would report the machine's memory
+  /// as belonging to the wrong nodes rather than merely out of order.
+  /// </para>
+  /// </remarks>
+  private static IReadOnlyList<Counter> ReadNumaMemory(string sysRoot) {
+    var nodeRoot = Path.Combine(sysRoot, "devices", "system", "node");
+    if (!Directory.Exists(nodeRoot))
+      return [];
+
+    var nodes = new List<Counter>();
+    for (var node = 0; ; ++node) {
+      var path = Path.Combine(nodeRoot, $"node{node.ToString(CultureInfo.InvariantCulture)}", "meminfo");
+      if (!File.Exists(path))
+        break;
+
+      nodes.Add(ReadNodeTotal(path));
+    }
+
+    return nodes;
+  }
+
+  /// <summary>
+  /// A node's <c>MemTotal</c>, out of lines that read <c>Node 0 MemTotal: 65900544 kB</c>.
+  /// </summary>
+  private static Counter ReadNodeTotal(string path) {
+    var lines = TryReadLines(path);
+    if (lines.Length == 0)
+      // The file is there and would not open, or opened empty: a permission or a race, not a
+      // machine without the node.
+      return Counter.NotPermitted;
+
+    foreach (var line in lines) {
+      var marker = line.IndexOf("MemTotal:", StringComparison.Ordinal);
+      if (marker < 0)
+        continue;
+
+      var fields = line[(marker + "MemTotal:".Length)..].Split(' ', StringSplitOptions.RemoveEmptyEntries);
+      if (fields.Length > 0 && ulong.TryParse(fields[0], CultureInfo.InvariantCulture, out var kilobytes))
+        return Counter.Of(kilobytes * 1024);
+    }
+
+    return Counter.NotSupported;
   }
 
   /// <summary>

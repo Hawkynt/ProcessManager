@@ -30,6 +30,117 @@ public struct SystemCounters {
   /// </summary>
   public Counter ModifiedMemoryBytes;
 
+  /// <summary>Changed in memory and not yet handed to the disk.</summary>
+  /// <remarks>
+  /// The half of <see cref="ModifiedMemoryBytes"/> that has not started moving, and worth its own
+  /// row beside <see cref="WritebackBytes"/>: a machine with gigabytes dirty and nothing in
+  /// writeback is one the kernel has not begun flushing, and a machine with the reverse is one
+  /// already waiting on its disk (PRD §47).
+  /// </remarks>
+  public Counter DirtyBytes;
+
+  /// <summary>On its way to the disk right now.</summary>
+  public Counter WritebackBytes;
+
+  /// <summary>
+  /// Anonymous pages: memory with nothing behind it but swap.
+  /// </summary>
+  /// <remarks>
+  /// The distinction that decides what happens under pressure. File-backed pages can be dropped and
+  /// read back; anonymous ones can only be compressed or written to swap, and on a machine without
+  /// swap they cannot go anywhere at all — which is how a machine gets killed by the OOM reaper
+  /// while it is still showing gigabytes of cache.
+  /// </remarks>
+  public Counter AnonymousBytes;
+
+  /// <summary>File pages mapped into some process's address space, as opposed to merely cached.</summary>
+  public Counter MappedBytes;
+
+  /// <summary>Anonymous pages the kernel holds in swap as well as in memory.</summary>
+  /// <remarks>
+  /// Already written out and still resident, so they can be dropped without any further I/O. Their
+  /// presence is the record of a machine that has been under pressure and has since recovered.
+  /// </remarks>
+  public Counter SwapCachedBytes;
+
+  /// <summary>What the compressed pool occupies in memory.</summary>
+  public Counter CompressedBytes;
+
+  /// <summary>What those pages would occupy uncompressed, which is what makes the pool worth having.</summary>
+  /// <remarks>
+  /// The two are only useful together: 1.1 GB holding 2.4 GB is a machine that has saved itself
+  /// 1.3 GB of swapping, and either figure alone says nothing about the ratio (PRD §47).
+  /// </remarks>
+  public Counter CompressedOriginalBytes;
+
+  /// <summary>Every slab allocation, reclaimable and not — the sum the kernel itself reports.</summary>
+  public Counter SlabBytes;
+
+  /// <summary>Pages that can never be swapped: <c>mlock</c>ed, and the kernel's own unevictable lists.</summary>
+  public Counter UnevictableBytes;
+
+  /// <summary>The part of that a process asked for by locking it.</summary>
+  public Counter LockedBytes;
+
+  /// <summary>Kernel virtual mappings in use, which on a machine with many modules is not small.</summary>
+  public Counter VmallocUsedBytes;
+
+  /// <summary>Per-CPU allocator memory, which grows with the core count rather than with the load.</summary>
+  public Counter PerCpuBytes;
+
+  /// <summary>
+  /// Memory the machine has withdrawn because it failed.
+  /// </summary>
+  /// <remarks>
+  /// Almost always zero, and worth a row for exactly that reason: anything else is a dying DIMM, and
+  /// that is the sort of finding somebody opens a memory page hoping to be told rather than hoping
+  /// to deduce.
+  /// </remarks>
+  public Counter HardwareCorruptedBytes;
+
+  /// <summary>How large one huge page is here — 2 MB on most machines, 1 GB where configured.</summary>
+  public Counter HugePageSizeBytes;
+
+  /// <summary>Explicitly reserved huge pages, counted in pages rather than in bytes.</summary>
+  public Counter HugePagesTotal;
+
+  public Counter HugePagesFree;
+
+  /// <summary>Promised to a process that has not faulted them in yet.</summary>
+  public Counter HugePagesReserved;
+
+  /// <summary>The whole <c>hugetlb</c> reservation in bytes, which is carved out of the total.</summary>
+  /// <remarks>
+  /// Part of no other band: pages here leave the kernel's ordinary accounting the moment they are
+  /// reserved, whether or not anything ever touches them. A machine configured for a database with
+  /// sixteen gigabytes of huge pages is missing sixteen gigabytes everywhere else, and nothing but
+  /// this row explains where they went.
+  /// </remarks>
+  public Counter HugeTlbBytes;
+
+  /// <summary>Anonymous memory the kernel has quietly backed with huge pages.</summary>
+  public Counter AnonymousHugePagesBytes;
+
+  /// <summary>Shared memory backed by huge pages.</summary>
+  public Counter SharedHugePagesBytes;
+
+  /// <summary>File-backed memory backed by huge pages.</summary>
+  public Counter FileHugePagesBytes;
+
+  /// <summary>The four reclaim lists: active and inactive, anonymous and file-backed.</summary>
+  /// <remarks>
+  /// What the kernel will take first. The inactive lists are the candidates: a machine whose file
+  /// pages are nearly all active is one that will pay for dropping its cache, and a machine whose
+  /// anonymous pages are mostly inactive is one about to swap.
+  /// </remarks>
+  public Counter ActiveAnonymousBytes;
+
+  public Counter InactiveAnonymousBytes;
+
+  public Counter ActiveFileBytes;
+
+  public Counter InactiveFileBytes;
+
   /// <summary>Address space every process together has asked for, which may exceed what exists.</summary>
   public Counter CommittedBytes;
 
@@ -77,6 +188,66 @@ public struct SystemCounters {
 
   /// <summary>Seconds since boot.</summary>
   public double UptimeSeconds;
+
+  /// <summary>
+  /// Every counter explicitly unread, which is what a snapshot starts each sample as.
+  /// </summary>
+  /// <remarks>
+  /// <c>default(Counter)</c> is a confident zero, so a plain <c>default(SystemCounters)</c> claims a
+  /// machine with no memory, no swap, no kernel allocations and no pressure — and a probe that fills
+  /// in twelve of these fields leaves the rest reading as measured zeros rather than as figures
+  /// nobody asked for. A graph drawn from one of those is a flat line that never happened (PRD §5.3,
+  /// §72.3). Every field is named here rather than derived, because the only way this stays true as
+  /// counters are added is for the compiler to have nothing to guess.
+  /// </remarks>
+  public static SystemCounters Unread => new() {
+    TotalMemoryBytes = Counter.NotSampledYet,
+    AvailableMemoryBytes = Counter.NotSampledYet,
+    CachedMemoryBytes = Counter.NotSampledYet,
+    TotalSwapBytes = Counter.NotSampledYet,
+    UsedSwapBytes = Counter.NotSampledYet,
+    FreeMemoryBytes = Counter.NotSampledYet,
+    BufferMemoryBytes = Counter.NotSampledYet,
+    ModifiedMemoryBytes = Counter.NotSampledYet,
+    DirtyBytes = Counter.NotSampledYet,
+    WritebackBytes = Counter.NotSampledYet,
+    AnonymousBytes = Counter.NotSampledYet,
+    MappedBytes = Counter.NotSampledYet,
+    SwapCachedBytes = Counter.NotSampledYet,
+    CompressedBytes = Counter.NotSampledYet,
+    CompressedOriginalBytes = Counter.NotSampledYet,
+    SlabBytes = Counter.NotSampledYet,
+    UnevictableBytes = Counter.NotSampledYet,
+    LockedBytes = Counter.NotSampledYet,
+    VmallocUsedBytes = Counter.NotSampledYet,
+    PerCpuBytes = Counter.NotSampledYet,
+    HardwareCorruptedBytes = Counter.NotSampledYet,
+    HugePageSizeBytes = Counter.NotSampledYet,
+    HugePagesTotal = Counter.NotSampledYet,
+    HugePagesFree = Counter.NotSampledYet,
+    HugePagesReserved = Counter.NotSampledYet,
+    HugeTlbBytes = Counter.NotSampledYet,
+    AnonymousHugePagesBytes = Counter.NotSampledYet,
+    SharedHugePagesBytes = Counter.NotSampledYet,
+    FileHugePagesBytes = Counter.NotSampledYet,
+    ActiveAnonymousBytes = Counter.NotSampledYet,
+    InactiveAnonymousBytes = Counter.NotSampledYet,
+    ActiveFileBytes = Counter.NotSampledYet,
+    InactiveFileBytes = Counter.NotSampledYet,
+    CommittedBytes = Counter.NotSampledYet,
+    CommitLimitBytes = Counter.NotSampledYet,
+    ReclaimableKernelBytes = Counter.NotSampledYet,
+    UnreclaimableKernelBytes = Counter.NotSampledYet,
+    PageTableBytes = Counter.NotSampledYet,
+    KernelStackBytes = Counter.NotSampledYet,
+    SharedMemoryBytes = Counter.NotSampledYet,
+    CpuPressure = PressureReading.Unknown,
+    MemoryPressure = PressureReading.Unknown,
+    IoPressure = PressureReading.Unknown,
+    ContextSwitches = Counter.NotSampledYet,
+    Interrupts = Counter.NotSampledYet,
+    ProcessesCreated = Counter.NotSampledYet,
+  };
 
 }
 
@@ -165,7 +336,9 @@ public sealed class SystemSnapshot {
   internal void Clear() {
     this.ProcessCount = 0;
     this.PerCoreCount = 0;
-    this.System = default;
+    // Unread rather than default: see SystemCounters.Unread. A probe that fills in some of these
+    // must leave the rest saying nobody looked, not saying zero.
+    this.System = SystemCounters.Unread;
   }
 
   /// <summary>Finds a process by identity. Linear — callers in a loop want the delta's index map.</summary>

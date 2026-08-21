@@ -453,6 +453,182 @@ public sealed class PerformanceWindowTests {
     Assert.That(Titles(window), Is.Not.Empty);
   }
 
+  #region every page draws something (PRD §45.1)
+
+  /// <summary>
+  /// Every graph on every page has a real size.
+  /// </summary>
+  /// <remarks>
+  /// The bug this caught: the single plot — the one every page with one series uses, which is the
+  /// processor, every disk and every adapter — was never given bounds, so it was laid out at nought
+  /// by nought pixels. The page's whole top half was blank, and both the test suite and the capture
+  /// log described it as one graph showing.
+  /// </remarks>
+  [Test]
+  public void EveryPagesGraphsHaveARealSize() {
+    var (window, _, _) = Open();
+
+    for (var i = 0; i < Rail(window).Items.Count; ++i) {
+      // The two pages that measure nothing are meant to have none: see the test below.
+      if (Titles(window)[i] is "System" or "Activity")
+        continue;
+
+      Select(window, i);
+      var drawn = 0;
+      foreach (var control in window.Controls) {
+        if (control is not HistoryPlot { Visible: true } plot)
+          continue;
+
+        ++drawn;
+        Assert.That(plot.Width, Is.GreaterThan(200), Titles(window)[i]);
+        Assert.That(plot.Height, Is.GreaterThan(40), Titles(window)[i]);
+      }
+
+      Assert.That(drawn, Is.GreaterThan(0), $"{Titles(window)[i]} draws no graph at all");
+    }
+  }
+
+  /// <summary>
+  /// A section that measures nothing is a page of figures rather than a page with an empty graph on
+  /// it, and it uses the room the graph would have taken (PRD §45.6).
+  /// </summary>
+  [Test]
+  public void APageThatMeasuresNothingHasNoGraphAndNoGap() {
+    var (window, _, _) = Open();
+
+    Select(window, Titles(window).IndexOf("System"));
+    Assert.That(PlotsShowing(window), Is.Zero);
+    Assert.That(HeadingNamed(window, "Live").Y, Is.LessThan(200), "the figures start where the graph would have");
+  }
+
+  #endregion
+
+  #region the fourth level, collapsed (PRD §45.2)
+
+  [Test]
+  public void TheEngineeringFiguresAreHiddenUntilTheyAreAskedFor() {
+    var (window, _, _) = Open();
+    Select(window, Titles(window).IndexOf("Memory"));
+
+    Assert.That(window.DiagnosticsOpen, Is.False);
+    Assert.That(Rows(window), Does.Not.Contain("Page tables"));
+
+    window.ToggleDiagnostics();
+    Assert.That(Rows(window), Does.Contain("Page tables"));
+
+    window.ToggleDiagnostics();
+    Assert.That(Rows(window), Does.Not.Contain("Page tables"), "and closing it leaves nothing behind");
+  }
+
+  /// <summary>
+  /// Compact is not merely smaller: it opens the fourth level, because somebody who asked for
+  /// density asked to see more at once (PRD §45.7).
+  /// </summary>
+  [Test]
+  public void CompactShowsMoreRatherThanTheSameThingSmaller() {
+    var (window, _, _) = Open();
+    Select(window, Titles(window).IndexOf("Memory"));
+    var comfortable = HeadingNamed(window, "Live").Y;
+
+    window.SetDensity(compact: true);
+
+    Assert.That(window.IsCompact, Is.True);
+    Assert.That(window.DiagnosticsOpen, Is.True);
+    Assert.That(HeadingNamed(window, "Live").Y, Is.Not.EqualTo(comfortable), "the rows tightened");
+  }
+
+  /// <summary>
+  /// Nothing is dropped off the bottom of a column without a word.
+  /// </summary>
+  /// <remarks>
+  /// The page used to hold twelve rows a column and simply stop: a memory page with fifteen live
+  /// figures showed twelve of them, and the three it did not show looked exactly like three figures
+  /// the machine had never reported. No screenshot of that is wrong-looking.
+  /// </remarks>
+  [Test]
+  public void EveryLiveFigureIsOnThePage() {
+    var (window, _, _) = Open();
+    Select(window, Titles(window).IndexOf("Memory"));
+
+    var shown = Rows(window);
+    foreach (var section in Query.PerformanceReport.Build(new() { HostName = "stub" }, Sampled()))
+      if (section.Title == "Memory")
+        foreach (var row in section.Rows)
+          if (row.Level != Query.PerformanceRowLevel.Diagnostic)
+            Assert.That(shown, Does.Contain(row.Label), row.Label);
+  }
+
+  private static SystemSnapshot Sampled() {
+    var probe = new StubProbe();
+    var sampler = new Sampler(probe);
+    sampler.Sample();
+    sampler.Sample();
+    return sampler.Current;
+  }
+
+  #endregion
+
+  #region pausing and the span (PRD §45.4)
+
+  /// <summary>
+  /// Pause freezes the drawing without clearing the history or stopping collection, and says so.
+  /// </summary>
+  [Test]
+  public void PauseFreezesTheDrawingAndNotTheCollection() {
+    var (window, _, sampler) = Open();
+    Select(window, Titles(window).IndexOf("Processor"));
+
+    window.TogglePause();
+    Assert.That(window.Paused, Is.True);
+
+    var before = RowFor(window, "Processor").History!.Count;
+    for (var i = 0; i < 3; ++i) {
+      sampler.Sample();
+      window.UpdateFromSample();
+    }
+
+    Assert.That(RowFor(window, "Processor").History!.Count, Is.GreaterThan(before), "collection carried on");
+
+    var plot = PlotShowing(window)!;
+    Assert.That(plot.Paused, Is.True, "and the plot says so rather than looking broken");
+    Assert.That(plot.SkipNewest, Is.EqualTo(3), "the drawing stayed on the second it was paused on");
+
+    window.TogglePause();
+    Assert.That(PlotShowing(window)!.SkipNewest, Is.Zero);
+  }
+
+  /// <summary>
+  /// One page, one time axis: the span reaches the rail's sparklines as well as the graphs, or the
+  /// two draw different minutes of the same machine (PRD §45.1).
+  /// </summary>
+  [Test]
+  public void TheSpanReachesTheSparklinesToo() {
+    var (window, _, _) = Open();
+    Select(window, Titles(window).IndexOf("Processor"));
+
+    window.SpanSeconds = 300;
+
+    Assert.That(PlotShowing(window)!.SpanSeconds, Is.EqualTo(300));
+    Assert.That(Rail(window).Samples, Is.EqualTo(300), "at a sample a second");
+  }
+
+  /// <summary>
+  /// The copy §45.8 asks for is the figures, not a screenshot of them.
+  /// </summary>
+  [Test]
+  public void TheCurrentValuesCopyAsText() {
+    var (window, _, _) = Open();
+    Select(window, Titles(window).IndexOf("Memory"));
+
+    var text = window.CurrentValuesText();
+
+    Assert.That(text, Does.StartWith("Memory"));
+    Assert.That(text, Does.Contain("In use"));
+    Assert.That(window.DiagnosticsText(), Does.Contain("Processor"), "and the whole machine is one call away");
+  }
+
+  #endregion
+
   #region reaching into the window
 
   private static List<string> Entries(PerformanceWindow window) {
@@ -521,9 +697,13 @@ public sealed class PerformanceWindowTests {
 
   private static int SelectedIndex(PerformanceWindow window) => Rail(window).SelectedIndex;
 
+  /// <summary>
+  /// The per-core switch, found by what it says rather than by being the first of its kind: the page
+  /// has other boxes on it now, and an ordinal here would keep passing while reading another one.
+  /// </summary>
   private static NativeForms.CheckBox Box(PerformanceWindow window) {
     foreach (var control in window.Controls)
-      if (control is NativeForms.CheckBox box)
+      if (control is NativeForms.CheckBox box && box.Text.StartsWith("Per logical processor", StringComparison.Ordinal))
         return box;
 
     Assert.Fail("the window has no per-core box");

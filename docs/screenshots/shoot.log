@@ -3,14 +3,38 @@ title:        Process Manager
 bounds:       {X=0,Y=0,Width=1240,Height=820}
 client size:  {Width=1240, Height=820}
 controls:     4
-process rows: 781 roots, 781 visible
+process rows: 804 roots, 804 visible
 columns:      5
 split at:     334
 plots:        cpu {X=6,Y=6,Width=392,Height=92}, memory {X=404,Y=6,Width=392,Height=92}, cores {X=802,Y=6,Width=432,Height=92}
 topology:     16 logical, 1 socket(s), hybrid False
-status:       781 of 781 processes  ·  CPU 35.7% (normalized)  ·  memory 125G total, 37.7G free  ·  sample 21.4 ms
+status:       804 of 804 processes  ·  CPU 96.3% (normalized)  ·  memory 125G total, 45.2G free  ·  sample 36.4 ms
 capture:      1240x820 -> docs/screenshots/desktop.png
 page rail:    13 resources, showing 'Memory'
 page header:  Memory / 125G
-page stats:   12 live, 4 hardware
+page stats:   12 live, 7 hardware, 0 diagnostics
+page graphs:  4 visible, 60 s span, live
+page plots:   914x330 at 254,94
+page bar:     composition shown
+page sweep:
+  System                   0 graph(s) at 0 px · 7 live, 0 hardware, 0 diagnostic
+  Activity                 0 graph(s) at 0 px · 8 live, 0 hardware, 0 diagnostic
+  Processor                1 graph(s) at 330 px · 7 live, 12 hardware, 5 diagnostic
+  Memory                   4 graph(s) at 80 px · 12 live, 7 hardware, 19 diagnostic
+  GPU — NVIDIA RTX A5000 Laptop GPU 5 graph(s) at 64 px · 8 live, 5 hardware, 0 diagnostic
+  GPU — Intel 9a60         1 graph(s) at 330 px · 8 live, 5 hardware, 0 diagnostic
+  Disk — nvme0n1           2 graph(s) at 163 px · 8 live, 3 hardware, 0 diagnostic
+  Disk — nvme1n1           2 graph(s) at 163 px · 8 live, 3 hardware, 0 diagnostic
+  Disk — dm-0              2 graph(s) at 163 px · 8 live, 2 hardware, 0 diagnostic
+  Disk — dm-1              2 graph(s) at 163 px · 8 live, 2 hardware, 0 diagnostic
+  Disk — dm-2              2 graph(s) at 163 px · 8 live, 2 hardware, 0 diagnostic
+  Network — enp0s31f6      1 graph(s) at 330 px · 6 live, 4 hardware, 0 diagnostic
+  Network — wlp148s0       1 graph(s) at 330 px · 6 live, 4 hardware, 0 diagnostic
 page capture: 1180x780 -> docs/screenshots/performance.png
+page rail:    13 resources, showing 'Processor'
+page header:  Processor / 11th Gen Intel(R) Core(TM) i9-11950H @ 2.60GHz
+page stats:   7 live, 12 hardware, 5 diagnostics
+page graphs:  1 visible, 60 s span, live
+page plots:   914x298 at 254,94
+page bar:     none
+page expanded: 1180x780 -> docs/screenshots/performance-expanded.png

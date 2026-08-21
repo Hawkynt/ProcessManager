@@ -31,8 +31,8 @@ shorthand:
 it is not known*. An unticked box must never become a zero on screen. This is restated here because
 it is the single requirement most likely to be broken while filling the tables in.
 
-**Counting, as of the last update:** **638 of 1343 boxes are ticked** — 99 of 198 in the field
-registry (§14–22), 539 of 1145 across the capabilities. A further 135 are marked 🟡, meaning some of
+**Counting, as of the last update:** **673 of 1343 boxes are ticked** — 99 of 198 in the field
+registry (§14–22), 574 of 1145 across the capabilities. A further 138 are marked 🟡, meaning some of
 the work behind them is already done. §100 tracks the phases; §101 defines when this may be called
 finished.
 
@@ -1691,21 +1691,26 @@ who is not an expert but is looking for the one thing that is unusual.
 ## 45.1 Shape
 
 - [x] Vertical resource rail down the left, one entry per resource, 210–240 px wide
-- [ ] Each rail row carries a **sparkline** over the same history the main graph uses
-- [ ] Each rail row carries a primary value and an optional secondary — `13 %  4.17 GHz`,
+- [x] Each rail row carries a **sparkline** over the same history the main graph uses — the same
+      span, not merely the same ring: rail and graph share one time axis, so changing the graph to
+      five minutes changes the rail with it
+- [x] Each rail row carries a primary value and an optional secondary — `13 %  4.17 GHz`,
       `8.4 / 16.0 GB`, `↓ 11.6 KB/s ↑ 2.9 KB/s`, `42 %  57 °C`
-- [ ] The selected row takes a pale accent background and a 2–3 px accent stripe down its left edge
+- [x] The selected row takes a pale accent background and a 2–3 px accent stripe down its left edge
 - [x] One resource selected at a time
-- [ ] The rail scrolls on its own when a machine has many disks, adapters or GPUs
-- [ ] Header: resource name large and left, full hardware model smaller and right —
+- [x] The rail scrolls on its own when a machine has many disks, adapters or GPUs
+- [x] Header: resource name large and left, full hardware model smaller and right —
       `CPU                    Intel Core i9-14900K`
 - [x] Large detailed graph, whose series follows the selection. Every resource's history is recorded
       whether or not it is on screen, so selecting a disk that has been idle for a minute shows that
       minute rather than starting blank
-- [ ] Statistics in **two columns**: live measurements on the left, hardware specifications on the
+- [x] Statistics in **two columns**: live measurements on the left, hardware specifications on the
       right — the two answer different questions and reading them as one list is what makes a
-      performance page look like a data dump
-- [ ] Engineering diagnostics collapsed below both, so the default state is not overwhelming
+      performance page look like a data dump. The columns are sized before the graphs rather than
+      after them: they held twelve rows and dropped the rest off the bottom of the window, which is
+      how a memory page showed twelve of its fifteen live figures and looked complete doing it
+- [x] Engineering diagnostics collapsed below both, so the default state is not overwhelming —
+      nineteen figures on the memory page, five on the processor's, none where a resource has none
 - [x] 🟡 Reference size 1280×780, minimum 900×600 — both windows now name a real minimum and relay
       out as they are dragged; graphs grow horizontally, the statistics do not reflow into the space
 
@@ -1735,24 +1740,35 @@ Four levels, and nothing may jump a level:
 
 - [x] 60 seconds by default, newest on the right, moving right to left
 - [x] Updated once a second
-- [ ] Selectable history: 30 s · 60 s · 2 min · 5 min · 15 min
+- [x] Selectable history: 30 s · 60 s · 2 min · 5 min · 15 min — the axis is the span rather than
+      the sample count, so a page open for sixteen seconds fills the right quarter of a minute-wide
+      graph instead of stretching sixteen samples across it
 - [ ] Optional 500 ms mode
 - [x] Engineering graticule — major and minor rules, graph paper rather than an analytics chart
 - [x] Thin resource-coloured stroke over a translucent fill; no data-point markers; no animation
       that gets in the way of reading the current value
 - [x] Scale label in the corner — `100%`, `16 GB`
-- [ ] Axis labels: `60 seconds ago` at the left, `Now` at the right
-- [ ] Hover tooltip carrying the timestamp and that instant's readings
-- [ ] Hovering a graph reveals Pause · history · mode · expand in its top-right corner
-- [ ] Pause freezes the drawing without clearing history or stopping collection, and says `Paused`
-- [ ] Double-click or Expand opens an inspection view with current, minimum, maximum and average
+- [x] Axis labels: `60 seconds ago` at the left, `Now` at the right
+- [x] Hover tooltip carrying the timestamp and that instant's readings — a rule down the sample and
+      its readings drawn on the plot rather than in a popup, which on a stack of six graphs would
+      cover the neighbour being compared against. The arrow keys walk it too (§45.9)
+- [x] 🟡 Hovering a graph reveals Pause · history · mode · expand in its top-right corner — the four
+      are there, above the graphs and to the right, but permanently rather than on hover: a control
+      that appears only under a pointer is one nobody finds and one no screenshot proves
+- [x] Pause freezes the drawing without clearing history or stopping collection, and says `Paused`.
+      Counted in samples rather than remembered as an index, so a plot paused on a spike still shows
+      that spike after the ring behind it has wrapped
+- [x] Double-click or Expand opens an inspection view with current, minimum, maximum and average
 
 ### Scales
 
 - [x] Fixed 0–100 % for CPU, GPU utilisation, disk active time and GPU power percentage
 - [x] Dynamic for network throughput and disk transfer rate
-- [ ] Scale hysteresis, so a dynamic scale does not rescale every second and make the shape unreadable
-- [ ] Temperature on a stable hardware-appropriate scale rather than a dynamic one
+- [x] Scale hysteresis, so a dynamic scale does not rescale every second and make the shape
+      unreadable — a dynamic ceiling only ever doubles, so noise leaves it where it is and a real
+      change moves it once
+- [x] Temperature on a stable hardware-appropriate scale rather than a dynamic one — a fixed
+      hundred degrees, so a card idling between 40 and 42 °C does not fill its graph
 
 ## 45.5 Colour
 
@@ -1792,23 +1808,35 @@ five, and telling somebody to run as root reads very differently from telling th
 
 ## 45.7 Density
 
-- [ ] **Comfortable** — more spacing, larger graphs, advanced statistics collapsed
-- [ ] **Compact** — tighter rows, more graphs at once, advanced statistics left open
+- [x] **Comfortable** — more spacing, larger graphs, advanced statistics collapsed
+- [x] **Compact** — tighter rows, more graphs at once, advanced statistics left open. Not merely
+      smaller: somebody who asks for density has asked to see more at once, so the fourth level opens
+      with it
 
 ## 45.8 Commands
 
-- [ ] Right-click a resource: copy current values · copy full diagnostics · pause · change graph ·
-      show kernel times · show logical processors · open hardware details
-- [ ] Copy diagnostics — a plain-text snapshot of the machine, which is what makes a support
-      conversation possible
-- [ ] `Ctrl+1`…`Ctrl+6` select overview, CPU, memory, disk, network and GPU
-- [ ] `Space` pauses, `F5` resumes, `Ctrl+C` copies the selected statistics
+- [x] 🟡 Right-click a resource: copy current values · copy full diagnostics · pause · change graph ·
+      show kernel times · show logical processors · open hardware details — all but two of them.
+      Kernel time is not a mode: it is always the second series under the total, because the reader
+      is asking what fraction of a busy core is kernel and that is a comparison rather than a choice.
+      A hardware-details window has nothing to say beyond what the right-hand column already does
+- [x] Copy diagnostics — a plain-text snapshot of the machine, which is what makes a support
+      conversation possible. Every level, including the one the window keeps collapsed: what is worth
+      hiding from a reader looking at the machine is exactly what is worth sending to one who is not
+- [x] `Ctrl+1`…`Ctrl+6` select overview, CPU, memory, disk, network and GPU — by name rather than by
+      index, so the shortcut for a resource this machine does not have does nothing instead of
+      landing on whatever took its place
+- [x] `Space` pauses, `F5` resumes, `Ctrl+C` copies the selected statistics
 
 ## 45.9 Accessibility
 
-- [ ] Nothing is identified by colour alone — every graph carries a visible text heading
-- [ ] Keyboard navigation reaches every graph control
-- [ ] Screen-reader labels
+- [x] Nothing is identified by colour alone — every graph carries a visible text heading, every band
+      of the composition bar names itself wherever it is wide enough to, and the expander says "show"
+      and "hide" rather than only turning a triangle
+- [x] Keyboard navigation reaches every graph control — the plots take focus, the arrow keys walk
+      the cursor along the axis, and the span, the pause and the inspection view all have shortcuts
+- [x] 🟡 Screen-reader labels — every graph and every control in the strip names itself; the
+      statistic rows are plain text and announce as what they say
 - [ ] High-contrast support, and lines that stay distinguishable in it
 - [ ] Colour-blind-safe differentiation
 - [ ] 100–200 % UI scaling
@@ -1973,7 +2001,8 @@ socket and cache topology.
 # 47. Memory performance
 
 - [x] Total physical memory
-- [ ] Usable memory
+- [x] Usable memory — `MemTotal`, which is what the kernel can allocate rather than what is in the
+      machine; the difference between the two is the hardware-reserved figure below
 - [x] Used / in use
 - [x] Available
 - [x] Free (as distinct from available) — and the distinction matters more than any other figure
@@ -1985,18 +2014,25 @@ socket and cache topology.
 - [x] Commit limit — shown against the committed figure, because neither means much alone
 - [x] Swap / pagefile used
 - [x] Swap / pagefile total
-- [ ] Compressed
+- [x] Compressed — `Zswap` against `Zswapped`, and only ever as the pair: a gigabyte holding two and
+      a half is a machine that has saved itself the difference in swapping, and either figure alone
+      says nothing about the ratio
 - [x] Kernel memory — reclaimable and fixed, which are what Linux has instead of paged and non-paged
       pools, plus page tables and kernel stacks
-- [ ] 🟡 Paged pool total — `SReclaimable`, which is the nearest true equivalent
-- [ ] 🟡 Nonpaged pool total — `SUnreclaim`, likewise
-- [ ] Hardware reserved
-- [ ] Memory pressure
+- [x] 🟡 Paged pool total — `SReclaimable`, which is the nearest true equivalent
+- [x] 🟡 Nonpaged pool total — `SUnreclaim`, likewise. Both are named for what they are on this
+      machine rather than for what Windows calls them (§5.3), and both are in the collapsed block
+      with the slab total beside them — where they are now actually visible, which they were not
+      while a column held twelve rows and these were the thirteenth and fourteenth
+- [ ] Hardware reserved — the row is there and is refused with its reason rather than computed as a
+      zero, because the installed total it subtracts from is one of the four firmware facts below
+- [x] Memory pressure — both halves, `some` and `full`
 - [ ] **Memory speed** — refused rather than guessed: `—`, with the reason
 - [ ] **Channels**
 - [ ] **Form factor** — as above
 - [ ] **Slots used / available** — as above
-- [ ] NUMA distribution
+- [x] NUMA distribution — how much memory each node has, from `/sys/devices/system/node/node*/meminfo`,
+      and only where there is more than one node: "node 0 has all of it" is not a distribution
 
 The four in bold are the Task-Manager-style hardware facts. They come from DMI/SMBIOS type-17
 records: `/sys/firmware/dmi/tables` on Linux, which is root-readable and therefore a helper call, and
@@ -2018,8 +2054,12 @@ Graphs:
       and free, each in its own shade of the memory accent, each naming its value in place and
       explaining itself on hover
 - [x] Memory pressure — both halves; `full` is the one that says the machine is thrashing
-- [ ] Swap
-- [ ] Cache
+- [x] Swap — on the swap device's own scale, and absent altogether on a machine with no swap: a flat
+      line along the floor of a scale of zero draws the absence of a device as an idle one
+- [x] Cache — cached plus buffers, on the machine's scale, directly under the physical series. Cache
+      falling while physical memory stays put is the kernel giving its cache away; swap rising after
+      that is the point where it has run out of cache to give, and neither is visible in the physical
+      series, which stays pinned near the top through all of it
 
 **The bands are a partition and sum to the total exactly.** That is what makes it a bar rather than
 four numbers, and every definition here is bent to fit it:

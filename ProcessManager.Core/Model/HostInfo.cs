@@ -85,6 +85,29 @@ public sealed record HostInfo {
   public Counter TotalMemoryBytes { get; init; } = Counter.Unknown(UnknownReason.NotSampledYet);
 
   /// <summary>
+  /// What is physically in the machine, which is not what the kernel can use.
+  /// </summary>
+  /// <remarks>
+  /// The firmware keeps some of every machine — the framebuffer on an integrated part, the ACPI
+  /// tables, whatever the platform reserved before the kernel was loaded — and the difference
+  /// between this and the usable total is what Task Manager calls hardware-reserved. It is a
+  /// firmware fact and comes from the same root-only SMBIOS tables as the three below, so
+  /// unelevated it is <see cref="UnknownReason.NotPermitted"/> and the reserved figure is refused
+  /// rather than computed as zero (PRD §47).
+  /// </remarks>
+  public Counter InstalledMemoryBytes { get; init; } = Counter.Unknown(UnknownReason.NotSampledYet);
+
+  /// <summary>
+  /// How much memory each NUMA node has, node 0 first.
+  /// </summary>
+  /// <remarks>
+  /// The distribution rather than the count: two nodes with half each and two nodes with all of it
+  /// on one are very different machines to run a thread on, and <see cref="NumaNodes"/> cannot tell
+  /// them apart. Empty where the kernel was built without NUMA.
+  /// </remarks>
+  public IReadOnlyList<Counter> NumaMemoryBytes { get; init; } = [];
+
+  /// <summary>
   /// Transfer rate of the installed modules — the "4800 MT/s" Task Manager shows.
   /// </summary>
   /// <remarks>
@@ -99,6 +122,9 @@ public sealed record HostInfo {
 
   public Counter MemorySlotsUsed { get; init; } = Counter.Unknown(UnknownReason.NotSampledYet);
   public Counter MemorySlotsTotal { get; init; } = Counter.Unknown(UnknownReason.NotSampledYet);
+
+  /// <summary>How many channels the modules are spread over — two on most desktops, eight on a server.</summary>
+  public Counter MemoryChannels { get; init; } = Counter.Unknown(UnknownReason.NotSampledYet);
 
   #endregion
 

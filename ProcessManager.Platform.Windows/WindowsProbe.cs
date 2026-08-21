@@ -167,6 +167,53 @@ public sealed class WindowsProbe : ISystemProbe {
     system.TotalSwapBytes = Counter.Of((ulong)info.CommitLimit * pageSize);
     system.UsedSwapBytes = Counter.Of((ulong)info.CommitTotal * pageSize);
     system.UptimeSeconds = Environment.TickCount64 / 1000d;
+
+    // The commit charge again, under the name the rest of the program uses for it.
+    system.CommittedBytes = Counter.Of((ulong)info.CommitTotal * pageSize);
+    system.CommitLimitBytes = Counter.Of((ulong)info.CommitLimit * pageSize);
+
+    // The two pools, which is the one place Windows has the finer figure and Linux has the
+    // approximation rather than the other way round.
+    system.ReclaimableKernelBytes = Counter.Of((ulong)info.KernelPaged * pageSize);
+    system.UnreclaimableKernelBytes = Counter.Of((ulong)info.KernelNonpaged * pageSize);
+
+    // Everything else on the memory page is reachable on Windows — the modified and standby lists
+    // through SYSTEM_MEMORY_LIST_INFORMATION, the rest through the performance counters — and is
+    // not read yet. Said in as many words rather than left to the snapshot's "nobody has sampled
+    // this second", which would send a reader off to wait for a figure that is never coming
+    // (PRD §7, §45.6).
+    var missing = Counter.Unknown(UnknownReason.NotImplementedHere);
+    system.FreeMemoryBytes = missing;
+    system.BufferMemoryBytes = missing;
+    system.ModifiedMemoryBytes = missing;
+    system.DirtyBytes = missing;
+    system.WritebackBytes = missing;
+    system.AnonymousBytes = missing;
+    system.MappedBytes = missing;
+    system.SwapCachedBytes = missing;
+    system.CompressedBytes = missing;
+    system.CompressedOriginalBytes = missing;
+    system.SlabBytes = missing;
+    system.UnevictableBytes = missing;
+    system.LockedBytes = missing;
+    system.VmallocUsedBytes = missing;
+    system.PerCpuBytes = missing;
+    system.HardwareCorruptedBytes = missing;
+    system.HugePageSizeBytes = missing;
+    system.HugePagesTotal = missing;
+    system.HugePagesFree = missing;
+    system.HugePagesReserved = missing;
+    system.HugeTlbBytes = missing;
+    system.AnonymousHugePagesBytes = missing;
+    system.SharedHugePagesBytes = missing;
+    system.FileHugePagesBytes = missing;
+    system.ActiveAnonymousBytes = missing;
+    system.InactiveAnonymousBytes = missing;
+    system.ActiveFileBytes = missing;
+    system.InactiveFileBytes = missing;
+    system.PageTableBytes = missing;
+    system.KernelStackBytes = missing;
+    system.SharedMemoryBytes = missing;
   }
 
   /// <summary>
