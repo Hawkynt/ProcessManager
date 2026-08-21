@@ -31,8 +31,8 @@ shorthand:
 it is not known*. An unticked box must never become a zero on screen. This is restated here because
 it is the single requirement most likely to be broken while filling the tables in.
 
-**Counting, as of the last update:** **899 of 1356 boxes are ticked** — 122 of 205 in the field
-registry (§14–22), 777 of 1151 across the capabilities. A further 104 are marked 🟡, meaning some of
+**Counting, as of the last update:** **905 of 1356 boxes are ticked** — 127 of 205 in the field
+registry (§14–22), 778 of 1151 across the capabilities. A further 103 are marked 🟡, meaning some of
 the work behind them is already done. §100 tracks the phases; §101 defines when this may be called
 finished.
 
@@ -763,7 +763,8 @@ Required of the CPU percentage:
       A process whose resident set is nearly all file-backed costs the machine far less than one of
       the same size that is nearly all anonymous
 - [x] `ws.shared` — `RssShmem`: tmpfs, shared anonymous mappings, System V shared memory
-- [ ] `ws.shareable`
+- [x] `ws.shareable` — the resident memory somebody else could also be holding, read from the same
+      lines as the private half so the two cannot disagree about the file they came from
 
 The three add up to the working set exactly, which is what makes them a breakdown rather than three
 more numbers. All free: the lines are already in the `status` this program reads anyway.
@@ -803,7 +804,7 @@ a zero — and a process nobody asked about reports *not sampled*. Neither is no
 - [x] `pool.paged` — Windows; `n/a` on Linux
 - [x] `pool.nonpaged` — Windows; `n/a` on Linux
 - [ ] `heap.count`
-- [ ] `stack.commit`
+- [x] `stack.commit` — how much stack the kernel has committed to the process
 - [ ] `mapped.file.bytes`
 - [x] `anon.bytes` — `RssAnon`
 - [ ] `shared.mem`
@@ -818,19 +819,20 @@ a zero — and a process nobody asked about reports *not sampled*. Neither is no
 - [x] `io.read.rate`
 - [x] `io.write.rate`
 - [x] `io.total.rate` — read + write + other
-- [ ] 🟡 `io.read.ops` / `io.read.ops.delta` — `syscr` (L) and `ReadOperationCount` (W) both
-      available, not surfaced
+- [x] `io.read.ops` / `io.read.ops.delta` — `syscr`, which counts calls where the byte columns count
+      bytes: a gigabyte in one call and a gigabyte a byte at a time cost very different amounts
 - [x] `io.read.bytes` / `io.read.bytes.delta`
-- [ ] 🟡 `io.write.ops` / `io.write.ops.delta` — as above
+- [x] `io.write.ops` / `io.write.ops.delta` — `syscw`, as above
 - [x] `io.write.bytes` / `io.write.bytes.delta`
 - [ ] 🟡 `io.other.ops` — Windows only
 - [x] `io.other.bytes` — Windows only
 - [x] `io.rate` — aggregate bytes/sec
-- [ ] 🟡 `io.priority` — `ioprio_set` is implemented and `ioprio_get` is not read into the table yet
+- [x] `io.priority` — the class the scheduler holds the process at, read as well as set
 - [x] `cpu.time.user` / `cpu.time.kernel` — the per-process split, free from `stat`'s `utime` and
       `stime`. A process that is mostly kernel time is usually waiting on something rather than
       computing, and one number covering both cannot say so
-- [ ] `io.wait` — `/proc/pid/schedstat`, needs delayacct
+- [ ] 🟡 `io.wait` — read where the kernel accounts it; `kernel.task_delayacct` is nought on the
+      machine this was written on, so it reports unknown rather than nought there
 - ∅ `disk.latency` — requires eBPF/ETW tracing; see §52
 
 # 18. Process table — network fields
@@ -1492,9 +1494,12 @@ equivalence §5.3 forbids.
 - [x] Expand / collapse tree
 - [x] Go to parent
 - [x] Go to children
-- [ ] Go to owning service
-- [ ] Go to package
-- [ ] Go to executable
+- [x] Go to owning service — the innermost unit in the cgroup path, with the cursor put on that
+      unit's row in the services list
+- [ ] Go to package — the package is known and there is no package view to go to. Grouping by
+      package gathers a process with its siblings, which is a different question
+- [ ] 🟡 Go to executable — it can be revealed in the file manager and its properties opened; there
+      is no destination inside this program to go to
 - [x] Reveal in file manager
 - [x] Open file properties — path, size, modification time, permissions, architecture and interpreter,
       with a SHA-256 on request
