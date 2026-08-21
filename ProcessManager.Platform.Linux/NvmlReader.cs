@@ -61,6 +61,33 @@ internal static partial class NvmlReader {
     public ulong Used;
   }
 
+  /// <summary>
+  /// <c>nvmlMemory_v2_t</c>: the same figures with the driver's own reservation split out.
+  /// </summary>
+  /// <remarks>
+  /// The distinction is not academic. The original call reports <em>used</em> as everything that is
+  /// not free, which includes the four hundred megabytes the driver keeps for itself — so a card
+  /// with 4230 MB allocated renders as 4633, and the page disagrees with <c>nvidia-smi</c> by an
+  /// amount nobody can account for. This one answers what is actually allocated, which is the figure
+  /// every other tool shows.
+  /// <para>
+  /// The version field is the struct's size with the version number in its top byte, which is how
+  /// NVML tells the two shapes apart at the ABI: a call with the wrong value there returns
+  /// <c>NVML_ERROR_INVALID_ARGUMENT</c> rather than filling in a struct of the wrong size.
+  /// </para>
+  /// </remarks>
+  [StructLayout(LayoutKind.Sequential)]
+  private struct MemoryInfoV2 {
+    public uint Version;
+    public ulong Total;
+    public ulong Reserved;
+    public ulong Free;
+    public ulong Used;
+  }
+
+  /// <summary>NVML_STRUCT_VERSION(Memory, 2): forty bytes, version two.</summary>
+  private const uint _MemoryV2Version = 40 | (2u << 24);
+
   [LibraryImport(_Library, EntryPoint = "nvmlInit_v2")]
   private static partial uint Init();
 
@@ -79,6 +106,9 @@ internal static partial class NvmlReader {
   [LibraryImport(_Library, EntryPoint = "nvmlDeviceGetMemoryInfo")]
   private static partial uint GetMemory(nint device, out MemoryInfo memory);
 
+  [LibraryImport(_Library, EntryPoint = "nvmlDeviceGetMemoryInfo_v2")]
+  private static partial uint GetMemoryV2(nint device, ref MemoryInfoV2 memory);
+
   [LibraryImport(_Library, EntryPoint = "nvmlDeviceGetTemperature")]
   private static partial uint GetTemperature(nint device, uint sensor, out uint celsius);
 
@@ -96,6 +126,29 @@ internal static partial class NvmlReader {
 
   [LibraryImport(_Library, EntryPoint = "nvmlDeviceGetFanSpeed")]
   private static partial uint GetFanSpeed(nint device, out uint percent);
+
+  [LibraryImport(_Library, EntryPoint = "nvmlDeviceGetNumFans")]
+  private static partial uint GetFanCount(nint device, out uint count);
+
+  /// <summary>
+  /// The card's video engines, which are the two of the five §50 asks for that NVML will name.
+  /// </summary>
+  /// <remarks>
+  /// Each returns the utilisation and the length of the window the driver averaged it over. The
+  /// sampling period is read and discarded: it is the driver's own choice, moves about, and saying
+  /// "42 % over the last 167 ms" beside a figure sampled every second would invite a comparison
+  /// between two numbers that do not cover the same time.
+  /// <para>
+  /// There is no equivalent for graphics, compute or copy. <c>nvmlDeviceGetUtilizationRates</c>
+  /// reports one figure for the shaders with graphics and compute already summed, and no call
+  /// splits them — so the three are left unread rather than invented (PRD §5.3).
+  /// </para>
+  /// </remarks>
+  [LibraryImport(_Library, EntryPoint = "nvmlDeviceGetEncoderUtilization")]
+  private static partial uint GetEncoderUtilization(nint device, out uint percent, out uint samplingPeriod);
+
+  [LibraryImport(_Library, EntryPoint = "nvmlDeviceGetDecoderUtilization")]
+  private static partial uint GetDecoderUtilization(nint device, out uint percent, out uint samplingPeriod);
 
   #region per-process (PRD §19)
 
@@ -544,6 +597,15 @@ internal static partial class NvmlReader {
       CoreClockHertz = Scaled(GetClock(device, _ClockGraphics, out var core), core, 1_000_000),
       MemoryClockHertz = Scaled(GetClock(device, _ClockMemory, out var clock), clock, 1_000_000),
       FanPercent = Scaled(GetFanSpeed(device, out var fan), fan, 1),
+      // How many fans the card has, which is a different question from how fast one is turning: a
+      // laptop card whose cooling belongs to the chassis reports none, and that is why its fan
+      // percentage is unreadable rather than a driver fault (PRD §50.1).
+      FanCount = Scaled(GetFanCount(device, out var fans), fans, 1),
+      // NVML publishes no tachometer, so the speed stays a percentage of the card's own range. An
+      // hwmon node would have the revolutions, and NVIDIA's driver does not publish one.
+      FanRpm = Counter.Unknown(UnknownReason.NotImplementedHere),
+      EncodePercent = Scaled(GetEncoderUtilization(device, out var encode, out _), encode, 1),
+      DecodePercent = Scaled(GetDecoderUtilization(device, out var decode, out _), decode, 1),
     };
   }
 
@@ -561,10 +623,39 @@ internal static partial class NvmlReader {
       ? Counter.Of(memory ? utilization.Memory : utilization.Gpu)
       : Counter.Unknown(UnknownReason.NotImplementedHere);
 
-  private static Counter Memory(nint device, bool used)
-    => GetMemory(device, out var memory) == _Success
+  /// <summary>
+  /// How much of the card's memory is in use, or how much it has.
+  /// </summary>
+  /// <remarks>
+  /// The newer call first, because the older one counts the driver's own reservation as used and
+  /// puts the page four hundred megabytes above what every other tool reports. A driver from before
+  /// 2022 has no such entry point, which is remembered so the miss is paid for once.
+  /// </remarks>
+  private static Counter Memory(nint device, bool used) {
+    if (_memoryV2 is not false) {
+      try {
+        var info = new MemoryInfoV2 { Version = _MemoryV2Version };
+        if (GetMemoryV2(device, ref info) == _Success) {
+          _memoryV2 = true;
+          return Counter.Of(used ? info.Used : info.Total);
+        }
+
+        _memoryV2 = false;
+      } catch (EntryPointNotFoundException) {
+        _memoryV2 = false;
+      } catch (DllNotFoundException) {
+        _available = false;
+        return Counter.Unknown(UnknownReason.NotImplementedHere);
+      }
+    }
+
+    return GetMemory(device, out var memory) == _Success
       ? Counter.Of(used ? memory.Used : memory.Total)
       : Counter.Unknown(UnknownReason.NotImplementedHere);
+  }
+
+  /// <summary>Null until the first attempt; false once the driver has been found too old for it.</summary>
+  private static bool? _memoryV2;
 
   /// <summary>
   /// One reading, converted into the unit the record keeps it in.

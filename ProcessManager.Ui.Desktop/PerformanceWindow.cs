@@ -147,13 +147,19 @@ public sealed class PerformanceWindow : Form {
   /// </remarks>
   private (int Rows, int Longest) _diagnostics;
 
-  public PerformanceWindow(ISystemProbe probe, Sampler sampler) {
+  /// <param name="openOnBusiest">
+  /// Whether to open on whatever is under the greatest load. Null reads the setting from the file,
+  /// which is what the program does; a caller that says either way is not asking about anybody's
+  /// configuration — which is what lets this be tested without one (PRD §67).
+  /// </param>
+  public PerformanceWindow(ISystemProbe probe, Sampler sampler, bool? openOnBusiest = null) {
     ArgumentNullException.ThrowIfNull(probe);
     ArgumentNullException.ThrowIfNull(sampler);
 
     this._probe = probe;
     this._sampler = sampler;
     this._topology = probe.DescribeTopology();
+    this.OpenOnBusiest = openOnBusiest ?? Settings.SettingsStore.Load().PerformanceOpensOnBusiest;
 
     this.Text = "System information";
     // A secondary window closing must not take the program with it. Form.QuitsOnClose defaults to
@@ -261,6 +267,16 @@ public sealed class PerformanceWindow : Form {
 
   /// <summary>Whether the drawing is frozen. Collection carries on regardless (PRD §45.4).</summary>
   public bool Paused => this._frozenSamples >= 0;
+
+  /// <summary>
+  /// Whether the page opens on whatever is under the greatest load (PRD §45.3, §67).
+  /// </summary>
+  /// <remarks>
+  /// Read from the settings file when the window is built, and only ever consulted while nothing is
+  /// selected: once a reader has chosen a resource, a disk that gets briefly busy must not take the
+  /// page away from them.
+  /// </remarks>
+  public bool OpenOnBusiest { get; set; } = true;
 
   #region the strip above the graphs (PRD §45.4, §45.8)
 
@@ -757,7 +773,9 @@ public sealed class PerformanceWindow : Form {
 
       this._rail.SelectedIndex = this._rail.Items.Count == 0
         ? -1
-        : selected < 0 ? this.BusiestOf(wanted) : Math.Clamp(selected, 0, this._rail.Items.Count - 1);
+        : selected < 0
+          ? this.OpenOnBusiest ? this.BusiestOf(wanted) : 0
+          : Math.Clamp(selected, 0, this._rail.Items.Count - 1);
 
       return;
     }

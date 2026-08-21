@@ -51,6 +51,22 @@ public sealed class SettingsTests {
   public void TheUsualSpellingsOfTrueAreAccepted(string spelling)
     => Assert.That(UserSettings.Parse($"tree={spelling}").TreeMode, Is.True);
 
+  /// <summary>
+  /// The performance page opening on whatever is busiest is what it does; the setting exists to
+  /// turn that off, so only the "off" survives a round trip through the file (PRD §45.3, §67).
+  /// </summary>
+  [Test]
+  public void OpeningThePerformancePageOnTheBusiestResourceCanBeTurnedOff() {
+    Assert.That(new UserSettings().PerformanceOpensOnBusiest, Is.True);
+    Assert.That(UserSettings.Parse("performance.busiest=false").PerformanceOpensOnBusiest, Is.False);
+    Assert.That(UserSettings.Parse("performance.busiest=true").PerformanceOpensOnBusiest, Is.True);
+
+    var written = (new UserSettings { PerformanceOpensOnBusiest = false }).Write();
+    Assert.That(written, Does.Contain("performance.busiest=false"));
+    Assert.That(UserSettings.Parse(written).PerformanceOpensOnBusiest, Is.False);
+    Assert.That(new UserSettings().Write(), Does.Not.Contain("performance.busiest"));
+  }
+
   [Test]
   public void CommentsAndBlankLinesAreIgnored() {
     var settings = UserSettings.Parse("""

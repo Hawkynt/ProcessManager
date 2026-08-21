@@ -317,7 +317,13 @@ internal static class LinuxDeviceReader {
       MemoryBusyPercent: Counter.Unknown(UnknownReason.NotImplementedHere),
       CoreClockHertz: ReadClock(cardPath),
       MemoryClockHertz: Counter.Unknown(UnknownReason.NotImplementedHere),
-      FanPercent: ReadFan(device)
+      FanPercent: ReadFanPercent(device),
+      FanRpm: ReadHwmon(device, "fan1_input"),
+      FanCount: CountFans(device),
+      // Neither AMD's sysfs nor Intel's publishes a per-engine figure at all: i915's lives behind a
+      // perf counter that needs a privileged open, and amdgpu has only the one busy percentage.
+      EncodePercent: Counter.Unknown(UnknownReason.NotImplementedHere),
+      DecodePercent: Counter.Unknown(UnknownReason.NotImplementedHere)
     );
 
     // The vendor's own library last, because it knows more than sysfs does about every card it
@@ -342,10 +348,45 @@ internal static class LinuxDeviceReader {
     return ReadCounter(Path.Combine(cardPath, "gt_cur_freq_mhz"), 1_000_000);
   }
 
-  /// <summary>Percent, from whichever of hwmon's two spellings the driver uses.</summary>
-  private static Counter ReadFan(string devicePath) {
-    var percent = ReadHwmon(devicePath, "fan1_input");
-    return percent.HasValue ? percent : ReadHwmon(devicePath, "pwm1");
+  /// <summary>
+  /// How hard the fan is being driven, as a percentage (PRD §50.1).
+  /// </summary>
+  /// <remarks>
+  /// From <c>pwm1</c>, which is the duty cycle the driver has set, on hwmon's fixed scale of 0–255.
+  /// It was previously taken from <c>fan1_input</c> as well — and that is revolutions a minute, so a
+  /// fan at 1800 rpm was reported as being 1800 % of the way up its range. The two are different
+  /// readings of the same fan, and the tachometer now goes to its own row (PRD §76).
+  /// </remarks>
+  private static Counter ReadFanPercent(string devicePath) {
+    var duty = ReadHwmon(devicePath, "pwm1");
+    if (!duty.HasValue)
+      return duty;
+
+    return duty.Value <= 255
+      ? Counter.Of(duty.Value * 100 / 255)
+      : Counter.Unknown(UnknownReason.CounterInvalid);
+  }
+
+  /// <summary>
+  /// How many fans the card has, counted by the tachometers its hwmon node publishes.
+  /// </summary>
+  /// <remarks>
+  /// Nought is a real answer and not a failure: a laptop card cooled by the chassis has no fan of
+  /// its own, which is why its speed is unreadable. A node that publishes no tachometer at all says
+  /// nothing about the count rather than claiming there are none.
+  /// </remarks>
+  private static Counter CountFans(string devicePath) {
+    var hwmon = Path.Combine(devicePath, "hwmon");
+    if (!Directory.Exists(hwmon))
+      return Counter.Unknown(UnknownReason.NotImplementedHere);
+
+    var found = 0;
+    foreach (var node in Directory.EnumerateDirectories(hwmon))
+      for (var fan = 1; fan <= 8; ++fan)
+        if (File.Exists(Path.Combine(node, $"fan{fan.ToString(CultureInfo.InvariantCulture)}_input")))
+          ++found;
+
+    return Counter.Of((ulong)found);
   }
 
   /// <summary>

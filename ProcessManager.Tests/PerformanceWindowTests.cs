@@ -94,6 +94,41 @@ public sealed class PerformanceWindowTests {
     return (new(probe, sampler), probe, sampler);
   }
 
+  /// <summary>
+  /// The page opens on whatever is under the greatest load (PRD §45.3).
+  /// </summary>
+  /// <remarks>
+  /// The stub's processor is at fifty percent and its disks are at full active time, so the page
+  /// opens on a disk — which is the point: it lands on what is busy rather than on the processor,
+  /// where every previous version of this page always started.
+  /// </remarks>
+  [Test]
+  public void ThePageOpensOnWhateverIsBusiest() {
+    var probe = new StubProbe();
+    var sampler = new Sampler(probe);
+    sampler.Sample();
+    sampler.Sample();
+
+    var window = new PerformanceWindow(probe, sampler, openOnBusiest: true);
+    Assert.That(Titles(window)[SelectedIndex(window)], Is.EqualTo("Disk — sda"));
+  }
+
+  /// <summary>
+  /// And does not, for somebody who keeps it on one resource and does not want it moved out from
+  /// under them (PRD §45.3, §67).
+  /// </summary>
+  [Test]
+  public void TurningThatOffOpensOnTheFirstResourceInstead() {
+    var probe = new StubProbe();
+    var sampler = new Sampler(probe);
+    sampler.Sample();
+    sampler.Sample();
+
+    var window = new PerformanceWindow(probe, sampler, openOnBusiest: false);
+    Assert.That(SelectedIndex(window), Is.Zero);
+    Assert.That(Titles(window)[0], Is.EqualTo("System"));
+  }
+
   [Test]
   public void TheRailListsEveryResource() {
     var (window, _, _) = Open();

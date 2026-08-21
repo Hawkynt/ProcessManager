@@ -143,7 +143,11 @@ public sealed class GpuTests {
       MemoryBusyPercent: Counter.Unknown(UnknownReason.NotImplementedHere),
       CoreClockHertz: Counter.Unknown(UnknownReason.NotImplementedHere),
       MemoryClockHertz: Counter.Unknown(UnknownReason.NotImplementedHere),
-      FanPercent: Counter.Unknown(UnknownReason.NotImplementedHere)
+      FanPercent: Counter.Unknown(UnknownReason.NotImplementedHere),
+      FanRpm: Counter.Unknown(UnknownReason.NotImplementedHere),
+      FanCount: Counter.Unknown(UnknownReason.NotImplementedHere),
+      EncodePercent: Counter.Unknown(UnknownReason.NotImplementedHere),
+      DecodePercent: Counter.Unknown(UnknownReason.NotImplementedHere)
     );
 
   private static IReadOnlyList<PerformanceSection> Sections(params GpuInfo[] gpus) {
@@ -339,6 +343,83 @@ public sealed class GpuTests {
     }
 
     Assert.Fail("no system section");
+  }
+
+  #endregion
+
+  #region fans and engines (PRD §50, §50.1)
+
+  /// <summary>
+  /// A fan has two readings and neither is the other. The duty cycle used to be taken from the
+  /// tachometer as well, which reported a fan at 1800 rpm as being 1800 % of the way up its range.
+  /// </summary>
+  [Test]
+  public void TheDutyCycleAndTheTachometerAreDifferentReadings() {
+    var card = Adapter("card0", "Fixture GPU", Counter.Of(30)) with {
+      FanPercent = Counter.Of(42),
+      FanRpm = Counter.Of(1800),
+      FanCount = Counter.Of(1),
+    };
+
+    Assert.That(Value(Find(Sections(card)), "Fan"), Is.EqualTo("42.0 %  (1800 rpm)"));
+  }
+
+  /// <summary>
+  /// A card with no fan of its own says so. That is a different sentence from a fan nobody can read,
+  /// and it is the explanation for the reading beside it being unknown (PRD §45.6).
+  /// </summary>
+  [Test]
+  public void ACardWhoseCoolingIsNotItsOwnSaysItHasNoFan() {
+    var card = Adapter("card0", "Fixture GPU", Counter.Of(30)) with { FanCount = Counter.Of(0) };
+
+    Assert.That(Value(Find(Sections(card)), "Fan"), Is.EqualTo("none"));
+    Assert.That(Value(Find(Sections(card)), "Fans"), Is.EqualTo("0"));
+  }
+
+  [Test]
+  public void TheVideoEnginesAreShownAsAPair() {
+    var card = Adapter("card0", "Fixture GPU", Counter.Of(30)) with {
+      EncodePercent = Counter.Of(64),
+      DecodePercent = Counter.Of(12),
+    };
+
+    var section = Find(Sections(card));
+    Assert.That(Value(section, "Video engines"), Is.EqualTo("64.0 % encode, 12.0 % decode"));
+
+    // And as one plot with two lines, because a card that is transcoding is using both.
+    foreach (var graph in section.Series) {
+      if (graph.Label != "Video engines")
+        continue;
+
+      Assert.That(graph.HasCompanion, Is.True);
+      Assert.That(graph.FirstLabel, Is.EqualTo("encode"));
+      Assert.That(graph.Companion.Value, Is.EqualTo(12));
+      return;
+    }
+
+    Assert.Fail("no video-engine graph");
+  }
+
+  /// <summary>
+  /// A driver that says nothing about its engines gets no engine graph, rather than one flat along
+  /// the floor of a card that may well be transcoding (PRD §45.6).
+  /// </summary>
+  [Test]
+  public void ACardThatWillNotNameItsEnginesGetsNoEngineGraph() {
+    foreach (var graph in Find(Sections(Adapter("card0", "Fixture GPU", Counter.Of(30)))).Series)
+      Assert.That(graph.Label, Is.Not.EqualTo("Video engines"));
+  }
+
+  /// <summary>
+  /// Shared memory is what a card borrows from the machine's own, and nothing on Linux publishes it.
+  /// Refused with its reason rather than reported as nought (PRD §50.1).
+  /// </summary>
+  [Test]
+  public void SharedMemoryIsRefusedRatherThanReportedAsNothing() {
+    Assert.That(
+      Value(Find(Sections(Adapter("card0", "Fixture GPU", Counter.Of(30)))), "Shared memory"),
+      Is.EqualTo(Humanize.Placeholder(UnknownReason.NotImplementedHere))
+    );
   }
 
   #endregion

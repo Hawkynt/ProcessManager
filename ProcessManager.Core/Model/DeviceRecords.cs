@@ -203,6 +203,25 @@ public sealed record NetworkInterfaceInfo(
 /// How much of the interval the memory bus was being read or written, which is a different question
 /// from how full the memory is and often the one that explains a stall.
 /// </param>
+/// <param name="FanPercent">
+/// How fast the fan is turning as a share of what it can do. Not the same reading as
+/// <paramref name="FanRpm"/> and not derivable from it: the maximum a card's fan can turn at is not
+/// published anywhere, so revolutions cannot be turned into a percentage (PRD §5.3).
+/// </param>
+/// <param name="FanRpm">
+/// Revolutions a minute, where there is a tachometer to read. hwmon publishes them and NVML does
+/// not, which is why both readings exist rather than one being computed from the other.
+/// </param>
+/// <param name="FanCount">
+/// How many fans the card has. Nought is a real answer — a laptop card whose cooling belongs to the
+/// chassis has none of its own — and is why an unreadable fan speed on such a card is the truth
+/// rather than a failure.
+/// </param>
+/// <param name="EncodePercent">
+/// The video engines, which are the two of §50's five that a driver will name separately. The
+/// shaders' figure in <paramref name="BusyPercent"/> already has graphics and compute summed and no
+/// interface splits them, so those two and the copy engines are unread rather than invented.
+/// </param>
 public sealed record GpuInfo(
   string Name,
   string? Model,
@@ -218,5 +237,9 @@ public sealed record GpuInfo(
   Counter MemoryBusyPercent,
   Counter CoreClockHertz,
   Counter MemoryClockHertz,
-  Counter FanPercent
+  Counter FanPercent,
+  Counter FanRpm,
+  Counter FanCount,
+  Counter EncodePercent,
+  Counter DecodePercent
 );

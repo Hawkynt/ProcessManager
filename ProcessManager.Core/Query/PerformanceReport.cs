@@ -1284,8 +1284,23 @@ public static class PerformanceReport {
         PerformanceUnit.Celsius
       ));
 
+    // The video engines, as one plot with two lines: a card that is transcoding uses both, and the
+    // pair against each other is what says whether it is encoding, decoding or doing both.
+    if (gpu.EncodePercent.HasValue || gpu.DecodePercent.HasValue)
+      graphs.Add(new(
+        "Video engines",
+        AsRate(gpu.EncodePercent),
+        100,
+        $"{AsPercent(gpu.EncodePercent)} encode, {AsPercent(gpu.DecodePercent)} decode",
+        "gpu",
+        PerformanceUnit.Percent,
+        Companion: AsRate(gpu.DecodePercent),
+        CompanionLabel: "decode",
+        SeriesLabel: "encode"
+      ));
+
     if (gpu.FanPercent.HasValue)
-      graphs.Add(new("Fan", AsRate(gpu.FanPercent), 100, AsPercent(gpu.FanPercent), "fan"));
+      graphs.Add(new("Fan", AsRate(gpu.FanPercent), 100, FanSpeed(gpu), "fan"));
 
     return [.. graphs];
   }
@@ -1434,7 +1449,10 @@ public static class PerformanceReport {
       new("Power", PowerDraw(gpu.PowerMicrowatts, gpu.PowerLimitMicrowatts)),
       new("Core clock", Hertz(gpu.CoreClockHertz)),
       new("Memory clock", Hertz(gpu.MemoryClockHertz)),
-      new("Fan", AsPercent(gpu.FanPercent)),
+      new("Fan", FanSpeed(gpu)),
+      // The two engines a driver will name apart from the shaders. Shown together because a card
+      // that is transcoding is using both, and either alone reads as an idle video block.
+      new("Video engines", $"{AsPercent(gpu.EncodePercent)} encode, {AsPercent(gpu.DecodePercent)} decode"),
       new("Adapter", gpu.Model ?? gpu.Name, Level: PerformanceRowLevel.Hardware),
       new("Driver", gpu.Driver ?? Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform), Level: PerformanceRowLevel.Hardware),
       new("Dedicated memory", Humanize.Bytes(gpu.MemoryTotalBytes), Level: PerformanceRowLevel.Hardware),
@@ -1444,7 +1462,37 @@ public static class PerformanceReport {
     if (gpu.PowerState is { } state)
       rows.Add(new("Power state", state, Level: PerformanceRowLevel.Hardware));
 
+    // Only where the card says: nought fans is a fact about a laptop card and worth a row, and an
+    // unknown count is a driver that was never asked and is not (PRD §5.3).
+    if (gpu.FanCount.HasValue)
+      rows.Add(new("Fans", Humanize.Count(gpu.FanCount), Level: PerformanceRowLevel.Hardware));
+
+    // Shared memory — what a card borrows from the machine's own — is what Task Manager's second
+    // memory figure is. Nothing on Linux publishes it: NVML's BAR1 is an aperture rather than an
+    // allocation, and the DRM accounting is per client. Refused rather than approximated (PRD §50.1).
+    rows.Add(new("Shared memory", Humanize.Placeholder(UnknownReason.NotImplementedHere), Level: PerformanceRowLevel.Hardware));
+
     return [.. rows];
+  }
+
+  /// <summary>
+  /// The fan, in whichever units the card publishes — and both where it publishes both.
+  /// </summary>
+  /// <remarks>
+  /// A percentage is a duty cycle and revolutions are a measurement, and neither can be computed
+  /// from the other: nothing publishes the speed a fan turns at when it is driven flat out. A card
+  /// with no fan of its own says so, which is a different sentence from a fan nobody can read.
+  /// </remarks>
+  private static string FanSpeed(GpuInfo gpu) {
+    if (gpu.FanCount is { HasValue: true, Value: 0 })
+      return "none";
+
+    var percent = AsPercent(gpu.FanPercent);
+    if (!gpu.FanRpm.HasValue)
+      return percent;
+
+    var revolutions = string.Format(CultureInfo.InvariantCulture, "{0} rpm", gpu.FanRpm.Value);
+    return gpu.FanPercent.HasValue ? $"{percent}  ({revolutions})" : revolutions;
   }
 
   /// <summary>A counter that is already a percentage, rendered like every other percentage.</summary>
