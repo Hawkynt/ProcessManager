@@ -4720,8 +4720,20 @@ Windows parsing on Linux.
 ## TUI tests
 
 - [x] Golden-frame comparison at fixed dimensions
-- [ ] 🟡 80×24 · 120×30 · 160×50
-- [ ] 256-colour
+- [x] 80×24 · 120×30 · 160×50 — three goldens, because §57.1's breakpoints make these three different
+      layouts rather than one layout scaled. The unit tests compared all three and the CI job
+      compared only 120×30, so a change that took the narrow and the wide frames with it would have
+      been caught by a developer's own `dotnet test` and not by the gate; the job now walks all three
+- [x] 256-colour — every slot of the palette rather than one of them. The old test wrote a single
+      accented cell and looked for `38;5;`, which would pass on a table whose other nine slots had
+      been left identical. Now: every slot defined and *distinct* at each depth, so two meanings
+      cannot paint the same; no palette speaking another's language, because the 256-colour and
+      24-bit tables sit one under the other and are edited by copying a line across; every one of the
+      256 attribute bytes painting something, because the flags are a bitfield and the palettes are
+      arrays; a whole frame at 256 colours carrying the escapes; and the same frame's characters
+      identical to the monochrome one, since colour is a plane beside the text and must not move a
+      cell. `DetectColorDepth` is read too — the only place the choice is actually made, and until
+      now nothing tested it, so a 256-colour terminal getting sixteen was invisible
 - [x] Monochrome
 - [x] UTF-8
 - [x] ASCII fallback
