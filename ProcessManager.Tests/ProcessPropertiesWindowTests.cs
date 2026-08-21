@@ -227,7 +227,11 @@ public sealed class ProcessPropertiesWindowTests {
 
     window.UpdateFromSample(snapshot, delta, row, Counter.NotSampledYet);
 
-    foreach (var line in window.PerformanceText.Split('\n')) {
+    foreach (var raw in window.PerformanceText.Split('\n')) {
+      // Trimmed, because the text is built with AppendLine: on Windows that ends every line with a
+      // carriage return, and splitting on the newline alone leaves it on the end of the placeholder.
+      // The assertion below is about the last visible character, not the last byte.
+      var line = raw.TrimEnd();
       if (!line.Contains("Descriptors", StringComparison.Ordinal))
         continue;
 
