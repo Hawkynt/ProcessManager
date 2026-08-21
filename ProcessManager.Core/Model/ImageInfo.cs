@@ -36,6 +36,19 @@ namespace Hawkynt.ProcessManager.Model;
 /// which is how a container's members are actually identified, rather than by a cgroup path anyone
 /// can write.
 /// </param>
+/// <param name="CreatedUtc">
+/// When the file was created, where the file system carries a birth time. Null is the ordinary
+/// answer on the file systems that do not — reporting the epoch instead would be a date nobody
+/// could tell from a real one.
+/// </param>
+/// <param name="Runtime">
+/// What is executing inside the process, from its module list rather than from its name.
+/// </param>
+/// <param name="Package">
+/// Which package the image belongs to, when somebody asked for it. Null when nobody did: finding
+/// out means reading every installed package's file list, which is not something to do because a
+/// properties window opened (PRD §5.4).
+/// </param>
 public sealed record ImageInfo(
   string? Path,
   string? Architecture,
@@ -46,5 +59,8 @@ public sealed record ImageInfo(
   Counter SizeBytes,
   DateTime? ModifiedUtc,
   string? WorkingDirectory,
-  IReadOnlyList<KeyValuePair<string, string>> Namespaces
+  IReadOnlyList<KeyValuePair<string, string>> Namespaces,
+  DateTime? CreatedUtc = null,
+  ProcessRuntime Runtime = ProcessRuntime.Unknown,
+  PackageIdentity? Package = null
 );

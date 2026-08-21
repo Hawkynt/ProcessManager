@@ -58,6 +58,24 @@ internal sealed class ProcessCache {
   /// <summary>The sample number this entry was last seen in; older entries are pruned.</summary>
   public int Generation { get; set; }
 
+  /// <summary>
+  /// What the process is running, worked out once (PRD §14, §70).
+  /// </summary>
+  /// <remarks>
+  /// None of it changes while the process lives: an image is not repackaged underneath a running
+  /// program, a file's birth time is fixed, and a runtime that is mapped stays mapped. So each of
+  /// these costs its read once per process rather than once per sample — which is the difference
+  /// between a column somebody can leave switched on and one they cannot (PRD §5.4).
+  /// </remarks>
+  public bool IdentityLoaded { get; set; }
+
+  public Model.PackageIdentity Package { get; set; } = Model.PackageIdentity.NotChecked;
+  public Model.SignatureStatus PackageStatus { get; set; }
+  public string? PackageStatusDetail { get; set; }
+  public Model.ProcessRuntime Runtime { get; set; }
+  public Model.UnknownReason RuntimeReason { get; set; } = Model.UnknownReason.NotSampledYet;
+  public Model.Counter ImageCreatedUtcTicks { get; set; } = Model.Counter.NotSampledYet;
+
   private static byte[] BuildPath(ReadOnlySpan<byte> procRoot, int pid, ReadOnlySpan<byte> leaf) {
     Span<byte> buffer = stackalloc byte[ProcPath.MaxLength];
     return ProcPath.Build(buffer, procRoot, pid, leaf).ToArray();

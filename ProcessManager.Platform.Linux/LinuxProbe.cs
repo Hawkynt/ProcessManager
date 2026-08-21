@@ -644,7 +644,13 @@ public sealed class LinuxProbe : ISystemProbe {
       size,
       modified,
       TryLink(Path.Combine(directory, "cwd")),
-      ReadNamespaces(Path.Combine(directory, "ns"))
+      ReadNamespaces(Path.Combine(directory, "ns")),
+      // One statx and one read of maps, both for the one process somebody is looking at. The
+      // package is deliberately not asked for here: that would build an index of every installed
+      // package because a properties window opened, and it is a column that has to be asked for
+      // (PRD §5.4).
+      path is { Length: > 0 } && Native.TryCreationTimeUtc(path, out var created, out _) ? created : null,
+      this.ReadRuntime(key.Pid, path, mayRead: true, out _)
     );
   }
 
@@ -779,6 +785,9 @@ public sealed class LinuxProbe : ISystemProbe {
     this.ReadCpuThrottling(ref record);
     // And after the image path, for the same reason.
     this.ReadImageHashes(ref record);
+    // After both: the package check compares the image against what its package recorded, so it
+    // needs the path to look up and the digest the line above already paid for.
+    this.ReadIdentity(cache, ref record);
     record.UserName = this._users.Resolve(record.UserId);
     // Almost always the same string, and taking it from the same cache costs a dictionary lookup
     // rather than an allocation. The handful of processes where the two differ are exactly the ones
@@ -1340,29 +1349,268 @@ public sealed class LinuxProbe : ISystemProbe {
       return;
     }
 
-    long size = -1, modified = -1;
-    try {
-      var info = new FileInfo(path);
-      if (info.Exists) {
-        size = info.Length;
-        modified = info.LastWriteTimeUtc.Ticks;
-      }
-    } catch (IOException) {
-      // Left at -1, which is a key of its own: a file that cannot be stat'ed is hashed each time
-      // rather than remembered under a stamp nobody could read.
-    } catch (UnauthorizedAccessException) {
-      // As above.
-    }
-
-    var key = (path, size, modified);
-    if (!this._imageDigests.TryGetValue(key, out var digest)) {
-      digest = Query.FileDigest.Of(path);
-      this._imageDigests[key] = digest;
-    }
+    var (size, modified) = ImageStamp(path);
+    var digest = this.DigestOf(path, size, modified);
 
     record.ImageSha256 = digest.Sha256;
     record.ImageSha1 = digest.Sha1;
     record.ImageHashReason = digest.Why;
+  }
+
+  /// <summary>
+  /// What the file was when it was last read, which is what the digest is remembered under.
+  /// </summary>
+  /// <remarks>
+  /// -1 for both when the file cannot be stat'ed at all, which is a key of its own: such a file is
+  /// hashed again each time rather than remembered under a stamp nobody could read.
+  /// </remarks>
+  private static (long Size, long Modified) ImageStamp(string path) {
+    try {
+      var info = new FileInfo(path);
+      if (info.Exists)
+        return (info.Length, info.LastWriteTimeUtc.Ticks);
+    } catch (IOException) {
+    } catch (UnauthorizedAccessException) {
+    }
+
+    return (-1, -1);
+  }
+
+  /// <summary>
+  /// The digests of one image, from the single read of it that the whole program shares.
+  /// </summary>
+  /// <remarks>
+  /// The hash columns of §21 and the package check of §70 ask about the same bytes, and hashing an
+  /// image is the one operation here whose cost is the size of a file. So both go through this, and
+  /// asking for both costs exactly what asking for either does (PRD §5.4).
+  /// </remarks>
+  private Query.FileDigest DigestOf(string path, long size, long modified) {
+    var key = (path, size, modified);
+    if (this._imageDigests.TryGetValue(key, out var digest))
+      return digest;
+
+    digest = Query.FileDigest.Of(path);
+    this._imageDigests[key] = digest;
+    return digest;
+  }
+
+  /// <summary>
+  /// Where a process's image came from, what is executing inside it, and when the file was made
+  /// (PRD §14, §70).
+  /// </summary>
+  /// <remarks>
+  /// Worked out once per process and then copied out of the cache. None of it can change while the
+  /// process runs: a running image is not repackaged, a file's birth time is fixed at creation, and
+  /// a runtime that has been mapped stays mapped. Doing it per sample would put a thirty-megabyte
+  /// index behind a column and a <c>maps</c> read behind every row (PRD §5.4).
+  /// </remarks>
+  private void ReadIdentity(ProcessCache cache, ref ProcessRecord record) {
+    // Set before anything is read, so that a record nobody filled makes no claim: an unfilled
+    // package would otherwise read as "not packaged", which is a finding rather than a hole
+    // (PRD §72.3).
+    record.Package = PackageIdentity.NotChecked;
+    record.PackageStatus = SignatureStatus.NotChecked;
+    record.PackageStatusDetail = null;
+    record.Runtime = ProcessRuntime.Unknown;
+    record.RuntimeReason = UnknownReason.NotSampledYet;
+    record.ImageCreatedUtcTicks = Counter.NotSampledYet;
+
+    var options = this._options;
+    if (!options.ReadPackageIdentity
+        && !options.ReadPackageVerification
+        && !options.ReadRuntime
+        && !options.ReadImageCreationTime)
+      return;
+
+    if (!cache.IdentityLoaded) {
+      cache.IdentityLoaded = true;
+      this.LoadIdentity(cache, in record);
+    }
+
+    record.Package = cache.Package;
+    record.PackageStatus = cache.PackageStatus;
+    record.PackageStatusDetail = cache.PackageStatusDetail;
+    record.Runtime = cache.Runtime;
+    record.RuntimeReason = cache.RuntimeReason;
+    record.ImageCreatedUtcTicks = cache.ImageCreatedUtcTicks;
+  }
+
+  private void LoadIdentity(ProcessCache cache, in ProcessRecord record) {
+    var mayRead = this.MayRead(record);
+    var path = record.ImagePath;
+
+    if (this._options.ReadRuntime) {
+      cache.Runtime = this.ReadRuntime(cache.Pid, path, mayRead, out var runtimeReason);
+      cache.RuntimeReason = runtimeReason;
+    } else
+      cache.RuntimeReason = UnknownReason.NotSampledYet;
+
+    if (this._options.ReadImageCreationTime)
+      cache.ImageCreatedUtcTicks = ImageCreated(path, mayRead);
+
+    if (!this._options.ReadPackageIdentity && !this._options.ReadPackageVerification)
+      return;
+
+    // A kernel thread runs no file and belongs to no package, which is a fact about it rather than
+    // a failure; somebody else's process has an image whose link this user may not follow, which is
+    // a failure and one the elevated helper could fix. The two must not share a cell (PRD §72.3).
+    if (path is not { Length: > 0 }) {
+      cache.Package = PackageIdentity.Unknown(
+        mayRead ? UnknownReason.NotSupportedOnPlatform : UnknownReason.NotPermitted
+      );
+
+      return;
+    }
+
+    // The kernel writes " (deleted)" after the link of an image that has been replaced or removed
+    // underneath its process. The path without it is the one to ask a package about — it is where
+    // the file was — and the bytes now at that path are somebody else's: the upgrade, not the
+    // program that is running. So ownership is answered and the check is not (PRD §23, §70).
+    var deleted = path.EndsWith(_DELETED, StringComparison.Ordinal);
+    if (deleted)
+      path = path[..^_DELETED.Length];
+
+    var sandbox = this.ReadSandbox(cache.Pid, path, record.ContainerPath, mayRead);
+    if (sandbox.Source is not (PackageSource.Unknown or PackageSource.None)) {
+      cache.Package = sandbox;
+      // A Flatpak's files are checked by ostree when they are deployed and a snap's are a read-only
+      // squashfs image; neither keeps a per-file digest anywhere this program reads, so the check is
+      // one that has not been made rather than one that passed (PRD §70).
+      cache.PackageStatus = SignatureStatus.NotChecked;
+      cache.PackageStatusDetail =
+        "this image is deployed by its own packaging system, which keeps no per-file digest that this program reads";
+
+      return;
+    }
+
+    var verify = this._options.ReadPackageVerification && !deleted;
+    var (size, modified) = ImageStamp(path);
+    var digest = verify ? this.DigestOf(path, size, modified) : default;
+    var trust = this.Packages.Describe(path, size, modified, digest, verify);
+    cache.Package = trust.Package;
+
+    if (!this._options.ReadPackageVerification)
+      return;
+
+    if (deleted) {
+      cache.PackageStatus = SignatureStatus.VerificationError;
+      cache.PackageStatusDetail =
+        "the running image is not the file at this path any more — it was replaced or deleted after the process started, so nothing on disk is these bytes";
+
+      return;
+    }
+
+    cache.PackageStatus = trust.Signature;
+    cache.PackageStatusDetail = trust.Detail;
+  }
+
+  /// <summary>What the kernel appends to the link of an image that is no longer on the file system.</summary>
+  private const string _DELETED = " (deleted)";
+
+  /// <summary>The package databases, opened the first time a column asks for one (PRD §5.4).</summary>
+  private PackageDatabaseReader Packages
+    => this._packages ??= new(this._options.PackageDatabaseRoot);
+
+  private PackageDatabaseReader? _packages;
+
+  /// <summary>
+  /// Whether the process is inside a Flatpak, a snap or an AppImage, and which one.
+  /// </summary>
+  /// <remarks>
+  /// The evidence is not equally reachable, and the order below is cheapest and most reachable
+  /// first. <c>/proc/[pid]/cgroup</c> has already been read and is world-readable, so a snap names
+  /// itself for free and for anybody's process. A Flatpak's own <c>.flatpak-info</c> is inside its
+  /// mount namespace and behind the kernel's ptrace check, so it is read for this user's processes
+  /// and the cgroup name is what answers for everybody else's. An AppImage is recognised by the
+  /// mount its runtime made, and its environment is asked only to put a name to it
+  /// (<c>proc_pid_root(5)</c>).
+  /// </remarks>
+  private PackageIdentity ReadSandbox(int pid, string imagePath, string? cgroupPath, bool mayRead) {
+    var snap = SandboxPackaging.ReadSnapCgroup(cgroupPath);
+    if (snap.Source == PackageSource.Snap)
+      return snap;
+
+    if (mayRead
+        && this._reader.TryRead($"{this._procRoot}/{pid}/root/.flatpak-info", out var info, out _)
+        && !info.IsEmpty) {
+      var flatpak = SandboxPackaging.ReadFlatpakInfo(info);
+      if (flatpak.Source == PackageSource.Flatpak)
+        return flatpak;
+    }
+
+    var scope = SandboxPackaging.ReadFlatpakCgroup(cgroupPath);
+    if (scope.Source == PackageSource.Flatpak)
+      return scope;
+
+    if (!imagePath.Contains("/.mount_", StringComparison.Ordinal)
+        && !imagePath.Contains("/appimage_extracted_", StringComparison.Ordinal))
+      return PackageIdentity.NotPackaged;
+
+    string? appImage = null;
+    if (mayRead && this._reader.TryReadWhole($"{this._procRoot}/{pid}/environ", out var environ, out _))
+      appImage = SandboxPackaging.ReadEnvironmentVariable(environ, "APPIMAGE"u8);
+
+    return SandboxPackaging.ReadAppImage(imagePath, appImage);
+  }
+
+  /// <summary>
+  /// What is executing inside the process, from the modules it has mapped (PRD §14).
+  /// </summary>
+  /// <remarks>
+  /// A kernel thread maps nothing and runs no runtime, which is not the same as a process whose
+  /// <c>maps</c> this user may not read: the first is <c>n/a</c> and the second is a hole somebody
+  /// with more privilege could fill (PRD §72.3).
+  /// </remarks>
+  private ProcessRuntime ReadRuntime(int pid, string? imagePath, bool mayRead, out UnknownReason reason) {
+    if (imagePath is not { Length: > 0 }) {
+      reason = mayRead ? UnknownReason.NotSupportedOnPlatform : UnknownReason.NotPermitted;
+      return ProcessRuntime.Unknown;
+    }
+
+    if (!mayRead) {
+      reason = UnknownReason.NotPermitted;
+      return ProcessRuntime.Unknown;
+    }
+
+    // Whole rather than a page: a browser tab's map is tens of kilobytes that the kernel formats one
+    // page per call, and the runtime is as likely to be at the end of it as at the start.
+    if (!this._reader.TryReadWhole($"{this._procRoot}/{pid}/maps", out var maps, out var errno)) {
+      reason = errno is Native.EACCES or Native.EPERM
+        ? UnknownReason.NotPermitted
+        : UnknownReason.ProcessExited;
+
+      return ProcessRuntime.Unknown;
+    }
+
+    reason = UnknownReason.None;
+    return RuntimeDetector.Detect(maps);
+  }
+
+  /// <summary>
+  /// When the image file was created, where the file system remembers (PRD §14).
+  /// </summary>
+  /// <remarks>
+  /// Three different nothings, and each says which it is: no file to ask about, no permission to
+  /// ask, and a file system that carries no birth time — which is most of them, and is the answer
+  /// on an ext4 built without <c>crtime</c> as much as on a network mount.
+  /// </remarks>
+  private static Counter ImageCreated(string? path, bool mayRead) {
+    if (path is not { Length: > 0 })
+      return Counter.Unknown(mayRead ? UnknownReason.NotSupportedOnPlatform : UnknownReason.NotPermitted);
+
+    if (Native.TryCreationTimeUtc(path, out var when, out var errno))
+      return Counter.Of(when.Ticks);
+
+    return errno switch {
+      // The call worked and the file system had nothing to give: an ext4 built without crtime, an
+      // overlay, a network mount. Not a failure, and the commonest answer of the four.
+      0 => Counter.NotSupported,
+      // The image was replaced or deleted while the process kept running it. Its bytes are still
+      // there behind /proc, but the path is not, and a birth time is a property of the path.
+      Native.ENOENT => Counter.Unknown(UnknownReason.SourceGone),
+      Native.EACCES or Native.EPERM => Counter.NotPermitted,
+      _ => Counter.Unknown(UnknownReason.CounterInvalid),
+    };
   }
 
   private void ReadFileDescriptorCount(ProcessCache cache, ref ProcessRecord record) {
