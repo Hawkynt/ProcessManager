@@ -5,7 +5,7 @@ using Hawkynt.ProcessManager.Settings;
 namespace Hawkynt.ProcessManager.App;
 
 /// <summary>Which face of the program the arguments asked for.</summary>
-internal enum RunMode : byte { Desktop, Terminal, List, Find, Kill, SelfTest, HelperCheck, Help, HelpFields, Host, Startup, Users, Services, Connections, Version }
+internal enum RunMode : byte { Desktop, Terminal, List, Find, Kill, SelfTest, HelperCheck, Help, HelpFields, Host, Startup, Users, Services, Connections, Limits, Version }
 
 /// <summary>
 /// Which sockets <c>--connections</c> lists.
@@ -439,6 +439,15 @@ internal sealed record CommandLineOptions {
           explicitMode = true;
           break;
 
+        case "--limits":
+          if (i + 1 >= args.Length || !int.TryParse(args[i + 1], out var limited))
+            return options with { Error = "--limits needs a pid" };
+
+          options = options with { Mode = RunMode.Limits, TargetPid = limited };
+          explicitMode = true;
+          ++i;
+          break;
+
         case "--help-fields":
           return options with { Mode = RunMode.HelpFields };
 
@@ -493,6 +502,7 @@ internal sealed record CommandLineOptions {
       procman --list [--json]        one snapshot to stdout, then exit
       procman --find <pattern>       which processes match, by name, command line or open file
       procman --host                 what this machine is: processor, memory, cache, uptime
+      procman --limits PID           what a process's cgroup allows it, and what it is using
       procman --startup              what is configured to start when you log in
       procman --users                who is logged in, and what their processes cost
       procman --services             which services exist and which are running
