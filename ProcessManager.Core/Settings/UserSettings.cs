@@ -59,6 +59,15 @@ public sealed record UserSettings {
   public int SplitPercent { get; init; }
 
   /// <summary>
+  /// Whether the lower pane was showing (PRD §10).
+  /// </summary>
+  /// <remarks>
+  /// Kept, because it is a decision about how much of the screen the process list gets and nobody
+  /// wants to make it twice a day. On by default: the pane is what the window is shaped around.
+  /// </remarks>
+  public bool LowerPaneVisible { get; init; } = true;
+
+  /// <summary>
   /// Whether a properties tab this machine cannot fill is removed rather than left saying so
   /// (PRD §26).
   /// </summary>
@@ -317,6 +326,12 @@ public sealed record UserSettings {
           settings = settings with { Thresholds = settings.Thresholds with { HotGpuPercent = Number(value, settings.Thresholds.HotGpuPercent) } };
           break;
 
+        case "window.lowerpane":
+          if (TryParseBool(value, out var lowerPane))
+            settings = settings with { LowerPaneVisible = lowerPane };
+
+          break;
+
         case "tabs.unavailable":
           settings = value.ToLowerInvariant() switch {
             "hidden" or "hide" => settings with { HideUnavailableTabs = true },
@@ -367,6 +382,11 @@ public sealed record UserSettings {
 
     if (this.SplitPercent > 0)
       text.Append("window.split=").AppendLine(this.SplitPercent.ToString(CultureInfo.InvariantCulture));
+
+    // Only when it is off. The pane is what the window is shaped around, so its being there is not
+    // a preference worth a line in everybody's file.
+    if (!this.LowerPaneVisible)
+      text.AppendLine("window.lowerpane=false");
 
     if (this.HideUnavailableTabs) {
       text.AppendLine();

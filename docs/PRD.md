@@ -429,16 +429,26 @@ No field or action may be introduced inside a front-end. §103 lists the thirtee
 Primary navigation:
 
 - [x] Processes
-- [ ] 🟡 Performance — a system overview exists; the resource selector does not (§45)
+- [ ] 🟡 Performance — reachable from the rail, but as a window of its own rather than a page in the
+      content region: it is modeless, has its own timer and its own lifetime, and a second copy of it
+      in here would mean two of everything it samples (§45)
 - [ ] Applications / usage history (§44)
-- [ ] 🟡 Startup — `--startup` lists them; there is no view (§42)
-- [ ] 🟡 Users / sessions — `--users` lists them; there is no view (§43)
-- [ ] 🟡 Services — `--services` lists them; there is no view and no control verbs (§41)
-- [ ] 🟡 Network — connections are collected and shown per process, not as a view (§40)
+- [x] Startup (§42)
+- [x] Users / sessions (§43)
+- [ ] 🟡 Services — there is a view; there are still no start or stop verbs, and the view says so
+      rather than offering buttons that would only ever refuse (§41)
+- [x] Network — every socket on the machine, with the process holding it where this account may see
+      one; opening a row goes to that process (§40)
 - [ ] System activity (§51)
-- [ ] Search / find resources (§33)
+- [x] Search / find resources — from the rail, which opens §33's dialog
 - [ ] Logs / history (§63)
 - [ ] Settings (§67)
+
+The four table views are collected when they are chosen and when Refresh is asked for, and never on
+the sample tick: enumerating every unit on the machine once a second would cost more than the thing
+being measured (§5.4). Each says above its rows how many of what came back and when — a table that
+has silently stopped being true is worse than one that admits its age — and each says which of the
+two things "none" means (§72.3).
 
 Optional advanced views: drivers/kernel modules, file activity, disk activity, GPU activity,
 containers/cgroups, jobs, security, devices — all unbuilt.
@@ -447,21 +457,24 @@ containers/cgroups, jobs, security, devices — all unbuilt.
 
 # 10. Global window layout
 
-- [ ] Left navigation rail with the persistent primary views
-- [ ] 🟡 Top command bar with context-sensitive actions — a menu bar exists instead
+- [x] Left navigation rail with the persistent primary views — and it collapses to icons on its own
+      hamburger, so the content region gets the width back on a small screen
+- [x] Top command bar with context-sensitive actions — what a view cannot do is disabled rather than
+      offered and silently inert, which is the failure mode this program has already shipped once
 - [x] Primary content pane: table, tree table, graphs or dashboard
-- [ ] Optional lower pane, resizable, toggled by shortcut, toolbar button and menu
+- [x] Optional lower pane, resizable, toggled by shortcut, toolbar button and menu — Ctrl+D,
+      the strip and View ▸ Lower pane, all three, and whether it was showing survives a restart.
+      Collapsed rather than removed, so the splitter comes back where it was left
 
-Lower-pane modes (all unbuilt as a *pane*; the engine behind the ticked ones works and is reachable
-from the detail pane):
+Lower-pane modes:
 
-- [ ] Summary
-- [ ] Threads
-- [ ] Modules
-- [ ] Handles / descriptors
-- [ ] Network
+- [x] Summary
+- [x] Threads
+- [x] Modules
+- [x] Handles / descriptors
+- [x] Network
 - [ ] Memory mappings
-- [ ] Environment
+- [x] Environment
 - [ ] Windows
 - [ ] Services
 - [ ] Security
@@ -469,6 +482,12 @@ from the detail pane):
 
 The lower pane is the defining Process Explorer interaction and is the highest-value single item in
 this document.
+
+**The window stacks menu, command bar, plots, then the rail beside the content, with the status line
+along the foot.** The adds run the other way round, because the toolkit's layout pass walks its
+children backwards and the child added last claims its edge first. That is not a style note: the
+strip used to be added after the menu on the assumption that earlier meant outer, and the window
+shipped with its plots above its menu bar for exactly as long as nobody looked at a picture of it.
 
 ---
 

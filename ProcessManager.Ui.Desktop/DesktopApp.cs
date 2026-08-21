@@ -75,6 +75,11 @@ public static class DesktopApp {
       // ellipses.
       // Held open when asked, so something outside can photograph the window. The smoke run passes
       // zero and keeps its old behaviour: up, described, gone.
+      // Opened at the start of the hold and kept, for the same reason the performance page is: a
+      // properties window opened at capture time holds exactly one sample, and every one of its six
+      // graphs is an empty grid — a picture that proves the layout and nothing else.
+      ProcessPropertiesWindow? properties = null;
+
       var closer = new NativeForms.Timer { Interval = Math.Max(2500, (int)(holdSeconds * 1000)) };
       closer.Tick += (_, _) => {
         closer.Stop();
@@ -128,6 +133,51 @@ public static class DesktopApp {
             ? $"page expanded: {expanded.Width}x{expanded.Height} -> {expandedPng}\n"
             : $"page expanded: none — {expandedFailure}\n";
 
+          // The rail's views. Counted and not quoted: the number is the empty-view detector, and the
+          // rows are this machine's services, logins and open sockets, which do not belong in a log
+          // that goes into a public repository (PRD §9).
+          description += "shell views:\n" + window.DescribeShellForCapture();
+
+          if (Environment.GetEnvironmentVariable("PROCMAN_SHOOT_VIEW") is { Length: > 0 } wanted && window.ShowView(wanted)) {
+            // A local check only, and never part of the committed set: these views list this
+            // machine's services, its logins and its open sockets, and the capture script's private
+            // pid namespace does not hide any of that. The counts above are the published evidence;
+            // this is for somebody looking at the layout on their own machine.
+            var viewPng = Path.Combine(directory, "view.png");
+            var viewSize = GtkCapture.Window(viewPng, out var viewFailure, window.Text);
+            description += viewSize is { } view
+              ? $"view capture: {view.Width}x{view.Height} -> {viewPng}\n"
+              : $"view capture: none — {viewFailure}\n";
+
+            window.ShowView("Processes");
+          }
+
+          // And one process in a window of its own, on both of the pages §26 grew: the sheet of
+          // facts and the six graphs. The graphs are tiled by arithmetic, which is exactly the kind
+          // of layout that photographs as an empty rectangle while every test around it passes.
+          if (properties is not null) {
+            properties.ShowPage("General");
+            properties.ApplyLayout();
+            description += $"properties:   {properties.TabTitles.Count} tabs, "
+              + $"{properties.GeneralText.Split('\n').Length} facts on General\n";
+
+            var generalPng = Path.Combine(directory, "properties.png");
+            var generalSize = GtkCapture.Window(generalPng, out var generalFailure, properties.Text);
+            description += generalSize is { } general
+              ? $"properties general: {general.Width}x{general.Height} -> {generalPng}\n"
+              : $"properties general: none — {generalFailure}\n";
+
+            properties.ShowPage("Performance");
+            properties.ApplyLayout();
+            description += properties.PerformanceText;
+            var graphsPng = Path.Combine(directory, "properties-performance.png");
+            var graphsSize = GtkCapture.Window(graphsPng, out var graphsFailure, properties.Text);
+            description += graphsSize is { } graphs
+              ? $"properties graphs: {graphs.Width}x{graphs.Height} -> {graphsPng}\n"
+              : $"properties graphs: none — {graphsFailure}\n";
+          } else
+            description += "properties:   no row was selected to open one for\n";
+
           // And the file box of §25.3, which is laid out by arithmetic rather than by anchoring and
           // is therefore exactly the kind that renders as an empty rectangle while every test around
           // it passes. Shown rather than shown modally: a modal one would block this callback and
@@ -163,6 +213,10 @@ public static class DesktopApp {
       opener.Tick += (_, _) => {
         opener.Stop();
         window.OpenPerformance();
+        // A row has to be selected before there is a process to open a window for, and nobody is
+        // here to click one.
+        window.SelectFirstRow();
+        properties = window.OpenProperties();
       };
 
       opener.Start();

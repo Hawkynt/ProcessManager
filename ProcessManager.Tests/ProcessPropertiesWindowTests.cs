@@ -231,7 +231,13 @@ public sealed class ProcessPropertiesWindowTests {
       if (!line.Contains("Descriptors", StringComparison.Ordinal))
         continue;
 
-      Assert.That(line, Does.EndWith("…"), "nobody has counted them, and that is not the same as none");
+      // A placeholder — this stub cannot count them at all — and never a number. Which placeholder
+      // is the probe's business; that it is one rather than a nought is this window's.
+      Assert.That(
+        line.EndsWith("…", StringComparison.Ordinal) || line.EndsWith("n/a", StringComparison.Ordinal),
+        Is.True,
+        $"nobody counted them, and that is not the same as none: {line}"
+      );
     }
   }
 

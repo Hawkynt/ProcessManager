@@ -46,6 +46,26 @@ internal sealed class ProcessFactsPage {
 
   public Control Control => this._list;
 
+  /// <summary>
+  /// Widens the value column to whatever the page is.
+  /// </summary>
+  /// <remarks>
+  /// A command line and an image path are the two widest things on the page and the two most worth
+  /// reading whole, and a fixed column truncated both while leaving a hand's width of empty page to
+  /// the right of them. The scrollbar's width comes off whether or not one is showing, because
+  /// whether one is showing is not something this side can ask — and a value drawn underneath the
+  /// bar loses its last character, which is not a shorter value, it is a different one (PRD §11).
+  /// </remarks>
+  public void Stretch() {
+    if (this._list.Columns.Count < 2)
+      return;
+
+    var available = this._list.Width - Hawkynt.NativeForms.Drawing.DefaultTheme.Instance.ScrollBarSize - 2;
+    var wanted = Math.Max(320, available - this._list.Columns[0].Width);
+    if (wanted != this._list.Columns[1].Width)
+      this._list.Columns[1].Width = wanted;
+  }
+
   /// <summary>What the page currently shows, one <c>name: value</c> per line, for a test.</summary>
   public string Description {
     get {

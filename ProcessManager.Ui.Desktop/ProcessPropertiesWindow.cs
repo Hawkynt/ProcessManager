@@ -77,7 +77,9 @@ public sealed class ProcessPropertiesWindow : Form {
     ProcessField.Priority,
     ProcessField.Nice,
     ProcessField.ThreadCount,
-    ProcessField.HandleCount,
+    // The descriptor count is not here. The table's column is filled on demand and reads "…" for
+    // every process nobody has asked about, and this window has asked — it counts them every sample
+    // for the graph. The freshly counted one goes in as an extra row below.
     ProcessField.Container,
     ProcessField.ImagePath,
     ProcessField.CommandLine
@@ -240,6 +242,22 @@ public sealed class ProcessPropertiesWindow : Form {
     }
   }
 
+  /// <summary>
+  /// Brings one page to the front, by the caption on its tab.
+  /// </summary>
+  /// <remarks>
+  /// For the capture run: a page nobody photographs is one whose layout regressions ship, and the
+  /// graphs are the pages here most able to come up empty while every test around them passes
+  /// (PRD §9.6).
+  /// </remarks>
+  public bool ShowPage(string title) {
+    if (this._tabs is null || this.PageNamed(title) is not { } page)
+      return false;
+
+    this._tabs.SelectedTab = page;
+    return true;
+  }
+
   /// <summary>What the General page says, for a test with no display to read it off.</summary>
   public string GeneralText => this._general.Description;
 
@@ -286,9 +304,9 @@ public sealed class ProcessPropertiesWindow : Form {
     // A miss on the main window's on-demand map leaves default(Counter) behind, whose reason is None
     // — "the value is present" — so an uncounted process would claim to hold no descriptors at all.
     // The record's own count is the fallback, and the reason it carries is the truth about it.
-    var descriptors = handles.HasValue ? handles : process.HandleCount;
+    var descriptors = this.Descriptors(handles.HasValue ? handles : process.HandleCount);
 
-    this._general.Update(row, this.GeneralExtras(in process));
+    this._general.Update(row, this.GeneralExtras(in process, descriptors));
     this._cpu.Update(row);
     this._memory.Update(row);
     this._io.Update(row, [
@@ -298,26 +316,33 @@ public sealed class ProcessPropertiesWindow : Form {
     ]);
 
     this.UpdateGpu(row, in process, delta, index);
-    this._performance.Append(in process, delta, index, this.Descriptors(descriptors));
+    this._performance.Append(in process, delta, index, descriptors);
     this._performance.Refresh();
 
     this._pane.UpdateOverview(in process, row);
     this._pane.Refresh();
+
+    // The window cannot see its own resize — a control outside the toolkit's assembly has no event
+    // for it — so the layout runs on the tick as well. Both halves of it are no-ops once the size
+    // has settled.
+    this.ApplyLayout();
   }
 
   /// <summary>
   /// The descriptor count for the graph.
   /// </summary>
   /// <remarks>
-  /// Counted here, and only while the Performance page is the one showing. On Linux this makes the
-  /// kernel walk the process's descriptor table, which is why it is not in the sample (PRD §5.4) —
-  /// but this window is pinned to one process, and a graph of thread count next to an empty box
-  /// where the descriptor count should be is the kind of half-answer §72.3 exists to stop.
+  /// Counted here, every sample, for as long as this window is open. On Linux that makes the kernel
+  /// walk the process's descriptor table, which is why it is not in the sample loop (PRD §5.4) — but
+  /// this is one process rather than a thousand, and opening a properties window <em>is</em> the
+  /// opt-in that §5.4 asks for.
+  /// <para>
+  /// It was collected only while the Performance page was the one showing, which is the discipline
+  /// the lists follow and the wrong one for a graph: switching to the page then showed an hour of
+  /// axis with nothing on it, because nothing had been counted until the moment somebody looked.
+  /// </para>
   /// </remarks>
   private Counter Descriptors(Counter fallback) {
-    if (this._tabs?.SelectedTab?.Text != _PerformanceTab)
-      return fallback;
-
     var counted = this._probe.GetHandleCount(this.Key);
     return counted.Reason == UnknownReason.NotSampledYet ? fallback : counted;
   }
@@ -368,8 +393,9 @@ public sealed class ProcessPropertiesWindow : Form {
   /// running process — and if the file on disk is replaced, the mapping in memory is still the old
   /// one, which is a fact the Modules page reports rather than something to re-read every second.
   /// </remarks>
-  private List<KeyValuePair<string, string>> GeneralExtras(in ProcessRecord process) {
+  private List<KeyValuePair<string, string>> GeneralExtras(in ProcessRecord process, Counter descriptors) {
     var extras = new List<KeyValuePair<string, string>> {
+      new("Handles", Humanize.Count(descriptors)),
       new("Running for", Uptime(process.StartTimeUtcTicks)),
     };
 
@@ -510,6 +536,10 @@ public sealed class ProcessPropertiesWindow : Form {
     this._copy.Bounds = new(Margin, y, 90, 28);
     this._reveal.Bounds = new(Margin + 100, y, 120, 28);
     this._file.Bounds = new(Margin + 230, y, 150, 28);
+
+    foreach (var page in (ReadOnlySpan<ProcessFactsPage>)[this._general, this._cpu, this._memory, this._io, this._gpu])
+      page.Stretch();
+
     this._performance.Refresh();
   }
 

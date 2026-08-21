@@ -29,6 +29,14 @@ public sealed class MainWindow : Form {
   private readonly SplitContainer _split = new();
   private readonly Panel _plots = new();
   private readonly Label _status = new();
+  private readonly NavigationView _rail = new();
+  private readonly ToolStrip _commands = new();
+  private readonly Panel _content = new();
+  private readonly List<ShellView> _views = [];
+  private readonly ShellViews _shell;
+  private ShellView? _shown;
+  private ToolStripButton? _lowerPaneButton;
+  private ToolStripMenuItem? _lowerPaneItem;
   private readonly NativeForms.Timer _timer = new();
   private readonly HistoryRing<Rate> _cpuHistory = new(600);
   private readonly HistoryRing<Rate> _memoryHistory = new(600);
@@ -49,6 +57,7 @@ public sealed class MainWindow : Form {
     this._actions = actions;
     this._binder = new(this._tree);
     this._details = new(probe) { Actions = actions };
+    this._shell = new(probe);
 
     this.Text = "Process Manager";
     this.Bounds = new(0, 0, 1240, 820);
@@ -60,15 +69,21 @@ public sealed class MainWindow : Form {
     // one (PRD §45.1).
     this.MinimumSize = new(900, 600);
 
-    // Docked, in the order the layout is stacked: the menu on top, the plots under it, the status
-    // line at the bottom, and the splitter taking everything that is left. Fixed bounds were the
-    // first version and did not survive a resize.
-    // Added outermost-first: the docking walk gives each control the edge of what is left, so the
-    // menu has to come before the plot strip or the strip takes the top of the window.
-    this.BuildStatus();
-    this.BuildMenu();
-    this.BuildPlots();
+    // Added in reverse of the order they stack, because that is how the toolkit docks: its layout
+    // pass walks the children backwards, so the child added *last* claims its edge first and ends up
+    // outermost. The window reads menu, command bar, plots, then the rail beside the content, with
+    // the status line along the foot — so the adds run the other way round.
+    //
+    // This is not a style note. The strip used to be added after the menu on the assumption that
+    // earlier meant outer, and the window shipped with its plots above its menu bar for exactly as
+    // long as nobody looked at a picture of it.
     this.BuildSplit();
+    this.BuildRail();
+    this.BuildStatus();
+    this.BuildPlots();
+    this.BuildCommandBar();
+    this.BuildMenu();
+    this.BuildViews();
 
     this._timer.Interval = 1000;
     this._timer.Tick += (_, _) => this.Refresh();
@@ -114,6 +129,7 @@ public sealed class MainWindow : Form {
     if (settings.WindowWidth > 0 && settings.WindowHeight > 0)
       this.Bounds = new(this.Bounds.X, this.Bounds.Y, settings.WindowWidth, settings.WindowHeight);
 
+    this.LowerPaneVisible = settings.LowerPaneVisible;
     this.RebuildColumns();
 
     this._autoSaver = new(this.DescribeSettings, save);
@@ -139,6 +155,7 @@ public sealed class MainWindow : Form {
       Thresholds = ProcessRow.Thresholds,
       WindowWidth = this.Width,
       WindowHeight = this.Height,
+      LowerPaneVisible = this.LowerPaneVisible,
     };
 
     return this._split.Height > 0
@@ -160,7 +177,10 @@ public sealed class MainWindow : Form {
     builder.AppendLine($"controls:     {this.Controls.Count}");
     builder.AppendLine($"process rows: {this._tree.Nodes.Count} roots, {this._tree.VisibleNodeCount} visible");
     builder.AppendLine($"columns:      {this._tree.Columns.Count}");
-    builder.AppendLine($"split at:     {this._split.SplitterDistance}");
+    builder.AppendLine($"split at:     {this._split.SplitterDistance}, lower pane {(this.LowerPaneVisible ? "shown" : "hidden")}");
+    builder.AppendLine($"rail:         {this._rail.Bounds}, {this._rail.Items.Count} entries — {string.Join(", ", this._rail.Items)}");
+    builder.AppendLine($"command bar:  {this._commands.Bounds}, {this._commands.Items.Count} items");
+    builder.AppendLine($"content:      {this._content.Bounds} showing {this._shown?.Title ?? "nothing"}");
     builder.AppendLine($"plots:        cpu {this._cpuPlot.Bounds}, memory {this._memoryPlot.Bounds}, cores {this._cores.Bounds}");
     builder.AppendLine($"topology:     {this._cores.Topology.Cores.Count} logical, {this._cores.Topology.Packages.Count} socket(s), hybrid {this._cores.Topology.IsHybrid}");
     builder.AppendLine($"status:       {this._status.Text}");
@@ -298,7 +318,11 @@ public sealed class MainWindow : Form {
     this.BuildTree();
     this._split.Panel1.Controls.Add(this._tree);
     this._split.Panel2.Controls.Add(this._details.Control);
-    this.Controls.Add(this._split);
+
+    // Into the content region rather than straight into the window: the rail beside it swaps what
+    // is in here, and the process tree is one of the things it swaps to (PRD §10).
+    this._content.Dock = DockStyle.Fill;
+    this.Controls.Add(this._content);
   }
 
   private void BuildTree() {
@@ -893,6 +917,258 @@ public sealed class MainWindow : Form {
     this.Controls.Add(this._status);
   }
 
+  #region the shell (PRD §10)
+
+  /// <summary>
+  /// The rail down the left, with the views that are always there (PRD §10).
+  /// </summary>
+  /// <remarks>
+  /// Persistent, and that is the requirement rather than a style: every one of these was already
+  /// collected and already printable from the command line, and §9's complaint was that there was no
+  /// way to <em>get</em> to any of it. A menu item somebody has to remember exists is not navigation.
+  /// </remarks>
+  private void BuildRail() {
+    this._rail.Dock = DockStyle.Left;
+    // Wide enough for the longest caption. The rail collapses to icons on its own hamburger, and a
+    // rail whose captions are cut off reads as one that is already collapsed.
+    this._rail.Width = 168;
+    this._rail.SelectedIndexChanged += (_, _) => this.ShowView(this._rail.SelectedIndex);
+    this.Controls.Add(this._rail);
+  }
+
+  /// <summary>
+  /// Builds the views and puts their names in the rail.
+  /// </summary>
+  /// <remarks>
+  /// The order is the order §9 lists them in. Processes is first and is what the window opens on,
+  /// because it is what the program is for.
+  /// </remarks>
+  private void BuildViews() {
+    this.AddView("Processes", this._split, () => { }, () => $"{this._view.RowCount} rows", () => this._view.RowCount);
+    // A window rather than a page: the performance view is modeless, has its own timer and its own
+    // lifetime, and embedding a second copy of it here would mean two of everything it samples.
+    this.AddView("Performance", null, this.ShowPerformance, () => "opens the performance window", () => 0);
+    this.AddView("Startup", this._shell.StartupControl, this._shell.RefreshStartup, () => this._shell.StartupText, () => this._shell.StartupRows);
+    this.AddView("Users", this._shell.SessionsControl, this._shell.RefreshSessions, () => this._shell.SessionsText, () => this._shell.SessionsRows);
+    this.AddView("Services", this._shell.ServicesControl, this._shell.RefreshServices, () => this._shell.ServicesText, () => this._shell.ServicesRows);
+    this.AddView("Network", this._shell.NetworkControl, this.RefreshNetwork, () => this._shell.NetworkText, () => this._shell.NetworkRows);
+    this.AddView("Find resources", null, this.FindResource, () => "opens the find dialog", () => 0);
+
+    // Opening a socket row goes to the process holding it, which is the question a connection list
+    // is usually being read to answer (PRD §33, §40).
+    this._shell.NetworkRowOpened += (_, _) => this.GoToSocketOwner();
+
+    this.ShowView(0);
+  }
+
+  /// <summary>The rail's entries, top to bottom (PRD §9).</summary>
+  public IReadOnlyList<string> ViewTitles {
+    get {
+      var titles = new List<string>(this._views.Count);
+      foreach (var view in this._views)
+        titles.Add(view.Title);
+
+      return titles;
+    }
+  }
+
+  /// <summary>Which view is in the content region.</summary>
+  public string ShownView => this._shown?.Title ?? string.Empty;
+
+  /// <summary>Chooses a view by name, the way clicking the rail does. False for a name it has not got.</summary>
+  public bool ShowView(string title) {
+    ArgumentNullException.ThrowIfNull(title);
+
+    for (var i = 0; i < this._views.Count; ++i) {
+      if (!string.Equals(this._views[i].Title, title, StringComparison.OrdinalIgnoreCase))
+        continue;
+
+      // Through the rail, so one gesture does one thing: assigning the index raises the event that
+      // swaps the view. Calling both would open a window-opening entry's window twice.
+      if (this._rail.SelectedIndex == i)
+        // Except when it is already there — the rail raises nothing then, and a caller asking for
+        // the view that is showing still means "collect it again".
+        this.ShowView(i);
+      else
+        this._rail.SelectedIndex = i;
+
+      return true;
+    }
+
+    return false;
+  }
+
+  /// <summary>
+  /// What a view holds, in text — how a test with no display, and the capture log, read one
+  /// (PRD §9.6).
+  /// </summary>
+  public string DescribeView(string title) {
+    foreach (var view in this._views)
+      if (string.Equals(view.Title, title, StringComparison.OrdinalIgnoreCase))
+        return view.Describe();
+
+    return string.Empty;
+  }
+
+  private void AddView(string title, Control? content, Action show, Func<string> describe, Func<int> rows) {
+    this._views.Add(new(title, content, show, describe, rows));
+    this._rail.AddItem(title);
+  }
+
+  /// <summary>
+  /// Puts one view in the content region.
+  /// </summary>
+  /// <remarks>
+  /// Swapped in and out rather than hidden: the toolkit's docking pass does not skip an invisible
+  /// child, so a hidden view would go on reserving the whole content region and the visible one
+  /// would be laid out into nothing. Removing a control returns it to its unrealized shape and
+  /// adding it back realizes it again, which is exactly what is wanted.
+  /// </remarks>
+  private void ShowView(int index) {
+    if ((uint)index >= (uint)this._views.Count)
+      return;
+
+    var view = this._views[index];
+    if (view.Content is null) {
+      // An entry that opens a window of its own leaves the content region — and the rail's
+      // selection — where they were, so the rail never claims to be showing something it is not.
+      //
+      // Put back first, and then opened. The other way round the rail stays on the entry for as
+      // long as the window it opened is modal, and stays there for good if opening it throws.
+      if (this._shown is { } current)
+        this._rail.SelectedIndex = this._views.IndexOf(current);
+
+      view.Show();
+      return;
+    }
+
+    if (ReferenceEquals(this._shown, view)) {
+      view.Show();
+      return;
+    }
+
+    if (this._shown?.Content is { } previous)
+      this._content.Controls.Remove(previous);
+
+    this._shown = view;
+    view.Content.Dock = DockStyle.Fill;
+    this._content.Controls.Add(view.Content);
+    view.Show();
+    this.UpdateCommandBar();
+  }
+
+  /// <summary>
+  /// The strip of actions above the content (PRD §10).
+  /// </summary>
+  /// <remarks>
+  /// Context-sensitive is the whole requirement: a command bar that offers "End task" while a list
+  /// of services is showing is a menu with a different shape. What is enabled here follows the view
+  /// and the selection, and what a view cannot do is disabled rather than silently doing nothing —
+  /// which is the failure mode this program has already shipped once (PRD §26).
+  /// </remarks>
+  private void BuildCommandBar() {
+    this._commands.Dock = DockStyle.Top;
+    // A ToolStrip has no intrinsic height, the same way a MenuStrip has none: docked without one it
+    // is present, mapped and nought pixels tall, which photographs exactly like a strip nobody added.
+    this._commands.Height = 30;
+
+    this._commands.Items.Add(Command("Properties", this.ShowProperties));
+    this._commands.Items.Add(Command("End task", this.EndTask));
+    this._commands.Items.Add(new ToolStripSeparator());
+    this._lowerPaneButton = Command("Lower pane", this.ToggleLowerPane);
+    this._lowerPaneButton.CheckOnClick = false;
+    this._commands.Items.Add(this._lowerPaneButton);
+    this._commands.Items.Add(Command("Columns…", this.ChooseColumns));
+    this._commands.Items.Add(new ToolStripSeparator());
+    this._commands.Items.Add(Command("Refresh", this.RefreshCurrentView));
+    this.Controls.Add(this._commands);
+  }
+
+  private static ToolStripButton Command(string text, Action action) {
+    var button = new ToolStripButton(text);
+    button.Click += (_, _) => action();
+    return button;
+  }
+
+  /// <summary>
+  /// Enables what the view showing can actually do.
+  /// </summary>
+  /// <remarks>
+  /// Only the process view has processes, so only it has the verbs that act on one. The rest keep
+  /// Refresh, which is the one thing every view here has — none of them follows the sample tick.
+  /// </remarks>
+  private void UpdateCommandBar() {
+    var processes = this._shown is null || ReferenceEquals(this._shown.Content, this._split);
+    foreach (var item in this._commands.Items)
+      if (item is ToolStripButton button && button.Text != "Refresh")
+        button.Enabled = processes;
+
+    if (this._lowerPaneButton is { } lower)
+      lower.Text = this.LowerPaneVisible ? "Hide lower pane" : "Show lower pane";
+  }
+
+  /// <summary>Collects the showing view's rows again, which is the only way any of them updates.</summary>
+  private void RefreshCurrentView() {
+    if (this._shown is { } view)
+      view.Show();
+
+    this.Refresh();
+  }
+
+  private void RefreshNetwork() {
+    var names = new Dictionary<int, string>();
+    foreach (var process in this._sampler.Current.Processes)
+      names[process.Pid] = process.Name;
+
+    this._shell.RefreshNetwork(names);
+  }
+
+  private void GoToSocketOwner() {
+    var pid = this._shell.SelectedNetworkPid;
+    if (pid <= 0) {
+      MessageBox.Show(
+        "This socket's owning process is not visible from this account. Sockets held by other users' "
+        + "processes cannot be attributed without privilege.",
+        "Process Manager"
+      );
+
+      return;
+    }
+
+    this._rail.SelectedIndex = 0;
+    if (!this.SelectPid(pid))
+      MessageBox.Show($"The socket belongs to pid {pid}, which is not in the process list.", "Process Manager");
+  }
+
+  #endregion
+
+  #region the lower pane (PRD §10)
+
+  /// <summary>Whether the detail pane at the foot of the process view is showing.</summary>
+  public bool LowerPaneVisible {
+    get => !this._split.Panel2Collapsed;
+    set {
+      this._split.Panel2Collapsed = !value;
+      if (this._lowerPaneItem is { } item)
+        item.Checked = value;
+
+      this.UpdateCommandBar();
+    }
+  }
+
+  /// <summary>
+  /// Shows or hides the lower pane — the defining Process Explorer interaction (PRD §10).
+  /// </summary>
+  /// <remarks>
+  /// Reachable three ways, and that is the requirement rather than belt and braces: from the menu
+  /// for somebody looking for it, from the command bar for somebody who works from the strip, and
+  /// from Ctrl+D for somebody who has stopped looking at either. Collapsed rather than removed, so
+  /// the splitter comes back where it was left.
+  /// </remarks>
+  private void ToggleLowerPane() => this.LowerPaneVisible = !this.LowerPaneVisible;
+
+  #endregion
+
   private void BuildMenu() {
     // Docked *and* given a height. A MenuStrip has no intrinsic one — the toolkit's own demo assigns
     // its bounds by hand — so docking it Top without a height produces a menu that is present,
@@ -954,6 +1230,14 @@ public sealed class MainWindow : Form {
     menu.Items.Add(sort);
 
     view.DropDownItems.Add(new ToolStripSeparator());
+
+    // The one interaction §10 calls the highest-value single item in the document, and the third of
+    // its three ways in. The chord is dispatched by the form through the menu strip, so it works
+    // wherever the focus happens to be.
+    this._lowerPaneItem = new("Lower pane") { ShortcutKeys = Keys.Control | Keys.D, Checked = true };
+    this._lowerPaneItem.Click += (_, _) => this.ToggleLowerPane();
+    view.DropDownItems.Add(this._lowerPaneItem);
+
     view.DropDownItems.Add(Item("Select columns…", this.ChooseColumns));
     view.DropDownItems.Add(Item("Performance…", this.ShowPerformance));
     view.DropDownItems.Add(Item("Colour legend…", this.ShowLegend));
@@ -1030,6 +1314,8 @@ public sealed class MainWindow : Form {
       this._laidOutWidth = this._plots.Width;
       this.LayOutPlots();
     }
+
+    this._shell.Stretch();
 
     if (this._splitPlaced || this._split.Height <= 240)
       return;
@@ -1312,6 +1598,61 @@ public sealed class MainWindow : Form {
   public PerformanceWindow OpenPerformance() {
     this.ShowPerformance();
     return this._performance!;
+  }
+
+  /// <summary>
+  /// Opens the selected process's properties window and returns it, so a capture run can photograph
+  /// it too (PRD §9.6, §26).
+  /// </summary>
+  /// <remarks>
+  /// §26 is almost entirely about pages, and the two new ones are laid out by arithmetic — the kind
+  /// that renders as an empty rectangle while every test around it passes.
+  /// </remarks>
+  public ProcessPropertiesWindow? OpenProperties() {
+    this.ShowProperties();
+    // Fed one sample immediately, because a properties window opened and photographed in the same
+    // callback would otherwise be a set of empty lists and six empty graphs.
+    if (this._properties.Count == 0)
+      return null;
+
+    var window = this._properties[^1];
+    window.UpdateFromSample(
+      this._sampler.Current,
+      this._sampler.Delta,
+      this._binder.RowFor(window.Key),
+      this._binder.HandleCountOf(window.Key)
+    );
+
+    return window;
+  }
+
+  /// <summary>
+  /// What each of the rail's views holds, counted rather than quoted (PRD §9.6).
+  /// </summary>
+  /// <remarks>
+  /// Counts and no contents, deliberately. The empty-view detector is the number; the rows
+  /// themselves are this machine's services, its logins and its open sockets, and none of that
+  /// belongs in a log that goes into a public repository — which is the same call the capture
+  /// script's private pid namespace makes about the process list.
+  /// </remarks>
+  public string DescribeShellForCapture() {
+    var builder = new System.Text.StringBuilder();
+    var opened = this.ShownView;
+    foreach (var view in this._views) {
+      if (view.Content is null) {
+        builder.AppendLine($"  {view.Title,-16} (opens a window of its own)");
+        continue;
+      }
+
+      this.ShowView(view.Title);
+      // The heading is the first line and says how many of what came back, including which of the
+      // two things "none" means. Everything after it is the machine's own business.
+      var heading = view.Describe().Split('\n')[0];
+      builder.AppendLine($"  {view.Title,-16} {view.Rows()} row(s) — {heading}");
+    }
+
+    this.ShowView(opened);
+    return builder.ToString();
   }
 
   private void ShowPerformance() {

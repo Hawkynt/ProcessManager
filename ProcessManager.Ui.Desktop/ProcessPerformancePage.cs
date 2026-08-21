@@ -49,7 +49,10 @@ internal sealed class ProcessPerformancePage {
   private readonly HistoryPlot _cpuPlot = new() { Caption = "CPU", Unit = PerformanceUnit.Percent, Maximum = 100 };
   private readonly HistoryPlot _memoryPlot = new() { Caption = "Memory", Unit = PerformanceUnit.Bytes, Filled = false };
   private readonly HistoryPlot _ioPlot = new() { Caption = "Disk", Unit = PerformanceUnit.BytesPerSecond, Filled = false };
-  private readonly HistoryPlot _gpuPlot = new() { Caption = "GPU", Unit = PerformanceUnit.Percent, Maximum = 100 };
+  // Fixed at the whole adapter, and the label says so. A GPU percentage is already a share of the
+  // whole device, so unlike the CPU's it has nowhere above a hundred to go — and a graph whose
+  // ceiling is unlabelled is a filled area at two thirds of the height meaning two thirds of nothing.
+  private readonly HistoryPlot _gpuPlot = new() { Caption = "GPU", Unit = PerformanceUnit.Percent, Maximum = 100, ScaleLabel = "100 %" };
   private readonly HistoryPlot _handlePlot = new() { Caption = "Descriptors", Unit = PerformanceUnit.Count };
   private readonly HistoryPlot _threadPlot = new() { Caption = "Threads", Unit = PerformanceUnit.Count };
 
@@ -236,8 +239,11 @@ internal sealed class ProcessPerformancePage {
 
     var x = _Gap;
     foreach (var button in this._spans) {
-      button.Bounds = new(x, 4, 74, 24);
-      x += 80;
+      // Wide enough for the longest label it carries. At seventy-four "15 min" photographed as
+      // "15 ...", which reads as a button that does something else — the same defect the file box's
+      // "Compute SHA…" button had.
+      button.Bounds = new(x, 4, 86, 24);
+      x += 92;
     }
 
     const int Columns = 2;
