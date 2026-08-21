@@ -204,8 +204,10 @@ public sealed class ColumnLayoutTests {
   [Test]
   public void AWideSetStaysInsideTheScreenAtEveryWidth() {
     var columns = new ColumnLayout([.. Settings.UserSettings.Presets["forensic"]]);
+    // One buffer for the whole sweep: a stackalloc inside the loop would grow the frame by three
+    // hundred and sixty of them.
+    Span<ColumnPlacement> placements = stackalloc ColumnPlacement[64];
     for (var width = 40; width <= 400; ++width) {
-      Span<ColumnPlacement> placements = stackalloc ColumnPlacement[64];
       var count = columns.Place(width, placements);
       Assert.That(count, Is.GreaterThan(0), $"nothing was placed at {width}");
       Assert.That(
