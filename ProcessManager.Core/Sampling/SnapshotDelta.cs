@@ -25,6 +25,7 @@ public sealed class SnapshotDelta {
   private Rate[] _cyclesPerSecond = [];
   private Rate[] _privateBytesDelta = [];
   private bool[] _isNew = [];
+  private Rate[] _memoryPercent = [];
   private Rate[] _perCoreBusy = [];
   private Rate[] _perCoreKernel = [];
   private Rate[] _perCoreUser = [];
@@ -93,6 +94,17 @@ public sealed class SnapshotDelta {
   /// <summary>True when this process was not in the previous snapshot (the green flash).</summary>
   public bool IsNew(int index) => this._isNew[index];
 
+  /// <summary>
+  /// What share of the machine's memory a process holds resident.
+  /// </summary>
+  /// <remarks>
+  /// Computed here rather than where the columns are rendered, because that is the only place the
+  /// machine's total is in scope alongside the process — a percentage of an unknown total is not a
+  /// percentage.
+  /// </remarks>
+  public Rate MemoryPercent(int index)
+    => (uint)index < (uint)this._memoryPercent.Length ? this._memoryPercent[index] : Rate.NotSampledYet;
+
   /// <summary>Busy percentage of one logical core.</summary>
   public Rate PerCoreBusyPercent(int core)
     => (uint)core < (uint)this._perCoreBusy.Length ? this._perCoreBusy[core] : Rate.NotSampledYet;
@@ -132,6 +144,8 @@ public sealed class SnapshotDelta {
     EnsureLength(ref this._cyclesPerSecond, count);
     EnsureLength(ref this._privateBytesDelta, count);
     EnsureLength(ref this._isNew, count);
+    EnsureLength(ref this._memoryPercent, count);
+    FillMemoryPercent(this._memoryPercent, current);
 
     this._exited.Clear();
     this.StartedCount = 0;
@@ -340,6 +354,30 @@ public sealed class SnapshotDelta {
   }
 
   #endregion
+
+  /// <summary>
+  /// Each process's resident memory against the machine's total.
+  /// </summary>
+  /// <remarks>
+  /// Needs no previous sample, so it is filled on the first one too — unlike every rate beside it.
+  /// A machine that will not say how much memory it has leaves this unknown rather than reporting
+  /// every process at nought percent (PRD §5.3).
+  /// </remarks>
+  private static void FillMemoryPercent(Rate[] destination, SystemSnapshot current) {
+    var processes = current.Processes;
+    var total = current.System.TotalMemoryBytes;
+    if (!total.HasValue || total.Value == 0) {
+      for (var i = 0; i < processes.Length; ++i)
+        destination[i] = Rate.Unknown(total.HasValue ? UnknownReason.CounterInvalid : total.Reason);
+
+      return;
+    }
+
+    for (var i = 0; i < processes.Length; ++i)
+      destination[i] = processes[i].WorkingSetBytes.HasValue
+        ? Rate.Of(processes[i].WorkingSetBytes.Value * 100d / total.Value)
+        : Rate.Unknown(processes[i].WorkingSetBytes.Reason);
+  }
 
   private static void EnsureLength<T>(ref T[] array, int length) {
     if (array.Length < length)

@@ -289,6 +289,9 @@ public sealed class FieldRegistryTests {
     records[0].ContainerPath = "/user.slice";
     records[0].SwapBytes = Counter.Of(4096ul);
     records[0].LastCpu = 3;
+    // A machine total, so the share-of-memory field is exercised as a number rather than skipped as
+    // an unknown.
+    snapshot.System.TotalMemoryBytes = Counter.Of(16ul * 1024 * 1024 * 1024);
 
     var delta = new SnapshotDelta();
     delta.Update(null, snapshot, CpuPercentMode.Normalized);
@@ -300,7 +303,7 @@ public sealed class FieldRegistryTests {
         continue;
 
       var shown = FieldAccessor.Text(descriptor.Id, in snapshot.Processes[0], delta, 0);
-      if (shown.Length == 0 || shown == Humanize.Placeholder(UnknownReason.NotSampledYet))
+      if (shown.Length == 0 || IsPlaceholder(shown))
         continue;
 
       var writer = new StringWriter();
@@ -309,6 +312,24 @@ public sealed class FieldRegistryTests {
 
       Assert.That(cell, Is.Not.Empty, $"{descriptor.Key} shows '{shown}' and exports an empty cell");
     }
+  }
+
+  /// <summary>
+  /// Whether what a column showed was one of the "there is no value" marks rather than a value.
+  /// </summary>
+  /// <remarks>
+  /// An unknown number is deliberately an empty cell in a data file — a spreadsheet column with "?"
+  /// in it is no longer numeric — so the rule above is about fields that <em>have</em> a value and
+  /// still export nothing. That was one placeholder's worth of exception and should always have been
+  /// all of them: the first field to be unknown for any other reason failed the test for being
+  /// correct.
+  /// </remarks>
+  private static bool IsPlaceholder(string shown) {
+    foreach (var reason in Enum.GetValues<UnknownReason>())
+      if (reason != UnknownReason.None && shown == Humanize.Placeholder(reason))
+        return true;
+
+    return false;
   }
 
 }

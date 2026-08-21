@@ -462,7 +462,9 @@ public sealed class LinuxProbe : ISystemProbe {
     record.ParentPid = scanner.NextInt32();                // 4 ppid
     scanner.Skip(1);                                       // 5 pgrp
     record.SessionId = scanner.NextInt32();                // 6 session
-    scanner.Skip(3);                                       // 7 tty_nr, 8 tpgid, 9 flags
+    // Free: the field is already under the cursor, and it was being skipped over.
+    record.TerminalDevice = scanner.NextInt32();           // 7 tty_nr
+    scanner.Skip(2);                                       // 8 tpgid, 9 flags
     var minorFaults = scanner.NextUInt64();                // 10 minflt
     scanner.Skip(1);                                       // 11 cminflt
     var majorFaults = scanner.NextUInt64();                // 12 majflt
@@ -470,7 +472,7 @@ public sealed class LinuxProbe : ISystemProbe {
     var utime = scanner.NextUInt64();                      // 14
     var stime = scanner.NextUInt64();                      // 15
     scanner.Skip(2);                                       // 16 cutime, 17 cstime
-    record.Priority = scanner.NextInt32();                 // 18
+    record.Priority = scanner.NextInt32();                 // 18 priority, the kernel's own number
     record.Nice = scanner.NextInt32();                     // 19
     record.ThreadCount = scanner.NextInt32();              // 20
     scanner.Skip(1);                                       // 21 itrealvalue
@@ -498,6 +500,7 @@ public sealed class LinuxProbe : ISystemProbe {
     record.SharedResidentBytes = Counter.NotSupported;
     record.ProportionalBytes = Counter.NotSampledYet;
     record.ProportionalSwapBytes = Counter.NotSampledYet;
+    record.UniqueBytes = Counter.NotSampledYet;
     record.PeakWorkingSetBytes = Counter.NotSupported;
     record.PeakVirtualBytes = Counter.NotSupported;
     record.PagedPoolBytes = Counter.NotSupported;
@@ -650,6 +653,7 @@ public sealed class LinuxProbe : ISystemProbe {
       // Nobody asked for it, which is not the same as the machine having none.
       record.ProportionalBytes = Counter.NotSampledYet;
       record.ProportionalSwapBytes = Counter.NotSampledYet;
+      record.UniqueBytes = Counter.NotSampledYet;
     } else if (this.MayRead(record))
       this.ReadProportionalSetSize(cache, ref record);
     else {
@@ -657,6 +661,7 @@ public sealed class LinuxProbe : ISystemProbe {
       // a failure to report — it is the answer without the elevated helper (PRD §8.3).
       record.ProportionalBytes = Counter.NotPermitted;
       record.ProportionalSwapBytes = Counter.NotPermitted;
+      record.UniqueBytes = Counter.NotPermitted;
     }
   }
 
@@ -712,10 +717,14 @@ public sealed class LinuxProbe : ISystemProbe {
       if (errno is Native.EACCES or Native.EPERM) {
         record.ProportionalBytes = Counter.NotPermitted;
         record.ProportionalSwapBytes = Counter.NotPermitted;
+        record.UniqueBytes = Counter.NotPermitted;
       }
 
       return;
     }
+
+    var privateClean = 0ul;
+    var privateDirty = 0ul;
 
     var scanner = new AsciiScanner(content);
     while (!scanner.IsEmpty) {
@@ -726,7 +735,15 @@ public sealed class LinuxProbe : ISystemProbe {
         record.ProportionalBytes = Counter.Of(value * 1024);
       else if (TryValue(line, "SwapPss:"u8, out value))
         record.ProportionalSwapBytes = Counter.Of(value * 1024);
+      // Private clean plus private dirty is the unique set: the memory only this process maps, and
+      // so the only memory that would come back if it exited. Free once the file is open.
+      else if (TryValue(line, "Private_Clean:"u8, out value))
+        privateClean = value * 1024;
+      else if (TryValue(line, "Private_Dirty:"u8, out value))
+        privateDirty = value * 1024;
     }
+
+    record.UniqueBytes = Counter.Of(privateClean + privateDirty);
   }
 
   /// <summary>
