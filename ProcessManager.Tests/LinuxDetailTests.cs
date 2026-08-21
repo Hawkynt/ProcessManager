@@ -24,6 +24,55 @@ public sealed partial class LinuxDetailTests {
 
   private static LinuxProbe Probe() => new(new LinuxProbeOptions());
 
+  /// <summary>
+  /// The count behind the window's handle column, against the kernel's own answer (PRD §32).
+  /// </summary>
+  /// <remarks>
+  /// This is the on-demand path rather than the sampled one: the window asks for a count on its own
+  /// schedule, because counting descriptors for every process every second is exactly the expense
+  /// §5.4 exists to avoid. Every other test in the suite stubs it, so nothing held it against a real
+  /// process until now.
+  /// </remarks>
+  [Test]
+  public void ItCountsTheDescriptorsThisProcessHolds() {
+    using var probe = Probe();
+
+    // The kernel's own answer, read a completely different way.
+    var expected = Directory.GetFileSystemEntries("/proc/self/fd").Length;
+
+    var counted = probe.GetHandleCount(Self);
+
+    Assert.That(counted.HasValue, Is.True, $"unknown, for a process we are inside: {counted.Reason}");
+    // Not equality: opening the directory to count it is itself a descriptor, and it is open for one
+    // of the two reads and not the other. A drift of a few is expected; a count of nought is not.
+    Assert.That(counted.Value, Is.GreaterThan(0ul), "a running process holds descriptors");
+    Assert.That((long)counted.Value, Is.EqualTo(expected).Within(4), "the kernel's count, near enough");
+  }
+
+  /// <summary>
+  /// Opening more of them moves the number. A count that is merely plausible but fixed would pass
+  /// the test above and still be wrong.
+  /// </summary>
+  [Test]
+  public void OpeningDescriptorsMovesTheCount() {
+    using var probe = Probe();
+    var before = probe.GetHandleCount(Self);
+
+    var files = new List<FileStream>();
+    try {
+      for (var i = 0; i < 8; ++i)
+        files.Add(File.OpenRead("/proc/self/status"));
+
+      var after = probe.GetHandleCount(Self);
+
+      Assert.That(before.HasValue && after.HasValue, Is.True);
+      Assert.That(after.Value, Is.EqualTo(before.Value + 8), "eight more descriptors, eight more counted");
+    } finally {
+      foreach (var file in files)
+        file.Dispose();
+    }
+  }
+
   [Test]
   public void ItListsTheImagesThisProcessHasMapped() {
     using var probe = Probe();
