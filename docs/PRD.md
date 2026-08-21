@@ -856,7 +856,8 @@ prevent.
 # 23. Process highlighting
 
 - [x] Highlight colours are configurable
-- [ ] Highlighting is disabled in high-contrast modes where inappropriate
+- [x] 🟡 Highlighting is never the only signal — the number is in the cell it washes, so the table
+      reads without colour at all; an explicit high-contrast mode is not detected yet (§45.9)
 
 Categories:
 
@@ -874,10 +875,33 @@ Categories:
 - [ ] Unsigned executable — needs `signature.status` (§21)
 - [ ] Invalid signature
 - [ ] Suspicious reputation — needs opt-in reputation
-- [ ] High CPU
-- [ ] High memory
-- [ ] High disk
-- [ ] High network
+- [x] High CPU
+- [x] High memory
+- [x] High disk
+- [ ] High network — no per-process byte counters exist to threshold (§18)
+
+**The mark goes on the cell, not the row.** A row's colour already answers a different question —
+what kind of process it is (§7.1) — and that is a one-of-many answer, while how much CPU something
+is using is a separate axis: a system process can be busy without stopping being a system process.
+Colouring the row for both would mean one of the two facts quietly winning.
+
+Two bands rather than one, warm and hot, because "above a line" throws away the difference between a
+process using half a core and one using six.
+
+**CPU is judged per core, not normalised.** "It is eating a core" is what somebody is looking for,
+and a normalised percentage turns a fully held core on a thirty-two thread machine into 3 % — which
+is nothing. A cell reading 10 % normalised can therefore be marked, and correctly: on sixteen threads
+that is 1.6 cores.
+
+Thresholds are settable (`heat.cpu.warm` and its five siblings, §67), because the right answer
+depends on the machine: a whole core is a lot on a laptop and nothing on a build server, and a
+hundred megabytes a second is saturation for a spinning disk and idle for an NVMe. A threshold of
+nought turns its band off rather than marking everything, and a line that will not parse leaves the
+setting alone — a threshold of nought is the most annoying possible response to a typo.
+
+A reading that does not exist is never marked, in either direction. `default(Rate)` is a confident
+zero, so an unread counter compares as cold; a counter that came back *not permitted* is not a
+measurement at all (§5.3).
 - [ ] High GPU
 - [ ] Process with an active UI window — needs §39
 - [ ] Process with a changed executable — needs image mtime + hash watch

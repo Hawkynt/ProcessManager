@@ -43,6 +43,24 @@ public sealed class ProcessRow(ProcessKey key) {
   /// <summary>What kind of process this is, which is what its row colour means (PRD §7.1).</summary>
   public ProcessCategory Category { get; private set; }
 
+  /// <summary>
+  /// How hard this row is leaning on each resource, by field (PRD §23).
+  /// </summary>
+  /// <remarks>
+  /// Per cell rather than per row, and computed once per sample beside the text for the same reason
+  /// the text is: the paint handler runs several times per row and must not be doing arithmetic.
+  /// </remarks>
+  private readonly UsageHeat[] _heat = new UsageHeat[_slots];
+
+  /// <summary>How hot one cell is. Fields that are not about consumption are never hot.</summary>
+  public UsageHeat HeatOf(ProcessField field) {
+    var index = (int)field;
+    return (uint)index < (uint)this._heat.Length ? this._heat[index] : UsageHeat.None;
+  }
+
+  /// <summary>The thresholds every row is judged against. Shared, and settable from the settings.</summary>
+  public static UsageThresholds Thresholds { get; set; } = UsageThresholds.Default;
+
   /// <summary>The sample this row was last seen in; older rows are removed from the tree.</summary>
   public int Generation { get; set; }
 
@@ -52,6 +70,7 @@ public sealed class ProcessRow(ProcessKey key) {
         continue;
 
       this._text[(int)descriptor.Id] = FieldAccessor.Text(descriptor.Id, in process, delta, index);
+      this._heat[(int)descriptor.Id] = Thresholds.Of(descriptor.Id, in process, delta, index);
     }
 
     // Two exceptions to the shared formatter, both because the window knows something the engine
