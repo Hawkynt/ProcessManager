@@ -57,6 +57,107 @@ public sealed class LinuxProcessActions(LinuxProbeOptions? options = null) : IPr
       : Translate(errno, "could not set CPU affinity");
   }
 
+  /// <summary>
+  /// Starts a process (PRD §54).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The scheduling parts are applied after it exists, because there is no portable way to start a
+  /// process that is already niced. So a launch can succeed while its priority does not — the result
+  /// says the process started and names what could not be applied, rather than reporting a failure
+  /// for a program that is now running.
+  /// </para>
+  /// <para>
+  /// Suspended means stopped before it has run any of its own code. There is a race here that cannot
+  /// be closed from outside: between <c>exec</c> and the signal the program has begun. It is the same
+  /// race every tool that offers this has, and it is worth saying so rather than implying the
+  /// instruction pointer is at the entry point.
+  /// </para>
+  /// </remarks>
+  public LaunchResult Launch(LaunchRequest request) {
+    ArgumentNullException.ThrowIfNull(request);
+    if (string.IsNullOrWhiteSpace(request.FileName))
+      return LaunchResult.Failed(ActionOutcome.Refused, "there is no program to start");
+
+    var start = new System.Diagnostics.ProcessStartInfo(request.FileName) {
+      // The shell is not involved: it would re-split and re-glob arguments that have already been
+      // split, and every program that tries gets quoting wrong for at least one shell.
+      UseShellExecute = false,
+    };
+
+    foreach (var argument in request.Arguments)
+      start.ArgumentList.Add(argument);
+
+    if (request.WorkingDirectory is { Length: > 0 } directory) {
+      if (!Directory.Exists(directory))
+        return LaunchResult.Failed(ActionOutcome.Refused, $"there is no directory {directory}");
+
+      start.WorkingDirectory = directory;
+    }
+
+    // Overrides rather than a replacement: a process started with an emptied environment loses its
+    // locale, its display and its path, which is never what somebody setting one variable meant.
+    if (request.Environment is { } overrides)
+      foreach (var (name, value) in overrides)
+        start.Environment[name] = value;
+
+    System.Diagnostics.Process started;
+    try {
+      started = System.Diagnostics.Process.Start(start) ?? throw new InvalidOperationException("no process");
+    } catch (System.ComponentModel.Win32Exception e) {
+      return LaunchResult.Failed(ActionOutcome.Failed, $"could not start {request.FileName}: {e.Message}");
+    } catch (InvalidOperationException e) {
+      return LaunchResult.Failed(ActionOutcome.Failed, $"could not start {request.FileName}: {e.Message}");
+    }
+
+    // Suspend first and everything else after: a process being held still cannot outrun the settings
+    // being applied to it, and one that was asked to start suspended must not get a chance to run.
+    if (request.Suspended)
+      Native.SendSignal(started.Id, Native.SIGSTOP);
+
+    // The program is running, so the launch succeeded. Whether its identity could be read back and
+    // whether the scheduling took are separate questions, answered below.
+    var key = this.KeyOf(started.Id);
+    var wanted = request.Nice is not null || request.AffinityMask != 0 || request.IoPriority is not null;
+    if (key.Pid == 0)
+      // Gone before it could be read. Ordinary for anything short-lived — echo does this — and a
+      // successful launch of a brief program, not a failure to start one. Only worth mentioning if
+      // there were settings that now cannot be applied to it.
+      return new(
+        wanted
+          ? ActionResult.Fail(ActionOutcome.ProcessExited, $"{request.FileName} finished before its priority could be set")
+          : ActionResult.Ok,
+        started.Id,
+        default
+      );
+
+    var refused = new List<string>();
+    if (request.Nice is { } nice && !this.SetPriority(key, nice).Succeeded)
+      refused.Add("priority");
+
+    if (request.AffinityMask != 0 && !this.SetAffinity(key, request.AffinityMask).Succeeded)
+      refused.Add("affinity");
+
+    if (request.IoPriority is { } io && !this.SetIoPriority(key, io).Succeeded)
+      refused.Add("I/O priority");
+
+    return refused.Count == 0
+      ? new(ActionResult.Ok, started.Id, key)
+      : new(ActionResult.Fail(ActionOutcome.NotPermitted, $"started, but its {string.Join(" and ", refused)} could not be set"), started.Id, key);
+  }
+
+  /// <summary>The identity pair of a process that has just been started, or default if it is gone.</summary>
+  private ProcessKey KeyOf(int pid) {
+    Span<byte> pathBuffer = stackalloc byte[ProcPath.MaxLength];
+    if (!this._reader.TryRead(ProcPath.Build(pathBuffer, System.Text.Encoding.UTF8.GetBytes(this._options.ProcRoot), pid, "stat"u8), out var content, out _))
+      return default;
+
+    var record = default(ProcessRecord);
+    return LinuxProbe.ParseStat(content, 1, this._options.PageSize, ref record)
+      ? new(pid, record.Key.StartTicks)
+      : default;
+  }
+
   public ActionResult SetIoPriority(ProcessKey key, IoPriority priority) {
     var check = this.Verify(key);
     if (!check.Succeeded)

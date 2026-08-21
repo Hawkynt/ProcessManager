@@ -79,4 +79,16 @@ public interface IProcessActions {
   ActionResult SetThreadAffinity(ProcessKey key, int threadId, ulong mask)
     => ActionResult.Fail(ActionOutcome.NotSupportedOnPlatform, "this platform has no per-thread affinity");
 
+  /// <summary>
+  /// Starts a process (PRD §54).
+  /// </summary>
+  /// <remarks>
+  /// The scheduling parts of the request are applied after the process exists, because there is no
+  /// portable way to start one that is already niced — so a launch can succeed while its priority
+  /// does not, and the result says which happened rather than reporting a failure for a process
+  /// that is now running.
+  /// </remarks>
+  LaunchResult Launch(LaunchRequest request)
+    => LaunchResult.Failed(ActionOutcome.NotSupportedOnPlatform, "this platform cannot start processes here");
+
 }

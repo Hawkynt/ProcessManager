@@ -2157,15 +2157,41 @@ Read-only. PE, ELF and Mach-O.
 
 # 54. Run / launch new process
 
-- [ ] Executable / command · arguments · working directory · environment overrides
+- [x] Executable / command · arguments · working directory · environment overrides
 - [ ] Selected user / account where supported
 - [ ] Elevation
-- [ ] Launch suspended — expert mode
-- [ ] Priority · affinity
-- [ ] Terminal / console behaviour · shell execution · environment inheritance
-- [ ] Recent commands are optional and clearable
-- [ ] **Passwords and secrets are never retained** — a "run as" dialog that remembers a credential is
-      a credential store nobody audited
+- [x] Launch suspended — expert mode
+- [x] 🟡 Priority · affinity ✔, and I/O priority; a CPU set is not offered
+- [x] 🟡 Environment inheritance ✔ and shell execution deliberately *not* offered; terminal and
+      console behaviour are not controlled
+- [ ] Recent commands are optional and clearable — nothing is remembered at all yet, which satisfies
+      the clearable half by accident rather than by design
+- [x] **Passwords and secrets are never retained** — there is no field for one on the request, and a
+      test enumerates its surface so the day somebody adds one in good faith it fails
+
+`procman --run PROGRAM [ARG...]`. Everything after `--run` belongs to the program being started,
+including anything that looks like one of this program's own switches: a launcher that ate its
+child's `--help` would be useless for exactly the programs somebody most wants to start.
+
+**Arguments are already split and the shell is not involved.** A single string would have to be
+re-split by somebody, and every program that tries gets quoting wrong for at least one shell.
+
+**The environment is added to, not replaced.** A process started with an emptied environment loses
+its locale, its display and its path, which is never what somebody setting one variable meant.
+
+**The scheduling is applied after the process exists**, because there is no portable way to start one
+that is already niced. So a launch can succeed while its priority does not, and the result says the
+process started and names what could not be applied rather than reporting a failure for a program
+that is now running.
+
+The pid and the identity pair are reported separately, because they become known at different moments
+and one can exist without the other: a program that exits before it can be read back — `echo`, or
+anything that fails on its own terms — has a pid and no readable start time. **That is a successful
+launch of a short-lived program, not a failure to start one** (§8.2), and it is only worth mentioning
+when there were settings that now cannot be applied.
+
+Running as another user stays the platform's own job — `sudo`, `pkexec`, `runas` — which is why there
+is no credential on the request to begin with.
 
 # 55. System power and session actions
 

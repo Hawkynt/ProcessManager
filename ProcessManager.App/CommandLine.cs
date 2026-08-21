@@ -5,7 +5,7 @@ using Hawkynt.ProcessManager.Settings;
 namespace Hawkynt.ProcessManager.App;
 
 /// <summary>Which face of the program the arguments asked for.</summary>
-internal enum RunMode : byte { Desktop, Terminal, List, Find, Kill, SelfTest, HelperCheck, Help, HelpFields, Host, Startup, Users, Services, Connections, Limits, Version }
+internal enum RunMode : byte { Desktop, Terminal, List, Find, Kill, SelfTest, HelperCheck, Help, HelpFields, Host, Startup, Users, Services, Connections, Limits, Run, Version }
 
 /// <summary>
 /// Which sockets <c>--connections</c> lists.
@@ -45,6 +45,16 @@ internal sealed record CommandLineOptions {
   public bool AllUsers { get; init; } = true;
   public bool KillTree { get; init; }
   public int TargetPid { get; init; }
+
+
+  /// <summary>The program to start and its arguments, for <c>--run</c> (PRD §54).</summary>
+  public IReadOnlyList<string>? LaunchCommand { get; init; }
+
+  /// <summary>Start it stopped, so something can attach before it runs (PRD §54).</summary>
+  public bool LaunchSuspended { get; init; }
+
+  /// <summary>The directory to start it in.</summary>
+  public string? LaunchDirectory { get; init; }
   public string? Pattern { get; init; }
 
   /// <summary>A filter in the query language of PRD §56, applied to --list and the two UIs.</summary>
@@ -434,6 +444,15 @@ internal sealed record CommandLineOptions {
           explicitMode = true;
           break;
 
+        case "--run":
+          // Everything after --run belongs to the program being started, including anything that
+          // looks like one of our own switches. A launcher that ate its child's --help would be
+          // useless for exactly the programs somebody most wants to start.
+          if (i + 1 >= args.Length)
+            return options with { Error = "--run needs a program to start" };
+
+          return options with { Mode = RunMode.Run, LaunchCommand = args[(i + 1)..] };
+
         case "--host":
           options = options with { Mode = RunMode.Host };
           explicitMode = true;
@@ -503,6 +522,7 @@ internal sealed record CommandLineOptions {
       procman --find <pattern>       which processes match, by name, command line or open file
       procman --host                 what this machine is: processor, memory, cache, uptime
       procman --limits PID           what a process's cgroup allows it, and what it is using
+      procman --run PROGRAM [ARG...] start a program; everything after --run belongs to it
       procman --startup              what is configured to start when you log in
       procman --users                who is logged in, and what their processes cost
       procman --services             which services exist and which are running
