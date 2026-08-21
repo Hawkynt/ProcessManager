@@ -277,7 +277,13 @@ internal static class Program {
     // spelling of --format=json because it is what every script already passes.
     var format = options.Json ? ExportFormat.Json : options.Format;
     Exporter.Write(Console.Out, format, snapshot, delta, view, options.Fields, options.TreeMode);
-    return _ExitOk;
+
+    // A filter that excluded everything is the "nothing matched" the exit codes promise, and it was
+    // the one place that promised it and did not deliver: a script asking whether anything is over a
+    // memory threshold got the same nought back whether the answer was no or yes. Only when a filter
+    // was given — a plain --list on a machine with no processes is a different and impossible thing,
+    // and reporting no-match for it would be answering a question nobody asked.
+    return options.Filter is { Length: > 0 } && view.RowCount == 0 ? _ExitNoMatch : _ExitOk;
   }
 
   /// <summary>

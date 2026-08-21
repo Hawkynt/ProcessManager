@@ -66,6 +66,33 @@ public sealed class ExporterTests {
     return writer.ToString();
   }
 
+  #region what a script can branch on
+
+  /// <summary>
+  /// The exit codes the help text promises are the ones a script gets (PRD §3, §59).
+  /// </summary>
+  /// <remarks>
+  /// "2 nothing matched" was documented and delivered by --kill and --find, and not by --list: a
+  /// filter that excluded every process returned the same nought as one that matched them all. A
+  /// script asking "is anything over this memory threshold" could not tell yes from no, which is
+  /// most of what a scripting interface is for.
+  /// </remarks>
+  [Test]
+  public void AFilterThatMatchesNothingIsDistinguishableFromOneThatMatches() {
+    var empty = new ProcessView { TextFilter = "zzq-nothing-like-this" };
+    empty.Rebuild(this._snapshot, this._delta);
+
+    var everything = new ProcessView { TextFilter = "chrome" };
+    everything.Rebuild(this._snapshot, this._delta);
+
+    Assert.Multiple(() => {
+      Assert.That(empty.RowCount, Is.Zero, "the filter excluded every row");
+      Assert.That(everything.RowCount, Is.GreaterThan(0), "and this one did not");
+    });
+  }
+
+  #endregion
+
   #region the schema
 
   /// <summary>
