@@ -272,11 +272,16 @@ These are consequences of the design, not a to-do list; the to-do list is the PR
 - **macOS is the only platform with no probe at all.** Windows and Linux are both verified against
   their own kernels on every push by `procman --self-test`, which asks the probe about the process it
   is running in and has the runtime check every answer.
-- **Sampling costs more than the budget says.** Around 30 ms of CPU per 1000 processes on an idle
-  machine against a target of 25, and considerably more on a busy one — three files are read per
-  process and syscalls are the entire cost. Closing it means dropping `status`, and with it private
-  memory, the owner id and every security field, which is a worse trade than a few milliseconds.
-  Measured and written down in PRD §71 rather than left as a number nobody intends to meet.
+- **Sampling costs more than the budget says, and the gap has widened.** 63–66 ms of CPU per 1000
+  processes on a sixteen-core desktop at load 7, against a target of 25; 83–105 ms on the same
+  machine at load 45. Three files are read per process and syscalls are the entire cost, so the
+  figure tracks what a syscall costs on the machine rather than anything about the code.
+  Measured against an older build side by side, interleaved rather than in blocks: 41 ms then, 65 ms
+  now, on the same machine at the same moment. That is the price of what has been added since —
+  every field on the row comes from a file somebody has to read. Closing it means dropping
+  `status`, and with it private memory, the owner id and every security field, which is a worse
+  trade than a few milliseconds. Recorded in PRD §71 rather than left as a number nobody intends
+  to meet.
 - **Services, startup and users are lists rather than pages.** `--services`, `--startup` and
   `--users` answer all three of Task Manager's missing tabs on Linux, and none of them has a view in
   either front-end. Windows has none of the three, and nothing can be started, stopped or disabled
