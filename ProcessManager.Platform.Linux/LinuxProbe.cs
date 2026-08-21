@@ -1369,12 +1369,18 @@ public sealed class LinuxProbe : ISystemProbe {
     // listing this shares with the pid scan stops at 1 by default, which is right for /proc and
     // undercounts every process on the machine by one here.
     if (!this._io.ListNumericEntries(cache.FdPath, this._directoryScratch, this._fdNumbers, minimum: 0)) {
-      // The directory of anybody else's process is 0500, so this is the ordinary answer without the
-      // elevated helper rather than a failure to report (PRD §8.3).
-      record.HandleCount = Counter.NotPermitted;
-      record.SocketCount = Counter.NotPermitted;
-      record.FileCount = Counter.NotPermitted;
-      record.PipeCount = Counter.NotPermitted;
+      // Which failure it was matters more than that there was one, and a listing that returns false
+      // does not say: another user's descriptor directory is 0500, and a process that exited between
+      // the pid scan and this call is simply gone. So the same directory is asked through the count,
+      // which does report errno, and every column carries that answer (PRD §72.3).
+      var counted = this.CountDescriptors(cache.FdPath, this._directoryScratch);
+      record.HandleCount = counted;
+      // A count that succeeded on the second attempt means the directory changed underneath the
+      // first: the split did not complete, and a partial tally is not one of the answers.
+      var kinds = counted.HasValue ? Counter.Unknown(UnknownReason.CounterInvalid) : counted;
+      record.SocketCount = kinds;
+      record.FileCount = kinds;
+      record.PipeCount = kinds;
       return;
     }
 
