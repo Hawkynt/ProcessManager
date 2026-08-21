@@ -87,6 +87,146 @@ public sealed class MainWindowTableTests {
     Assert.That(window.DescribeSettings().DesktopColumnWidths, Is.Empty);
   }
 
+  /// <summary>
+  /// The pinned run is a count into the column order, so it has to be restored after the order is —
+  /// restoring it first clamps it against whatever the window happened to open with (PRD §11).
+  /// </summary>
+  [Test]
+  public void ThePinnedColumnsSurviveARestart() {
+    var window = Window();
+    window.ApplySettings(new() {
+      DesktopColumns = [ProcessField.Name, ProcessField.Pid, ProcessField.UserName, ProcessField.CpuPercent],
+      PinnedDesktopColumns = 3,
+    }, _ => true);
+
+    Assert.That(window.DescribeSettings().PinnedDesktopColumns, Is.EqualTo(3));
+    Assert.That(window.DescribeForCapture(), Does.Contain("pinned:       3 of them"));
+  }
+
+  /// <summary>
+  /// A file asking for more pinned columns than it lists gets what it can have rather than a table
+  /// the toolkit will not scroll at all.
+  /// </summary>
+  [Test]
+  public void MorePinnedColumnsThanThereAreIsClampedToWhatIsThere() {
+    var window = Window();
+    window.ApplySettings(new() {
+      DesktopColumns = [ProcessField.Name, ProcessField.Pid],
+      PinnedDesktopColumns = 9,
+    }, _ => true);
+
+    Assert.That(window.DescribeSettings().PinnedDesktopColumns, Is.EqualTo(2));
+  }
+
+  /// <summary>
+  /// The third shape of copy §11 asks a table for. It needs a column and not a cell selection: the
+  /// column cursor is what "this column" means, in this window and in the terminal alike.
+  /// </summary>
+  /// <remarks>
+  /// Over the recorded machine rather than the stub, because a column copy of nothing would pass
+  /// against an empty table however it was built.
+  /// </remarks>
+  [Test]
+  public void CopyingAColumnTakesItDownEveryRowThatIsShowing() {
+    using var probe = TerminalFixture.Probe();
+    var window = new MainWindow(new Sampler(probe), probe, null);
+    window.ApplySettings(new() { DesktopColumns = [ProcessField.Name, ProcessField.Pid] }, _ => true);
+    window.Start();
+
+    var lines = (window.ColumnAsText() ?? string.Empty).TrimEnd('\n').Split('\n');
+    Assert.That(lines[0], Is.EqualTo(FieldRegistry.Get(ProcessField.Name).Header), "the column is named");
+    Assert.That(lines, Has.Length.EqualTo(6), "the recorded machine's five processes, under a header");
+    Assert.That(lines[1], Is.Not.Empty);
+  }
+
+  /// <summary>A drawn history has no text, and an empty copy looks exactly like one that failed.</summary>
+  [Test]
+  public void ADrawnHistoryIsNotAColumnACopyCanTake() {
+    var window = Window();
+    window.ApplySettings(new() { DesktopColumns = [ProcessField.CpuHistory, ProcessField.Pid] }, _ => true);
+
+    Assert.That(window.ColumnAsText(), Is.Null);
+  }
+
+  #region the sample tick (PRD §12)
+
+  [Test]
+  public void TheWindowOffersTheSameRatesTheTerminalDoes() {
+    var window = Window();
+    window.ApplySettings(new(), _ => true);
+
+    foreach (var seconds in UserSettings.OfferedIntervalSeconds) {
+      var described = window.ShowRefresh((int)Math.Round(seconds * 1000));
+      Assert.That(described, Does.Contain("refresh:      every " + UserSettings.NameOfInterval(seconds)));
+    }
+  }
+
+  /// <summary>
+  /// Pausing holds the list where it was. Nothing rebuilds while the tick is off, so the selection,
+  /// the expansion and the scroll position are all exactly where the reader left them (PRD §12).
+  /// </summary>
+  [Test]
+  public void PausingHoldsTheListWhereItWas() {
+    var window = Window();
+    window.ApplySettings(new(), _ => true);
+    window.Start();
+    window.SelectFirstRow();
+    var before = window.DescribeForCapture();
+
+    window.ShowRefresh(0, paused: true);
+
+    Assert.That(window.Paused, Is.True);
+    Assert.That(window.DescribeForCapture(), Does.Contain("refresh:      paused"));
+    Assert.That(
+      Rows(window.DescribeForCapture()),
+      Is.EqualTo(Rows(before)),
+      "a paused list is the list that was there, not a rebuilt one"
+    );
+  }
+
+  private static string Rows(string described) {
+    foreach (var line in described.Split('\n'))
+      if (line.StartsWith("process rows:", StringComparison.Ordinal))
+        return line;
+
+    return string.Empty;
+  }
+
+  /// <summary>
+  /// A by-hand refresh is a preference and is written down; a pause is a toggle somebody flips for a
+  /// few seconds, and a window that opened paused because it was paused when it was last closed is a
+  /// window showing a table of nothing at all.
+  /// </summary>
+  [Test]
+  public void RefreshingByHandSurvivesARestartAndAPauseDoesNot() {
+    var window = Window();
+    window.ApplySettings(new() { IntervalSeconds = 5 }, _ => true);
+
+    window.ShowRefresh(0, manual: true);
+    var described = window.DescribeSettings();
+    Assert.That(described.ManualRefresh, Is.True);
+    Assert.That(described.IntervalSeconds, Is.EqualTo(5), "the rate underneath is remembered");
+
+    window.ShowRefresh(0, paused: true);
+    Assert.That(window.DescribeSettings().ManualRefresh, Is.False, "a pause is not written down");
+  }
+
+  [Test]
+  public void AWindowAskedToRefreshByHandStillOpensOnSomething() {
+    var window = Window();
+    window.ApplySettings(new() { ManualRefresh = true }, _ => true);
+    window.Start();
+
+    Assert.That(window.ManualRefresh, Is.True);
+    Assert.That(window.DescribeForCapture(), Does.Contain("refresh:      by hand"));
+    // The stub machine has no processes, so what proves a sample was taken is the status line: a
+    // window that had waited for the first keystroke would have no sample to time.
+    Assert.That(window.DescribeForCapture(), Does.Contain("processes"));
+    Assert.That(window.DescribeForCapture(), Does.Contain("·  refreshed by hand"));
+  }
+
+  #endregion
+
   [Test]
   public void TheGroupingSurvivesARestart() {
     var window = Window();

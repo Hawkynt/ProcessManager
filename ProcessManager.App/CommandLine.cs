@@ -133,6 +133,23 @@ internal sealed record CommandLineOptions {
   public ProcessField[]? TerminalColumns { get; init; }
 
   /// <summary>
+  /// How many leading columns the terminal pins (PRD §11, §57.2).
+  /// </summary>
+  /// <remarks>
+  /// From the settings file only. <c>#</c> moves the boundary in a running terminal and there is no
+  /// flag for it, because a pinned run is a layout decision like a column width rather than
+  /// something anybody wants to retype on every invocation.
+  /// </remarks>
+  public int PinnedTerminalColumns { get; init; } = 1;
+
+  /// <summary>Whether the interactive front-ends open with the tick off (PRD §12).</summary>
+  /// <remarks>
+  /// From the settings file's <c>interval=manual</c>. A <c>--interval</c> on the command line is a
+  /// rate and therefore an answer to a different question, so it says nothing about this either way.
+  /// </remarks>
+  public bool ManualRefresh { get; init; }
+
+  /// <summary>
   /// The window's saved column layout, which is a request for those fields exactly as naming them on
   /// the command line would be.
   /// </summary>
@@ -525,6 +542,8 @@ internal sealed record CommandLineOptions {
       CpuMode = settings.CpuMode,
       AsciiOnly = !settings.BlockCharacters,
       TerminalColumns = settings.TerminalColumns.Length > 0 ? settings.TerminalColumns : null,
+      PinnedTerminalColumns = settings.PinnedTerminalColumns,
+      ManualRefresh = settings.ManualRefresh,
       DesktopColumns = settings.DesktopColumns.Length > 0 ? settings.DesktopColumns : null,
     };
 

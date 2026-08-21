@@ -121,6 +121,9 @@ public sealed class MainWindow : Form {
     this._view.TreeMode = settings.TreeMode;
     this._sampler.CpuPercentMode = settings.CpuMode;
     this.Interval = (int)Math.Round(settings.IntervalSeconds * 1000);
+    // Not the pause: pausing is a toggle somebody flips for a few seconds, and a monitor that opened
+    // paused because it was paused when it was closed shows a table of nothing (PRD §12).
+    this.ManualRefresh = settings.ManualRefresh;
 
     if (settings.DesktopColumns.Length > 0)
       this._columns.Apply(settings.DesktopColumns);
@@ -129,6 +132,10 @@ public sealed class MainWindow : Form {
     // way round would drop every width the moment the column list was replaced.
     foreach (var (field, width) in settings.DesktopColumnWidths)
       this._columns.Restore(field, width);
+
+    // After the set as well, for the same reason: the pinned run is a count of columns, and a count
+    // restored before the list it counts into would be clamped against the old one.
+    this._columns.SetFrozen(settings.PinnedDesktopColumns);
 
     this._view.Grouping = settings.Grouping;
 
@@ -153,12 +160,14 @@ public sealed class MainWindow : Form {
   public UserSettings DescribeSettings() {
     var updated = this._settings with {
       IntervalSeconds = this.Interval / 1000d,
+      ManualRefresh = this.ManualRefresh,
       SortField = this._view.SortColumn,
       SortDescending = this._view.SortDescending,
       TreeMode = this._view.TreeMode,
       CpuMode = this._sampler.CpuPercentMode,
       DesktopColumns = this._columns.Fields,
       DesktopColumnWidths = this._columns.ChosenWidths,
+      PinnedDesktopColumns = this._columns.Frozen,
       Grouping = this._view.Grouping,
       Thresholds = ProcessRow.Thresholds,
       WindowWidth = this.Width,
@@ -185,6 +194,7 @@ public sealed class MainWindow : Form {
     builder.AppendLine($"controls:     {this.Controls.Count}");
     builder.AppendLine($"process rows: {this._tree.Nodes.Count} roots, {this._tree.VisibleNodeCount} visible");
     builder.AppendLine($"columns:      {this._tree.Columns.Count} — {this.DescribeColumns()}");
+    builder.AppendLine($"pinned:       {this._columns.Frozen} of them, scrolled {this._tree.HorizontalOffset} px of {this._tree.MaxHorizontalOffset}");
     builder.AppendLine($"sorted by:    {this.DescribeSort()}");
     builder.AppendLine(
       $"grouped by:   {Settings.UserSettings.NameOfGrouping(this._view.Grouping)}, "
@@ -195,6 +205,10 @@ public sealed class MainWindow : Form {
       $"filter:       {(this._filterBox.Text.Length == 0 ? "(none)" : this._filterBox.Text)}"
       + $", case {(this._view.CaseSensitive ? "matters" : "ignored")}"
       + $"{(this._filterNote.Text.Length > 0 ? " — " + this._filterNote.Text : string.Empty)}"
+    );
+
+    builder.AppendLine(
+      $"refresh:      {(this.Paused ? "paused" : this.ManualRefresh ? "by hand" : "every " + Settings.UserSettings.NameOfInterval(this.Interval / 1000d))}"
     );
 
     builder.AppendLine($"ticked rows:  {this.TickedKeys().Count}");
@@ -208,14 +222,34 @@ public sealed class MainWindow : Form {
     return builder.ToString();
   }
 
-  /// <summary>The columns as they stand — their order and the width each ended up with.</summary>
+  /// <summary>
+  /// The columns as they stand — their order, the width each ended up with, and where the pinned
+  /// run ends.
+  /// </summary>
+  /// <remarks>
+  /// The boundary is a bar rather than a count on a line of its own, because what a reader of the
+  /// shoot log is checking is <em>which</em> columns are pinned after a move: reordering a table
+  /// with two pinned columns changes what is held still, and a count says nothing about that.
+  /// <para>
+  /// Drawn at both ends as well as in the middle. Leaving it off when nothing is pinned would make
+  /// that line identical to one where <em>everything</em> is, and those are the two states where
+  /// the table stops scrolling for opposite reasons.
+  /// </para>
+  /// </remarks>
   private string DescribeColumns() {
-    var parts = new List<string>(this._columns.Count);
-    for (var i = 0; i < this._columns.Count; ++i)
+    var parts = new List<string>(this._columns.Count + 1);
+    for (var i = 0; i < this._columns.Count; ++i) {
+      if (i == this._columns.Frozen)
+        parts.Add("|");
+
       parts.Add(
         $"{ColumnSet.Info(this._columns.FieldAt(i)).Key}:{this._columns.WidthAt(i).ToString(CultureInfo.InvariantCulture)}"
         + (i == this._columns.Current ? "*" : string.Empty)
       );
+    }
+
+    if (this._columns.Frozen >= this._columns.Count)
+      parts.Add("|");
 
     return string.Join(" ", parts);
   }
@@ -266,12 +300,68 @@ public sealed class MainWindow : Form {
   /// </remarks>
   public void RefreshOnce() => this.Refresh();
 
+  /// <summary>
+  /// Whether the sample tick is stopped, and why (PRD §12).
+  /// </summary>
+  /// <remarks>
+  /// Two states rather than one, because they are two different requests. A pause is flipped for a
+  /// few seconds to read a row that will not hold still and is not remembered; asking for a refresh
+  /// by hand is a preference and is written to the file. Both stop the timer, and neither touches
+  /// the list — nothing rebuilds while the tick is off, so what is selected, what is expanded and
+  /// where the list is scrolled are all exactly where they were.
+  /// </remarks>
+  public bool Paused { get; private set; }
+
+  public bool ManualRefresh { get; private set; }
+
+  /// <summary>
+  /// The two words the status bar carries while the tick is off, or null while it runs.
+  /// </summary>
+  /// <remarks>
+  /// Two words and not a sentence, because this is appended to a status line that already carries
+  /// four figures: the how-to belongs in the message the picker leaves behind, which is on screen at
+  /// the moment somebody chose it and has the whole bar to itself.
+  /// </remarks>
+  private string? WhyItIsNotUpdating => this.Paused ? "paused" : this.ManualRefresh ? "refreshed by hand" : null;
+
+  /// <summary>
+  /// Sets how often the machine is sampled, or stops it being sampled at all (PRD §12).
+  /// </summary>
+  /// <remarks>
+  /// The timer is stopped rather than left running against a flag: a tick that woke up every second
+  /// to decide not to sample is a wakeup a laptop pays for, and this program is one people leave
+  /// open (PRD §71.2).
+  /// </remarks>
+  private void SetRefresh(int milliseconds, bool paused, bool manual) {
+    this.Paused = paused;
+    this.ManualRefresh = manual;
+    if (milliseconds > 0)
+      this.Interval = milliseconds;
+
+    this._timer.Stop();
+    if (!paused && !manual)
+      this._timer.Start();
+
+    // Written now rather than on the next tick. The saver is flushed from the sample loop, and a
+    // window whose sample loop has just been stopped would otherwise never write down that it was.
+    this._autoSaver?.Flush();
+
+    this._status.Text = paused
+      ? "paused — the list is held where it was; Refresh, or F5, takes one sample"
+      : manual
+        ? "refreshed by hand — Refresh, or F5, takes a sample"
+        : $"sampling every {Settings.UserSettings.NameOfInterval(this.Interval / 1000d)}";
+  }
+
   public void Start() {
     this._binder.CurrentUserId = CurrentUserId();
     // Read once, before the first paint: the machine will not rearrange its cores while we watch.
     this._cores.Topology = this._probe.DescribeTopology();
+    // One sample even when the tick is off. A window asked to refresh by hand still has to open on
+    // something rather than on an empty table waiting for a keystroke nobody knows to press.
     this.Refresh();
-    this._timer.Start();
+    if (!this.ManualRefresh)
+      this._timer.Start();
   }
 
   /// <summary>
@@ -445,6 +535,28 @@ public sealed class MainWindow : Form {
   private bool IsHeader(int y) => this._tree.ShowColumnHeaders && y >= 0 && y < this._tree.ItemHeight;
 
   /// <summary>
+  /// Turns an x on the control into an x in the columns (PRD §11).
+  /// </summary>
+  /// <remarks>
+  /// A pinned column is where it looks; everything else has moved left by the scroll offset. Adding
+  /// the offset to both — which is what this did while nothing could be pinned — makes a click on a
+  /// pinned caption pick whichever column has scrolled underneath it, and a resize started there
+  /// drag the wrong boundary.
+  /// <para>
+  /// The widths come from the header rather than from <see cref="DesktopColumns"/> so that this and
+  /// the drawing cannot disagree: the last column is stretched to fill the list, and the copy of the
+  /// widths on this side does not know that.
+  /// </para>
+  /// </remarks>
+  private int ColumnCoordinate(int x) {
+    var frozenWidth = 0;
+    for (var i = 0; i < this._columns.Frozen && i < this._tree.Columns.Count; ++i)
+      frozenWidth += this._tree.Columns[i].Width;
+
+    return x < frozenWidth ? x : x + this._tree.HorizontalOffset;
+  }
+
+  /// <summary>
   /// A press in the header: near a boundary it grabs the boundary, otherwise it grabs the column.
   /// </summary>
   /// <remarks>
@@ -460,7 +572,7 @@ public sealed class MainWindow : Form {
     if (e.Button != MouseButtons.Left || !this.IsHeader(e.Y))
       return;
 
-    var x = e.X + this._tree.HorizontalOffset;
+    var x = this.ColumnCoordinate(e.X);
     this._pressX = x;
     var edge = this._columns.EdgeAt(x);
     if (edge >= 0) {
@@ -477,14 +589,14 @@ public sealed class MainWindow : Form {
   private void OnTreeMouseMove(object? sender, MouseEventArgs e) {
     if (this._resizingColumn >= 0) {
       this._dragged = true;
-      this._columns.SetWidth(this._resizingColumn, this._pressWidth + (e.X + this._tree.HorizontalOffset - this._pressX));
+      this._columns.SetWidth(this._resizingColumn, this._pressWidth + (this.ColumnCoordinate(e.X) - this._pressX));
       // The widths, not the whole header: rebuilding the columns on every pointer move would drop
       // and recreate six controls a frame, and the header would flicker under the hand doing it.
       this.ApplyWidths();
       return;
     }
 
-    if (this._pressedColumn >= 0 && Math.Abs(e.X + this._tree.HorizontalOffset - this._pressX) > _DragSlop)
+    if (this._pressedColumn >= 0 && Math.Abs(this.ColumnCoordinate(e.X) - this._pressX) > _DragSlop)
       this._dragged = true;
   }
 
@@ -512,7 +624,7 @@ public sealed class MainWindow : Form {
       return;
 
     if (dragged) {
-      var target = this._columns.HitTest(e.X + this._tree.HorizontalOffset);
+      var target = this._columns.HitTest(this.ColumnCoordinate(e.X));
       if (target >= 0 && this._columns.MoveTo(pressed, target)) {
         this.RebuildColumns();
         this.Rebind();
@@ -591,6 +703,10 @@ public sealed class MainWindow : Form {
       var which = column;
       this._tree.Columns.Add(new(header, this._columns.WidthAt(i), Cell) {
         TextAlign = info.RightAligned ? ContentAlignment.MiddleRight : ContentAlignment.MiddleLeft,
+        // The pinned run, which the list holds still while the rest scroll under it (PRD §11). The
+        // toolkit reads it as the leading run of pinned columns and stops at the first one that is
+        // not, which is the same rule the terminal's layout follows.
+        Frozen = this._columns.IsFrozen(i),
       });
 
       // A grouping heading is not a process, so it has no cell in any column but the first — where
@@ -660,6 +776,15 @@ public sealed class MainWindow : Form {
     if ((uint)e.ColumnIndex >= (uint)this._columns.Count)
       return;
 
+    // Before anything else, and only for a table that has actually scrolled: the pinned columns are
+    // drawn in a second pass over whatever slid underneath them, and the control fills the row's
+    // ground once for the whole row before either pass runs. So a pinned cell arrives here with
+    // somebody else's value already drawn in it and has to clear its own ground first — without
+    // this, every pinned cell in a scrolled table shows two values one on top of the other, which
+    // is how the first picture of this came out (PRD §11).
+    if (this._tree.HorizontalOffset > 0 && this._columns.IsFrozen(e.ColumnIndex))
+      e.Graphics.FillRectangle(GroundOf(e), e.Bounds);
+
     // Under everything else, and for every cell: this runs before the control draws its text, so a
     // rule laid down here is a rule the text sits on rather than one drawn over it.
     DrawGridLines(e);
@@ -695,6 +820,25 @@ public sealed class MainWindow : Form {
     // Handled: the cell has no text, and letting the control draw an empty string over the plot
     // would only cost a measure.
     e.Handled = true;
+  }
+
+  /// <summary>
+  /// The colour the control filled this row with, so a pinned cell can clear its own ground.
+  /// </summary>
+  /// <remarks>
+  /// The third duplication of the toolkit's own drawing on this side, and written down as one for
+  /// the same reason the cell insets are: if <c>TreeListView</c> ever fills its rows differently,
+  /// the pinned columns end up a different colour from the rest of their row and this is the line to
+  /// change. The order matches the control's — selection first, then the row's own colour, then the
+  /// field's.
+  /// </remarks>
+  private static Color GroundOf(TreeListViewCellPaintEventArgs e) {
+    if (e.Selected)
+      return e.Theme.SelectionBackground;
+
+    return e.Node.Tag is ProcessRow row
+      ? RowPalette.BackColorOf(row.Category, e.Theme) ?? e.Theme.FieldBackground
+      : e.Theme.FieldBackground;
   }
 
   /// <summary>
@@ -1818,6 +1962,7 @@ public sealed class MainWindow : Form {
 
     var view = new ToolStripMenuItem("View");
     view.DropDownItems.Add(this.BuildGroupingMenu());
+    view.DropDownItems.Add(this.BuildRefreshMenu());
 
     view.DropDownItems.Add(Item("Show all users", () => {
       this._view.UserIdFilter = null;
@@ -2021,7 +2166,11 @@ public sealed class MainWindow : Form {
       $"{this._view.MatchCount} of {snapshot.ProcessCount} processes{this.TickedSuffix}  ·  "
       + $"CPU {Humanize.Percent(delta.SystemCpuPercent)}% ({mode})  ·  "
       + $"memory {Humanize.Bytes(snapshot.System.TotalMemoryBytes)} total, {Humanize.Bytes(snapshot.System.AvailableMemoryBytes)} free  ·  "
-      + $"sample {this._sampler.LastSampleDuration.TotalMilliseconds.ToString("0.0", CultureInfo.InvariantCulture)} ms";
+      + $"sample {this._sampler.LastSampleDuration.TotalMilliseconds.ToString("0.0", CultureInfo.InvariantCulture)} ms"
+      // Said on every line rather than once when it was switched on: a table that is not following
+      // the machine looks exactly like one that is, and the moment somebody most needs to be told is
+      // the moment they have forgotten they asked for it (PRD §12, §72.3).
+      + (this.WhyItIsNotUpdating is { } why ? "  ·  " + why : string.Empty);
   }
 
   private void UpdateDetails() {
@@ -2359,6 +2508,48 @@ public sealed class MainWindow : Form {
   }
 
   /// <summary>
+  /// Sets the sample tick and says what the window looks like afterwards (PRD §12, §9.6).
+  /// </summary>
+  /// <remarks>
+  /// The same shape as <see cref="ShowGrouping"/>: the menu item a person clicks is a click, and a
+  /// capture has nobody to click it. Pass a nought for the interval to leave the rate where it is,
+  /// which is what stopping the tick does.
+  /// </remarks>
+  public string ShowRefresh(int milliseconds, bool paused = false, bool manual = false) {
+    this.SetRefresh(milliseconds, paused, manual);
+    return this.DescribeForCapture();
+  }
+
+  /// <summary>The columns that are showing, and how many of them are pinned (PRD §11).</summary>
+  /// <remarks>Enough for a caller to put the table back the way it found it.</remarks>
+  public (ProcessField[] Fields, int Pinned) ShownColumns => (this._columns.Fields, this._columns.Frozen);
+
+  /// <summary>
+  /// Shows a set of columns, pins a run of them, and optionally scrolls the rest to the far end
+  /// (PRD §11, §9.6).
+  /// </summary>
+  /// <remarks>
+  /// The one state a picture of the default layout cannot show. Six columns fit a window, so nothing
+  /// scrolls and nothing is held still, and a pinned run that had stopped working would photograph
+  /// exactly like one that had not. Ten columns do not fit, and a table scrolled to its right-hand
+  /// end either still has its names down the left or it does not.
+  /// </remarks>
+  public string ShowColumns(IReadOnlyList<ProcessField> fields, int pinned, bool scrollToTheEnd = false) {
+    ArgumentNullException.ThrowIfNull(fields);
+
+    this._columns.Apply(fields);
+    this._columns.SetFrozen(pinned);
+    this._columns.SetCurrent(0);
+    this.RebuildColumns();
+    this.Rebind();
+    // Asked for after the rebuild: the ceiling is computed from the columns, so a table asked to
+    // scroll before it had them is a table clamped to nought.
+    this._tree.HorizontalOffset = scrollToTheEnd ? this._tree.MaxHorizontalOffset : 0;
+    this.SelectFirstRow();
+    return this.DescribeForCapture();
+  }
+
+  /// <summary>
   /// Puts the columns through the moves §11 asks for, and says what each did (PRD §9.6).
   /// </summary>
   /// <remarks>
@@ -2372,6 +2563,7 @@ public sealed class MainWindow : Form {
     // throw away the layout of whoever regenerated the screenshots.
     var opened = this._columns.Fields;
     var openedWidths = this._columns.ChosenWidths;
+    var openedPins = this._columns.Frozen;
 
     var builder = new System.Text.StringBuilder();
     builder.AppendLine($"columns opened:  {this.DescribeColumns()}");
@@ -2382,6 +2574,11 @@ public sealed class MainWindow : Form {
     builder.AppendLine($"columns moved:   {this.DescribeColumns()}");
     this.ResizeColumn(_ResizeStep * 4);
     builder.AppendLine($"columns resized: {this.DescribeColumns()}");
+    this._columns.SetCurrent(2);
+    this.PinColumns();
+    builder.AppendLine($"columns pinned:  {this.DescribeColumns()}");
+    this.PinColumns();
+    builder.AppendLine($"columns loosed:  {this.DescribeColumns()}");
     this.ResetColumns();
     builder.AppendLine($"columns reset:   {this.DescribeColumns()}");
 
@@ -2389,6 +2586,7 @@ public sealed class MainWindow : Form {
     foreach (var (field, width) in openedWidths)
       this._columns.Restore(field, width);
 
+    this._columns.SetFrozen(openedPins);
     this._columns.SetCurrent(0);
     this.RebuildColumns();
     this.Rebind();
@@ -2536,6 +2734,8 @@ public sealed class MainWindow : Form {
     menu.DropDownItems.Add(Shortcut("Narrower", Keys.Control | Keys.OemMinus, () => this.ResizeColumn(-_ResizeStep)));
     menu.DropDownItems.Add(Shortcut("Wider", Keys.Control | Keys.Oemplus, () => this.ResizeColumn(_ResizeStep)));
     menu.DropDownItems.Add(new ToolStripSeparator());
+    menu.DropDownItems.Add(Shortcut("Pin up to this column", Keys.Control | Keys.Shift | Keys.P, this.PinColumns));
+    menu.DropDownItems.Add(new ToolStripSeparator());
     menu.DropDownItems.Add(Shortcut("Fit this column", Keys.Control | Keys.D1, () => this.AutoSize(false)));
     menu.DropDownItems.Add(Shortcut("Fit every column", Keys.Control | Keys.D2, () => this.AutoSize(true)));
     menu.DropDownItems.Add(Shortcut("Reset columns", Keys.Control | Keys.D0, this.ResetColumns));
@@ -2574,6 +2774,22 @@ public sealed class MainWindow : Form {
     this.RebuildColumns();
     this.Rebind();
     this.SayCurrentColumn();
+  }
+
+  /// <summary>
+  /// Pins the columns up to the cursor, or releases them all (PRD §11).
+  /// </summary>
+  /// <remarks>
+  /// The status line says what happened because the header cannot. The toolkit draws its own
+  /// captions and offers nothing to mark one with, so a table that had just pinned three columns and
+  /// a table that had not would be told apart only by scrolling it sideways and watching.
+  /// </remarks>
+  private void PinColumns() {
+    this._columns.ToggleFreeze();
+    this.RebuildColumns();
+    this._status.Text = this._columns.Frozen == 0
+      ? "no columns are pinned; the whole table scrolls"
+      : $"pinned {this._columns.Frozen} column(s), up to {ColumnSet.Info(this._columns.FieldAt(this._columns.Frozen - 1)).Header}";
   }
 
   private void ResizeColumn(int delta) {
@@ -2661,6 +2877,7 @@ public sealed class MainWindow : Form {
     // the cell, which needs somebody to have chosen a column first, gets the deliberate one.
     menu.DropDownItems.Add(Shortcut("Copy row, or every ticked row", Keys.Control | Keys.C, this.CopyRows));
     menu.DropDownItems.Add(Shortcut("Copy cell", Keys.Control | Keys.Shift | Keys.C, this.CopyCell));
+    menu.DropDownItems.Add(Shortcut("Copy this column", Keys.Control | Keys.Shift | Keys.D, this.CopyColumn));
     menu.DropDownItems.Add(new ToolStripSeparator());
     menu.DropDownItems.Add(Shortcut("Tick every row", Keys.Control | Keys.A, () => this.TickAll(invert: false)));
     menu.DropDownItems.Add(Item("Invert the ticks", () => this.TickAll(invert: true)));
@@ -2712,6 +2929,69 @@ public sealed class MainWindow : Form {
     }
 
     this.PutOnClipboard(this.RowsAsText(key => key == row.Key), "one row");
+  }
+
+  /// <summary>
+  /// One column, down every row that is showing — or down the ticked ones (PRD §11).
+  /// </summary>
+  /// <remarks>
+  /// The third shape of copy §11 asks a table for, and the one that was refused for want of a cell
+  /// selection to take it from. There is no cell selection here or in the terminal, and there does
+  /// not need to be: a column copy needs a column, and both front-ends have had a column cursor
+  /// since the header grew its gestures. The rule about which rows is the one the row copy already
+  /// follows — the ticked ones if any are ticked, everything on screen otherwise, because a person
+  /// who has ticked nothing and asked for a column means the column.
+  /// </remarks>
+  private void CopyColumn() {
+    if (this.ColumnAsText() is not { } text) {
+      this._status.Text = $"{ColumnSet.Info(this._columns.CurrentField).Header} is a drawn history and has nothing to copy";
+      return;
+    }
+
+    var ticked = this.TickedKeys().Count;
+    this.PutOnClipboard(
+      text,
+      $"{ColumnSet.Info(this._columns.CurrentField).Header} of {text.Split('\n').Length - 2} row(s)"
+        + (ticked > 0 ? ", the ticked ones" : string.Empty)
+    );
+  }
+
+  /// <summary>
+  /// The current column as a header line and one raw value per row, or null when it has no text.
+  /// </summary>
+  /// <remarks>
+  /// Split from the copy so that what goes on the clipboard can be read without one: this window's
+  /// copies have never been testable, because the toolkit's clipboard needs a backend and a test
+  /// has no display. Null rather than an empty string for a drawn history — copying a column of
+  /// nothing looks exactly like a copy that silently failed.
+  /// </remarks>
+  public string? ColumnAsText() {
+    if (this._columns.Count == 0)
+      return null;
+
+    var field = this._columns.CurrentField;
+    if (ColumnSet.Info(field).IsGraph)
+      return null;
+
+    var ticked = this.TickedKeys();
+    var builder = new System.Text.StringBuilder(256);
+    builder.Append(ColumnSet.Info(field).Header).Append('\n');
+
+    var processes = this._sampler.Current.Processes;
+    foreach (var row in this._view.Rows) {
+      // A heading is not a process and has no cell in any column, so it contributes no line
+      // (PRD §83).
+      if (row.IsGroupHeader)
+        continue;
+
+      ref readonly var process = ref processes[row.Index];
+      if (ticked.Count > 0 && !ticked.Contains(process.Key))
+        continue;
+
+      builder.Append(FieldAccessor.RawText(field, in process, this._sampler.Delta, row.Index) ?? string.Empty).Append('\n');
+    }
+
+    return builder.ToString();
   }
 
   /// <summary>A header line and one tab-separated line per row, over the columns that are showing.</summary>
@@ -2997,6 +3277,36 @@ public sealed class MainWindow : Form {
       menu.DropDownItems.Add(Item(label, () => this.GroupBy(chosen)));
     }
 
+    return menu;
+  }
+
+  /// <summary>
+  /// How often the machine is sampled, and whether it is sampled at all (PRD §12).
+  /// </summary>
+  /// <remarks>
+  /// The list comes from <see cref="Settings.UserSettings.OfferedIntervalSeconds"/>, so this menu and
+  /// the terminal's picker cannot come to offer different rates. Anything else is still settable —
+  /// <c>--interval</c> and the file take any number — and this is what is worth a line in a menu.
+  /// <para>
+  /// Pause and "by hand" are both here and are not the same entry. Both stop the tick; only the
+  /// second is remembered, because a monitor that opened paused because it was paused when it was
+  /// last closed is a monitor showing a table of nothing at all.
+  /// </para>
+  /// </remarks>
+  private ToolStripMenuItem BuildRefreshMenu() {
+    var menu = new ToolStripMenuItem("Refresh");
+    foreach (var seconds in Settings.UserSettings.OfferedIntervalSeconds) {
+      var milliseconds = (int)Math.Round(seconds * 1000);
+      menu.DropDownItems.Add(Item(
+        "Every " + Settings.UserSettings.NameOfInterval(seconds),
+        () => this.SetRefresh(milliseconds, paused: false, manual: false)
+      ));
+    }
+
+    menu.DropDownItems.Add(new ToolStripSeparator());
+    menu.DropDownItems.Add(Item("Paused", () => this.SetRefresh(0, paused: true, manual: false)));
+    menu.DropDownItems.Add(Item("By hand only", () => this.SetRefresh(0, paused: false, manual: true)));
+    menu.DropDownItems.Add(Shortcut("Refresh now", Keys.F5, this.RefreshCurrentView));
     return menu;
   }
 

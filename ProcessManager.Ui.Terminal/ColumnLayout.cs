@@ -160,9 +160,14 @@ public sealed class ColumnLayout {
   /// <summary>Pins every column up to and including the cursor, or unpins them all.</summary>
   public void ToggleFreeze() {
     var wanted = this.Current + 1;
-    this.Frozen = this.Frozen == wanted ? 0 : wanted;
-    this.Scroll = Math.Max(this.Scroll, this.Frozen);
+    this.SetFrozen(this.Frozen == wanted ? 0 : wanted);
     this.Customised = true;
+  }
+
+  /// <summary>Pins the first <paramref name="count"/> columns — what the settings file restores.</summary>
+  public void SetFrozen(int count) {
+    this.Frozen = Math.Clamp(count, 0, this._columns.Count);
+    this.Scroll = Math.Max(this.Scroll, this.Frozen);
   }
 
   public void ScrollBy(int delta) => this.Scroll = Math.Clamp(this.Scroll + delta, this.Frozen, Math.Max(this.Frozen, this._columns.Count - 1));
@@ -173,7 +178,7 @@ public sealed class ColumnLayout {
   /// <returns>How many placements were written.</returns>
   public int Place(int screenWidth, Span<ColumnPlacement> destination) {
     Span<int> reserved = stackalloc int[this._columns.Count + 1];
-    this.ReserveForTheColumnsAfterEachOne(reserved);
+    this.ReserveForTheColumnsAfterEachOne(reserved, screenWidth);
 
     var written = 0;
     var x = 0;
@@ -207,15 +212,40 @@ public sealed class ColumnLayout {
   }
 
   /// <summary>The width the columns drawn after each one need, so it can leave them room.</summary>
-  private void ReserveForTheColumnsAfterEachOne(Span<int> reserved) {
+  /// <remarks>
+  /// Only as far along as the screen can reach. A set with more columns than the terminal can hold
+  /// even at their narrowest was reserving room for columns it was never going to draw, and the ones
+  /// it did draw paid for them: the forensic set's twenty-five columns starved the process name to
+  /// six characters at a hundred and sixty wide, which renders every row as <c>kthrea</c>. Past the
+  /// reach the reservation is nought, because a column that will not be on screen needs no room kept
+  /// for it — it is reached by scrolling sideways instead (PRD §57.2).
+  /// </remarks>
+  private void ReserveForTheColumnsAfterEachOne(Span<int> reserved, int screenWidth) {
+    var reach = this._columns.Count;
+    var used = 0;
+    for (var i = 0; i < this._columns.Count; ++i) {
+      if (!this.IsDrawn(i))
+        continue;
+
+      used += Math.Min(this._columns[i].Width, _MinimumWidth) + 1;
+      if (used <= screenWidth)
+        continue;
+
+      reach = i;
+      break;
+    }
+
     reserved[this._columns.Count] = 0;
-    for (var i = this._columns.Count - 1; i >= 0; --i) {
-      var drawn = this._columns[i].Visible && (i < this.Frozen || i >= this.Scroll);
+    for (var i = this._columns.Count - 1; i >= 0; --i)
       // Reserved at the declared width but no more than a squeezed one needs: reserving 120 for a
       // trailing name column would starve everything in front of it instead.
-      reserved[i] = reserved[i + 1] + (drawn ? Math.Min(this._columns[i].Width, _MinimumWidth) + 1 : 0);
-    }
+      reserved[i] = reserved[i + 1]
+        + (i < reach && this.IsDrawn(i) ? Math.Min(this._columns[i].Width, _MinimumWidth) + 1 : 0);
   }
+
+  /// <summary>Whether a column ends up on screen at all: visible, and either pinned or scrolled to.</summary>
+  private bool IsDrawn(int index)
+    => this._columns[index].Visible && (index < this.Frozen || index >= this.Scroll);
 
   /// <summary>What a column squeezed by its neighbours still gets.</summary>
   private const int _MinimumWidth = 6;

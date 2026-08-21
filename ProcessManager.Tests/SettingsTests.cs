@@ -195,7 +195,7 @@ public sealed class SettingsTests {
   public void ThePresetsOfSection94AreAvailableWithoutAFile() {
     var settings = new UserSettings();
 
-    foreach (var name in new[] { "basic", "expert", "security", "io", "memory", "cpu", "minimal" }) {
+    foreach (var name in new[] { "basic", "expert", "security", "io", "memory", "cpu", "forensic", "minimal" }) {
       Assert.That(settings.TryGetColumnSet(name, out var fields), Is.True, name);
       Assert.That(fields, Is.Not.Empty, name);
     }
@@ -223,6 +223,28 @@ public sealed class SettingsTests {
       foreach (var field in fields)
         Assert.That(FieldRegistry.Get(field).Id, Is.EqualTo(field), $"{name} names an unregistered field");
     }
+  }
+
+  /// <summary>
+  /// §11's full forensic set is the expert set plus the two halves it was missing — who a process
+  /// really is, and what it is doing to the disk. A set that had drifted back to being expert with
+  /// extra spelling would close that row without earning it.
+  /// </summary>
+  [Test]
+  public void TheForensicSetHasEverythingTheExpertSetHasAndTheDetailItLacked() {
+    var settings = new UserSettings();
+    Assert.That(settings.TryGetColumnSet("forensic", out var forensic), Is.True);
+    Assert.That(settings.TryGetColumnSet("expert", out var expert), Is.True);
+
+    foreach (var field in expert)
+      Assert.That(forensic, Does.Contain(field), $"the forensic set drops {FieldRegistry.Get(field).Key}");
+
+    foreach (var field in new[] {
+      ProcessField.EffectiveUserName, ProcessField.PrivilegeChanged, ProcessField.Capabilities,
+      ProcessField.SecurityContext, ProcessField.Seccomp, ProcessField.TracerPid,
+      ProcessField.ReadBytesPerSecond, ProcessField.WriteBytesPerSecond, ProcessField.HandleCount,
+    })
+      Assert.That(forensic, Does.Contain(field), $"the forensic set has no {FieldRegistry.Get(field).Key}");
   }
 
   [Test]

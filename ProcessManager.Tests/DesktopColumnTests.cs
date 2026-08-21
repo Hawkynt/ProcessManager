@@ -214,4 +214,90 @@ public sealed class DesktopColumnTests {
     Assert.That(parsed.IntervalSeconds, Is.EqualTo(2), "the rest of the file still parsed");
   }
 
+  #region the pinned run (PRD §11)
+
+  /// <summary>
+  /// One column pinned to start with, the same as the terminal: a table scrolled sideways with no
+  /// name column left on it is a table of numbers belonging to nobody.
+  /// </summary>
+  [Test]
+  public void TheFirstColumnIsPinnedToBeginWith() {
+    var columns = Columns();
+    Assert.That(columns.Frozen, Is.EqualTo(1));
+    Assert.That(columns.IsFrozen(0), Is.True);
+    Assert.That(columns.IsFrozen(1), Is.False);
+  }
+
+  /// <summary>The same arithmetic the terminal's <c>#</c> does: pin up to the cursor, or let go.</summary>
+  [Test]
+  public void PinningTakesEverythingUpToTheCursorAndPressingAgainLetsGo() {
+    var columns = Columns();
+    columns.SetCurrent(2);
+
+    columns.ToggleFreeze();
+    Assert.That(columns.Frozen, Is.EqualTo(3));
+    Assert.That(columns.IsFrozen(2), Is.True);
+    Assert.That(columns.IsFrozen(3), Is.False);
+    Assert.That(columns.Customised, Is.True);
+
+    columns.ToggleFreeze();
+    Assert.That(columns.Frozen, Is.Zero, "the same key on the same column releases the lot");
+  }
+
+  /// <summary>
+  /// Ticking columns off must not leave three pinned out of two, which the toolkit reads as "pin
+  /// everything" and then refuses to scroll at all.
+  /// </summary>
+  [Test]
+  public void TheNumberPinnedCannotOutrunTheColumns() {
+    var columns = Columns();
+    columns.SetCurrent(3);
+    columns.ToggleFreeze();
+    Assert.That(columns.Frozen, Is.EqualTo(4));
+
+    columns.Apply([ProcessField.Name, ProcessField.Pid]);
+    Assert.That(columns.Frozen, Is.EqualTo(2));
+
+    columns.SetFrozen(99);
+    Assert.That(columns.Frozen, Is.EqualTo(2));
+    columns.SetFrozen(-1);
+    Assert.That(columns.Frozen, Is.Zero);
+  }
+
+  [Test]
+  public void ResettingTheColumnsPinsTheFirstOneAgain() {
+    var columns = Columns();
+    columns.SetFrozen(0);
+    columns.Reset([ProcessField.Name, ProcessField.Pid]);
+
+    Assert.That(columns.Frozen, Is.EqualTo(1));
+    Assert.That(columns.Customised, Is.False);
+  }
+
+  /// <summary>
+  /// Only when it is not the one column every table opens with: a line in everybody's settings file
+  /// saying the first column is pinned is a line nobody reads.
+  /// </summary>
+  [Test]
+  public void ThePinnedRunSurvivesTheSettingsFile() {
+    var written = new UserSettings { PinnedDesktopColumns = 3, PinnedTerminalColumns = 2 }.Write();
+
+    var parsed = UserSettings.Parse(written);
+    Assert.That(parsed.PinnedDesktopColumns, Is.EqualTo(3));
+    Assert.That(parsed.PinnedTerminalColumns, Is.EqualTo(2));
+
+    Assert.That(new UserSettings().Write(), Does.Not.Contain("pinned"));
+  }
+
+  [Test]
+  public void ANonsensePinnedCountLeavesTheSettingAlone() {
+    var parsed = UserSettings.Parse("columns.desktop.pinned=-3\ncolumns.terminal.pinned=nine\ninterval=2");
+
+    Assert.That(parsed.PinnedDesktopColumns, Is.EqualTo(1));
+    Assert.That(parsed.PinnedTerminalColumns, Is.EqualTo(1));
+    Assert.That(parsed.IntervalSeconds, Is.EqualTo(2), "the rest of the file still parsed");
+  }
+
+  #endregion
+
 }

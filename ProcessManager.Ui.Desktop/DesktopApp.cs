@@ -137,6 +137,20 @@ public static class DesktopApp {
             : $"filtered capture: none — {filteredFailure}\n";
 
           window.ShowFilter(string.Empty);
+
+          // A table wider than the window, pinned and scrolled to its far end (PRD §11). The default
+          // six columns fit, so nothing scrolls and nothing is held still — a pinned run that had
+          // stopped working would photograph exactly like one that had not. Put back afterwards,
+          // because the window writes its settings once a second.
+          var openedColumns = window.ShownColumns;
+          var pinnedPng = Path.Combine(directory, "desktop-pinned.png");
+          description += window.ShowColumns(Settings.UserSettings.Presets["expert"], pinned: 2, scrollToTheEnd: true);
+          var pinnedSize = GtkCapture.Window(pinnedPng, out var pinnedFailure, window.Text);
+          description += pinnedSize is { } wide
+            ? $"pinned capture: {wide.Width}x{wide.Height} -> {pinnedPng}\n"
+            : $"pinned capture: none — {pinnedFailure}\n";
+
+          window.ShowColumns(openedColumns.Fields, openedColumns.Pinned);
           description += window.ExerciseColumns();
 
           // And the performance page, which is where most of §45 lives and none of it was ever

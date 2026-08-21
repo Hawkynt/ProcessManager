@@ -54,7 +54,7 @@ public sealed class TerminalUi {
   private enum InputMode : byte { Normal, Search, Filter, Confirm, SchedulingClass, Detail, Overlay, ExportPath }
 
   /// <summary>Which list is on screen, so one set of keys can drive all three.</summary>
-  private enum OverlayKind : byte { None, Actions, Columns, Help, Grouping }
+  private enum OverlayKind : byte { None, Actions, Columns, Help, Grouping, Interval }
 
   /// <summary>
   /// What the pending confirmation will do if it is answered yes.
@@ -95,6 +95,32 @@ public sealed class TerminalUi {
 
   /// <summary>Whether sampling is stopped (PRD §57.3, §12).</summary>
   public bool Paused { get; private set; }
+
+  /// <summary>
+  /// Whether the tick is off and a sample is asked for by hand (PRD §12).
+  /// </summary>
+  /// <remarks>
+  /// Not the same as a pause, and kept apart from it for the reason the settings file gives: a pause
+  /// is flipped for a few seconds to read a row that will not hold still, and asking to refresh by
+  /// hand is a preference that outlives the session.
+  /// </remarks>
+  public bool ManualRefresh { get; private set; }
+
+  /// <summary>
+  /// How long the host waits between samples (PRD §12).
+  /// </summary>
+  /// <remarks>
+  /// Lives here rather than in the host so that the picker can move it: the loop reads it each time
+  /// round, so a rate chosen mid-session takes effect at the next sample rather than at the next
+  /// start-up.
+  /// </remarks>
+  public int IntervalMilliseconds {
+    get;
+    set => field = Math.Clamp(value, 250, 60_000);
+  } = 1000;
+
+  /// <summary>Whether the host should take a sample at all, which pausing and manual both stop.</summary>
+  public bool Sampling => !this.Paused && !this.ManualRefresh;
 
   /// <summary>Which page is showing.</summary>
   public TerminalPage Page { get; private set; }
@@ -372,6 +398,7 @@ public sealed class TerminalUi {
         this.Say(this.Paused ? "sampling paused" : "sampling again", Attributes.Accent);
         return true;
       case TerminalAction.RefreshNow: this.Update(); return false;
+      case TerminalAction.RefreshInterval: this.OpenIntervalMenu(); return true;
       case TerminalAction.CpuMode: this.ToggleCpuMode(); return true;
       case TerminalAction.UserFilter: this.ToggleUserFilter(); return true;
       case TerminalAction.Search: this.BeginInput(InputMode.Search); return true;
@@ -418,6 +445,7 @@ public sealed class TerminalUi {
         return true;
       case TerminalAction.CopyCell: this.CopyCell(); return true;
       case TerminalAction.CopyRow: this.CopyRows(); return true;
+      case TerminalAction.CopyColumn: this.CopyColumn(); return true;
       case TerminalAction.Export: this.BeginInput(InputMode.ExportPath); return true;
 
       case TerminalAction.ActionMenu: this.OpenActionMenu(); return true;
@@ -680,6 +708,10 @@ public sealed class TerminalUi {
 
       case OverlayKind.Grouping:
         this.GroupBy((ProcessGrouping)item.Tag);
+        return this.CloseOverlay();
+
+      case OverlayKind.Interval:
+        this.SetRefresh(item.Tag);
         return this.CloseOverlay();
 
       case OverlayKind.Columns:
@@ -1281,6 +1313,48 @@ public sealed class TerminalUi {
     this.Copy(builder.ToString(), copied == 1 ? "one row" : $"{copied} rows");
   }
 
+  /// <summary>
+  /// One column, down every row that is showing — or down the ticked ones (PRD §11).
+  /// </summary>
+  /// <remarks>
+  /// The third shape of copy §11 asks a table for, and the one that was refused for want of a cell
+  /// selection to take it from. There is none here and none is needed: a column copy needs a column,
+  /// and this table has had a column cursor since it grew a mouse. Which rows follows the rule the
+  /// row copy already uses — the ticked ones if any are, everything on screen otherwise.
+  /// </remarks>
+  private void CopyColumn() {
+    var field = this._columns.CurrentField;
+    if (FieldRegistry.Get(field).IsGraph) {
+      // A drawn history has no text. An empty column of nothing looks exactly like a copy that
+      // silently failed.
+      this.Say($"{FieldRegistry.Get(field).Header} is a drawn history and has nothing to copy", Attributes.Dim);
+      return;
+    }
+
+    var builder = new StringBuilder(256);
+    builder.Append(FieldRegistry.Get(field).Header).Append('\n');
+
+    var copied = 0;
+    var processes = this._sampler.Current.Processes;
+    foreach (var row in this._view.Rows) {
+      // A heading is not a process and has no cell in any column but the first (PRD §83).
+      if (row.IsGroupHeader)
+        continue;
+
+      ref readonly var process = ref processes[row.Index];
+      if (this._marked.Count > 0 && !this._marked.Contains(process.Key))
+        continue;
+
+      builder.Append(FieldAccessor.RawText(field, in process, this._sampler.Delta, row.Index) ?? string.Empty).Append('\n');
+      ++copied;
+    }
+
+    this.Copy(
+      builder.ToString(),
+      $"{FieldRegistry.Get(field).Header} of {copied} row(s)" + (this._marked.Count > 0 ? ", the ticked ones" : string.Empty)
+    );
+  }
+
   private void Copy(string text, string what) {
     this.LastCopiedText = text;
     if (this.ClipboardOutput is null) {
@@ -1469,6 +1543,56 @@ public sealed class TerminalUi {
       }
   }
 
+  /// <summary>
+  /// How often the machine is sampled, and whether it is sampled at all (PRD §12).
+  /// </summary>
+  /// <remarks>
+  /// The rates come from <see cref="UserSettings.OfferedIntervalSeconds"/>, so this picker and the
+  /// window's menu cannot come to offer different ones. The tag is the interval in milliseconds,
+  /// with nought for a pause and -1 for by-hand — two states that both stop the tick and are not the
+  /// same request.
+  /// </remarks>
+  private void OpenIntervalMenu() {
+    var items = new List<OverlayItem> { OverlayItem.Heading("Sample the machine") };
+    foreach (var seconds in UserSettings.OfferedIntervalSeconds) {
+      var milliseconds = (int)Math.Round(seconds * 1000);
+      // No hint: "Every 250 ms" is the whole of what that line means, and a column of restatements
+      // beside it is a column that pushes the box wider for nothing.
+      items.Add(OverlayItem.Toggle(
+        "Every " + UserSettings.NameOfInterval(seconds),
+        string.Empty,
+        milliseconds,
+        this.Sampling && this.IntervalMilliseconds == milliseconds
+      ));
+    }
+
+    items.Add(OverlayItem.Heading("Or not at all"));
+    items.Add(OverlayItem.Toggle("Paused", "until unpaused", _PausedTag, this.Paused));
+    items.Add(OverlayItem.Toggle("By hand only", "refresh samples", _ManualTag, this.ManualRefresh));
+    this.ShowOverlay(new("Refresh — Enter chooses, Esc closes", items) { HintColumn = 22 }, OverlayKind.Interval);
+  }
+
+  private const int _PausedTag = 0;
+  private const int _ManualTag = -1;
+
+  /// <summary>Opens with the tick off, because the settings file said so (PRD §12).</summary>
+  public void SetManualRefresh() => this.SetRefresh(_ManualTag);
+
+  /// <summary>Takes one of the picker's answers and says what it did.</summary>
+  private void SetRefresh(int milliseconds) {
+    this.Paused = milliseconds == _PausedTag;
+    this.ManualRefresh = milliseconds == _ManualTag;
+    if (milliseconds > 0)
+      this.IntervalMilliseconds = milliseconds;
+
+    this.Say(
+      this.Paused ? "sampling paused"
+      : this.ManualRefresh ? $"refreshed by hand — {this.Keys.KeysFor(TerminalAction.RefreshNow)} takes a sample"
+      : $"sampling every {UserSettings.NameOfInterval(this.IntervalMilliseconds / 1000d)}",
+      Attributes.Accent
+    );
+  }
+
   private void OpenColumnChooser() {
     var items = new List<OverlayItem> { OverlayItem.Heading("Column sets") };
     foreach (var name in UserSettings.Presets.Keys)
@@ -1587,6 +1711,11 @@ public sealed class TerminalUi {
     var state = new StringBuilder(48);
     if (this.Paused)
       state.Append("PAUSED  ");
+    // Said whether or not it is paused as well: a table that is not following the machine looks
+    // exactly like one that is, and the two reasons it might not be are not the same reason
+    // (PRD §12).
+    else if (this.ManualRefresh)
+      state.Append("BY HAND  ");
     if (this._view.CaseSensitive)
       state.Append("case  ");
     if (this._marked.Count > 0)

@@ -26,6 +26,43 @@ public sealed record UserSettings {
   /// <summary>Seconds between samples (PRD §12).</summary>
   public double IntervalSeconds { get; init; } = 1;
 
+  /// <summary>
+  /// Whether the sample tick is off and a refresh is asked for by hand (PRD §12).
+  /// </summary>
+  /// <remarks>
+  /// Kept beside the interval rather than folded into it as a nought, because they are two different
+  /// statements and a program that forgot the difference would put somebody who chose "by hand" back
+  /// on a quarter-second tick the next time they opened it. The interval underneath is remembered,
+  /// so leaving manual refresh goes back to the rate they were on.
+  /// <para>
+  /// A pause is <em>not</em> this. Pausing is a toggle somebody flips for a few seconds to read a
+  /// row that will not hold still, and a monitor that opened paused because it was paused when it
+  /// was last closed is a monitor showing a table of nothing at all.
+  /// </para>
+  /// </remarks>
+  public bool ManualRefresh { get; init; }
+
+  /// <summary>
+  /// The intervals both front-ends offer (PRD §12).
+  /// </summary>
+  /// <remarks>
+  /// One list, so the window's menu and the terminal's picker cannot come to hold different ideas of
+  /// what is on offer — the same reason the fields are one catalogue. Anything else is still
+  /// settable: <c>--interval</c> and the file take any number, and this is what is worth a line in
+  /// a menu.
+  /// </remarks>
+  public static IReadOnlyList<double> OfferedIntervalSeconds { get; } = [0.25, 0.5, 1, 2, 5, 10];
+
+  /// <summary>What an interval is called on screen — <c>250 ms</c>, <c>1 s</c>, <c>2.5 s</c>.</summary>
+  /// <remarks>
+  /// Beside the list it labels, so the window's menu and the terminal's picker read the same. Under
+  /// a second the figure is milliseconds, because "0.25 s" is a number somebody has to convert
+  /// before it means anything.
+  /// </remarks>
+  public static string NameOfInterval(double seconds) => seconds < 1
+    ? (seconds * 1000).ToString("0.###", CultureInfo.InvariantCulture) + " ms"
+    : seconds.ToString("0.###", CultureInfo.InvariantCulture) + " s";
+
   public ProcessField SortField { get; init; } = ProcessField.CpuPercent;
 
   public bool SortDescending { get; init; } = true;
@@ -56,6 +93,23 @@ public sealed record UserSettings {
 
   /// <summary>The columns the terminal opens with.</summary>
   public ProcessField[] TerminalColumns { get; init; } = [];
+
+  /// <summary>
+  /// How many leading columns are pinned in each front-end (PRD §11).
+  /// </summary>
+  /// <remarks>
+  /// A count rather than a list of fields, because that is what pinning is: the leading run of the
+  /// column order, which moves when the order does. One apiece by default, so a table scrolled
+  /// sideways always has a name column left on it.
+  /// <para>
+  /// Two keys and not one. The window and the terminal keep their own column orders, and a machine
+  /// they share is a machine where five pinned columns in a 200-pixel-wide list mean nothing at all
+  /// in an eighty-column terminal.
+  /// </para>
+  /// </remarks>
+  public int PinnedDesktopColumns { get; init; } = 1;
+
+  public int PinnedTerminalColumns { get; init; } = 1;
 
   /// <summary>
   /// Widths somebody dragged in the window, by field (PRD §11).
@@ -185,6 +239,22 @@ public sealed record UserSettings {
         ProcessField.CpuTime, ProcessField.ContextSwitchesDelta, ProcessField.LastCpu,
         ProcessField.ThreadCount, ProcessField.CpuHistory,
       ],
+      // Everything the expert set has, plus the two halves it is missing: who a process really is
+      // and what it is doing to the disk (PRD §11, §94). Deliberately the dearest set in the file —
+      // the package, the digest and the descriptor count each cost a reading the sampler does not
+      // otherwise take, and asking for a forensic table is asking to pay for them (PRD §5.4). It is
+      // also the widest, which is what the pinned columns and the sideways scroll are for.
+      ["forensic"] = [
+        ProcessField.Name, ProcessField.Pid, ProcessField.ParentPid, ProcessField.UserName,
+        ProcessField.EffectiveUserName, ProcessField.PrivilegeChanged, ProcessField.Elevated,
+        ProcessField.Capabilities, ProcessField.SecurityContext, ProcessField.Seccomp,
+        ProcessField.NoNewPrivileges, ProcessField.TracerPid,
+        ProcessField.CpuPercent, ProcessField.PrivateBytes, ProcessField.WorkingSetBytes,
+        ProcessField.ReadBytesPerSecond, ProcessField.WriteBytesPerSecond, ProcessField.IoTotalRate,
+        ProcessField.ThreadCount, ProcessField.HandleCount, ProcessField.StartTime,
+        ProcessField.Package, ProcessField.ImageSha256, ProcessField.ImagePath,
+        ProcessField.CommandLine,
+      ],
       ["minimal"] = [
         ProcessField.Name, ProcessField.Pid, ProcessField.UserName, ProcessField.State,
         ProcessField.CpuPercent, ProcessField.PrivateBytes,
@@ -268,9 +338,20 @@ public sealed record UserSettings {
 
       switch (key.ToLowerInvariant()) {
         case "interval":
-          if (double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var seconds)
+          // "manual" leaves the interval where it was: it says the tick is off, not how fast it
+          // would run, and going back to a rate somebody never chose is the wrong answer (PRD §12).
+          if (value.Equals("manual", StringComparison.OrdinalIgnoreCase))
+            settings = settings with { ManualRefresh = true };
+          else if (double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var seconds)
               && seconds is > 0 and <= 3600)
             settings = settings with { IntervalSeconds = seconds };
+
+          break;
+
+        case "interval.seconds":
+          if (double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var underneath)
+              && underneath is > 0 and <= 3600)
+            settings = settings with { IntervalSeconds = underneath };
 
           break;
 
@@ -316,6 +397,18 @@ public sealed record UserSettings {
         case "columns.terminal":
           if (TryParseFields(value, out var terminal))
             settings = settings with { TerminalColumns = terminal };
+
+          break;
+
+        case "columns.desktop.pinned":
+          if (TryParseCount(value, out var pinnedDesktop))
+            settings = settings with { PinnedDesktopColumns = pinnedDesktop };
+
+          break;
+
+        case "columns.terminal.pinned":
+          if (TryParseCount(value, out var pinnedTerminal))
+            settings = settings with { PinnedTerminalColumns = pinnedTerminal };
 
           break;
 
@@ -416,7 +509,14 @@ public sealed record UserSettings {
     text.AppendLine("# ProcessManager settings. Edited by hand quite deliberately: every value here");
     text.AppendLine("# is a field key or a plain number, and `procman --help-fields` lists them all.");
     text.AppendLine();
-    text.Append("interval=").AppendLine(this.IntervalSeconds.ToString("0.###", CultureInfo.InvariantCulture));
+    // The rate underneath is written on its own line when the tick is off, so that turning the tick
+    // back on returns to the rate somebody chose rather than to whatever the default happens to be.
+    if (this.ManualRefresh) {
+      text.AppendLine("interval=manual");
+      text.Append("interval.seconds=").AppendLine(this.IntervalSeconds.ToString("0.###", CultureInfo.InvariantCulture));
+    } else
+      text.Append("interval=").AppendLine(this.IntervalSeconds.ToString("0.###", CultureInfo.InvariantCulture));
+
     text.Append("sort=").AppendLine(FieldRegistry.Get(this.SortField).Key);
     text.Append("sort.descending=").AppendLine(this.SortDescending ? "true" : "false");
     text.Append("tree=").AppendLine(this.TreeMode ? "true" : "false");
@@ -428,6 +528,14 @@ public sealed record UserSettings {
 
     if (this.TerminalColumns.Length > 0)
       text.Append("columns.terminal=").AppendLine(Join(this.TerminalColumns));
+
+    // Only when they are not the one column every table opens with. A line in everybody's file
+    // saying the first column is pinned is a line nobody reads.
+    if (this.PinnedDesktopColumns != 1)
+      text.Append("columns.desktop.pinned=").AppendLine(this.PinnedDesktopColumns.ToString(CultureInfo.InvariantCulture));
+
+    if (this.PinnedTerminalColumns != 1)
+      text.Append("columns.terminal.pinned=").AppendLine(this.PinnedTerminalColumns.ToString(CultureInfo.InvariantCulture));
 
     if (this.DesktopColumnWidths.Count > 0) {
       var widths = new List<string>(this.DesktopColumnWidths.Count);
@@ -635,6 +743,13 @@ public sealed record UserSettings {
     => double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var value) && value >= 0
       ? value
       : fallback;
+
+  /// <summary>
+  /// A count of columns. Negative is a typo rather than a preference, and so is a number larger than
+  /// any column list anybody will ever have — both leave the setting alone.
+  /// </summary>
+  private static bool TryParseCount(string text, out int value)
+    => int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out value) && value is >= 0 and <= 64;
 
   private static bool TryParseBool(string text, out bool value) {
     switch (text.ToLowerInvariant()) {

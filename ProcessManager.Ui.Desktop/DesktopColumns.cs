@@ -45,6 +45,18 @@ public sealed class DesktopColumns {
   /// <summary>The column a resize, a copy or a move acts on.</summary>
   public int Current { get; private set; }
 
+  /// <summary>
+  /// How many leading columns stay put while the rest scroll sideways (PRD §11).
+  /// </summary>
+  /// <remarks>
+  /// The leading run and not "whichever columns are ticked": a pinned third column with two
+  /// scrolling ones in front of it leaves a hole beside it that nothing can fill, which is why the
+  /// toolkit stops its pinned run at the first column that is not pinned. One by default, the same
+  /// as the terminal — a table scrolled sideways with no name column left on it is a table of
+  /// numbers belonging to nobody.
+  /// </remarks>
+  public int Frozen { get; private set; } = 1;
+
   /// <summary>True once anything here has been moved by hand, so the file is worth writing.</summary>
   public bool Customised { get; private set; }
 
@@ -102,6 +114,29 @@ public sealed class DesktopColumns {
       });
 
     this.ClampCurrent();
+    this.ClampFrozen();
+  }
+
+  /// <summary>Whether the column at this index is one of the pinned ones (PRD §11).</summary>
+  public bool IsFrozen(int index) => index < this.Frozen;
+
+  /// <summary>
+  /// Pins every column up to and including the cursor, or unpins the lot.
+  /// </summary>
+  /// <remarks>
+  /// The same gesture the terminal's <c>#</c> makes, and deliberately the same arithmetic: pressing
+  /// it on the column that is already the last pinned one unpins everything, so one key both pins
+  /// and releases and nobody has to find a second one.
+  /// </remarks>
+  public void ToggleFreeze() {
+    var wanted = this.Current + 1;
+    this.SetFrozen(this.Frozen == wanted ? 0 : wanted);
+    this.Customised = true;
+  }
+
+  /// <summary>Pins the first <paramref name="count"/> columns — what the settings file restores.</summary>
+  public void SetFrozen(int count) {
+    this.Frozen = Math.Clamp(count, 0, this._columns.Count);
   }
 
   /// <summary>Sets a width somebody chose earlier, for a column that is showing.</summary>
@@ -124,6 +159,7 @@ public sealed class DesktopColumns {
       this._columns.Add(new() { Field = field, Width = FieldRegistry.Get(field).DesktopWidth });
 
     this.Current = 0;
+    this.Frozen = 1;
     this.Customised = false;
   }
 
@@ -256,5 +292,14 @@ public sealed class DesktopColumns {
 
   private void ClampCurrent()
     => this.Current = this._columns.Count == 0 ? 0 : Math.Clamp(this.Current, 0, this._columns.Count - 1);
+
+  /// <summary>
+  /// Keeps the pinned run inside the column list.
+  /// </summary>
+  /// <remarks>
+  /// Ticking six columns down to three must not leave three columns pinned out of two, which the
+  /// toolkit would read as "pin everything" and then refuse to scroll at all.
+  /// </remarks>
+  private void ClampFrozen() => this.Frozen = Math.Clamp(this.Frozen, 0, this._columns.Count);
 
 }

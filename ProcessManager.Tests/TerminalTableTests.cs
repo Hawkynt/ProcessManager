@@ -11,6 +11,12 @@ namespace Hawkynt.ProcessManager.Tests;
 [TestFixture]
 public sealed class TerminalTableTests {
 
+  /// <summary>
+  /// Ctrl+Y as a terminal actually delivers it: the control character itself, with the modifier
+  /// flag set beside it because not every console layer sets one.
+  /// </summary>
+  private static ConsoleKeyInfo CtrlY => new('\u0019', ConsoleKey.Y, false, false, true);
+
   [Test]
   public void TickingARowMarksItInTheGutterAndMovesOn() {
     var (ui, probe) = Machine();
@@ -72,6 +78,38 @@ public sealed class TerminalTableTests {
       Assert.That(lines, Has.Length.EqualTo(3), "a header and the two ticked rows");
       Assert.That(lines[0], Does.StartWith("PID\t"), "the columns are named, so a paste is readable");
       Assert.That(lines[1].Split('\t')[0], Is.EqualTo("1"));
+    }
+  }
+
+  /// <summary>
+  /// The third shape of copy §11 asks for. It needs a column, not a cell selection: this table has
+  /// a column cursor and that is enough to say which column is meant.
+  /// </summary>
+  [Test]
+  public void CopyingAColumnTakesItDownEveryRowThatIsShowing() {
+    var (ui, probe) = Machine();
+    using (probe) {
+      // The column cursor starts on the pid, and the recorded machine has five processes.
+      ui.HandleKey(CtrlY);
+
+      var lines = (ui.LastCopiedText ?? string.Empty).TrimEnd('\n').Split('\n');
+      Assert.That(lines[0], Is.EqualTo("PID"), "the column is named, so a paste is readable");
+      Assert.That(lines, Has.Length.EqualTo(ui.View.MatchCount + 1));
+      Assert.That(lines[1], Is.EqualTo("1"));
+    }
+  }
+
+  /// <summary>Ticked rows mean those rows, the same way they do for a row copy.</summary>
+  [Test]
+  public void CopyingAColumnTakesTheTickedRowsWhenAnyAreTicked() {
+    var (ui, probe) = Machine();
+    using (probe) {
+      ui.HandleKey(Key(' '));
+      ui.HandleKey(Key(' '));
+      ui.HandleKey(CtrlY);
+
+      var lines = (ui.LastCopiedText ?? string.Empty).TrimEnd('\n').Split('\n');
+      Assert.That(lines, Has.Length.EqualTo(3), "a header and the two ticked rows");
     }
   }
 
