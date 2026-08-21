@@ -17,6 +17,15 @@ public sealed class SnapshotDelta {
   private readonly List<ProcessKey> _exited = [];
   private Rate[] _cpuPercent = [];
   private Rate[] _cpuPercentPerCore = [];
+  private Rate[] _cpuPercentDelta = [];
+  // The share each process had in the interval before this one, in the previous snapshot's order.
+  // Two arrays swapped rather than one copied: the buffer this call is about to overwrite is
+  // exactly the one holding last call's answer.
+  private Rate[] _previousCpuPercent = [];
+  // How many of those entries were actually written. The arrays only ever grow and a grown one is
+  // a fresh allocation, so every slot past this is default(Rate) — which is a confident zero, and
+  // reading one would report a process's CPU as unchanged when nobody measured it (PRD §72.3).
+  private int _previousCpuPercentCount;
   private Rate[] _readBytesPerSecond = [];
   private Rate[] _writeBytesPerSecond = [];
   private Rate[] _otherBytesPerSecond = [];
@@ -64,6 +73,19 @@ public sealed class SnapshotDelta {
   /// reader who has to remember which is on screen is a reader who will misread one of them (§3.2).
   /// </remarks>
   public Rate CpuPercentPerCore(int index) => this._cpuPercentPerCore[index];
+
+  /// <summary>
+  /// How far the process's share of the processor moved between the previous interval and this one,
+  /// in percentage points (PRD §15).
+  /// </summary>
+  /// <remarks>
+  /// The derivative of a derivative, and it needs three samples rather than two: a process that has
+  /// just started working stands out from one that has been busy all along, and the CPU column alone
+  /// cannot tell them apart. Signed, because the process that has just <em>stopped</em> is as
+  /// interesting as the one that started. Unknown until the third sample rather than nought, which
+  /// would read as "steady" for a whole interval after start-up.
+  /// </remarks>
+  public Rate CpuPercentDelta(int index) => this._cpuPercentDelta[index];
 
   /// <summary>Bytes read, written and neither, per second.</summary>
   public Rate OtherBytesPerSecond(int index) => this._otherBytesPerSecond[index];
@@ -194,7 +216,11 @@ public sealed class SnapshotDelta {
     ArgumentNullException.ThrowIfNull(current);
 
     var count = current.ProcessCount;
+    // Before anything is written: what this call is about to overwrite is what the last one worked
+    // out, and that is the only record of the interval before this one.
+    (this._cpuPercent, this._previousCpuPercent) = (this._previousCpuPercent, this._cpuPercent);
     EnsureLength(ref this._cpuPercent, count);
+    EnsureLength(ref this._cpuPercentDelta, count);
     EnsureLength(ref this._cpuPercentPerCore, count);
     EnsureLength(ref this._readBytesPerSecond, count);
     EnsureLength(ref this._writeBytesPerSecond, count);
@@ -230,6 +256,7 @@ public sealed class SnapshotDelta {
       var processes = current.Processes;
       for (var i = 0; i < processes.Length; ++i) {
         this._cpuPercent[i] = Rate.NotSampledYet;
+        this._cpuPercentDelta[i] = Rate.NotSampledYet;
         this._cpuPercentPerCore[i] = Rate.NotSampledYet;
         this._readBytesPerSecond[i] = Rate.NotSampledYet;
         this._writeBytesPerSecond[i] = Rate.NotSampledYet;
@@ -246,6 +273,7 @@ public sealed class SnapshotDelta {
         this._isNew[i] = false;
       }
 
+      this._previousCpuPercentCount = processes.Length;
       return;
     }
 
@@ -263,6 +291,7 @@ public sealed class SnapshotDelta {
       ref readonly var process = ref currentProcesses[i];
       if (!this._previousIndex.Remove(process.Key, out var previousPosition)) {
         this._cpuPercent[i] = Rate.NotSampledYet;
+        this._cpuPercentDelta[i] = Rate.NotSampledYet;
         this._cpuPercentPerCore[i] = Rate.NotSampledYet;
         this._readBytesPerSecond[i] = Rate.NotSampledYet;
         this._writeBytesPerSecond[i] = Rate.NotSampledYet;
@@ -279,6 +308,7 @@ public sealed class SnapshotDelta {
 
       ref readonly var before = ref previousProcesses[previousPosition];
       this._cpuPercent[i] = RateCalculator.CpuPercent(before.CpuTimeNs, process.CpuTimeNs, elapsed, cores, mode);
+      this._cpuPercentDelta[i] = this.CpuPercentChange(previousPosition, this._cpuPercent[i]);
       this._cpuPercentPerCore[i] = RateCalculator.CpuPercent(
         before.CpuTimeNs, process.CpuTimeNs, elapsed, cores, CpuPercentMode.PerCore
       );
@@ -293,6 +323,8 @@ public sealed class SnapshotDelta {
       this.FillGpu(i, in process, in before, hasPrevious: true, elapsed);
       this._isNew[i] = false;
     }
+
+    this._previousCpuPercentCount = currentProcesses.Length;
 
     // Whatever is left in the map was in the previous snapshot and is not in this one. Removing the
     // matches above rather than doing a second pass is what keeps this O(n) instead of O(n log n),
@@ -319,6 +351,25 @@ public sealed class SnapshotDelta {
       this._perCoreKernel[i] = RateCalculator.KernelPercent(previousCores[i], currentCores[i]);
       this._perCoreUser[i] = RateCalculator.UserPercent(previousCores[i], currentCores[i]);
     }
+  }
+
+  /// <summary>
+  /// This interval's share against the one the same process had in the interval before it.
+  /// </summary>
+  /// <remarks>
+  /// Unknown wherever either half is: a process one interval old has a share and nothing to compare
+  /// it with, and subtracting from a share nobody could compute would produce a change that looks
+  /// like the whole of this interval's use.
+  /// </remarks>
+  private Rate CpuPercentChange(int previousPosition, Rate now) {
+    if (!now.HasValue)
+      return now;
+
+    if ((uint)previousPosition >= (uint)this._previousCpuPercentCount)
+      return Rate.NotSampledYet;
+
+    var before = this._previousCpuPercent[previousPosition];
+    return before.HasValue ? Rate.Of(now.Value - before.Value) : Rate.NotSampledYet;
   }
 
   #region devices

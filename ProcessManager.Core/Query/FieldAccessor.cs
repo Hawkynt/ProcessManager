@@ -38,6 +38,7 @@ public static class FieldAccessor {
 
       case ProcessField.CpuPercent: return Humanize.Percent(Rated(delta, index, field));
       case ProcessField.CpuPercentPerCore: return Humanize.Percent(Rated(delta, index, field));
+      case ProcessField.CpuPercentDelta: return Humanize.SignedPercent(Rated(delta, index, field));
       case ProcessField.MemoryPercent: return Humanize.Percent(Rated(delta, index, field));
       case ProcessField.CpuTime: return Humanize.Duration(process.CpuTimeNs);
       case ProcessField.UserTime: return Humanize.Duration(process.UserTimeNs);
@@ -51,6 +52,16 @@ public static class FieldAccessor {
         return process.LastCpu >= 0
           ? process.LastCpu.ToString(CultureInfo.InvariantCulture)
           : Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform);
+
+      case ProcessField.SchedulingClass:
+        // Unknown is a stat line that stopped short or a platform that has no such notion — not the
+        // ordinary class, which is what a nought here would claim (PRD §5.3).
+        return process.SchedulingPolicy == SchedulingPolicy.Unknown
+          ? Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform)
+          : Humanize.SchedulingPolicy(process.SchedulingPolicy);
+      case ProcessField.CpuAffinity:
+        return process.CpuAffinity ?? Humanize.Placeholder(process.CpuAffinityReason);
+      case ProcessField.CpuThrottled: return Humanize.Count(process.ThrottledPeriods);
 
       case ProcessField.CyclesDelta: return Humanize.Rate(Rated(delta, index, field));
       case ProcessField.ContextSwitchesDelta: return Humanize.Rate(Rated(delta, index, field));
@@ -186,6 +197,11 @@ public static class FieldAccessor {
       case ProcessField.State: return (byte)process.State;
       case ProcessField.LastCpu: return process.LastCpu >= 0 ? process.LastCpu : null;
       case ProcessField.ThreadCount: return process.ThreadCount;
+      // The class as its own kernel number, so sorting groups the real-time tasks together. Unknown
+      // has no number at all, which keeps it out of both "== other" and "!= other".
+      case ProcessField.SchedulingClass:
+        return process.SchedulingPolicy == SchedulingPolicy.Unknown ? null : (byte)process.SchedulingPolicy;
+      case ProcessField.CpuThrottled: return Number(process.ThrottledPeriods);
       case ProcessField.Priority: return process.Priority;
       case ProcessField.Nice: return process.Nice;
       case ProcessField.UniqueSet: return Number(process.UniqueBytes);
@@ -258,6 +274,7 @@ public static class FieldAccessor {
       case ProcessField.GpuDedicatedMemoryDelta:
       case ProcessField.CpuPercent:
       case ProcessField.CpuPercentPerCore:
+      case ProcessField.CpuPercentDelta:
       case ProcessField.MemoryPercent:
       case ProcessField.CyclesDelta:
       case ProcessField.ContextSwitchesDelta:
@@ -311,6 +328,12 @@ public static class FieldAccessor {
       ? process.SeccompMode.Value switch { 0 => "off", 1 => "strict", 2 => "filter", _ => null }
       : null,
     ProcessField.SecurityContext => process.SecurityContext,
+    // The kernel's own spelling, which is what "sched.class:SCHED_FIFO" is written as and what chrt
+    // prints. Unknown has no text, so it matches neither that nor its negation.
+    ProcessField.SchedulingClass => process.SchedulingPolicy == SchedulingPolicy.Unknown
+      ? null
+      : Humanize.SchedulingPolicy(process.SchedulingPolicy),
+    ProcessField.CpuAffinity => process.CpuAffinity,
     ProcessField.GpuAdapter => process.GpuAdapter,
     ProcessField.GpuEngineName => delta?.BusiestGpuEngine(index) is { } engine and not GpuEngine.Unknown
       ? EngineName(engine)
@@ -361,6 +384,10 @@ public static class FieldAccessor {
         return string.Compare(a.EffectiveUserName, b.EffectiveUserName, StringComparison.OrdinalIgnoreCase);
       case ProcessField.SupplementaryGroups:
         return string.Compare(a.SupplementaryGroups, b.SupplementaryGroups, StringComparison.Ordinal);
+      // Ordinal, so "0-15" and "15" sort apart rather than both compared as the numbers they are
+      // not: an affinity list is a set, and the only order it has is its spelling.
+      case ProcessField.CpuAffinity:
+        return string.Compare(a.CpuAffinity, b.CpuAffinity, StringComparison.Ordinal);
       case ProcessField.CommandLine:
         return string.Compare(a.CommandLine, b.CommandLine, StringComparison.OrdinalIgnoreCase);
       case ProcessField.ImagePath:
@@ -540,6 +567,7 @@ public static class FieldAccessor {
       ProcessField.CpuPercent => delta.CpuPercent(index),
       ProcessField.MemoryPercent => delta.MemoryPercent(index),
       ProcessField.CpuPercentPerCore => delta.CpuPercentPerCore(index),
+      ProcessField.CpuPercentDelta => delta.CpuPercentDelta(index),
       ProcessField.CyclesDelta => delta.CyclesPerSecond(index),
       ProcessField.ContextSwitchesDelta => delta.ContextSwitchesPerSecond(index),
       ProcessField.PageFaultsDelta => delta.PageFaultsPerSecond(index),

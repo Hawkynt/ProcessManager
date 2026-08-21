@@ -634,7 +634,10 @@ term all use it, and it never changes even when the display name differs per pla
 
 - [x] `cpu.percent` — normalised 0–100 % utilisation
 - [x] `cpu.percent.raw` — multi-core cumulative
-- [ ] `cpu.delta` — change since prior sample
+- [x] `cpu.delta` — change since prior sample, in percentage points and signed. The difference
+      between two intervals rather than between two samples, so it needs three of them: a process
+      one interval old has a share and nothing to compare it against, and says so rather than
+      reading as steady. `--list` takes the third sample only when the column is asked for
 - [x] `cpu.time` — total processor time
 - [x] `cpu.time.user`
 - [x] `cpu.time.kernel`
@@ -644,20 +647,41 @@ term all use it, and it never changes even when the display name differs per pla
 - [x] `ctx.switches.delta`
 - [x] `ctx.switches.rate`
 - [x] `threads` — current thread count
-- [ ] `threads.peak`
+- [ ] `threads.peak` — **no Linux source.** The kernel keeps the current thread count in `status`
+      and no high-water mark of it anywhere. The only figure this program could offer is the largest
+      it happened to see while it was running, which is a fact about the observer rather than about
+      the process (§9.2)
 - [x] `priority.base`
 - [x] 🟡 `priority.dynamic` — Linux only; `stat` field 18, the kernel's own number rather than the
       nice value
 - [x] `nice` — the politeness a process was started with, backwards on purpose
-- [ ] `priority.class` — idle/below normal/normal/… (`GetPriorityClass`)
+- [ ] `priority.class` — idle/below normal/normal/… (`GetPriorityClass`). **Windows only.** Linux
+      has no such band: nice orders tasks inside `SCHED_OTHER` and the class is `sched.class`, and
+      folding either into a Windows priority class would be the false equivalence §5.3 forbids
 - [x] `nice`
-- [ ] `cpu.affinity` — `sched_getaffinity` / `GetProcessAffinityMask`
-- [ ] `cpu.set` — Windows CPU sets
-- [ ] `numa.node`
+- [x] 🟡 `cpu.affinity` — Linux only, and opt-in. `Cpus_allowed_list` from the `status` the sampler
+      already has open, in the kernel's own notation (`0-15`, `2,3`), which is what `taskset -pc`
+      prints; the list rather than the mask, because on a 128-way machine the mask is unreadable.
+      Not `sched_getaffinity`: that is a syscall per process for a line already in front of us.
+      Windows' `GetProcessAffinityMask` is not written
+- [ ] `cpu.set` — Windows CPU sets. **Windows only**; the Linux near-relative is the cgroup `cpuset`,
+      which is already reflected in `cpu.affinity` — the kernel narrows `Cpus_allowed` to it
+- [ ] `numa.node` — **not answerable honestly here.** `Mems_allowed_list` says which nodes a process
+      may allocate from, which is a different question from which node it is running on, and this
+      machine has one node — an implementation could not be told from a broken one (§9.2)
 - [x] `cpu.last` — field 39, which sits behind fourteen fields nothing else reads
-- [ ] `sched.class` — `sched_getscheduler`
-- [ ] `qos` — OS energy/performance state
-- [ ] `throttled` — cgroup `cpu.stat` `nr_throttled`
+- [x] `sched.class` — `SCHED_OTHER`, `_FIFO`, `_RR`, `_BATCH`, `_IDLE`, `_DEADLINE`, `_EXT`, under
+      the kernel's own names. From `stat` field 41 rather than `sched_getscheduler`, which would be a
+      syscall per process for a number already in the line being parsed. Verified against `chrt -p`.
+      A class the kernel adds later is left unknown rather than folded into the ordinary one, and a
+      `stat` that stops short says nothing rather than claiming `SCHED_OTHER`
+- [ ] `qos` — OS energy/performance state. **Windows and macOS only.** Linux has no per-process
+      quality-of-service class; `uclamp` is a utilisation hint on a task, not a state the OS assigns,
+      and reporting one as the other would invent a concept the kernel does not have
+- [x] `throttled` — cgroup `cpu.stat` `nr_throttled`, opt-in. The group's counter and not the
+      process's, which the column says: everything in one cgroup shows the same figure. Read once per
+      cgroup per sample rather than once per process. A group whose CPU controller is off has no such
+      line and reports unknown — a real nought there means "has a quota and never reached it"
 
 Required of the CPU percentage:
 

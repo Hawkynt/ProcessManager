@@ -129,6 +129,36 @@ public struct ProcessRecord {
   /// </remarks>
   public int LastCpu;
 
+  /// <summary>
+  /// The processors the process is allowed to run on, in the kernel's own list notation
+  /// (<c>0-7,15</c>), or <see langword="null"/> when nobody asked or nobody could tell.
+  /// </summary>
+  /// <remarks>
+  /// The list rather than a mask, for the same reason <see cref="ThreadRecord.Affinity"/> is: on a
+  /// 128-way machine the list is the readable form and thirty-two hex digits are not. Text and
+  /// therefore an allocation per process per sample, so it is kept only when asked for (PRD §5.4) —
+  /// the line itself is free, being in the <c>status</c> the sampler already has open.
+  /// </remarks>
+  public string? CpuAffinity;
+
+  /// <summary>
+  /// Why <see cref="CpuAffinity"/> is <see langword="null"/>: not asked for, not readable, or a
+  /// platform whose affinity we do not read yet. A string cannot carry its own reason the way a
+  /// <see cref="Counter"/> does, and "no answer" needs one just as much (PRD §72.3).
+  /// </summary>
+  public UnknownReason CpuAffinityReason;
+
+  /// <summary>
+  /// How many times the process's cgroup has been stopped for exhausting its CPU quota.
+  /// </summary>
+  /// <remarks>
+  /// The cgroup's counter, not the process's: everything in one group shares it, and the column says
+  /// so. A group with a quota it never reaches reports a real nought here, which is why an absent
+  /// controller has to report unknown instead — the two would otherwise be the same cell with
+  /// opposite meanings (PRD §72.3).
+  /// </remarks>
+  public Counter ThrottledPeriods;
+
   /// <summary>Total CPU consumed since start, in nanoseconds.</summary>
   public Counter CpuTimeNs;
 

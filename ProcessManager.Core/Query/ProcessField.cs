@@ -29,6 +29,9 @@ public enum ProcessField : byte {
   CyclesDelta,
   ContextSwitchesDelta,
   LastCpu,
+  SchedulingClass,
+  CpuAffinity,
+  CpuThrottled,
   CpuHistory,
 
   PrivateBytes,

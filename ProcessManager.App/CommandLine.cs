@@ -126,6 +126,36 @@ internal sealed record CommandLineOptions {
   public bool WantsSupplementaryGroups => this.Wants(ProcessField.SupplementaryGroups);
 
   /// <summary>
+  /// Whether anything this run asked for needs a third sample (PRD §15).
+  /// </summary>
+  /// <remarks>
+  /// The change in a process's CPU share is the difference between two intervals, and two samples
+  /// are only one of them. The same rule as the expensive reads, for a cost measured in seconds
+  /// rather than in syscalls: a <c>--list</c> that waited an extra interval for a column nobody
+  /// named would take twice as long for nothing.
+  /// </remarks>
+  public bool WantsCpuPercentDelta => this.Wants(ProcessField.CpuPercentDelta);
+
+  /// <summary>
+  /// Whether the affinity list is worth the string it costs (PRD §5.4, §15).
+  /// </summary>
+  /// <remarks>
+  /// The group list's rule for the group list's reason: the line is already in front of the sampler
+  /// and keeping it is an allocation per process per sample.
+  /// </remarks>
+  public bool WantsCpuAffinity => this.Wants(ProcessField.CpuAffinity);
+
+  /// <summary>
+  /// Whether anything this run asked for needs each process's cgroup read (PRD §5.4, §15).
+  /// </summary>
+  /// <remarks>
+  /// A file outside <c>/proc</c> per cgroup per sample. Cheaper than it sounds, because the answer
+  /// belongs to the group rather than to the process — but not free, and not worth paying for a
+  /// column nobody named.
+  /// </remarks>
+  public bool WantsCpuThrottling => this.Wants(ProcessField.CpuThrottled);
+
+  /// <summary>
   /// Whether anything this run asked for needs per-process graphics accounting (PRD §5.4, §19).
   /// </summary>
   /// <remarks>

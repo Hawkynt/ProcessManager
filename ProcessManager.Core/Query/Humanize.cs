@@ -171,6 +171,27 @@ public static class Humanize {
     ? rate.Value.ToString(rate.Value >= 100 ? "0" : "0.0", CultureInfo.InvariantCulture)
     : Placeholder(rate.Reason);
 
+  /// <summary>
+  /// A change in percentage points, with its sign — <c>+3.4</c>, <c>−1.0</c>, or <c>0</c>.
+  /// </summary>
+  /// <remarks>
+  /// Signed like <see cref="SignedBytesPerSecond"/> and for the same reason: the reading that
+  /// matters is as often the fall as the rise, and a magnitude with no sign turns a process that
+  /// has just stopped working into one that has just started. Anything under a tenth of a point is
+  /// written as a plain nought, so a table of idle processes is not a column of <c>+0.0</c>.
+  /// </remarks>
+  public static string SignedPercent(Rate rate) {
+    if (!rate.HasValue)
+      return Placeholder(rate.Reason);
+
+    var value = rate.Value;
+    if (Math.Abs(value) < 0.05)
+      return "0";
+
+    return (value < 0 ? "−" : "+")
+      + Math.Abs(value).ToString(Math.Abs(value) >= 100 ? "0" : "0.0", CultureInfo.InvariantCulture);
+  }
+
   public static string Count(Counter counter) => counter.HasValue
     ? counter.Value.ToString(CultureInfo.InvariantCulture)
     : Placeholder(counter.Reason);

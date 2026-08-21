@@ -52,7 +52,9 @@ internal static class Program {
       options.WantsProportionalSetSize,
       options.WantsSupplementaryGroups,
       options.WantsGpuUsage,
-      options.WantsHandleCount
+      options.WantsHandleCount,
+      options.WantsCpuAffinity,
+      options.WantsCpuThrottling
     );
     if (probe is null) {
       Console.Error.WriteLine($"procman: there is no probe for this platform yet ({Environment.OSVersion.Platform}).");
@@ -190,6 +192,14 @@ internal static class Program {
     sampler.Sample();
     Thread.Sleep(options.Interval);
     sampler.Sample();
+
+    // A third when the change in a CPU share was asked for, because that is the difference between
+    // two intervals and two samples make only one of them. Waiting another interval for a column
+    // nobody named would double the cost of every --list there is (PRD §5.4).
+    if (options.WantsCpuPercentDelta) {
+      Thread.Sleep(options.Interval);
+      sampler.Sample();
+    }
 
     var view = new ProcessView {
       SortColumn = options.SortColumn,

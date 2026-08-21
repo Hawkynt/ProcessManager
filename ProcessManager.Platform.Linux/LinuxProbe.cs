@@ -33,6 +33,9 @@ public sealed class LinuxProbe : ISystemProbe {
   private readonly Dictionary<ProcessKey, ProcessCache> _cache = [];
   private readonly List<ProcessKey> _stale = [];
   private readonly List<int> _pids = [];
+  // One cgroup's throttling counter, for the length of one sample. Several hundred processes share
+  // a few dozen groups, so this is the difference between a file per process and a file per group.
+  private readonly Dictionary<string, Counter> _throttling = [];
   // One buffer for every getdents64 call. 32 KiB holds about a thousand short names, so a process
   // with a few hundred descriptors is one syscall rather than one per entry.
   private readonly byte[] _directoryScratch = new byte[32 * 1024];
@@ -452,6 +455,9 @@ public sealed class LinuxProbe : ISystemProbe {
 
   private void ReadProcesses(SystemSnapshot snapshot) {
     this._pids.Clear();
+    // A cgroup's counters are read once per sample and shared by every process in the group; kept
+    // no longer than that, because the point of the column is that the number moves.
+    this._throttling.Clear();
     Span<byte> rootPath = stackalloc byte[ProcPath.MaxLength];
     this._procRootUtf8.CopyTo(rootPath);
     rootPath[this._procRootUtf8.Length] = 0;
@@ -730,6 +736,8 @@ public sealed class LinuxProbe : ISystemProbe {
     record.CommandLine = cache.CommandLine;
     record.ImagePath = cache.ImagePath;
     record.ContainerPath = cache.ContainerPath;
+    // After the cgroup path is known, because that is what says which group's counter to read.
+    this.ReadCpuThrottling(ref record);
     record.UserName = this._users.Resolve(record.UserId);
     // Almost always the same string, and taking it from the same cache costs a dictionary lookup
     // rather than an allocation. The handful of processes where the two differ are exactly the ones
@@ -839,6 +847,9 @@ public sealed class LinuxProbe : ISystemProbe {
     record.HandleCount = Counter.NotSupported;
     record.ContextSwitches = Counter.NotSupported;
     record.MemoryLimitBytes = Counter.NotSupported;
+    // Nobody has looked in the cgroup yet, and a nought here would say the group has never been
+    // held back — which is a claim, not an absence.
+    record.ThrottledPeriods = Counter.NotSupported;
     // Graphics is off unless asked for, so the default is "nobody looked" rather than "none" — and
     // stated here, because a record that left them alone would claim every process uses no GPU.
     LinuxGpuAccounting.NotCollected(ref record, UnknownReason.NotSampledYet);
@@ -902,6 +913,10 @@ public sealed class LinuxProbe : ISystemProbe {
     record.SupplementaryGroupsReason = this._options.ReadSupplementaryGroups
       ? UnknownReason.NotSupportedOnPlatform
       : UnknownReason.NotSampledYet;
+    record.CpuAffinity = null;
+    record.CpuAffinityReason = this._options.ReadCpuAffinity
+      ? UnknownReason.NotSupportedOnPlatform
+      : UnknownReason.NotSampledYet;
     // Linux confines processes with capabilities and LSMs, not with an integrity level.
     record.IntegrityLevel = Counter.NotSupported;
 
@@ -919,6 +934,7 @@ public sealed class LinuxProbe : ISystemProbe {
         record.BoundingCapabilities = Counter.NotPermitted;
         record.AmbientCapabilities = Counter.NotPermitted;
         record.SupplementaryGroupsReason = UnknownReason.NotPermitted;
+        record.CpuAffinityReason = UnknownReason.NotPermitted;
       }
 
       return;
@@ -965,6 +981,15 @@ public sealed class LinuxProbe : ISystemProbe {
           ? string.Empty
           : System.Text.Encoding.ASCII.GetString(groups);
         record.SupplementaryGroupsReason = UnknownReason.None;
+      } else if (this._options.ReadCpuAffinity && AsciiScanner.StartsWith(line, "Cpus_allowed_list:"u8)) {
+        // The list, not the mask two lines above it: "0-15" is readable on a machine where
+        // "ffff" is arithmetic and "00000000,00000000,...,ffffffff" is neither. Only when asked
+        // for, because it is the second line of status that has to become a string (PRD §5.4).
+        var allowed = line["Cpus_allowed_list:"u8.Length..].Trim(" \t"u8);
+        if (!allowed.IsEmpty) {
+          record.CpuAffinity = System.Text.Encoding.ASCII.GetString(allowed);
+          record.CpuAffinityReason = UnknownReason.None;
+        }
       } else if (TryValue(line, "Seccomp:"u8, out var flag))
         record.SeccompMode = Counter.Of(flag);
       else if (TryValue(line, "Seccomp_filters:"u8, out flag))
@@ -1178,6 +1203,55 @@ public sealed class LinuxProbe : ISystemProbe {
       else if (TryValue(line, "write_bytes:"u8, out value))
         record.WriteBytes = Counter.Of(value);
     }
+  }
+
+  /// <summary>
+  /// How often the process's cgroup has been stopped for using up its CPU quota (PRD §15).
+  /// </summary>
+  /// <remarks>
+  /// Cached per cgroup for the length of one sample, which is what makes the column affordable: a
+  /// machine with six hundred processes has a few dozen groups, and the counter belongs to the
+  /// group rather than to any one of the processes in it. Nobody asking is
+  /// <see cref="UnknownReason.NotSampledYet"/> and never a nought — "we did not look" and "this has
+  /// never been throttled" are the two answers this column exists to keep apart.
+  /// </remarks>
+  private void ReadCpuThrottling(ref ProcessRecord record) {
+    if (!this._options.ReadCpuThrottling) {
+      record.ThrottledPeriods = Counter.NotSampledYet;
+      return;
+    }
+
+    if (record.ContainerPath is not { Length: > 0 } path) {
+      // A process outside any group has no such counter; a run with the cgroup read switched off
+      // has one nobody looked for. Different answers, and they are reported differently.
+      record.ThrottledPeriods = this._options.ReadCgroups ? Counter.NotSupported : Counter.NotSampledYet;
+      return;
+    }
+
+    if (this._throttling.TryGetValue(path, out var known)) {
+      record.ThrottledPeriods = known;
+      return;
+    }
+
+    var counter = this.ReadThrottleCounter(path);
+    this._throttling[path] = counter;
+    record.ThrottledPeriods = counter;
+  }
+
+  private Counter ReadThrottleCounter(string cgroupPath) {
+    // The path from /proc/[pid]/cgroup begins with a slash and is relative to the mount point, so
+    // it is trimmed rather than joined — joining it would read from the file-system root instead.
+    var file = $"{this._options.CgroupRoot}/{cgroupPath.TrimStart('/')}/cpu.stat";
+    if (!this._reader.TryRead(file, out var content, out var errno))
+      return errno is Native.EACCES or Native.EPERM ? Counter.NotPermitted : Counter.NotSupported;
+
+    // Widened rather than decoded: cpu.stat is ASCII by construction and a dozen short lines long,
+    // and the parser it goes to lives in Core so that it is exercised on every leg (PRD §9.2).
+    Span<char> text = content.Length <= 1024 ? stackalloc char[content.Length] : new char[content.Length];
+    for (var i = 0; i < content.Length; ++i)
+      text[i] = (char)content[i];
+
+    return CgroupCpuStatParser.Throttled(text);
   }
 
   private void ReadFileDescriptorCount(ProcessCache cache, ref ProcessRecord record) {

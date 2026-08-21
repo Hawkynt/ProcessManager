@@ -97,6 +97,13 @@ internal static class SystemProcessInformationReader {
       // every process on every sample is not worth a column nobody sorts by. The threads carry it.
       record.ContextSwitches = Counter.NotSupported;
       record.MemoryLimitBytes = Counter.NotSupported;
+      // Windows has no cgroups; a job object can cap CPU, but it counts nothing that corresponds to
+      // a throttled period, so there is no figure here rather than a nought (PRD §5.3).
+      record.ThrottledPeriods = Counter.NotSupported;
+      // Affinity is the other case: GetProcessAffinityMask answers this perfectly well and we have
+      // not written it, which is a fact about us rather than about the machine (PRD §7).
+      record.CpuAffinity = null;
+      record.CpuAffinityReason = UnknownReason.NotImplementedHere;
 
       // Windows has no seccomp, no no_new_privs and no capability mask; it has integrity levels and
       // privileges instead, which are different things and get their own fields when they are built.

@@ -26,6 +26,27 @@ public sealed record LinuxProbeOptions {
   /// </remarks>
   public bool ReadSupplementaryGroups { get; init; }
 
+  /// <summary>
+  /// Keep the <c>Cpus_allowed_list:</c> line of <c>status</c> as text (PRD §15).
+  /// </summary>
+  /// <remarks>
+  /// Off for exactly the reason the group list is off: the line costs no extra read — it is in a
+  /// file the sampler already has open — but turning it into a string is one allocation per process
+  /// per sample against a budget of zero (PRD §4).
+  /// </remarks>
+  public bool ReadCpuAffinity { get; init; }
+
+  /// <summary>
+  /// Read <c>cpu.stat</c> from each process's cgroup, for the throttling column (PRD §15, §38).
+  /// </summary>
+  /// <remarks>
+  /// Off by default: it is a file outside <c>/proc</c> per <em>cgroup</em> per sample. Per cgroup
+  /// rather than per process because the answer belongs to the group — a machine's six hundred
+  /// processes live in a few dozen of them, and reading it once each is what makes the column
+  /// affordable at all when somebody does ask for it (PRD §5.4).
+  /// </remarks>
+  public bool ReadCpuThrottling { get; init; }
+
   /// <summary>Where the running kernel publishes its own processes.</summary>
   public const string LiveProcRoot = "/proc";
 
