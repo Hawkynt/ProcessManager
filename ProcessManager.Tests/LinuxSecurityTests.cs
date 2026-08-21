@@ -71,6 +71,38 @@ public sealed class LinuxSecurityTests(bool portable) {
   }
 
   /// <summary>
+  /// How many filters, not just whether there is one: two of them is a process something sandboxed
+  /// twice, and the mode alone cannot say that.
+  /// </summary>
+  [Test]
+  public void TheFilterCountIsReadWhereTheKernelWritesIt() {
+    var snapshot = this.Sample();
+
+    Assert.That(Find(snapshot, 1000).SeccompFilters.Value, Is.EqualTo(3ul));
+    Assert.That(Find(snapshot, 1).SeccompFilters.Value, Is.EqualTo(0ul), "a real zero");
+
+    // Seccomp_filters arrived in 5.9. Fixture 1001 has no such line, and a kernel that does not
+    // write one has not said there are none.
+    var older = Find(snapshot, 1001);
+    Assert.That(older.SeccompFilters.HasValue, Is.False);
+    Assert.That(older.SeccompMode.Value, Is.EqualTo(0ul), "the mode is still there");
+  }
+
+  /// <summary>
+  /// <c>Seccomp_filters:</c> begins with the seven characters of <c>Seccomp:</c>, and it is the very
+  /// next line. A prefix match that dropped the colon would read the filter count as the mode, and
+  /// the two are numbers in overlapping ranges — so the fixture gives one process a mode and a count
+  /// that differ, which is the only shape that catches it.
+  /// </summary>
+  [Test]
+  public void TheFilterCountIsNotMistakenForTheMode() {
+    var confined = Find(this.Sample(), 1000);
+
+    Assert.That(confined.SeccompMode.Value, Is.EqualTo(2ul), "the mode");
+    Assert.That(confined.SeccompFilters.Value, Is.EqualTo(3ul), "the count, from the next line");
+  }
+
+  /// <summary>
   /// The mask is separated from its label by a tab, not a space. Trimming only spaces left the tab
   /// in front of the digits and the hex parser stopped on it, reporting every process on the machine
   /// as having no capabilities at all — a security field that was confidently, silently wrong.
@@ -95,9 +127,232 @@ public sealed class LinuxSecurityTests(bool portable) {
 
     Assert.That(kernelThread.SeccompMode.HasValue, Is.False);
     Assert.That(kernelThread.SeccompMode.Reason, Is.EqualTo(UnknownReason.NotSupportedOnPlatform));
+    Assert.That(kernelThread.SeccompFilters.HasValue, Is.False);
     Assert.That(kernelThread.NoNewPrivileges.HasValue, Is.False);
     Assert.That(kernelThread.EffectiveCapabilities.HasValue, Is.False);
+    Assert.That(kernelThread.PermittedCapabilities.HasValue, Is.False);
+    Assert.That(kernelThread.InheritableCapabilities.HasValue, Is.False);
+    Assert.That(kernelThread.BoundingCapabilities.HasValue, Is.False);
+    Assert.That(kernelThread.AmbientCapabilities.HasValue, Is.False);
   }
+
+  #region the other four capability sets
+
+  /// <summary>
+  /// Five masks, five different questions. Reading only the effective one hides a process that has
+  /// put a capability down and can pick it up again without asking anybody (PRD §21).
+  /// </summary>
+  [Test]
+  public void AllFiveSetsAreRead() {
+    var systemd = Find(this.Sample(), 1);
+
+    Assert.That(systemd.InheritableCapabilities.Value, Is.EqualTo(0UL));
+    Assert.That(systemd.PermittedCapabilities.Value, Is.EqualTo(0x000001ffffffffffUL));
+    Assert.That(systemd.EffectiveCapabilities.Value, Is.EqualTo(0x000001ffffffffffUL));
+    Assert.That(systemd.BoundingCapabilities.Value, Is.EqualTo(0x000001ffffffffffUL));
+    Assert.That(systemd.AmbientCapabilities.Value, Is.EqualTo(0UL));
+  }
+
+  /// <summary>
+  /// The five labels differ only in their last three characters, so a parser matching them in the
+  /// wrong order — or on too short a prefix — would fill every field from one line. This is the
+  /// shape that catches it: a process whose five masks are five different numbers.
+  /// </summary>
+  [Test]
+  public void TheFiveLabelsAreNotConfusedWithEachOther() {
+    var setuid = Find(this.Sample(), 1002);
+
+    Assert.That(setuid.InheritableCapabilities.Value, Is.EqualTo(0UL), "CapInh");
+    Assert.That(setuid.PermittedCapabilities.Value, Is.EqualTo(0x0000003fffffffffUL), "CapPrm");
+    Assert.That(setuid.EffectiveCapabilities.Value, Is.EqualTo(0x0000003fffffffffUL), "CapEff");
+    Assert.That(setuid.BoundingCapabilities.Value, Is.EqualTo(0x000001ffffffffffUL), "CapBnd");
+    Assert.That(setuid.AmbientCapabilities.Value, Is.EqualTo(0x20UL), "CapAmb");
+  }
+
+  /// <summary>
+  /// A column that says <c>0x0000000000003000</c> answers no question anybody has. The names are
+  /// the ones <c>capsh --decode</c> prints, so a reader can paste one straight into a unit file.
+  /// </summary>
+  [Test]
+  public void TheColumnShowsNamesRatherThanAMask() {
+    var snapshot = this.Sample();
+    var delta = new SnapshotDelta();
+    delta.Update(null, snapshot, CpuPercentMode.Normalized);
+
+    var networked = Find(snapshot, 1001);
+    Assert.That(
+      FieldAccessor.Text(ProcessField.Capabilities, in networked, delta, 0),
+      Is.EqualTo("cap_net_admin,cap_net_raw")
+    );
+
+    // The raw mask stays one field away, in the form the kernel's own tools accept.
+    Assert.That(
+      FieldAccessor.Text(ProcessField.CapabilitiesHex, in networked, delta, 0),
+      Is.EqualTo("0x0000000000003000")
+    );
+
+    // Forty-one names would fill a screen and say less than one word does.
+    var systemd = Find(snapshot, 1);
+    Assert.That(FieldAccessor.Text(ProcessField.Capabilities, in systemd, delta, 0), Is.EqualTo("all"));
+    Assert.That(FieldAccessor.Text(ProcessField.AmbientCapabilities, in systemd, delta, 0), Is.EqualTo("none"));
+  }
+
+  /// <summary>
+  /// A kernel newer than this table. The bounding set of fixture 1001 holds two bits no released
+  /// kernel had; both must be reported, because the one direction a privilege must never be rounded
+  /// is downwards.
+  /// </summary>
+  [Test]
+  public void ACapabilityThisBuildHasNoNameForIsStillReported() {
+    var snapshot = this.Sample();
+    var delta = new SnapshotDelta();
+    delta.Update(null, snapshot, CpuPercentMode.Normalized);
+
+    var process = Find(snapshot, 1001);
+    Assert.That(process.BoundingCapabilities.Value, Is.EqualTo(0x0000060000000000UL));
+    Assert.That(FieldAccessor.Text(ProcessField.BoundingCapabilities, in process, delta, 0), Is.EqualTo("41,42"));
+  }
+
+  #endregion
+
+  #region who the process is
+
+  /// <summary>
+  /// All four ids, not two. A process whose real and effective ids are an ordinary user while the
+  /// saved one is root has given up nothing at all — it can call <c>seteuid(0)</c> whenever it
+  /// likes — and only the quartet says so (PRD §36).
+  /// </summary>
+  [Test]
+  public void TheWholeUidAndGidQuartetsAreRead() {
+    var snapshot = this.Sample();
+
+    var setuid = Find(snapshot, 1002);
+    Assert.That(setuid.UserId, Is.EqualTo(1000), "real");
+    Assert.That(setuid.EffectiveUserId, Is.EqualTo(0), "effective");
+    Assert.That(setuid.SavedUserId, Is.EqualTo(0), "saved");
+    Assert.That(setuid.FilesystemUserId, Is.EqualTo(1000), "filesystem");
+
+    var setgid = Find(snapshot, 1001);
+    Assert.That(setgid.GroupId, Is.EqualTo(1000), "real");
+    Assert.That(setgid.EffectiveGroupId, Is.EqualTo(44), "effective");
+    Assert.That(setgid.SavedGroupId, Is.EqualTo(1000), "saved");
+    Assert.That(setgid.FilesystemGroupId, Is.EqualTo(44), "filesystem");
+  }
+
+  /// <summary>
+  /// The account the process runs <em>as</em>, which for anything set-user-ID is not the account
+  /// that started it. Both names are kept, because the difference is the point.
+  /// </summary>
+  [Test]
+  public void TheEffectiveAccountIsNamedAsWellAsTheRealOne() {
+    var setuid = Find(this.Sample(), 1002);
+
+    Assert.That(setuid.UserName, Is.EqualTo("alice"));
+    Assert.That(setuid.EffectiveUserName, Is.EqualTo("root"));
+  }
+
+  /// <summary>
+  /// A set-group-ID binary is the same kind of thing as a set-user-ID one, so the field notices both
+  /// — and says nothing at all when it has not been told either.
+  /// </summary>
+  [Test]
+  public void APrivilegeChangeIsNoticedForGroupsAsWellAsUsers() {
+    var snapshot = this.Sample();
+    var delta = new SnapshotDelta();
+    delta.Update(null, snapshot, CpuPercentMode.Normalized);
+
+    static string Text(SystemSnapshot snapshot, SnapshotDelta delta, int pid) {
+      var process = Find(snapshot, pid);
+      return FieldAccessor.Text(ProcessField.PrivilegeChanged, in process, delta, 0);
+    }
+
+    Assert.That(Text(snapshot, delta, 1002), Is.EqualTo("yes"), "set-user-ID");
+    Assert.That(Text(snapshot, delta, 1001), Is.EqualTo("yes"), "set-group-ID");
+    Assert.That(Text(snapshot, delta, 1000), Is.EqualTo("no"));
+    Assert.That(Text(snapshot, delta, 1), Is.EqualTo("no"), "root started as root");
+  }
+
+  /// <summary>
+  /// -1, never 0. Zero is root, so an id nobody filled would name the superuser for every process
+  /// on a platform that does not report the quartet at all (PRD §5.3).
+  /// </summary>
+  [Test]
+  public void AnIdNobodyReportedIsNotRoot() {
+    var snapshot = new SystemSnapshot();
+    var records = snapshot.PrepareProcesses(1);
+    records[0] = default;
+    records[0].Key = new(1, 1);
+    records[0].Name = "test";
+    records[0].UserId = -1;
+    records[0].EffectiveUserId = -1;
+    records[0].SavedUserId = -1;
+    records[0].GroupId = -1;
+
+    var delta = new SnapshotDelta();
+    delta.Update(null, snapshot, CpuPercentMode.Normalized);
+
+    foreach (var field in new[] {
+      ProcessField.UserId, ProcessField.EffectiveUserId, ProcessField.SavedUserId, ProcessField.GroupId,
+    }) {
+      Assert.That(FieldAccessor.Number(field, in snapshot.Processes[0], delta, 0), Is.Null, field.ToString());
+      Assert.That(
+        FieldAccessor.Text(field, in snapshot.Processes[0], delta, 0),
+        Is.EqualTo(Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform)),
+        field.ToString()
+      );
+    }
+
+    // And with nothing to compare, the derived field must not claim the identity is unchanged.
+    Assert.That(
+      FieldAccessor.Number(ProcessField.PrivilegeChanged, in snapshot.Processes[0], delta, 0),
+      Is.Null
+    );
+  }
+
+  #endregion
+
+  #region supplementary groups
+
+  [Test]
+  public void TheGroupsAreNotKeptUnlessTheyWereAskedFor() {
+    var process = Find(this.Sample(), 1000);
+
+    Assert.That(process.SupplementaryGroups, Is.Null);
+    Assert.That(process.SupplementaryGroupsReason, Is.EqualTo(UnknownReason.NotSampledYet));
+  }
+
+  [Test]
+  public void TheGroupsAreKeptWhenTheyAre() {
+    var snapshot = this.Sample(this.Options with { ReadSupplementaryGroups = true });
+
+    Assert.That(Find(snapshot, 1000).SupplementaryGroups, Is.EqualTo("998 1000"));
+    Assert.That(Find(snapshot, 1001).SupplementaryGroups, Is.EqualTo("44 1000"));
+  }
+
+  /// <summary>
+  /// systemd is in no supplementary group and a kernel thread has no such line at all. Those are
+  /// different answers and the program says so — the first is a fact about the process, the second
+  /// is the absence of one (PRD §72.3).
+  /// </summary>
+  [Test]
+  public void BelongingToNoGroupIsNotTheSameAsNobodySaying() {
+    var snapshot = this.Sample(this.Options with { ReadSupplementaryGroups = true });
+    var delta = new SnapshotDelta();
+    delta.Update(null, snapshot, CpuPercentMode.Normalized);
+
+    var systemd = Find(snapshot, 1);
+    Assert.That(systemd.SupplementaryGroups, Is.EqualTo(string.Empty));
+    Assert.That(FieldAccessor.Text(ProcessField.SupplementaryGroups, in systemd, delta, 0), Is.EqualTo("none"));
+
+    var kernelThread = Find(snapshot, 2);
+    Assert.That(kernelThread.SupplementaryGroups, Is.Null);
+    Assert.That(
+      FieldAccessor.Text(ProcessField.SupplementaryGroups, in kernelThread, delta, 0),
+      Is.EqualTo(Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform))
+    );
+  }
+
+  #endregion
 
   #region the LSM label
 
@@ -146,7 +401,7 @@ public sealed class LinuxSecurityTests(bool portable) {
     var confined = Find(snapshot, 1000);
     Assert.That(FieldAccessor.Text(ProcessField.Seccomp, in confined, delta, 0), Is.EqualTo("filter"));
     Assert.That(FieldAccessor.Text(ProcessField.NoNewPrivileges, in confined, delta, 0), Is.EqualTo("yes"));
-    Assert.That(FieldAccessor.Text(ProcessField.Capabilities, in confined, delta, 0), Is.EqualTo("0x0"));
+    Assert.That(FieldAccessor.Text(ProcessField.Capabilities, in confined, delta, 0), Is.EqualTo("none"));
   }
 
   [Test]
@@ -179,6 +434,17 @@ public sealed class LinuxSecurityTests(bool portable) {
     // kthreadd's seccomp is unknown, so it matches neither side — the same rule as every other
     // unknown value in the program.
     Assert.That(Matching("seccomp:off", snapshot, delta), Does.Not.Contain(2));
+
+    // "which processes may reconfigure the network" is the question a capability column exists for,
+    // and it is asked by name rather than by working out which bit that is. The two root processes
+    // are in the answer because they hold every capability there is — which is exactly the case a
+    // filter reading the abbreviated column text would have missed, since that text says "all".
+    Assert.That(Matching("caps:cap_net_admin", snapshot, delta), Is.EqualTo(new[] { 1, 1001, 1002 }));
+    Assert.That(Matching("caps.bounding:cap_sys_module", snapshot, delta), Is.EqualTo(new[] { 1, 1000, 1002 }));
+    Assert.That(Matching("setuid:yes", snapshot, delta), Is.EqualTo(new[] { 1001, 1002 }));
+    Assert.That(Matching("euid:0", snapshot, delta), Is.EqualTo(new[] { 1, 2, 1002 }));
+    Assert.That(Matching("uid:1000", snapshot, delta), Is.EqualTo(new[] { 1000, 1001, 1002 }));
+    Assert.That(Matching("egid:44", snapshot, delta), Is.EqualTo(new[] { 1001 }));
   }
 
   #endregion
