@@ -171,6 +171,67 @@ internal static partial class Native {
   [return: MarshalAs(UnmanagedType.Bool)]
   internal static partial bool ReadProcessMemory(nint process, nint address, nint buffer, nuint size, out nuint read);
 
+  /// <summary>
+  /// One <c>PROCESS_MITIGATION_*</c> policy, as the flags word its structure is a union over
+  /// (PRD §21).
+  /// </summary>
+  /// <remarks>
+  /// The buffer is caller-owned unmanaged memory rather than a typed <c>out</c>, because the six
+  /// structures this is called with have six different lengths and every one of them is a union with
+  /// a bitfield — which C# cannot express and does not need to, since the only thing read out of any
+  /// of them is the word.
+  /// </remarks>
+  [LibraryImport("kernel32.dll", SetLastError = true)]
+  [return: MarshalAs(UnmanagedType.Bool)]
+  internal static partial bool GetProcessMitigationPolicy(nint process, int policy, nint buffer, nuint length);
+
+  /// <summary>
+  /// The full path of the running image (PRD §14).
+  /// </summary>
+  /// <remarks>
+  /// <c>SYSTEM_PROCESS_INFORMATION</c> carries only the file name, so the path has to be asked for
+  /// separately — but only with <c>PROCESS_QUERY_LIMITED_INFORMATION</c>, which is the right the
+  /// owner lookup already holds, and only once per process because a running program does not move.
+  /// The alternative, <c>GetModuleFileNameEx</c>, needs to read the target's address space.
+  /// </remarks>
+  // The Utf16 marshalling is what lets the buffer be a `ref char` over a stack span rather than a
+  // string the generator would allocate and copy — the same reason LookupAccountSidW is written this
+  // way above.
+  [LibraryImport("kernel32.dll", EntryPoint = "QueryFullProcessImageNameW",
+    StringMarshalling = StringMarshalling.Utf16, SetLastError = true)]
+  [return: MarshalAs(UnmanagedType.Bool)]
+  internal static partial bool QueryFullProcessImageNameW(nint process, uint flags, ref char name, ref uint size);
+
+  /// <summary>
+  /// <c>GetProcessInformation</c>, used here only for <c>ProcessProtectionLevelInfo</c>.
+  /// </summary>
+  [LibraryImport("kernel32.dll", SetLastError = true)]
+  [return: MarshalAs(UnmanagedType.Bool)]
+  internal static partial bool GetProcessInformation(nint process, int informationClass, nint information, uint size);
+
+  /// <summary>
+  /// How many window-manager or graphics objects a process holds (PRD §20).
+  /// </summary>
+  /// <remarks>
+  /// Returns nought both for a process with no such objects and for a call that failed, and the
+  /// documentation says so in as many words — which is why the caller clears the last error first
+  /// and asks afterwards. A console service really does hold no USER objects, and that is a
+  /// measurement rather than a refusal (PRD §72.3).
+  /// </remarks>
+  [LibraryImport("user32.dll", SetLastError = true)]
+  internal static partial uint GetGuiResources(nint process, uint flags);
+
+  /// <summary>
+  /// Which instruction set a process is being translated from, and which the machine itself runs.
+  /// </summary>
+  /// <remarks>
+  /// Windows 10 1709 and newer. On anything older the export is simply not there, so the first call
+  /// throws and the caller remembers that rather than asking again for every process on the machine.
+  /// </remarks>
+  [LibraryImport("kernel32.dll", SetLastError = true)]
+  [return: MarshalAs(UnmanagedType.Bool)]
+  internal static partial bool IsWow64Process2(nint process, out ushort processMachine, out ushort nativeMachine);
+
   public const uint AF_INET = 2;
   public const uint AF_INET6 = 23;
 
@@ -206,6 +267,57 @@ internal static partial class Native {
   /// TOKEN_MANDATORY_LABEL: a SID whose last sub-authority is the integrity level.
   /// </summary>
   public const int TokenIntegrityLevel = 25;
+
+  /// <summary>
+  /// TOKEN_IS_APP_CONTAINER: one DWORD, non-zero when the token belongs to an AppContainer.
+  /// </summary>
+  /// <remarks>
+  /// Derived from its position in <c>TOKEN_INFORMATION_CLASS</c>, because Microsoft's reference page
+  /// for that enumeration prints exactly one number — <c>TokenUser = 1</c> — and the rest by order.
+  /// The two neighbours this file already uses, <c>TokenElevation</c> at 20 and
+  /// <c>TokenIntegrityLevel</c> at 25, are derived the same way and have been right in practice
+  /// since this probe was written, which is the only corroboration available from here.
+  /// </remarks>
+  public const int TokenIsAppContainer = 29;
+
+  /// <summary>
+  /// <c>ProcessProtectionLevelInfo</c>, the eighth member of <c>PROCESS_INFORMATION_CLASS</c>.
+  /// </summary>
+  public const int ProcessProtectionLevelInfo = 7;
+
+  /// <summary>
+  /// <c>PROTECTION_LEVEL_NONE</c>, which is <c>0xFFFFFFFE</c> and emphatically not <c>-1</c>.
+  /// </summary>
+  /// <remarks>
+  /// <c>PROTECTION_LEVEL_SAME</c> is the <c>0xFFFFFFFF</c> one would otherwise reach for, and nought
+  /// is <c>PROTECTION_LEVEL_WINTCB_LIGHT</c> — a real and high level. Getting either of those wrong
+  /// reports the whole machine as protected or none of it.
+  /// </remarks>
+  public const uint PROTECTION_LEVEL_NONE = 0xFFFF_FFFE;
+
+  /// <summary>
+  /// The six <c>PROCESS_MITIGATION_POLICY</c> members this program reads, by their position in the
+  /// enumeration (PRD §21).
+  /// </summary>
+  /// <remarks>
+  /// Microsoft's reference page for the enumeration prints no numbers at all, so these are derived
+  /// from the order of the members on that page: DEP, ASLR, dynamic code, strict handle check,
+  /// system call disable, options mask, extension point disable, control flow guard, signature,
+  /// font disable, image load, system call filter, payload restriction, child process, side channel
+  /// isolation, user shadow stack. Note that the <c>GetProcessMitigationPolicy</c> page lists the
+  /// same members in a <em>different</em> order and omits several, so it must not be used to derive
+  /// them — which is the sort of thing that is only obvious once somebody has looked at both.
+  /// </remarks>
+  public const int ProcessDEPPolicy = 0;
+  public const int ProcessASLRPolicy = 1;
+  public const int ProcessDynamicCodePolicy = 2;
+  public const int ProcessControlFlowGuardPolicy = 7;
+  public const int ProcessSignaturePolicy = 8;
+  public const int ProcessUserShadowStackPolicy = 15;
+
+  /// <summary>The two <c>GetGuiResources</c> flags, which the documentation does give numbers for.</summary>
+  public const uint GR_GDIOBJECTS = 0;
+  public const uint GR_USEROBJECTS = 1;
 
   /// <summary>
   /// <c>ProcessCommandLineInformation</c>. Available since Windows 8.1 and the only way to read a

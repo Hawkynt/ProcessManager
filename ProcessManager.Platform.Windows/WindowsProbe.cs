@@ -37,7 +37,17 @@ public sealed class WindowsProbe : ISystemProbe {
   private readonly WindowsIdentityResolver _identities = new();
   private readonly HashSet<int> _livePids = [];
   private readonly HandleNameResolver _handleNames = new();
+  private readonly WindowsImageReader _images = new();
+  private readonly WindowsProbeOptions _options;
+  private readonly Dictionary<int, ObjectTally> _objects = [];
+  private readonly HashSet<string> _liveImages = new(StringComparer.OrdinalIgnoreCase);
+  private ObjectTypeIndices _objectTypes = ObjectTypeIndices.None;
   private int _bufferLength;
+
+  public WindowsProbe() : this(new()) { }
+
+  public WindowsProbe(WindowsProbeOptions options)
+    => this._options = options ?? throw new ArgumentNullException(nameof(options));
 
   public string Description => "windows:ntquerysysteminformation";
 
@@ -229,26 +239,44 @@ public sealed class WindowsProbe : ISystemProbe {
   /// </summary>
   private void ResolveOwnersAndCommandLines(SystemSnapshot snapshot) {
     this._livePids.Clear();
+    this._liveImages.Clear();
+    this.CollectObjectCounts();
+
     var processes = snapshot.ProcessBuffer;
     for (var i = 0; i < processes.Length; ++i) {
       ref var record = ref processes[i];
       this._livePids.Add(record.Pid);
 
-      // One token read answers all three, and the answer is cached for the life of the process:
-      // none of the owner, the elevation or the integrity level changes while it runs.
-      record.UserName = this._identities.Resolve(
+      // One open answers seven questions, and the answers are cached for the life of the process:
+      // none of the owner, the elevation, the integrity level, the protection level, the sandbox
+      // flag, the translated machine or the image path changes while it runs.
+      var identity = this._identities.Resolve(
         record.Pid,
         record.Key.StartTicks,
-        out var userId,
-        out var elevated,
-        out var integrity
+        this._options.ReadMitigations,
+        out var mitigations
       );
 
-      record.UserId = userId;
-      record.IsElevated = elevated;
-      record.IntegrityLevel = integrity;
+      record.UserName = identity.UserName;
+      record.UserId = identity.UserId;
+      record.IsElevated = identity.Elevated;
+      record.IntegrityLevel = identity.Integrity;
+      record.ProtectionLevel = identity.ProtectionLevel;
+      record.IsAppContainer = identity.IsAppContainer;
+      record.Emulation = identity.Emulation;
+      record.ImagePath = identity.ImagePath;
       // Windows has no notion of a real-versus-effective uid; the token is the whole answer.
-      record.EffectiveUserId = userId;
+      record.EffectiveUserId = identity.UserId;
+
+      record.DepPolicy = mitigations.Dep;
+      record.AslrPolicy = mitigations.Aslr;
+      record.ControlFlowGuardPolicy = mitigations.ControlFlowGuard;
+      record.ShadowStackPolicy = mitigations.ShadowStack;
+      record.DynamicCodePolicy = mitigations.DynamicCode;
+      record.BinarySignaturePolicy = mitigations.BinarySignature;
+
+      this.ApplyObjectCounts(ref record);
+      this.ApplyImageFacts(ref record);
 
       if (this._commandLines.TryGetValue(record.Key, out var commandLine)) {
         record.CommandLine = commandLine;
@@ -261,10 +289,189 @@ public sealed class WindowsProbe : ISystemProbe {
     }
 
     this._identities.Prune(this._livePids);
+    this._images.Prune(this._liveImages);
     if (this._commandLines.Count > 4096)
       foreach (var key in this._commandLines.Keys.Where(key => !this._livePids.Contains(key.Pid)).ToList())
         this._commandLines.Remove(key);
   }
+
+  /// <summary>
+  /// What the process's own image says about itself, and its subsystem (PRD §14).
+  /// </summary>
+  /// <remarks>
+  /// Only when asked for. A run that has not asked leaves both readings at "nobody has looked"
+  /// rather than at a blank, so that a reader is not sent off waiting for a version that is never
+  /// coming (PRD §45.6, §72.3).
+  /// </remarks>
+  private void ApplyImageFacts(ref ProcessRecord record) {
+    if (record.ImagePath is { Length: > 0 } path)
+      this._liveImages.Add(path);
+
+    if (!this._options.ReadImageVersions) {
+      record.ImageVersionReason = UnknownReason.NotSampledYet;
+      record.Subsystem = Counter.NotSampledYet;
+      return;
+    }
+
+    var facts = this._images.Read(record.ImagePath, out var reason);
+    WindowsImageReader.Apply(ref record, facts, reason);
+  }
+
+  #region object counts (PRD §20)
+
+  /// <summary>
+  /// Tallies the machine's whole handle table once, for every process at once.
+  /// </summary>
+  /// <remarks>
+  /// Once per sample and not once per process: there is no per-process handle query on Windows, so a
+  /// per-process implementation would read the same machine-wide table for every row. The type
+  /// indices are discovered on the first pass and kept — they are fixed for as long as the kernel is
+  /// running, being the order in which its object types were created at boot, and they are not
+  /// constants anybody may hard-code (PRD §5.3).
+  /// </remarks>
+  private void CollectObjectCounts() {
+    this._objects.Clear();
+    if (!this._options.ReadObjectCounts)
+      return;
+
+    var size = 256 * 1024;
+    for (var attempt = 0; attempt < 8; ++attempt) {
+      var memory = Marshal.AllocHGlobal(size);
+      try {
+        var status = Native.NtQuerySystemInformationRaw(
+          Native.SystemExtendedHandleInformationClass,
+          memory,
+          (uint)size,
+          out var needed
+        );
+
+        if (status == NtStructures.STATUS_INFO_LENGTH_MISMATCH) {
+          size = (int)Math.Max(needed + (64 * 1024), (uint)size * 2);
+          continue;
+        }
+
+        if (status != NtStructures.STATUS_SUCCESS)
+          return;
+
+        unsafe {
+          var table = new ReadOnlySpan<byte>((void*)memory, size);
+          if (this._objectTypes.IsEmpty)
+            this._objectTypes = NameObjectTypes(table);
+
+          WindowsObjectTally.Tally(table, in this._objectTypes, this._objects);
+        }
+
+        return;
+      } finally {
+        Marshal.FreeHGlobal(memory);
+      }
+    }
+  }
+
+  /// <summary>
+  /// Works out which type index means which object type, by asking one handle of each.
+  /// </summary>
+  /// <remarks>
+  /// A few dozen duplications rather than one per handle: the table has a million rows and a few
+  /// dozen distinct type indices in it, so one sample of each index is the whole of what is needed.
+  /// A handle whose owner will not open for duplication simply leaves that index unnamed, which
+  /// means the count for that type is missing rather than wrong.
+  /// </remarks>
+  private static ObjectTypeIndices NameObjectTypes(ReadOnlySpan<byte> table) {
+    var self = Native.GetCurrentProcess();
+    var found = ObjectTypeIndices.None;
+    foreach (var (index, pid, handle) in WindowsObjectTally.SampleTypes(table)) {
+      var owner = Native.OpenProcess(Native.PROCESS_DUP_HANDLE, false, pid);
+      if (owner == 0)
+        continue;
+
+      try {
+        if (!Native.DuplicateHandle(owner, handle, self, out var copy, 0, false, Native.DUPLICATE_SAME_ACCESS))
+          continue;
+
+        try {
+          found = found.With(HandleNameResolver.QueryType(copy), index);
+        } finally {
+          Native.CloseHandle(copy);
+        }
+      } finally {
+        Native.CloseHandle(owner);
+      }
+    }
+
+    return found;
+  }
+
+  /// <summary>
+  /// The five tallies and the two desktop quotas, or why there are none.
+  /// </summary>
+  /// <remarks>
+  /// A process the table mentioned nowhere holds none of these objects, which is a measurement and
+  /// reads as nought. A run that did not ask has not measured anything, which is a different cell
+  /// (PRD §72.3).
+  /// </remarks>
+  private void ApplyObjectCounts(ref ProcessRecord record) {
+    if (this._options.ReadObjectCounts) {
+      this._objects.TryGetValue(record.Pid, out var tally);
+      // An index that was never named cannot be counted, and reporting nought for it would say the
+      // process holds no events when nobody ever knew which handles were events.
+      record.EventObjectCount = Tallied(this._objectTypes.Event, tally.Events);
+      record.SemaphoreObjectCount = Tallied(this._objectTypes.Semaphore, tally.Semaphores);
+      record.MutexObjectCount = Tallied(this._objectTypes.Mutant, tally.Mutexes);
+      record.SectionObjectCount = Tallied(this._objectTypes.Section, tally.Sections);
+      record.RegistryKeyCount = Tallied(this._objectTypes.Key, tally.Keys);
+    } else {
+      record.EventObjectCount = Counter.NotSampledYet;
+      record.SemaphoreObjectCount = Counter.NotSampledYet;
+      record.MutexObjectCount = Counter.NotSampledYet;
+      record.SectionObjectCount = Counter.NotSampledYet;
+      record.RegistryKeyCount = Counter.NotSampledYet;
+    }
+
+    if (!this._options.ReadGuiObjectCounts) {
+      record.UserObjectCount = Counter.NotSampledYet;
+      record.GdiObjectCount = Counter.NotSampledYet;
+      return;
+    }
+
+    var process = Native.OpenProcess(Native.PROCESS_QUERY_LIMITED_INFORMATION, false, record.Pid);
+    if (process == 0) {
+      record.UserObjectCount = Counter.NotPermitted;
+      record.GdiObjectCount = Counter.NotPermitted;
+      return;
+    }
+
+    try {
+      record.UserObjectCount = GuiResources(process, Native.GR_USEROBJECTS);
+      record.GdiObjectCount = GuiResources(process, Native.GR_GDIOBJECTS);
+    } finally {
+      Native.CloseHandle(process);
+    }
+  }
+
+  private static Counter Tallied(ushort index, uint count)
+    => index == ObjectTypeIndices.Unknown ? Counter.Unknown(UnknownReason.NotPermitted) : Counter.Of(count);
+
+  /// <summary>
+  /// One of the two desktop quotas.
+  /// </summary>
+  /// <remarks>
+  /// <c>GetGuiResources</c> returns nought both for a process holding no such objects and for a call
+  /// that failed, and says so in its own documentation — so the last error is cleared first and
+  /// asked afterwards. A console service really does hold no USER objects, and that is a
+  /// measurement; a call that was refused is not, and the two must not be the same cell
+  /// (PRD §72.3).
+  /// </remarks>
+  private static Counter GuiResources(nint process, uint flag) {
+    Marshal.SetLastSystemError(0);
+    var count = Native.GetGuiResources(process, flag);
+    if (count != 0)
+      return Counter.Of(count);
+
+    return Marshal.GetLastWin32Error() == 0 ? Counter.Of(0ul) : Counter.NotPermitted;
+  }
+
+  #endregion
 
   /// <summary>
   /// The command line, through <c>ProcessCommandLineInformation</c>.
