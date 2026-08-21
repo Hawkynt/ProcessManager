@@ -90,6 +90,15 @@ internal static class LimitsReport {
     if (image.SizeBytes.HasValue)
       Console.WriteLine($"  size                 {Humanize.Bytes(image.SizeBytes)}{(image.ModifiedUtc is { } when ? $", last written {when.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)}Z" : string.Empty)}");
 
+    // Only where the file system carries a birth time. Most do not, and a line saying so would be a
+    // line on most rows of most machines.
+    if (image.CreatedUtc is { } created)
+      Console.WriteLine($"  created              {created.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)}Z");
+
+    // From the modules the process has mapped, not from what it is called (PRD §5.3).
+    if (image.Runtime != ProcessRuntime.Unknown)
+      Console.WriteLine($"  running              {image.Runtime.Text()}");
+
     if (image.WorkingDirectory is { Length: > 0 } directory)
       Console.WriteLine($"  running in           {directory}");
 

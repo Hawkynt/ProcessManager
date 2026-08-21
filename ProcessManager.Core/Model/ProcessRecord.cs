@@ -585,6 +585,62 @@ public struct ProcessRecord {
   public UnknownReason ImageHashReason;
 
   /// <summary>
+  /// Which package the running image belongs to, and which application it is (PRD §14).
+  /// </summary>
+  /// <remarks>
+  /// Opt-in: answering it means reading every installed package's file list once, which is thirty
+  /// megabytes of text on an ordinary desktop (PRD §5.4).
+  /// </remarks>
+  public PackageIdentity Package;
+
+  /// <summary>
+  /// Whether the image is still the file its package shipped (PRD §70).
+  /// </summary>
+  /// <remarks>
+  /// Local signature verification, and only that. It is not a hash — that is
+  /// <see cref="ImageSha256"/>, and a matching hash is not a verdict — it is not a trust chain, and
+  /// it is emphatically not a reputation: nothing about this process is transmitted anywhere to fill
+  /// it in (PRD §3, §70).
+  /// </remarks>
+  public SignatureStatus PackageStatus;
+
+  /// <summary>
+  /// One sentence naming what was actually compared, so the word above is never the whole story.
+  /// </summary>
+  public string? PackageStatusDetail;
+
+  /// <summary>
+  /// What is executing inside the process — a runtime, or machine code (PRD §14).
+  /// </summary>
+  /// <remarks>
+  /// From the module list, never from the name: a process called <c>java</c> may be a shell script,
+  /// and one called anything at all may have a virtual machine in it (PRD §5.3).
+  /// </remarks>
+  public ProcessRuntime Runtime;
+
+  /// <summary>
+  /// Why <see cref="Runtime"/> is <see cref="ProcessRuntime.Unknown"/>: not asked for, no image to
+  /// look inside — a kernel thread has none — or a module list this user may not read.
+  /// </summary>
+  /// <remarks>
+  /// <see cref="ProcessRuntime.Native"/> is the answer when the modules were read and none of them
+  /// was a runtime, so the enum cannot carry the reason as well: "there is no virtual machine in
+  /// here" and "nobody could look" are opposite statements (PRD §72.3).
+  /// </remarks>
+  public UnknownReason RuntimeReason;
+
+  /// <summary>
+  /// When the image file was created, in UTC ticks, where the file system remembers (PRD §14).
+  /// </summary>
+  /// <remarks>
+  /// <c>statx</c>'s birth time. Plenty of file systems do not carry one — an ext4 made without
+  /// <c>crtime</c>, most network file systems — and there the kernel returns the field unset rather
+  /// than a date. That is unknown and not the epoch: a column of 1970 would be a lie the width of
+  /// the table (PRD §72.3).
+  /// </remarks>
+  public Counter ImageCreatedUtcTicks;
+
+  /// <summary>
   /// The LSM label — an SELinux context or an AppArmor profile — or <see langword="null"/>.
   /// </summary>
   /// <remarks>

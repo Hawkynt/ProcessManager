@@ -64,6 +64,24 @@ internal static class ProbeFactory {
   /// <c>readlink</c> per open descriptor on the machine, which makes it dearer than the descriptor
   /// count on its own, so the same rule applies (PRD §5.4, §18).
   /// </param>
+  /// <param name="wantPackageIdentity">
+  /// Whether anything on this run asked which package each image belongs to. It costs reading every
+  /// installed package's file list once — thirty megabytes of text on an ordinary desktop — so it
+  /// happens only when a column or a filter names it (PRD §5.4, §14).
+  /// </param>
+  /// <param name="wantPackageVerification">
+  /// Whether anything on this run asked whether each image still matches what its package shipped.
+  /// That is the identity plus a hash of every distinct image, out of the same cache the digest
+  /// columns use (PRD §70).
+  /// </param>
+  /// <param name="wantRuntime">
+  /// Whether anything on this run asked what is executing inside each process. It reads
+  /// <c>maps</c> once per process, which is the only honest source and not a free one (PRD §14).
+  /// </param>
+  /// <param name="wantImageCreationTime">
+  /// Whether anything on this run asked when each image file was created. One <c>statx</c> per
+  /// process, on a path nothing else reads.
+  /// </param>
   public static ISystemProbe? Create(
     string? probeRoot,
     bool useHelper = true,
@@ -76,7 +94,11 @@ internal static class ProbeFactory {
     bool wantCpuThrottling = false,
     bool wantDescriptorKinds = false,
     bool wantImageHashes = false,
-    bool wantSocketCounts = false
+    bool wantSocketCounts = false,
+    bool wantPackageIdentity = false,
+    bool wantPackageVerification = false,
+    bool wantRuntime = false,
+    bool wantImageCreationTime = false
   ) {
     if (OperatingSystem.IsLinux()) {
       // A recorded tree is somebody else's machine; asking a helper about pids in it would be asking
@@ -106,6 +128,10 @@ internal static class ProbeFactory {
             ReadImageHashes = wantImageHashes,
             ReadCpuThrottling = wantCpuThrottling,
             ReadSocketCounts = wantSocketCounts,
+            ReadPackageIdentity = wantPackageIdentity,
+            ReadPackageVerification = wantPackageVerification,
+            ReadRuntime = wantRuntime,
+            ReadImageCreationTime = wantImageCreationTime,
           }
           // A recorded tree was captured by somebody else, so the live user's id would refuse every
           // file in it. Root reads everything, which is what a replay wants (PRD §9.1).
@@ -130,6 +156,14 @@ internal static class ProbeFactory {
             // The socket tables and the fd links are both in a recorded tree, so this replays the
             // same way the descriptor count does.
             ReadSocketCounts = wantSocketCounts,
+            // The recorded tree carries each process's maps and cgroup, so the runtime and the
+            // sandbox replay. The package databases and the file system's birth times belong to the
+            // machine that was recorded and are not in the capture, so asking this machine's would
+            // describe this machine while claiming to describe that one (PRD §9.1).
+            ReadPackageIdentity = false,
+            ReadPackageVerification = false,
+            ReadRuntime = wantRuntime,
+            ReadImageCreationTime = false,
           }
       );
     }

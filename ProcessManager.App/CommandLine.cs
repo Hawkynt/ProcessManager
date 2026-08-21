@@ -230,6 +230,49 @@ internal sealed record CommandLineOptions {
     => this.Wants(ProcessField.ImageSha256) || this.Wants(ProcessField.ImageSha1);
 
   /// <summary>
+  /// Whether anything this run asked for needs the package databases read (PRD §5.4, §14).
+  /// </summary>
+  /// <remarks>
+  /// The index costs thirty megabytes of file lists to build, once. Asking which package a process
+  /// belongs to and asking whether that package's file has been changed are the same lookup, so the
+  /// check implies the identity — and inferred the same way as everything else here, from the
+  /// column or the filter naming it.
+  /// </remarks>
+  public bool WantsPackageIdentity
+    => this.Wants(ProcessField.Package)
+    || this.Wants(ProcessField.ApplicationId)
+    || this.WantsPackageVerification;
+
+  /// <summary>
+  /// Whether anything this run asked for needs each image checked against its package (PRD §70).
+  /// </summary>
+  /// <remarks>
+  /// The identity plus a hash of every distinct image, because a comparison against a recorded
+  /// digest needs a digest. The hash comes from the same per-image cache the digest columns use, so
+  /// asking for the check and for the digests together costs one read of each file.
+  /// </remarks>
+  public bool WantsPackageVerification => this.Wants(ProcessField.PackageStatus);
+
+  /// <summary>
+  /// Whether anything this run asked for needs each process's module list (PRD §5.4, §14).
+  /// </summary>
+  /// <remarks>
+  /// <c>maps</c> is a page-at-a-time read of tens of kilobytes for a browser tab, which is why the
+  /// runtime is worked out only when somebody names the column — and once per process rather than
+  /// once per sample, because a process does not change what is running inside it.
+  /// </remarks>
+  public bool WantsRuntime => this.Wants(ProcessField.Runtime);
+
+  /// <summary>
+  /// Whether anything this run asked for needs the image's birth time (PRD §5.4, §14).
+  /// </summary>
+  /// <remarks>
+  /// One <c>statx</c> per process, on a path nothing else reads. Cheap next to the others here and
+  /// still not free, so it follows the same rule.
+  /// </remarks>
+  public bool WantsImageCreationTime => this.Wants(ProcessField.ImageCreated);
+
+  /// <summary>
   /// Whether anything this run asked for needs the sockets each process holds counted (PRD §18).
   /// </summary>
   /// <remarks>
