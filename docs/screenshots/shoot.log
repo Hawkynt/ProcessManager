@@ -3,12 +3,12 @@ title:        Process Manager
 bounds:       {X=0,Y=0,Width=1240,Height=820}
 client size:  {Width=1240, Height=820}
 controls:     4
-process rows: 804 roots, 804 visible
+process rows: 668 roots, 668 visible
 columns:      5
 split at:     334
 plots:        cpu {X=6,Y=6,Width=392,Height=92}, memory {X=404,Y=6,Width=392,Height=92}, cores {X=802,Y=6,Width=432,Height=92}
 topology:     16 logical, 1 socket(s), hybrid False
-status:       804 of 804 processes  ·  CPU 96.3% (normalized)  ·  memory 125G total, 45.2G free  ·  sample 36.4 ms
+status:       668 of 668 processes  ·  CPU 28.4% (normalized)  ·  memory 125G total, 39.5G free  ·  sample 15.2 ms
 capture:      1240x820 -> docs/screenshots/desktop.png
 page rail:    13 resources, showing 'Memory'
 page header:  Memory / 125G
@@ -38,3 +38,5 @@ page graphs:  1 visible, 60 s span, live
 page plots:   914x298 at 254,94
 page bar:     none
 page expanded: 1180x780 -> docs/screenshots/performance-expanded.png
+file box:     8 lines
+file capture: 720x249 -> docs/screenshots/file.png

@@ -1,130 +1,127 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="980" height="704" viewBox="0 0 980 704" role="img" aria-label="procman --tui">
+<svg xmlns="http://www.w3.org/2000/svg" width="972" height="704" viewBox="0 0 972 704" role="img" aria-label="procman --tui">
   <title>procman --tui</title>
-  <rect width="980" height="704" rx="6" fill="#0c0c0c"/>
+  <rect width="972" height="704" rx="6" fill="#0c0c0c"/>
   <g font-family="ui-monospace,SFMono-Regular,Menlo,DejaVu Sans Mono,Consolas,monospace" font-size="13" xml:space="preserve">
     <text x="10" y="23" fill="#2aa198">  0</text>
     <text x="34" y="23" fill="#8a8a8a">[</text>
-    <text x="42" y="23" fill="#3fbf3f">||||||||</text>
-    <text x="106" y="23" fill="#d8d8d8">                                        </text>
-    <text x="426" y="23" fill="#8a8a8a">14.6%]</text>
+    <text x="42" y="23" fill="#3fbf3f">|||||||||</text>
+    <text x="114" y="23" fill="#d8d8d8">                                       </text>
+    <text x="426" y="23" fill="#8a8a8a">17.1%]</text>
     <text x="474" y="23" fill="#d8d8d8">  </text>
     <text x="490" y="23" fill="#2aa198">  1</text>
     <text x="514" y="23" fill="#8a8a8a">[</text>
-    <text x="522" y="23" fill="#3fbf3f">||||||||||||||||||||||||||</text>
-    <text x="730" y="23" fill="#d8d8d8">                      </text>
-    <text x="906" y="23" fill="#8a8a8a">50.0%]</text>
+    <text x="522" y="23" fill="#3fbf3f">|||||||||||||||||||||||||</text>
+    <text x="722" y="23" fill="#d8d8d8">                       </text>
+    <text x="906" y="23" fill="#8a8a8a">47.6%]</text>
     <text x="10" y="40" fill="#2aa198">  2</text>
     <text x="34" y="40" fill="#8a8a8a">[</text>
-    <text x="42" y="40" fill="#3fbf3f">|</text>
-    <text x="50" y="40" fill="#d8d8d8">                                                </text>
-    <text x="434" y="40" fill="#8a8a8a">2.4%]</text>
+    <text x="42" y="40" fill="#3fbf3f">||||||||||||||||||||||||||||||</text>
+    <text x="282" y="40" fill="#d8d8d8">                  </text>
+    <text x="426" y="40" fill="#8a8a8a">57.1%]</text>
     <text x="474" y="40" fill="#d8d8d8">  </text>
     <text x="490" y="40" fill="#2aa198">  3</text>
     <text x="514" y="40" fill="#8a8a8a">[</text>
-    <text x="522" y="40" fill="#3fbf3f">||||||||||||||</text>
-    <text x="634" y="40" fill="#d8d8d8">                                  </text>
-    <text x="906" y="40" fill="#8a8a8a">26.8%]</text>
+    <text x="522" y="40" fill="#3fbf3f">|||||||||</text>
+    <text x="594" y="40" fill="#d8d8d8">                                       </text>
+    <text x="906" y="40" fill="#8a8a8a">16.7%]</text>
     <text x="10" y="57" fill="#2aa198">  4</text>
     <text x="34" y="57" fill="#8a8a8a">[</text>
-    <text x="42" y="57" fill="#3fbf3f">|||||||||</text>
-    <text x="114" y="57" fill="#d8d8d8">                                       </text>
-    <text x="426" y="57" fill="#8a8a8a">17.1%]</text>
+    <text x="42" y="57" fill="#3fbf3f">|||||||||||||||||||</text>
+    <text x="194" y="57" fill="#d8d8d8">                             </text>
+    <text x="426" y="57" fill="#8a8a8a">35.0%]</text>
     <text x="474" y="57" fill="#d8d8d8">  </text>
     <text x="490" y="57" fill="#2aa198">  5</text>
     <text x="514" y="57" fill="#8a8a8a">[</text>
-    <text x="522" y="57" fill="#3fbf3f">|||</text>
-    <text x="546" y="57" fill="#d8d8d8">                                              </text>
-    <text x="914" y="57" fill="#8a8a8a">4.8%]</text>
+    <text x="522" y="57" fill="#c8a02c">||||||||||||||||||||||||||||||||||</text>
+    <text x="794" y="57" fill="#d8d8d8">              </text>
+    <text x="906" y="57" fill="#8a8a8a">63.4%]</text>
     <text x="10" y="74" fill="#2aa198">  6</text>
     <text x="34" y="74" fill="#8a8a8a">[</text>
-    <text x="42" y="74" fill="#3fbf3f">||||||||||||||||||||||||||||||</text>
-    <text x="282" y="74" fill="#d8d8d8">                  </text>
-    <text x="426" y="74" fill="#8a8a8a">57.1%]</text>
+    <text x="42" y="74" fill="#3fbf3f">||||||||||||||||||||</text>
+    <text x="202" y="74" fill="#d8d8d8">                            </text>
+    <text x="426" y="74" fill="#8a8a8a">38.6%]</text>
     <text x="474" y="74" fill="#d8d8d8">  </text>
     <text x="490" y="74" fill="#2aa198">  7</text>
     <text x="514" y="74" fill="#8a8a8a">[</text>
-    <text x="522" y="74" fill="#3fbf3f">||||||||||</text>
-    <text x="602" y="74" fill="#d8d8d8">                                      </text>
-    <text x="906" y="74" fill="#8a8a8a">18.6%]</text>
+    <text x="522" y="74" fill="#3fbf3f">||||||</text>
+    <text x="570" y="74" fill="#d8d8d8">                                          </text>
+    <text x="906" y="74" fill="#8a8a8a">12.2%]</text>
     <text x="10" y="91" fill="#2aa198">  8</text>
     <text x="34" y="91" fill="#8a8a8a">[</text>
-    <text x="42" y="91" fill="#3fbf3f">|||||||||</text>
-    <text x="114" y="91" fill="#d8d8d8">                                       </text>
-    <text x="426" y="91" fill="#8a8a8a">16.7%]</text>
+    <text x="42" y="91" fill="#d04040">||||||||||||||||||||||||||||||||||||||||||||||||</text>
+    <text x="426" y="91" fill="#8a8a8a">90.9%]</text>
     <text x="474" y="91" fill="#d8d8d8">  </text>
     <text x="490" y="91" fill="#2aa198">  9</text>
     <text x="514" y="91" fill="#8a8a8a">[</text>
-    <text x="522" y="91" fill="#3fbf3f">|||||||||||||||||||||||||</text>
-    <text x="722" y="91" fill="#d8d8d8">                       </text>
-    <text x="906" y="91" fill="#8a8a8a">46.3%]</text>
+    <text x="522" y="91" fill="#d04040">|||||||||||||||||||||||||||||||||||||||||||||||||</text>
+    <text x="914" y="91" fill="#8a8a8a">100%]</text>
     <text x="10" y="108" fill="#2aa198"> 10</text>
     <text x="34" y="108" fill="#8a8a8a">[</text>
-    <text x="42" y="108" fill="#3fbf3f">||</text>
-    <text x="58" y="108" fill="#d8d8d8">                                               </text>
-    <text x="434" y="108" fill="#8a8a8a">4.7%]</text>
+    <text x="42" y="108" fill="#3fbf3f">|||||||||||||||||||||</text>
+    <text x="210" y="108" fill="#d8d8d8">                           </text>
+    <text x="426" y="108" fill="#8a8a8a">39.5%]</text>
     <text x="474" y="108" fill="#d8d8d8">  </text>
     <text x="490" y="108" fill="#2aa198"> 11</text>
     <text x="514" y="108" fill="#8a8a8a">[</text>
-    <text x="522" y="108" fill="#c8a02c">|||||||||||||||||||||||||||||||||</text>
-    <text x="786" y="108" fill="#d8d8d8">               </text>
-    <text x="906" y="108" fill="#8a8a8a">61.9%]</text>
+    <text x="522" y="108" fill="#d04040">||||||||||||||||||||||||||||||||||||||||||||||||</text>
+    <text x="906" y="108" fill="#8a8a8a">90.5%]</text>
     <text x="10" y="125" fill="#2aa198"> 12</text>
     <text x="34" y="125" fill="#8a8a8a">[</text>
-    <text x="42" y="125" fill="#3fbf3f">|||||</text>
-    <text x="82" y="125" fill="#d8d8d8">                                            </text>
-    <text x="434" y="125" fill="#8a8a8a">9.8%]</text>
+    <text x="42" y="125" fill="#c8a02c">||||||||||||||||||||||||||||||||||</text>
+    <text x="314" y="125" fill="#d8d8d8">              </text>
+    <text x="426" y="125" fill="#8a8a8a">64.3%]</text>
     <text x="474" y="125" fill="#d8d8d8">  </text>
     <text x="490" y="125" fill="#2aa198"> 13</text>
     <text x="514" y="125" fill="#8a8a8a">[</text>
-    <text x="522" y="125" fill="#c8a02c">|||||||||||||||||||||||||||||||||||||||||||||||</text>
-    <text x="898" y="125" fill="#d8d8d8"> </text>
-    <text x="906" y="125" fill="#8a8a8a">88.1%]</text>
+    <text x="522" y="125" fill="#c8a02c">|||||||||||||||||||||||||||||||||||</text>
+    <text x="802" y="125" fill="#d8d8d8">             </text>
+    <text x="906" y="125" fill="#8a8a8a">65.9%]</text>
     <text x="10" y="142" fill="#2aa198"> 14</text>
     <text x="34" y="142" fill="#8a8a8a">[</text>
-    <text x="42" y="142" fill="#3fbf3f">|||||||||</text>
-    <text x="114" y="142" fill="#d8d8d8">                                       </text>
-    <text x="426" y="142" fill="#8a8a8a">17.1%]</text>
+    <text x="42" y="142" fill="#c8a02c">|||||||||||||||||||||||||||||||||||||</text>
+    <text x="338" y="142" fill="#d8d8d8">           </text>
+    <text x="426" y="142" fill="#8a8a8a">69.0%]</text>
     <text x="474" y="142" fill="#d8d8d8">  </text>
     <text x="490" y="142" fill="#2aa198"> 15</text>
     <text x="514" y="142" fill="#8a8a8a">[</text>
-    <text x="522" y="142" fill="#3fbf3f">|||||||||</text>
-    <text x="594" y="142" fill="#d8d8d8">                                       </text>
-    <text x="906" y="142" fill="#8a8a8a">16.3%]</text>
+    <text x="522" y="142" fill="#c8a02c">||||||||||||||||||||||||||||||||||||||||||</text>
+    <text x="858" y="142" fill="#d8d8d8">      </text>
+    <text x="906" y="142" fill="#8a8a8a">78.6%]</text>
     <text x="10" y="159" fill="#2aa198">Mem</text>
     <text x="34" y="159" fill="#8a8a8a">[</text>
-    <text x="42" y="159" fill="#c8a02c">||||||||||||||||||||||||||||||||||</text>
-    <text x="314" y="159" fill="#d8d8d8">         </text>
-    <text x="386" y="159" fill="#8a8a8a">81.0G/125G]</text>
+    <text x="42" y="159" fill="#c8a02c">||||||||||||||||||||||||||||||||||||</text>
+    <text x="330" y="159" fill="#d8d8d8">       </text>
+    <text x="386" y="159" fill="#8a8a8a">85.2G/125G]</text>
     <text x="474" y="159" fill="#d8d8d8">  </text>
     <text x="490" y="159" fill="#2aa198">Swp</text>
     <text x="514" y="159" fill="#8a8a8a">[</text>
     <text x="522" y="159" fill="#3fbf3f">|||||</text>
     <text x="562" y="159" fill="#d8d8d8">                                      </text>
     <text x="866" y="159" fill="#8a8a8a">6.6G/64.0G]</text>
-    <text x="10" y="176" fill="#8a8a8a">Tasks: 792, 5 running</text>
-    <text x="178" y="176" fill="#d8d8d8">           </text>
-    <text x="266" y="176" fill="#8a8a8a">Load average: 27.34 41.88 43.75</text>
+    <text x="10" y="176" fill="#8a8a8a">Tasks: 665, 11 running</text>
+    <text x="186" y="176" fill="#d8d8d8">          </text>
+    <text x="266" y="176" fill="#8a8a8a">Load average: 60.45 47.28 35.96</text>
     <text x="514" y="176" fill="#d8d8d8">     </text>
-    <text x="554" y="176" fill="#8a8a8a">Uptime: 2d 17:13:02</text>
+    <text x="554" y="176" fill="#8a8a8a">Uptime: 2d 17:38:48</text>
     <rect x="10" y="197" width="912" height="17" fill="#2aa198"/>
     <text x="10" y="210" fill="#0c2b2b">    PID User       S      CPU% CPU hist     Private Mem hist       Read/s  Write/s I/O hist      Thr   Hnd Process</text>
     <rect x="10" y="214" width="952" height="17" fill="#d8d8d8"/>
-    <text x="10" y="227" fill="#0c0c0c">1333754 hawky      sleep   0.0 ▁       ▁       6.8G ████████████        0        0                32     … llama-server</text>
-    <text x="10" y="244" fill="#d8d8d8"> 575226 hawky      sleep   0.0 </text>
+    <text x="10" y="227" fill="#0c0c0c">1333754 hawky      sleep   0.0                 6.8G ████████████        0        0                32     … llama-server</text>
+    <text x="10" y="244" fill="#d8d8d8"> 632991 hawky      sleep   0.0 </text>
     <text x="258" y="244" fill="#3fbf3f">            </text>
-    <text x="354" y="244" fill="#d8d8d8">    2.1G </text>
+    <text x="354" y="244" fill="#d8d8d8">    1.7G </text>
     <text x="426" y="244" fill="#2aa198">▂▂▂▂▂▂▂▂▂▂▂▂</text>
     <text x="522" y="244" fill="#d8d8d8">        0        0 </text>
     <text x="674" y="244" fill="#c8a02c">            </text>
-    <text x="770" y="244" fill="#d8d8d8">   41     … VBCSCompiler</text>
+    <text x="770" y="244" fill="#d8d8d8">   84     … VBCSCompiler</text>
     <text x="10" y="261" fill="#d8d8d8">2520163 hawky      sleep   0.3 </text>
-    <text x="258" y="261" fill="#3fbf3f">▁ ▁ ▁▁▁ ▁▁ ▁</text>
+    <text x="258" y="261" fill="#3fbf3f">  ▁▁▁▁▁▁ ▂▁▁</text>
     <text x="354" y="261" fill="#d8d8d8">    6.5G </text>
     <text x="426" y="261" fill="#2aa198">████████████</text>
     <text x="522" y="261" fill="#d8d8d8">        0        0 </text>
-    <text x="674" y="261" fill="#c8a02c">        ▁   </text>
+    <text x="674" y="261" fill="#c8a02c">       █    </text>
     <text x="770" y="261" fill="#d8d8d8">   44     … claude</text>
-    <text x="10" y="278" fill="#d8d8d8">  22199 hawky      sleep   0.4 </text>
+    <text x="10" y="278" fill="#d8d8d8">  22199 hawky      sleep   0.3 </text>
     <text x="258" y="278" fill="#3fbf3f">▁▁▁▁▁▁▁▁▁▁▁▁</text>
     <text x="354" y="278" fill="#d8d8d8">    6.4G </text>
     <text x="426" y="278" fill="#2aa198">████████████</text>
@@ -132,167 +129,167 @@
     <text x="674" y="278" fill="#c8a02c">            </text>
     <text x="770" y="278" fill="#d8d8d8">   44     … claude</text>
     <text x="10" y="295" fill="#d8d8d8">3357215 hawky      sleep   0.0 </text>
-    <text x="258" y="295" fill="#3fbf3f">    ▁       </text>
-    <text x="354" y="295" fill="#d8d8d8">    723M </text>
+    <text x="258" y="295" fill="#3fbf3f">            </text>
+    <text x="354" y="295" fill="#d8d8d8">    726M </text>
     <text x="426" y="295" fill="#2aa198">▁▁▁▁▁▁▁▁▁▁▁▁</text>
     <text x="522" y="295" fill="#d8d8d8">        0        0 </text>
     <text x="674" y="295" fill="#c8a02c">            </text>
     <text x="770" y="295" fill="#d8d8d8">   26     … plasmashell</text>
-    <text x="10" y="312" fill="#d8d8d8">2452138 hawky      sleep   0.3 </text>
-    <text x="258" y="312" fill="#3fbf3f">▁▁▁▁▁▁▁▁▁▁▁▁</text>
-    <text x="354" y="312" fill="#d8d8d8">    5.4G </text>
-    <text x="426" y="312" fill="#2aa198">▆▆▆▆▆▆▆▆▆▆▆▆</text>
+    <text x="10" y="312" fill="#d8d8d8"> 633303 hawky      sleep   0.0 </text>
+    <text x="258" y="312" fill="#3fbf3f">            </text>
+    <text x="354" y="312" fill="#d8d8d8">    543M </text>
+    <text x="426" y="312" fill="#2aa198">▁▁▁▁▁▁▁▁▁▁▁▁</text>
     <text x="522" y="312" fill="#d8d8d8">        0        0 </text>
     <text x="674" y="312" fill="#c8a02c">            </text>
-    <text x="770" y="312" fill="#d8d8d8">   21     … claude</text>
-    <text x="10" y="329" fill="#d8d8d8">  35211 hawky      sleep   0.0 </text>
-    <text x="258" y="329" fill="#3fbf3f">▁           </text>
-    <text x="354" y="329" fill="#d8d8d8">    1.5G </text>
-    <text x="426" y="329" fill="#2aa198">▂▂▂▂▂▂▂▂▂▂▂▂</text>
+    <text x="770" y="312" fill="#d8d8d8">   24     … dotnet</text>
+    <text x="10" y="329" fill="#d8d8d8">2452138 hawky      run     0.4 </text>
+    <text x="258" y="329" fill="#3fbf3f">▁▁▁▁▂▁▁▁▂▁▁▁</text>
+    <text x="354" y="329" fill="#d8d8d8">    5.4G </text>
+    <text x="426" y="329" fill="#2aa198">▆▆▆▆▆▆▆▆▆▆▆▆</text>
     <text x="522" y="329" fill="#d8d8d8">        0        0 </text>
     <text x="674" y="329" fill="#c8a02c">            </text>
-    <text x="770" y="329" fill="#d8d8d8">   26     … vivaldi-bin</text>
-    <text x="10" y="346" fill="#d8d8d8">4179266 hawky      sleep   0.0 </text>
-    <text x="258" y="346" fill="#3fbf3f">  ▁         </text>
-    <text x="354" y="346" fill="#d8d8d8">    391M </text>
+    <text x="770" y="329" fill="#d8d8d8">   22     … claude</text>
+    <text x="10" y="346" fill="#d8d8d8"> 638275 hawky      sleep   0.0 </text>
+    <text x="258" y="346" fill="#3fbf3f">            </text>
+    <text x="354" y="346" fill="#d8d8d8">    494M </text>
     <text x="426" y="346" fill="#2aa198">▁▁▁▁▁▁▁▁▁▁▁▁</text>
-    <text x="522" y="346" fill="#d8d8d8">        —        — </text>
+    <text x="522" y="346" fill="#d8d8d8">        0        0 </text>
     <text x="674" y="346" fill="#c8a02c">            </text>
-    <text x="770" y="346" fill="#d8d8d8">   16     … kscreenlocker</text>
-    <text x="10" y="363" fill="#d8d8d8">  73184 hawky      sleep   0.0 </text>
-    <text x="258" y="363" fill="#3fbf3f">       ▁    </text>
-    <text x="354" y="363" fill="#d8d8d8">    2.8G </text>
-    <text x="426" y="363" fill="#2aa198">▃▃▃▃▃▃▃▃▃▃▃▃</text>
+    <text x="770" y="346" fill="#d8d8d8">   23     … dotnet</text>
+    <text x="10" y="363" fill="#d8d8d8"> 642658 hawky      sleep   0.0 </text>
+    <text x="258" y="363" fill="#3fbf3f">            </text>
+    <text x="354" y="363" fill="#d8d8d8">    492M </text>
+    <text x="426" y="363" fill="#2aa198">▁▁▁▁▁▁▁▁▁▁▁▁</text>
     <text x="522" y="363" fill="#d8d8d8">        0        0 </text>
     <text x="674" y="363" fill="#c8a02c">            </text>
-    <text x="770" y="363" fill="#d8d8d8">   26     … vivaldi-bin</text>
-    <text x="10" y="380" fill="#d8d8d8">   1808 hawky      sleep   0.0 </text>
-    <text x="258" y="380" fill="#3fbf3f">            </text>
-    <text x="354" y="380" fill="#d8d8d8">    382M </text>
-    <text x="426" y="380" fill="#2aa198">▁▁▁▁▁▁▁▁▁▁▁▁</text>
+    <text x="770" y="363" fill="#d8d8d8">   23     … dotnet</text>
+    <text x="10" y="380" fill="#d8d8d8">  35211 hawky      sleep   0.0 </text>
+    <text x="258" y="380" fill="#3fbf3f">        ▁   </text>
+    <text x="354" y="380" fill="#d8d8d8">    1.5G </text>
+    <text x="426" y="380" fill="#2aa198">▂▂▂▂▂▂▂▂▂▂▂▂</text>
     <text x="522" y="380" fill="#d8d8d8">        0        0 </text>
     <text x="674" y="380" fill="#c8a02c">            </text>
-    <text x="770" y="380" fill="#d8d8d8">    6     … xdg-desktop-p</text>
-    <text x="10" y="397" fill="#d8d8d8">   1326 hawky      sleep   0.0 </text>
-    <text x="258" y="397" fill="#3fbf3f">   ▁ ▁   ▁  </text>
-    <text x="354" y="397" fill="#d8d8d8">    813M </text>
+    <text x="770" y="380" fill="#d8d8d8">   26     … vivaldi-bin</text>
+    <text x="10" y="397" fill="#d8d8d8"> 633305 hawky      sleep   0.0 </text>
+    <text x="258" y="397" fill="#3fbf3f">            </text>
+    <text x="354" y="397" fill="#d8d8d8">    508M </text>
     <text x="426" y="397" fill="#2aa198">▁▁▁▁▁▁▁▁▁▁▁▁</text>
-    <text x="522" y="397" fill="#d8d8d8">        —        — </text>
+    <text x="522" y="397" fill="#d8d8d8">        0        0 </text>
     <text x="674" y="397" fill="#c8a02c">            </text>
-    <text x="770" y="397" fill="#d8d8d8">   23     … kwin_wayland</text>
-    <text x="10" y="414" fill="#d8d8d8">   1485 hawky      sleep   0.0 </text>
+    <text x="770" y="397" fill="#d8d8d8">   24     … dotnet</text>
+    <text x="10" y="414" fill="#d8d8d8"> 633297 hawky      sleep   0.0 </text>
     <text x="258" y="414" fill="#3fbf3f">            </text>
-    <text x="354" y="414" fill="#d8d8d8">    341M </text>
+    <text x="354" y="414" fill="#d8d8d8">    487M </text>
     <text x="426" y="414" fill="#2aa198">▁▁▁▁▁▁▁▁▁▁▁▁</text>
-    <text x="522" y="414" fill="#d8d8d8">        —        — </text>
+    <text x="522" y="414" fill="#d8d8d8">        0        0 </text>
     <text x="674" y="414" fill="#c8a02c">            </text>
-    <text x="770" y="414" fill="#d8d8d8">   10     … polkit-kde-au</text>
-    <text x="10" y="431" fill="#d8d8d8"> 578777 hawky      sleep   0.0 </text>
+    <text x="770" y="414" fill="#d8d8d8">   23     … dotnet</text>
+    <text x="10" y="431" fill="#d8d8d8"> 645713 hawky      sleep   0.0 </text>
     <text x="258" y="431" fill="#3fbf3f">            </text>
-    <text x="354" y="431" fill="#d8d8d8">    240M </text>
+    <text x="354" y="431" fill="#d8d8d8">    481M </text>
     <text x="426" y="431" fill="#2aa198">▁▁▁▁▁▁▁▁▁▁▁▁</text>
     <text x="522" y="431" fill="#d8d8d8">        0        0 </text>
     <text x="674" y="431" fill="#c8a02c">            </text>
-    <text x="770" y="431" fill="#d8d8d8">   21     … dotnet</text>
-    <text x="10" y="448" fill="#d8d8d8"> 554895 hawky      sleep   0.0 </text>
+    <text x="770" y="431" fill="#d8d8d8">   23     … dotnet</text>
+    <text x="10" y="448" fill="#d8d8d8"> 633307 hawky      sleep   0.0 </text>
     <text x="258" y="448" fill="#3fbf3f">            </text>
-    <text x="354" y="448" fill="#d8d8d8">    233M </text>
+    <text x="354" y="448" fill="#d8d8d8">    484M </text>
     <text x="426" y="448" fill="#2aa198">▁▁▁▁▁▁▁▁▁▁▁▁</text>
     <text x="522" y="448" fill="#d8d8d8">        0        0 </text>
     <text x="674" y="448" fill="#c8a02c">            </text>
-    <text x="770" y="448" fill="#d8d8d8">   21     … dotnet</text>
-    <text x="10" y="465" fill="#d8d8d8"> 554921 hawky      sleep   0.0 </text>
+    <text x="770" y="448" fill="#d8d8d8">   23     … dotnet</text>
+    <text x="10" y="465" fill="#d8d8d8"> 645703 hawky      sleep   0.0 </text>
     <text x="258" y="465" fill="#3fbf3f">            </text>
-    <text x="354" y="465" fill="#d8d8d8">    239M </text>
+    <text x="354" y="465" fill="#d8d8d8">    466M </text>
     <text x="426" y="465" fill="#2aa198">▁▁▁▁▁▁▁▁▁▁▁▁</text>
     <text x="522" y="465" fill="#d8d8d8">        0        0 </text>
     <text x="674" y="465" fill="#c8a02c">            </text>
-    <text x="770" y="465" fill="#d8d8d8">   21     … dotnet</text>
-    <text x="10" y="482" fill="#d8d8d8"> 578778 hawky      sleep   0.0 </text>
+    <text x="770" y="465" fill="#d8d8d8">   23     … dotnet</text>
+    <text x="10" y="482" fill="#d8d8d8"> 638266 hawky      sleep   0.0 </text>
     <text x="258" y="482" fill="#3fbf3f">            </text>
-    <text x="354" y="482" fill="#d8d8d8">    242M </text>
+    <text x="354" y="482" fill="#d8d8d8">    475M </text>
     <text x="426" y="482" fill="#2aa198">▁▁▁▁▁▁▁▁▁▁▁▁</text>
     <text x="522" y="482" fill="#d8d8d8">        0        0 </text>
     <text x="674" y="482" fill="#c8a02c">            </text>
-    <text x="770" y="482" fill="#d8d8d8">   21     … dotnet</text>
-    <text x="10" y="499" fill="#d8d8d8"> 579222 hawky      sleep   0.0 </text>
+    <text x="770" y="482" fill="#d8d8d8">   23     … dotnet</text>
+    <text x="10" y="499" fill="#d8d8d8"> 638271 hawky      sleep   0.0 </text>
     <text x="258" y="499" fill="#3fbf3f">            </text>
-    <text x="354" y="499" fill="#d8d8d8">    240M </text>
+    <text x="354" y="499" fill="#d8d8d8">    452M </text>
     <text x="426" y="499" fill="#2aa198">▁▁▁▁▁▁▁▁▁▁▁▁</text>
     <text x="522" y="499" fill="#d8d8d8">        0        0 </text>
     <text x="674" y="499" fill="#c8a02c">            </text>
-    <text x="770" y="499" fill="#d8d8d8">   22     … dotnet</text>
-    <text x="10" y="516" fill="#d8d8d8"> 554899 hawky      sleep   0.0 </text>
+    <text x="770" y="499" fill="#d8d8d8">   23     … dotnet</text>
+    <text x="10" y="516" fill="#d8d8d8"> 638284 hawky      sleep   0.0 </text>
     <text x="258" y="516" fill="#3fbf3f">            </text>
-    <text x="354" y="516" fill="#d8d8d8">    224M </text>
+    <text x="354" y="516" fill="#d8d8d8">    462M </text>
     <text x="426" y="516" fill="#2aa198">▁▁▁▁▁▁▁▁▁▁▁▁</text>
     <text x="522" y="516" fill="#d8d8d8">        0        0 </text>
     <text x="674" y="516" fill="#c8a02c">            </text>
-    <text x="770" y="516" fill="#d8d8d8">   21     … dotnet</text>
-    <text x="10" y="533" fill="#d8d8d8">  22703 hawky      sleep   0.0 </text>
+    <text x="770" y="516" fill="#d8d8d8">   23     … dotnet</text>
+    <text x="10" y="533" fill="#d8d8d8"> 642669 hawky      sleep   0.0 </text>
     <text x="258" y="533" fill="#3fbf3f">            </text>
-    <text x="354" y="533" fill="#d8d8d8">   1006M </text>
+    <text x="354" y="533" fill="#d8d8d8">    442M </text>
     <text x="426" y="533" fill="#2aa198">▁▁▁▁▁▁▁▁▁▁▁▁</text>
     <text x="522" y="533" fill="#d8d8d8">        0        0 </text>
     <text x="674" y="533" fill="#c8a02c">            </text>
-    <text x="770" y="533" fill="#d8d8d8">   25     … vivaldi-bin</text>
-    <text x="10" y="550" fill="#d8d8d8"> 579242 hawky      sleep   0.0 </text>
+    <text x="770" y="533" fill="#d8d8d8">   23     … dotnet</text>
+    <text x="10" y="550" fill="#d8d8d8"> 633295 hawky      sleep   0.0 </text>
     <text x="258" y="550" fill="#3fbf3f">            </text>
-    <text x="354" y="550" fill="#d8d8d8">    230M </text>
+    <text x="354" y="550" fill="#d8d8d8">    413M </text>
     <text x="426" y="550" fill="#2aa198">▁▁▁▁▁▁▁▁▁▁▁▁</text>
     <text x="522" y="550" fill="#d8d8d8">        0        0 </text>
     <text x="674" y="550" fill="#c8a02c">            </text>
-    <text x="770" y="550" fill="#d8d8d8">   21     … dotnet</text>
-    <text x="10" y="567" fill="#d8d8d8"> 579211 hawky      sleep   0.0 </text>
+    <text x="770" y="550" fill="#d8d8d8">   23     … dotnet</text>
+    <text x="10" y="567" fill="#d8d8d8"> 633298 hawky      sleep   0.0 </text>
     <text x="258" y="567" fill="#3fbf3f">            </text>
-    <text x="354" y="567" fill="#d8d8d8">    227M </text>
+    <text x="354" y="567" fill="#d8d8d8">    405M </text>
     <text x="426" y="567" fill="#2aa198">▁▁▁▁▁▁▁▁▁▁▁▁</text>
     <text x="522" y="567" fill="#d8d8d8">        0        0 </text>
     <text x="674" y="567" fill="#c8a02c">            </text>
-    <text x="770" y="567" fill="#d8d8d8">   21     … dotnet</text>
-    <text x="10" y="584" fill="#d8d8d8"> 578856 hawky      sleep   0.0 </text>
+    <text x="770" y="567" fill="#d8d8d8">   23     … dotnet</text>
+    <text x="10" y="584" fill="#d8d8d8"> 645727 hawky      sleep   0.0 </text>
     <text x="258" y="584" fill="#3fbf3f">            </text>
-    <text x="354" y="584" fill="#d8d8d8">    228M </text>
+    <text x="354" y="584" fill="#d8d8d8">    398M </text>
     <text x="426" y="584" fill="#2aa198">▁▁▁▁▁▁▁▁▁▁▁▁</text>
     <text x="522" y="584" fill="#d8d8d8">        0        0 </text>
     <text x="674" y="584" fill="#c8a02c">            </text>
-    <text x="770" y="584" fill="#d8d8d8">   21     … dotnet</text>
-    <text x="10" y="601" fill="#d8d8d8"> 579279 hawky      sleep   0.0 </text>
+    <text x="770" y="584" fill="#d8d8d8">   22     … dotnet</text>
+    <text x="10" y="601" fill="#d8d8d8"> 633360 hawky      sleep   0.0 </text>
     <text x="258" y="601" fill="#3fbf3f">            </text>
-    <text x="354" y="601" fill="#d8d8d8">    226M </text>
+    <text x="354" y="601" fill="#d8d8d8">    400M </text>
     <text x="426" y="601" fill="#2aa198">▁▁▁▁▁▁▁▁▁▁▁▁</text>
     <text x="522" y="601" fill="#d8d8d8">        0        0 </text>
     <text x="674" y="601" fill="#c8a02c">            </text>
-    <text x="770" y="601" fill="#d8d8d8">   21     … dotnet</text>
-    <text x="10" y="618" fill="#d8d8d8"> 579209 hawky      sleep   0.0 </text>
+    <text x="770" y="601" fill="#d8d8d8">   23     … dotnet</text>
+    <text x="10" y="618" fill="#d8d8d8"> 638267 hawky      sleep   0.0 </text>
     <text x="258" y="618" fill="#3fbf3f">            </text>
-    <text x="354" y="618" fill="#d8d8d8">    231M </text>
+    <text x="354" y="618" fill="#d8d8d8">    402M </text>
     <text x="426" y="618" fill="#2aa198">▁▁▁▁▁▁▁▁▁▁▁▁</text>
     <text x="522" y="618" fill="#d8d8d8">        0        0 </text>
     <text x="674" y="618" fill="#c8a02c">            </text>
-    <text x="770" y="618" fill="#d8d8d8">   21     … dotnet</text>
-    <text x="10" y="635" fill="#d8d8d8"> 578776 hawky      sleep   0.0 </text>
+    <text x="770" y="618" fill="#d8d8d8">   23     … dotnet</text>
+    <text x="10" y="635" fill="#d8d8d8"> 633294 hawky      sleep   0.0 </text>
     <text x="258" y="635" fill="#3fbf3f">            </text>
-    <text x="354" y="635" fill="#d8d8d8">    237M </text>
+    <text x="354" y="635" fill="#d8d8d8">    402M </text>
     <text x="426" y="635" fill="#2aa198">▁▁▁▁▁▁▁▁▁▁▁▁</text>
     <text x="522" y="635" fill="#d8d8d8">        0        0 </text>
     <text x="674" y="635" fill="#c8a02c">            </text>
-    <text x="770" y="635" fill="#d8d8d8">   22     … dotnet</text>
-    <text x="10" y="652" fill="#d8d8d8"> 554898 hawky      sleep   0.0 </text>
+    <text x="770" y="635" fill="#d8d8d8">   24     … dotnet</text>
+    <text x="10" y="652" fill="#d8d8d8"> 645704 hawky      sleep   0.0 </text>
     <text x="258" y="652" fill="#3fbf3f">            </text>
-    <text x="354" y="652" fill="#d8d8d8">    221M </text>
+    <text x="354" y="652" fill="#d8d8d8">    385M </text>
     <text x="426" y="652" fill="#2aa198">▁▁▁▁▁▁▁▁▁▁▁▁</text>
     <text x="522" y="652" fill="#d8d8d8">        0        0 </text>
     <text x="674" y="652" fill="#c8a02c">            </text>
-    <text x="770" y="652" fill="#d8d8d8">   21     … dotnet</text>
-    <text x="10" y="669" fill="#d8d8d8"> 578854 hawky      sleep   0.0 </text>
-    <text x="258" y="669" fill="#3fbf3f">            </text>
-    <text x="354" y="669" fill="#d8d8d8">    229M </text>
+    <text x="770" y="652" fill="#d8d8d8">   22     … dotnet</text>
+    <text x="10" y="669" fill="#d8d8d8"> 645724 hawky      sleep   0.0 </text>
+    <text x="258" y="669" fill="#3fbf3f">▁           </text>
+    <text x="354" y="669" fill="#d8d8d8">    388M </text>
     <text x="426" y="669" fill="#2aa198">▁▁▁▁▁▁▁▁▁▁▁▁</text>
     <text x="522" y="669" fill="#d8d8d8">        0        0 </text>
     <text x="674" y="669" fill="#c8a02c">            </text>
-    <text x="770" y="669" fill="#d8d8d8">   21     … dotnet</text>
-    <rect x="10" y="673" width="680" height="17" fill="#2aa198"/>
-    <text x="10" y="686" fill="#0c2b2b">F5 tree  F6 sort  F9 kill  Enter details  / search  u user  h handles  C cpu%  q quit</text>
+    <text x="770" y="669" fill="#d8d8d8">   23     … dotnet</text>
+    <rect x="10" y="673" width="880" height="17" fill="#2aa198"/>
+    <text x="10" y="686" fill="#0c2b2b">F5 tree  F6 sort  e end task  k kill  K kill tree  R restart  s class  / search  u user  Enter details  q quit</text>
   </g>
 </svg>
