@@ -31,8 +31,8 @@ shorthand:
 it is not known*. An unticked box must never become a zero on screen. This is restated here because
 it is the single requirement most likely to be broken while filling the tables in.
 
-**Counting, as of the last update:** **937 of 1358 boxes are ticked** — 151 of 205 in the field
-registry (§14–22), 786 of 1153 across the capabilities. A further 97 are marked 🟡, meaning some of
+**Counting, as of the last update:** **942 of 1358 boxes are ticked** — 151 of 205 in the field
+registry (§14–22), 791 of 1153 across the capabilities. A further 97 are marked 🟡, meaning some of
 the work behind them is already done. §100 tracks the phases; §101 defines when this may be called
 finished.
 
@@ -1641,12 +1641,15 @@ of the tree went.
 - [x] Set processor affinity — through the helper where it needs privilege, and from a dialog whose
       boxes name what each core *is*: on a hybrid part "CPU 14" says nothing and "CPU 14 (E)" says
       which half of the machine is being pinned to (§46)
-- [ ] Set CPU set
+- [ ] Set CPU set — a cgroup here and an unrelated Win32 API there, sharing only a name. §5.3
+      forbids mapping one onto the other
 - [x] **Set I/O priority** — the control that makes a backup or an indexer stop making a machine
       unusable without slowing it down much: left at normal CPU priority but moved to idle I/O, it
       keeps running at full speed and yields the disk whenever anything else wants it
-- [ ] Set page priority
-- [ ] Enable/disable efficiency mode or platform QoS
+- [ ] Set page priority — Linux has no equivalent to set
+- [ ] Enable/disable efficiency mode or platform QoS — the nearest Linux relatives are the
+      scheduling class and the I/O class, both already settable; calling either of them a QoS class
+      is the false equivalence §5.3 forbids
 - [x] **Set resource limits** — all sixteen of the kernel's per-process ceilings, read and set, each
       shown beside what running into it actually does
 - [x] **Per-thread priority and affinity** — from the Threads tab
@@ -1728,7 +1731,7 @@ equivalence §5.3 forbids.
 - [x] Copy path
 - [x] Copy command line
 - [x] Search Internet — confirmed, and the confirmation names the engine before it goes
-- [ ] Inspect binary (§53)
+- [ ] Inspect binary (§53) — needs a disassembler, which §53 has not been written
 
 Navigation is grouped under one menu and none of it changes anything, which is what keeps it away
 from the items that do (§5.5).
@@ -1755,7 +1758,8 @@ which is a subprocess per query against a database whose format is the distribut
 - [ ] Create memory dump — **baseline Windows parity requirement**; Task Manager has it
 - [ ] Analyse wait chain — **baseline Windows parity requirement**
 - [x] Inspect threads
-- [ ] Inspect stacks (§30)
+- [x] Inspect stacks (§30) — Inspect ▸ Stacks…, in a window that resolves symbols and saves the
+      frames it found
 - [x] Inspect modules
 - [x] Inspect handles / descriptors
 - [x] **Inspect memory mappings** — every mapping of the address space, unfolded, with what each one
@@ -1764,8 +1768,9 @@ which is a subprocess per query against a database whose format is the distribut
 - [x] **Inspect token / security context** — the four uids, the four gids, the five capability sets,
       seccomp, no-new-privileges, the LSM label and the namespaces (§36)
 - [x] Inspect network connections
-- [ ] Inspect windows
-- [ ] Inspect services
+- [x] Inspect windows — Inspect ▸ Windows…
+- [x] Inspect services — Inspect ▸ Service unit…, which stays on the process and shows the unit
+      it is in, where Go to ▸ Owning service leaves for the machine's list
 
 **All of it is under one menu now, and for most of it that is the whole change.** Threads, modules,
 descriptors, environment and connections were all implemented and reachable only by opening a
@@ -1800,10 +1805,12 @@ this program has not got, and §30's reasoning for stacks applies to the first o
 
 - [x] **Set the out-of-memory priority** — `oom_score_adj`, which decides who the kernel kills when
       the machine runs out, shown beside the badness score that says who it would actually pick
-- [ ] Trim working set
-- [ ] Read memory
-- [ ] Save memory range
-- [ ] Search readable memory
+- [ ] Trim working set — `process_madvise` needs CAP_SYS_NICE to reach another process, which
+      nothing on a desktop holds, so the item could only ever refuse
+- [ ] Read memory — needs PTRACE_MODE_ATTACH; `kernel.yama.ptrace_scope` is 1 on this machine, so
+      even a process of the same user that is not a descendant is refused
+- [ ] Save memory range — as above
+- [ ] Search readable memory — as above
 - [ ] Inspect mapped region — the map of §34 now says which regions there are, which is the half of
       this that does not need to read a byte of anybody's memory
 
@@ -1845,14 +1852,16 @@ likelier to be chosen, and that is a decision to take at a root prompt rather th
 
 ## 25.6 Modules
 
-- [ ] View module
+- [x] View module — Inspect ▸ Modules…
 - [x] Reveal module file
-- [ ] Verify signature
+- [ ] Verify signature — there is nothing to run: the verdict is a column, read for every row from
+      the package database, rather than an action somebody starts (§70)
 - [x] **Hash file** — SHA-256, computed on request and never as a side effect
-- [ ] Open binary inspector
-- [ ] Search reputation
+- [ ] Open binary inspector — as above
+- [ ] Search reputation — a network service that does not exist, and §3 promises no executable
+      information leaves the machine unasked
 - [x] Copy path
-- [ ] Inspect mapped memory
+- [x] Inspect mapped memory — Inspect ▸ Memory map…
 - [ ] Unload module — expert-only, with an explicit instability warning
 
 **A hash is not a verdict.** It says what the bytes are and nothing about whether they are signed,
