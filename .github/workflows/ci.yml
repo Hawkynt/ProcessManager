@@ -87,8 +87,9 @@ jobs:
         run: >
           dotnet run --project ProcessManager.App --configuration Release --no-build -- --tui --tree --sort=pid
           --probe-root ProcessManager.Tests/Fixtures/proc-desktop
+          --capture-size 120x30
           --capture-frame "${{ runner.temp }}/tui.txt"
-          --compare-golden ProcessManager.Tests/Golden/tui-desktop.txt
+          --compare-golden ProcessManager.Tests/Golden/tui-120x30.txt
       - name: Upload the captured frame
         if: always()
         uses: actions/upload-artifact@v4

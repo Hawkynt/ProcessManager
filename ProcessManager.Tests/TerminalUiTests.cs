@@ -103,12 +103,30 @@ public sealed class TerminalScreenTests {
 [TestFixture]
 public sealed class GoldenFrameTests {
 
-  [Test]
-  public void TheComposedFrameMatchesTheGoldenOne() {
-    var fixtures = Path.Combine(TestContext.CurrentContext.TestDirectory, "Fixtures", "proc-desktop");
-    var golden = Path.Combine(TestContext.CurrentContext.TestDirectory, "Golden", "tui-desktop.txt");
+  /// <summary>
+  /// One frame per breakpoint, because the layout is not the same table at three sizes (PRD §57.1).
+  /// </summary>
+  /// <remarks>
+  /// The three widths are the ones people have: the eighty-column default, an SSH window, and a
+  /// maximised desktop terminal. Each drops or keeps different columns, so a golden at one of them
+  /// proves nothing about the other two — which is how a name column ten characters wide survived
+  /// review at 160 and shipped as "kthread" for every row at 80.
+  /// </remarks>
+  [TestCase(80, 24, "tui-80x24.txt")]
+  [TestCase(120, 30, "tui-120x30.txt")]
+  [TestCase(160, 50, "tui-160x50.txt")]
+  public void TheComposedFrameMatchesTheGoldenOne(int width, int height, string file) {
+    var golden = Path.Combine(TestContext.CurrentContext.TestDirectory, "Golden", file);
     Assert.That(File.Exists(golden), $"the golden frame is missing: {golden}");
 
+    var actual = Normalize(Frame(width, height));
+    var expected = Normalize(File.ReadAllText(golden));
+    Assert.That(actual, Is.EqualTo(expected));
+  }
+
+  /// <summary>Composes the frame the golden files were taken from.</summary>
+  internal static string Frame(int width, int height) {
+    var fixtures = Path.Combine(TestContext.CurrentContext.TestDirectory, "Fixtures", "proc-desktop");
     using var probe = new LinuxProbe(new() {
       ProcRoot = fixtures,
       PasswdPath = Path.Combine(fixtures, "passwd"),
@@ -121,7 +139,7 @@ public sealed class GoldenFrameTests {
     // Both pinned. The frame is compared byte for byte, so nothing about it may come from the
     // machine: the sample cost would differ every run, and the block characters would differ between
     // a UTF-8 desktop and a CI runner whose LANG is C — which is exactly how this first broke.
-    var ui = new TerminalUi(sampler, probe, null, 120, 40, ColorDepth.None) {
+    var ui = new TerminalUi(sampler, probe, null, width, height, ColorDepth.None) {
       ShowTiming = false,
       UseBlockCharacters = true,
     };
@@ -130,10 +148,23 @@ public sealed class GoldenFrameTests {
     ui.View.SortDescending = false;
     ui.Update();
     ui.Update();
+    return ui.Screen.Capture();
+  }
 
-    var actual = Normalize(ui.Screen.Capture());
-    var expected = Normalize(File.ReadAllText(golden));
-    Assert.That(actual, Is.EqualTo(expected));
+  /// <summary>
+  /// The name column is the one every other column steals from, so it is checked by name.
+  /// </summary>
+  /// <remarks>
+  /// A golden frame catches a change; it does not say whether the change was any good. This says
+  /// what "good" is at each size: the process names are all there, whole, at every breakpoint.
+  /// </remarks>
+  [TestCase(80, 24)]
+  [TestCase(120, 30)]
+  [TestCase(160, 50)]
+  public void EveryProcessNameFitsAtEverySize(int width, int height) {
+    var frame = Frame(width, height);
+    foreach (var name in (string[])["systemd", "kthreadd", "bash", "sleep"])
+      Assert.That(frame, Does.Contain(name), $"{name} is clipped at {width}×{height}");
   }
 
   private static string Normalize(string text)
