@@ -211,7 +211,10 @@ public static class MapsParser {
             Architecture: null,
             EntryPoint: Counter.NotSampledYet,
             Soname: null,
-            Interpreter: null
+            Interpreter: null,
+            Mitigations: ImageMitigations.None,
+            BuildId: null,
+            LoadReason: ModuleLoadReason.Unknown
           ));
         }
 

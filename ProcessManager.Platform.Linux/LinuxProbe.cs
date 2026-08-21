@@ -1836,8 +1836,13 @@ public sealed class LinuxProbe : ISystemProbe {
       Architecture: null,
       EntryPoint: Counter.NotSampledYet,
       Soname: null,
-      Interpreter: null
-    )).EntryPoint;
+      Interpreter: null,
+      Mitigations: ImageMitigations.None,
+      BuildId: null,
+      // One image on its own, and a load reason is a statement about a whole list: this row exists
+      // to be asked for its entry point and is never shown.
+      LoadReason: ModuleLoadReason.Unknown
+    ), out _).EntryPoint;
 
     if (!entry.TryGetValue(out var address))
       return ThreadStart.Unknown(entry.Reason);
@@ -1920,9 +1925,15 @@ public sealed class LinuxProbe : ISystemProbe {
     // Whether the file behind each mapping can be read is a separate question from whether the
     // process could be: /proc said "libfoo.so", and the answer to "how big is it, and what does its
     // header say" is on the file system.
+    var descriptions = new ElfImage.Description[modules.Count];
     for (var i = 0; i < modules.Count; ++i)
-      modules[i] = this._images.Describe(modules[i]);
+      modules[i] = this._images.Describe(modules[i], out descriptions[i]);
 
+    // And then once more over the whole list, because "why is this image here" is the one question
+    // no single row can answer: it is the other rows that name it (PRD §31). The executable is
+    // whichever row /proc/[pid]/exe points at — one readlink, on a path that is already reading a
+    // file per distinct image.
+    ModuleGraph.Assign(modules, descriptions, this._reader.TryReadLink($"{this._procRoot}/{key.Pid}/exe"));
     return modules;
   }
 
@@ -1950,6 +1961,14 @@ public sealed class LinuxProbe : ISystemProbe {
       return result;
     }
 
+    // The process's own mount table, read once for the whole list: fdinfo says which mount an open
+    // file is on and says it as a number, and this is the only thing that turns that number into a
+    // device and a file system (PRD §32). The process's own and not ours, because a process in a
+    // container is looking at different mounts.
+    var mounts = this._reader.TryReadWhole($"{this._procRoot}/{key.Pid}/mountinfo", out var table, out _)
+      ? MountInfoParser.Collect(table)
+      : [];
+
     foreach (var entry in entries) {
       var name = Path.GetFileName(entry);
       if (!int.TryParse(name, out var fd))
@@ -1962,7 +1981,7 @@ public sealed class LinuxProbe : ISystemProbe {
           ? DescriptorParser.Refused
           : DescriptorParser.Unread;
 
-      result.Add(Build((ulong)fd, target, info));
+      result.Add(Build((ulong)fd, target, info, mounts));
     }
 
     return result;
@@ -1977,7 +1996,12 @@ public sealed class LinuxProbe : ISystemProbe {
   /// as long as <c>/proc</c> has had one, and the socket join must not stop working on an older
   /// kernel.
   /// </remarks>
-  private static HandleRecord Build(ulong fd, string? target, DescriptorParser.DescriptorInfo info) {
+  private static HandleRecord Build(
+    ulong fd,
+    string? target,
+    DescriptorParser.DescriptorInfo info,
+    Dictionary<int, MountInfoParser.Mount> mounts
+  ) {
     var inode = info.Inode;
     if (!inode.HasValue && DescriptorParser.TryParsePseudoInode(target, out var fromName))
       inode = Counter.Of(fromName);
@@ -1989,6 +2013,11 @@ public sealed class LinuxProbe : ISystemProbe {
     if (kind == HandleKind.File && target is not null && Directory.Exists(target))
       kind = HandleKind.Directory;
 
+    // A socket, a pipe and an anonymous inode each carry a mount id that names a file system the
+    // kernel keeps to itself: sockfs, pipefs and anon_inodefs are mounted nowhere and are in no
+    // mount table, so the lookup misses and the two fields stay null. That is the truth about the
+    // descriptor — it is on no file system anybody can name — rather than a lookup that failed.
+    var mount = MountInfoParser.Find(mounts, info.MountId);
     return new(
       fd,
       kind,
@@ -1997,7 +2026,11 @@ public sealed class LinuxProbe : ISystemProbe {
       info.Position,
       info.OpenFlags,
       inode,
-      info.TargetPid
+      info.TargetPid,
+      info.MountId,
+      mount?.Device,
+      mount?.FileSystem,
+      info.Detail
     );
   }
 
@@ -2022,8 +2055,10 @@ public sealed class LinuxProbe : ISystemProbe {
       var target = line[(tab + 1)..];
       // The helper answers with the name and nothing else. Everything fdinfo would have added is
       // therefore missing because the protocol does not carry it yet — a fact about this program, not
-      // about the kernel, and the two must not render the same (PRD §7).
-      result.Add(Build((ulong)fd, target.Length == 0 ? null : target, DescriptorParser.NotRelayed));
+      // about the kernel, and the two must not render the same (PRD §7). The mount table is empty
+      // for the same reason: without a mount id there is nothing to look up, and an empty table
+      // leaves the device unknown rather than claiming there is none.
+      result.Add(Build((ulong)fd, target.Length == 0 ? null : target, DescriptorParser.NotRelayed, []));
     }
 
     return result;

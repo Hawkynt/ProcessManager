@@ -236,6 +236,90 @@ public static class Humanize {
   };
 
   /// <summary>
+  /// Why an image is in the process, in three or four characters of table (PRD §31).
+  /// </summary>
+  /// <remarks>
+  /// "run time" rather than "dlopen" on purpose. All the graph knows is that nothing it could read
+  /// names this library; <c>dlopen</c> is the usual explanation and <c>LD_PRELOAD</c> is another,
+  /// and naming the mechanism would claim to have seen the call (PRD §5.3, §72.3).
+  /// </remarks>
+  public static string LoadReason(ModuleLoadReason reason) => reason switch {
+    ModuleLoadReason.Image => "image",
+    ModuleLoadReason.Interpreter => "loader",
+    ModuleLoadReason.Direct => "linked",
+    ModuleLoadReason.Dependency => "indirect",
+    ModuleLoadReason.RunTime => "run time",
+    ModuleLoadReason.Data => "data",
+    _ => "—",
+  };
+
+  /// <summary>
+  /// The hardening an image asks for, as the short names the tools that check it use (PRD §31).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The vocabulary is <c>checksec</c>'s and <c>readelf</c>'s, because that is what somebody will
+  /// compare this against: <c>PIE</c>, <c>NX</c>, <c>RELRO</c>, and <c>CET</c> for the pair of x86
+  /// features that are always turned on together. An executable stack is named rather than left out,
+  /// since it is the one value here that is a finding.
+  /// </para>
+  /// <para>
+  /// An image whose headers were never read renders as the ellipsis and not as an empty list: "this
+  /// file asks for nothing" is a serious claim and is not what an unread file supports (PRD §72.3).
+  /// </para>
+  /// </remarks>
+  public static string Mitigations(ImageMitigations mitigations) {
+    if ((mitigations & ImageMitigations.Read) == 0)
+      return Placeholder(UnknownReason.NotSampledYet);
+
+    var text = new System.Text.StringBuilder();
+    Append((mitigations & ImageMitigations.PositionIndependent) != 0, "PIE");
+    Append((mitigations & ImageMitigations.ExecutableStack) != 0, "X-STACK");
+    Append((mitigations & ImageMitigations.NonExecutableStack) != 0, "NX");
+    Append(
+      (mitigations & ImageMitigations.Relro) != 0,
+      (mitigations & ImageMitigations.BindNow) != 0 ? "RELRO+NOW" : "RELRO"
+    );
+
+    // Only when the relocations are not protected is eager binding worth naming on its own: it is a
+    // request for the whole table to be resolved before main, which without RELRO leaves it writable
+    // afterwards.
+    Append((mitigations & (ImageMitigations.Relro | ImageMitigations.BindNow)) == ImageMitigations.BindNow, "NOW");
+    Append(
+      (mitigations & (ImageMitigations.IndirectBranchTracking | ImageMitigations.ShadowStack))
+        == (ImageMitigations.IndirectBranchTracking | ImageMitigations.ShadowStack),
+      "CET"
+    );
+
+    // And each half on its own, for the image that has one and not the other — which is what a
+    // library built by an older toolchain into a CET program looks like.
+    Append(
+      (mitigations & ImageMitigations.IndirectBranchTracking) != 0 && (mitigations & ImageMitigations.ShadowStack) == 0,
+      "IBT"
+    );
+
+    Append(
+      (mitigations & ImageMitigations.ShadowStack) != 0 && (mitigations & ImageMitigations.IndirectBranchTracking) == 0,
+      "SHSTK"
+    );
+
+    Append((mitigations & ImageMitigations.BranchTargetIdentification) != 0, "BTI");
+    Append((mitigations & ImageMitigations.PointerAuthentication) != 0, "PAC");
+    // Read, and asking for nothing at all. A real answer about a real file, and a rare one.
+    return text.Length > 0 ? text.ToString() : "none";
+
+    void Append(bool present, string name) {
+      if (!present)
+        return;
+
+      if (text.Length > 0)
+        text.Append(' ');
+
+      text.Append(name);
+    }
+  }
+
+  /// <summary>
   /// A point in time as local <c>yyyy-MM-dd HH:mm:ss</c>, or the em dash when there is none.
   /// </summary>
   /// <remarks>

@@ -31,6 +31,17 @@ public sealed class FindResourceDialog : Form {
   private readonly Button _search = new() { Text = "Find" };
   private readonly Button _close = new() { Text = "Close" };
   private readonly CheckBox _deep = new() { Text = "Search descriptors, mappings and sockets", Checked = true };
+
+  /// <summary>
+  /// The one search option that cannot be written into the pattern (PRD §33).
+  /// </summary>
+  /// <remarks>
+  /// The four modes are chosen by the shape of what is typed — quotes for exact, slashes for a
+  /// regular expression, a star for a wildcard — so they need no controls and every front-end has
+  /// them. Case is different: it is a property of the comparison rather than of the pattern, and
+  /// there is no punctuation for it that would not collide with a file name.
+  /// </remarks>
+  private readonly CheckBox _matchCase = new() { Text = "Match case" };
   private readonly Label _status = new();
   private readonly TreeListView _results = new();
   private readonly List<ResourceMatch> _matches = [];
@@ -51,7 +62,11 @@ public sealed class FindResourceDialog : Form {
     this._results.Columns.Add(new("Process", 200, node => Row(node).ProcessName));
     this._results.Columns.Add(new("PID", 70, node => Row(node).Pid.ToString(System.Globalization.CultureInfo.InvariantCulture)));
     this._results.Columns.Add(new("Kind", 110, node => Row(node).Kind.ToString()));
-    this._results.Columns.Add(new("Detail", 480, node => Row(node).Detail));
+    // What the holder may do with the thing that matched: the access mode of a descriptor, the
+    // permission characters of a mapping. The question after "who has my file open" is always
+    // whether they have it open for writing (PRD §33).
+    this._results.Columns.Add(new("Access", 64, node => Row(node).Access ?? "—"));
+    this._results.Columns.Add(new("Detail", 420, node => Row(node).Detail));
     this._results.MouseDoubleClick += (_, _) => this.Choose();
 
     this._search.Click += (_, _) => this.Search();
@@ -61,12 +76,15 @@ public sealed class FindResourceDialog : Form {
     this.Controls.Add(this._search);
     this.Controls.Add(this._close);
     this.Controls.Add(this._deep);
+    this.Controls.Add(this._matchCase);
     this.Controls.Add(this._status);
     this.Controls.Add(this._results);
 
     this.Resize += (_, _) => this.ApplyLayout();
     this.ApplyLayout();
-    this._status.Text = "A file name, a port as \":443\", a library, a service — or /a regular expression/.";
+    this._status.Text =
+      "A file name, a port as \":443\", a library, a service — «*.so.6» as a wildcard,"
+      + " \"exactly this\" in quotes, /a regular expression/ in slashes.";
   }
 
   /// <summary>The process a result was double-clicked on, for the caller to select.</summary>
@@ -101,7 +119,13 @@ public sealed class FindResourceDialog : Form {
     this._probe.Sample(this._snapshot);
 
     try {
-      this._matches.AddRange(ResourceSearch.Find(this._probe, this._snapshot, pattern, this._deep.Checked));
+      this._matches.AddRange(ResourceSearch.Find(
+        this._probe,
+        this._snapshot,
+        pattern,
+        this._deep.Checked,
+        this._matchCase.Checked
+      ));
     } catch (IOException e) {
       this._status.Text = $"The search could not finish: {e.Message}";
       return;
@@ -110,10 +134,21 @@ public sealed class FindResourceDialog : Form {
     foreach (var match in this._matches)
       this._results.Nodes.Add(new TreeNode(match.ProcessName) { Tag = match });
 
+    // Which of the four modes the pattern was read as, always — a star inside a file name turns a
+    // substring search into a wildcard one without anybody asking for it, and a result of nothing at
+    // all is exactly when somebody needs to be told that (PRD §33).
+    var mode = ResourceSearch.ModeOf(pattern) switch {
+      SearchMode.Regex => "as a regular expression",
+      SearchMode.Exact => "as an exact match",
+      SearchMode.Wildcard => "as a wildcard",
+      _ => "as a substring",
+    };
+
+    var sensitivity = this._matchCase.Checked ? ", case-sensitive" : string.Empty;
     this._status.Text = this._matches.Count switch {
-      0 => $"Nothing is using anything matching \"{pattern}\".",
-      1 => "One process. Double-click it to go there.",
-      _ => $"{this._matches.Count} processes. Double-click one to go there.",
+      0 => $"Nothing is using anything matching \"{pattern}\" — read {mode}{sensitivity}.",
+      1 => $"One process, matched {mode}{sensitivity}. Double-click it to go there.",
+      _ => $"{this._matches.Count} processes, matched {mode}{sensitivity}. Double-click one to go there.",
     };
   }
 
@@ -122,7 +157,10 @@ public sealed class FindResourceDialog : Form {
     this._pattern.Bounds = new(_Margin, _Margin, width - 180, 26);
     this._search.Bounds = new(this.Width - _Margin - 170, _Margin, 80, 26);
     this._close.Bounds = new(this.Width - _Margin - 80, _Margin, 80, 26);
-    this._deep.Bounds = new(_Margin, _Margin + 32, width, 20);
+    // The two options share a row: the deep search is the one people turn off, so it keeps the left
+    // edge, and the case toggle sits at the right where its label has room to be read whole.
+    this._deep.Bounds = new(_Margin, _Margin + 32, Math.Max(200, width - 140), 20);
+    this._matchCase.Bounds = new(this.Width - _Margin - 130, _Margin + 32, 130, 20);
     this._status.Bounds = new(_Margin, this.Height - _Margin - 18, width, 18);
     this._results.Bounds = new(_Margin, _Margin + 58, width, Math.Max(60, this.Height - _Margin - 88));
   }

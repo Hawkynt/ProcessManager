@@ -1,0 +1,9 @@
+26 33 0:24 / /proc rw,nosuid,nodev,noexec,relatime shared:5 - proc proc rw
+27 33 0:25 / /sys rw,nosuid,nodev,noexec,relatime shared:6 - sysfs sys rw
+28 33 0:7 / /dev rw,nosuid,relatime shared:2 - devtmpfs dev rw,size=65408288k,nr_inodes=16352072,mode=755,inode64,huge=advise
+29 33 0:26 / /run rw,nosuid,nodev,relatime shared:12 - tmpfs run rw,mode=755,inode64,huge=advise
+32 28 0:29 / /dev/pts rw,nosuid,noexec,relatime shared:3 - devpts devpts rw,gid=5,mode=620,ptmxmode=000
+33 2 0:30 /@ / rw,relatime shared:1 - btrfs /dev/mapper/ArchinstallVg-root rw,compress=zstd:3,ssd,discard=async,space_cache=v2,subvolid=256,subvol=/@
+35 28 0:33 / /dev/shm rw,nosuid,nodev shared:4 - tmpfs tmpfs rw,inode64,huge=advise,usrquota
+36 27 0:34 / /sys/fs/cgroup rw,nosuid,nodev,noexec,relatime shared:9 - cgroup2 cgroup2 rw,nsdelegate,memory_recursiveprot,memory_hugetlb_accounting
+70 33 0:52 / /tmp rw,nosuid,nodev shared:127 - tmpfs tmpfs rw,size=65537656k,nr_inodes=1048576,inode64,huge=advise,usrquota

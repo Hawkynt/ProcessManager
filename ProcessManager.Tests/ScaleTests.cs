@@ -331,7 +331,11 @@ public sealed class ScaleTests {
           Counter.NotSupported,
           Counter.NotSupported,
           Counter.Of((ulong)i),
-          Counter.NotSupported
+          Counter.NotSupported,
+          Counter.NotSupported,
+          null,
+          null,
+          null
         );
 
       // One of them, once, is the needle.
@@ -415,7 +419,11 @@ public sealed class ScaleTests {
         Counter.NotSupported,
         Counter.NotSupported,
         Counter.NotSupported,
-        Counter.NotSupported
+        Counter.NotSupported,
+        Counter.NotSupported,
+        null,
+        null,
+        null
       );
 
     var clock = Stopwatch.StartNew();

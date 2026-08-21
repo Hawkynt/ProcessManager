@@ -406,7 +406,17 @@ public sealed class WindowsProbe : ISystemProbe {
           // A PE image has no SONAME and asks for no interpreter: the import table names what it
           // needs, and the loader is the kernel's.
           Soname: null,
-          Interpreter: null
+          Interpreter: null,
+          // A PE image declares its own hardening — ASLR, DEP, CFG and the rest live in the optional
+          // header's DllCharacteristics — and none of it is read yet. None here therefore means "not
+          // read", which is exactly what the flag word means everywhere else (PRD §7, §72.3).
+          Mitigations: ImageMitigations.None,
+          // Windows has an equivalent identity in the debug directory's PDB signature, which is also
+          // not read yet.
+          BuildId: null,
+          // Toolhelp does not say why a module is loaded; the loader's own table does, and reading
+          // it is a separate piece of work from listing the modules.
+          LoadReason: ModuleLoadReason.Unknown
         ));
 
         entry.Size = (uint)Marshal.SizeOf<NtStructures.ModuleEntry32>();
@@ -494,7 +504,15 @@ public sealed class WindowsProbe : ISystemProbe {
           Position: Counter.NotSupported,
           OpenFlags: Counter.NotSupported,
           Inode: Counter.NotSupported,
-          TargetPid: Counter.Unknown(UnknownReason.NotImplementedHere)
+          TargetPid: Counter.Unknown(UnknownReason.NotImplementedHere),
+          // The Unix mount identity has no Windows counterpart: a handle's volume is in the object
+          // name this already resolves, and there is no per-descriptor mount to join against.
+          MountId: Counter.NotSupported,
+          Device: null,
+          FileSystem: null,
+          // Windows keeps its per-type detail in NtQueryObject's information classes rather than in a
+          // text file, and none of it is read yet.
+          Detail: null
         ));
       } finally {
         Native.CloseHandle(copy);
