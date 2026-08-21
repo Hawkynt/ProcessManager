@@ -1928,25 +1928,72 @@ most of the address space.
 - [x] 🟡 Architecture — the ELF `e_machine`; a machine with no name is reported as its number
 - [x] 🟡 Module type — executable · shared object · relocatable · core dump, and `data` for a mapped
       file that is not an image at all
-- [ ] Load count
-- [ ] Load time
-- [ ] Load reason
+- [x] 🟡 Load count — how many separate loads of the file are in this process, which is the number
+      the address space actually shows. Not the loader's reference count: `link_map`'s
+      `l_direct_opencount` is the count of `dlopen` calls not yet undone and no file under `/proc`
+      publishes it. One is the answer for nearly every row and that is what makes a two worth the
+      column — two copies of a library is two sets of its global state, and a live `dotnet` has
+      forty-eight of its ninety-four mapped files loaded more than once. Windows has both counts in
+      the Toolhelp entry and does not read them yet
+- [ ] ∅ on Linux — **Load time.** Nothing records when a mapping was made. The loader knows and
+      publishes nothing; `/proc/[pid]/maps` has no timestamp column; and the one date near a mapping
+      is the file's own modification time, which is a different fact and already a column. Windows'
+      Toolhelp has no such field either, so this is unanswered on both, for two different reasons
+- [x] 🟡 Load reason — derived rather than read, because Linux publishes none: the program names its
+      interpreter in `PT_INTERP` and its libraries in `DT_NEEDED`, and every library does the same.
+      Sound in one direction only, and the value says which — an image nothing names reports "nothing
+      that could be read names this" and never "somebody called `dlopen`", because `LD_PRELOAD` and
+      an unreadable dependency produce the same silence. Windows keeps the reason per module and it
+      is not read yet
 - [x] 🟡 File size — Linux only; Windows reports `n/i`
 - [x] 🟡 File modification time — as above
-- [ ] Version
-- [ ] Description
-- [ ] Company
-- [ ] Product
-- [ ] Signature status
-- [ ] Signer
-- [ ] SHA-256
-- [ ] ASLR
-- [ ] CFG
+
+The four a Windows file keeps in a version resource, which **ELF has no counterpart for**. There is
+no such section in the format and never has been, so what a Linux machine publishes about a file is
+what the database that installed it publishes about its package — read from `pacman`'s `desc` and
+`dpkg`'s `status`, named as the package's in every cell so that nobody reads a package version as a
+file version (§5.3), and asked for when the properties box is opened rather than while the list is
+filled, because the lookup indexes every path every installed package owns (§5.4):
+
+- [x] 🟡 Version — the package's, as the packaging system spells it. Linux only
+- [x] 🟡 Description — `%DESC%`, or the synopsis line of `dpkg`'s `Description:`. Linux only
+- [x] 🟡 Company — `%PACKAGER%`, or `dpkg`'s `Maintainer:`: who assembled the package. Linux only
+- [x] 🟡 Product — the package name. Linux only
+- [x] 🟡 Signature status — the same verdict §70 gives a process's own image, asked of a module.
+      Nothing signs an ELF, so this is the packaging system's answer: the file against the digest its
+      package recorded, and whether that package's own signature was checked when it was installed.
+      The two are separate readings and only both together are worth a verdict — a file that matches
+      a package nobody signed is exactly as unsigned as one from nowhere. Behind the same button as
+      the hash, because it is the same read of the file. Windows has Authenticode and does not read
+      it yet
+- [ ] ∅ on Linux — **Signer.** Nothing names one. `pacman` records *that* a signature was verified
+      at install time, not whose; `dpkg` records no signature over an installed file at all; and the
+      signature itself went with the downloaded archive. Naming the packager here would answer a
+      question about identity with a name from the changelog. Windows' certificate subject is a real
+      signer and is not read yet
+- [x] 🟡 SHA-256 — a button in the file properties box and never a side effect, because it is the one
+      reading whose cost is the size of the file: hashing every module a process has mapped would
+      read a gigabyte to fill a column nobody looked at. **A hash is not a verdict** (§70)
+- [x] 🟡 ASLR — `ET_DYN`, which is what lets the kernel place the image where it likes; an `ET_EXEC`
+      image names its own addresses and goes where it says. What the *file* asks for, which is not
+      what the kernel granted — randomisation additionally needs the process not to have turned it
+      off — and only the first is readable from a mapped file. Windows' `DllCharacteristics` is not
+      read yet
+- [x] 🟡 CFG — Linux's control-flow protection, from `NT_GNU_PROPERTY_TYPE_0`: `IBT` and `SHSTK` on
+      x86, `BTI` and `PAC` on AArch64. The two properties have different type numbers and the same
+      bit values, so the type is checked rather than the bits alone — reading the bits off an AArch64
+      note would report CET on a machine that has never had it. Windows' own CFG bit is not read yet
 - [x] Executable flag — the `x` of the folded mappings' permission union
 - [x] Writable flag — the `w` of it
 - [x] Mapped / shared — the `s`/`p` of it
 - [x] Backing file
-- [ ] Runtime classification
+- [x] 🟡 Runtime classification — which engine reads the file, from its own header and never from its
+      name: an ELF is native, a PE with a CLI header is a managed assembly, one without is a Windows
+      binary under Wine, and a ZIP container is a class path. The rows this exists for are the ones
+      the view used to call `data`, which is also the word for a font: a .NET process maps every
+      assembly it loads and not one of them is an ELF. "Not code" is a finding and the dash beside it
+      is a hole, and they render differently (§72.3). What *runs* in a process — the version of the
+      runtime, its managed threads — is §80's and is not this
 
 Linux additions — what `maps` and `smaps` report and Windows has no equivalent for:
 
@@ -1974,16 +2021,48 @@ named pipes (§6.1).
       a mask of independent bits. Windows has the mask in the table entry and does not decode it yet
 - [x] 🟡 Flags — the `O_*` word, spelled out; a bit the list does not name is shown as a hex
       remainder rather than dropped. Windows reports `n/a`: its equivalent is the access mask
-- [ ] Object address
-- [ ] Reference count
+- [ ] ∅ on Linux — **Object address.** The five `/proc/net` tables do print a pointer beside every
+      socket, and it is not an address: the kernel writes it with `%pK`, which since 4.15 hands an
+      unprivileged reader a *hash* of the pointer and hands one a `kptr_restrict` of 1 sixteen zeros.
+      Measured on the machine this was written on with `kptr_restrict` at nought — the value has eight
+      leading zeros and no x86-64 kernel address does. Putting it in a column labelled "address" would
+      be a number that is stable, plausible and not the address of anything. Nothing outside a socket
+      publishes even that: a file, a pipe and an event descriptor have a `struct file` whose address
+      no file under `/proc` prints. Windows hands the object pointer over in the handle table and does
+      not read it yet
+- [x] 🟡 Reference count — `sk_refcnt`, out of the network table's own column, joined to the
+      descriptor by inode. Decimal in the four internet tables and hex in `/proc/net/unix`, which is a
+      fact about the kernel's format strings and not about sockets. Sockets only, and everything else
+      says there is no such number rather than showing one: note that a socket held by one descriptor
+      commonly reads two or three, because this counts holders of the socket and the protocol's own
+      hash tables are among them. Windows' object reference count is not read yet
 - [x] 🟡 File offset — Linux, from `fdinfo`. A socket and an event descriptor have none and say so
-- [ ] File type
-- [ ] Device
+- [x] 🟡 File type — the kernel's own `st_mode`, from one `statx` on the descriptor rather than on the
+      path it names, so that it still answers for an unlinked file or one in another mount namespace.
+      A second axis and not a finer resource type, and the answer wherever the name above was only a
+      guess: a FIFO or a Unix socket bound under `/run` is a path like any other and all of them read
+      as ordinary files before this. **An anonymous inode has no file type** — an eventfd's `st_mode`
+      is `0600` with the type bits *clear* — and it says "no type", because a table that maps that
+      nought onto one of the seven POSIX types files every event descriptor on the machine under
+      something it is not (§72.3). It replaces a `Directory.Exists` on the same path, so it costs the
+      list nothing it was not already paying. Windows' `GetFileType` is not called yet
+- [x] 🟡 Device — two of them, and they are different questions. The device the descriptor's inode is
+      *on* comes from `fdinfo`'s `mnt_id` joined to `mountinfo`, with the mount point and the file
+      system beside it; the device a node *is* comes from `statx`'s `stx_rdev`, and `/dev/null` is
+      character device 1:3 living on the `devtmpfs` at 0:7. Reporting either as the other would give
+      every device node on the machine the same number. A socket, a pipe and an anonymous inode are
+      on file systems the kernel mounts nowhere and say so. Windows has no per-handle mount to join
+      against — a handle's volume is in the object name — so this is `n/a` there
 - [x] 🟡 Inode — Linux, from `fdinfo`'s `ino:` with the bracketed number in `socket:[n]`/`pipe:[n]`
       as the fallback for a kernel too old to write it
 - [x] Socket endpoint — the descriptor's inode joins it to a row of the five `/proc/net` tables, and
       the handles view shows the endpoint and state beside the descriptor
-- [ ] Creation / open time
+- [ ] ∅ on Linux — **Creation / open time.** The kernel records no time at which a descriptor was
+      opened. The timestamps on `/proc/[pid]/fd/[n]` belong to the `procfs` directory entry, and a
+      test proves it by reusing a descriptor number: a file is opened and its link looked at, the
+      descriptor is closed, a different file is opened over a second later on the same number, and
+      the timestamp has not moved by a nanosecond. Reporting it would say the second file had been
+      open since before it was. Windows keeps a creation time on the object and it is not read yet
 - [x] 🟡 Target process — a pidfd names the process it holds, from `fdinfo`'s `Pid:`. Nothing else
       refers to a process, and says so rather than reporting pid 0
 
@@ -2000,14 +2079,24 @@ kernel/event interfaces.
 
 Actions:
 
-- [ ] Copy
-- [ ] Reveal / open path
-- [ ] Resource properties
-- [ ] Go to owning process
-- [ ] Close resource — **strong warning** (§69 class 3)
-
-- ∅ Closing a descriptor in another process on Linux — no supported mechanism exists; offering it
-  would be a lie dressed as a feature
+- [x] Copy — the row with its headers, or every row of the list, because the interesting cells are
+      the wide ones a table shows eight characters of
+- [x] Reveal / open path — for a descriptor that has a path. A socket, a pipe and an anonymous inode
+      are named by the kernel and not by the file system, and this says which of the two it is rather
+      than opening a file manager on a name that is not a path
+- [x] Resource properties — everything one descriptor is, in a box: the per-kind detail `fdinfo`
+      carries that a row one line high cannot show, and a button that finds every other descriptor on
+      the machine pointing at the same inode. That scan is how the far end of a pipe is found, and it
+      travels with the count of processes that answered — "nothing else holds this" and "nothing we
+      were allowed to ask holds this" are different statements (§72.3)
+- [x] 🟡 Go to owning process — in the only form that means anything here. Every row belongs to the
+      process the pane is showing, so the navigation that is worth having is to the process a
+      descriptor *names*: the target of a pidfd. Nothing else names one, and this says so rather than
+      opening the window the reader is already in
+- [ ] ∅ on Linux — **Close resource.** No supported mechanism exists for closing a descriptor in
+      another process, and an item that could only ever refuse is a lie dressed as a feature. Windows
+      has `DuplicateHandle` with `DUPLICATE_CLOSE_SOURCE` and it is not wired up, which is why this
+      is a refusal on one platform and unwritten work on the other
 
 # 33. Find handles / files / modules / resources
 
