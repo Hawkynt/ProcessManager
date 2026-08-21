@@ -25,12 +25,21 @@ public sealed class ProcessPropertiesWindow : Form {
   private readonly DetailPane _pane;
   private readonly string _name;
 
-  public ProcessPropertiesWindow(ISystemProbe probe, ProcessKey key, string name) {
+  /// <param name="actions">
+  /// What may be done to the process from inside this window, or null for a read-only one.
+  /// </param>
+  /// <remarks>
+  /// Without this the Threads tab's own menu — per-thread priority and affinity (PRD §25.2) — was
+  /// built, drawn and inert here, because the pane bails when it holds no actions. The same pane
+  /// docked at the foot of the main window had them, so the feature worked in one place and silently
+  /// did nothing in the other.
+  /// </remarks>
+  public ProcessPropertiesWindow(ISystemProbe probe, ProcessKey key, string name, IProcessActions? actions = null) {
     ArgumentNullException.ThrowIfNull(probe);
 
     this.Key = key;
     this._name = name;
-    this._pane = new(probe);
+    this._pane = new(probe) { Actions = actions };
 
     this.Text = $"{name} ({key.Pid})";
     // A secondary window closing must not take the program with it. Form.QuitsOnClose defaults to

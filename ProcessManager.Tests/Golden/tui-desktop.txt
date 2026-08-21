@@ -37,4 +37,4 @@ Tasks: 5, 3 running             Load average: 1.25 0.80 0.55        Uptime: 1d 1
 
 
 
-F5 tree  F6 sort  F9 kill  Enter details  / search  u user  h handles  C cpu%  q quit
+F5 tree  F6 sort  e end task  k kill  K kill tree  R restart  s class  / search  u user  Enter details  q quit

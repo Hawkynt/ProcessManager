@@ -495,12 +495,16 @@ public sealed class MainWindow : Form {
     var menu = new ContextMenuStrip();
     menu.Items.Add(Item("Properties", () => this.UpdateDetails()));
     menu.Items.Add(new ToolStripSeparator());
-    menu.Items.Add(Item("End process", () => this.Act("end", key => this._actions!.Terminate(key))));
+    menu.Items.Add(Item("End task", this.EndTask));
+    menu.Items.Add(Item("End process", () => this.Act("end", key => this._actions!.Terminate(key), _EndsWithoutAsking)));
+    menu.Items.Add(Item("End process tree", this.EndTree));
+    menu.Items.Add(Item("Restart", this.RestartProcess));
     menu.Items.Add(Item("Suspend", () => this.Act("suspend", key => this._actions!.Suspend(key))));
     menu.Items.Add(Item("Resume", () => this.Act("resume", key => this._actions!.Resume(key))));
     menu.Items.Add(new ToolStripSeparator());
     menu.Items.Add(this.PriorityMenu());
     menu.Items.Add(this.IoPriorityMenu());
+    menu.Items.Add(this.SchedulingMenu());
     menu.Items.Add(Item("Set affinity…", this.ChooseAffinity));
     menu.Items.Add(new ToolStripSeparator());
     menu.Items.Add(Item("Read handle count", this.FillHandleCounts));
@@ -556,6 +560,34 @@ public sealed class MainWindow : Form {
     }) {
       var value = priority;
       menu.DropDownItems.Add(Item(label, () => this.Act($"set I/O priority to {value}", key => this._actions!.SetIoPriority(key, value))));
+    }
+
+    return menu;
+  }
+
+  /// <summary>
+  /// The scheduler classes (PRD §25.2).
+  /// </summary>
+  /// <remarks>
+  /// The names are the kernel's, in brackets, so that what the menu did can be checked against what
+  /// <c>chrt</c> reports. The real-time entries are offered and will usually be refused — naming
+  /// them and explaining the refusal is more use than hiding them, which is the same call the I/O
+  /// menu above makes.
+  /// </remarks>
+  private ToolStripMenuItem SchedulingMenu() {
+    var menu = new ToolStripMenuItem("Scheduling class");
+    foreach (var choice in SchedulingClasses.Offered) {
+      var chosen = choice;
+      menu.DropDownItems.Add(Item(
+        chosen.Name,
+        () => this.Act(
+          $"move to {chosen.Name}",
+          key => this._actions!.SetSchedulingClass(key, chosen.Policy, chosen.Priority),
+          chosen.IsRealTime
+            ? "A real-time task cannot be preempted by an ordinary one. A real-time process that spins never gives the processor back."
+            : null
+        )
+      ));
     }
 
     return menu;
@@ -721,7 +753,10 @@ public sealed class MainWindow : Form {
     view.DropDownItems.Add(Item("Find window…", this.PickWindow));
 
     var process = new ToolStripMenuItem("Process");
-    process.DropDownItems.Add(Item("End process", () => this.Act("end", key => this._actions!.Terminate(key))));
+    process.DropDownItems.Add(Item("End task", this.EndTask));
+    process.DropDownItems.Add(Item("End process", () => this.Act("end", key => this._actions!.Terminate(key), _EndsWithoutAsking)));
+    process.DropDownItems.Add(Item("End process tree", this.EndTree));
+    process.DropDownItems.Add(Item("Restart", this.RestartProcess));
     process.DropDownItems.Add(Item("Suspend", () => this.Act("suspend", key => this._actions!.Suspend(key))));
     process.DropDownItems.Add(Item("Resume", () => this.Act("resume", key => this._actions!.Resume(key))));
     process.DropDownItems.Add(new ToolStripSeparator());
@@ -845,7 +880,23 @@ public sealed class MainWindow : Form {
 
   #endregion
 
-  private void Act(string what, Func<ProcessKey, ActionResult> action) {
+  /// <summary>
+  /// What a destructive action costs, said in the confirmation rather than left to be discovered
+  /// (PRD §5.5, §90).
+  /// </summary>
+  /// <remarks>
+  /// The sentence exists because "Are you sure?" is not a question anybody can answer. A prompt has
+  /// to name the action, the target, its pid and what may be lost — and the difference between these
+  /// and "end task" is precisely that these do not ask the program first.
+  /// </remarks>
+  private const string _EndsWithoutAsking
+    = "This stops it immediately without asking it to save anything, and unsaved work in it will be lost.";
+
+  private const string _RestartEndsWithoutAsking
+    = "It is asked to stop and then started again with the same arguments in the same directory. "
+    + "Unsaved work in it may be lost, and it will be a different process with a different pid.";
+
+  private void Act(string what, Func<ProcessKey, ActionResult> action, string? consequence = null) {
     if (this._binder.SelectedRow is not { } row)
       return;
 
@@ -856,8 +907,9 @@ public sealed class MainWindow : Form {
 
     // Confirmed before it happens, and the target named unambiguously — a pid on its own is not a
     // name, and the row under the pointer may have moved (PRD §6.4).
+    var question = $"{char.ToUpper(what[0], CultureInfo.CurrentCulture)}{what[1..]} {row.Name} (PID {row.Pid})?";
     var answer = MessageBox.Show(
-      $"{char.ToUpper(what[0], CultureInfo.CurrentCulture)}{what[1..]} {row.Name} ({row.Pid})?",
+      consequence is null ? question : $"{question}\n\n{consequence}",
       "Process Manager",
       MessageBoxButtons.YesNo
     );
@@ -865,12 +917,89 @@ public sealed class MainWindow : Form {
     if (answer != DialogResult.Yes)
       return;
 
-    var result = action(row.Key);
-    if (!result.Succeeded)
-      MessageBox.Show(result.Detail ?? result.Outcome.ToString(), "Process Manager");
-
+    this.Report(action(row.Key));
     this.Refresh();
   }
+
+  /// <summary>
+  /// Puts an action's answer in front of somebody — including the ones that succeeded with something
+  /// to say.
+  /// </summary>
+  /// <remarks>
+  /// Most successes are silent, because the list redrawing is the answer. The exceptions carry a
+  /// detail, and it is always something the outcome alone does not convey: "its window was asked to
+  /// close" and "it has no window, so SIGTERM was sent" are both successes and are not the same
+  /// thing to have happened (PRD §72.3).
+  /// </remarks>
+  private void Report(ActionResult result) {
+    if (!result.Succeeded)
+      MessageBox.Show(result.Detail ?? result.Outcome.ToString(), "Process Manager");
+    else if (result.Detail is { Length: > 0 } detail)
+      MessageBox.Show(detail, "Process Manager");
+  }
+
+  /// <summary>
+  /// Asks the program to close rather than telling it to (PRD §25.1).
+  /// </summary>
+  /// <remarks>
+  /// Deliberately at the top of the menu and deliberately not confirmed: it is the reversible one.
+  /// The program is asked, may put up its own "save your changes?" and may decline — which is the
+  /// whole reason it sits beside "End process" instead of replacing it.
+  /// </remarks>
+  private void EndTask() {
+    if (this._binder.SelectedRow is not { } row || this._actions is null)
+      return;
+
+    this.Report(this._actions.EndTask(row.Key));
+    this.Refresh();
+  }
+
+  /// <summary>
+  /// Ends a process and everything under it (PRD §25.1).
+  /// </summary>
+  /// <remarks>
+  /// The confirmation counts the descendants and says so, because "and everything under it" is the
+  /// part somebody needs to weigh and the part a plain "Are you sure?" hides. A shell with a build
+  /// under it and a shell on its own are the same row and very different requests (PRD §90).
+  /// </remarks>
+  private void EndTree() {
+    if (this._binder.SelectedRow is not { } row)
+      return;
+
+    if (this._actions is null) {
+      MessageBox.Show("This build has no actions for this platform.", "Process Manager");
+      return;
+    }
+
+    // Deepest first — see Query.ProcessTree.DescendantsFirst for why the order is not incidental.
+    var order = ProcessTree.DescendantsFirst(this._sampler.Current, row.Pid);
+    if (order.Count == 0) {
+      MessageBox.Show($"{row.Name} (PID {row.Pid}) is no longer in the list.", "Process Manager");
+      return;
+    }
+
+    var descendants = order.Count - 1;
+    var question = descendants == 0
+      ? $"End {row.Name} (PID {row.Pid})? Nothing is running under it."
+      : $"End {row.Name} (PID {row.Pid}) and the {descendants} process{(descendants == 1 ? string.Empty : "es")} running under it?";
+
+    if (MessageBox.Show($"{question}\n\n{_EndsWithoutAsking}", "Process Manager", MessageBoxButtons.YesNo) != DialogResult.Yes)
+      return;
+
+    this.Report(this._actions.TerminateTree(order));
+    this.Refresh();
+  }
+
+  private void RestartProcess() => this.Act(
+    "restart",
+    key => {
+      var result = this._actions!.Restart(key);
+      return result.Outcome.Succeeded
+        ? new(ActionOutcome.Succeeded, $"started again as pid {result.Pid}")
+        : result.Outcome;
+    },
+    _RestartEndsWithoutAsking
+  );
 
 
   /// <summary>
@@ -903,7 +1032,7 @@ public sealed class MainWindow : Form {
         return;
       }
 
-    var window = new ProcessPropertiesWindow(this._probe, row.Key, row.Name);
+    var window = new ProcessPropertiesWindow(this._probe, row.Key, row.Name, this._actions);
     window.FormClosed += (_, _) => this._properties.Remove(window);
     this._properties.Add(window);
     window.Show();
