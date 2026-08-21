@@ -3766,8 +3766,8 @@ Status vocabulary — exactly these, no synonyms:
 - [x] Verified — the image still matches the digest its package recorded
 - [ ] Valid but untrusted chain — a package database records that something signed, not who, so
       this needs a real chain and Linux packaging does not offer one
-- [ ] Unsigned
-- [ ] Invalid signature
+- [x] Unsigned — nothing signed for the package, which is most of a machine that builds its own
+- [x] Invalid signature — the image no longer matches the digest its package recorded
 - [ ] Revoked — needs a revocation list, which no package database keeps
 - [ ] Expired — needs a certificate with a validity period, which a package signature is not
 - [x] Verification error — the databases could not be read
