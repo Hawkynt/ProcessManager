@@ -164,12 +164,16 @@ public sealed class DetailView(ISystemProbe probe) {
       case DetailTab.Network: {
         this._headers = ["Proto", "Type", "Local", "Remote", "State", "User", "If", "Send-Q", "Recv-Q", "Retx"];
         this._widths = [6, 9, 24, 24, 12, 9, 8, 7, 7, 5];
+
+        // Named ports, as the command line names them and as ss does by default. Asked of the probe
+        // once per fill, which is a dictionary lookup and not a read (PRD §40, §58).
+        var services = probe.DescribePortNames();
         foreach (var connection in probe.GetConnections(this._key))
           this._rows.Add([
             connection.Protocol.ToString(),
             Humanize.SocketKindName(connection.Kind),
-            Humanize.LocalEndpoint(connection),
-            Humanize.RemoteEndpoint(connection),
+            Humanize.LocalEndpoint(connection, services, null),
+            Humanize.RemoteEndpoint(connection, services, null),
             connection.State,
             Humanize.SocketUser(connection),
             connection.Interface ?? "—",

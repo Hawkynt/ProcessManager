@@ -36,6 +36,7 @@ internal sealed class ProcessMemoryMapPage {
   private const int _PathColumn = 5;
 
   private readonly RecordTable _table = new(
+    "Memory regions",
     // Ordered by what a reader came for, and the order was decided by a photograph rather than by
     // taste: with the path last, the first screenful of a 1280-pixel window ended at the inode and
     // the one column that says what a region *is* was two thousand pixels off the right-hand edge.

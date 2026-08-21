@@ -20,9 +20,13 @@ internal static class TerminalFixture {
   });
 
   /// <summary>A UI that has sampled twice, sorted by pid, with the first row selected.</summary>
-  public static (TerminalUi Ui, LinuxProbe Probe) Machine(int width = 120, int height = 30) {
+  /// <param name="depth">
+  /// Monochrome unless a caller is asking about colour. Every test that compares text wants it that
+  /// way, because an escape sequence in the buffer would be in the comparison too.
+  /// </param>
+  public static (TerminalUi Ui, LinuxProbe Probe) Machine(int width = 120, int height = 30, ColorDepth depth = ColorDepth.None) {
     var probe = Probe();
-    var ui = new TerminalUi(new Sampler(probe), probe, null, width, height, ColorDepth.None) {
+    var ui = new TerminalUi(new Sampler(probe), probe, null, width, height, depth) {
       ShowTiming = false,
       UseBlockCharacters = true,
     };

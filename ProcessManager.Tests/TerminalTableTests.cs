@@ -537,6 +537,167 @@ public sealed class TerminalFallbackTests {
     }
   }
 
+  /// <summary>
+  /// Every appearance the palette has, at 256 colours. The one-slot test above would pass on a
+  /// palette in which nine of the ten had been left the same colour, which is a table that has lost
+  /// nine of its meanings while still emitting the escape the test looks for.
+  /// </summary>
+  [Test]
+  public void EverySlotIsDefinedAndDistinctAtEveryDepth() {
+    foreach (var depth in (ColorDepth[])[ColorDepth.Ansi16, ColorDepth.Ansi256, ColorDepth.TrueColor]) {
+      var seen = new Dictionary<string, byte>();
+      foreach (var attribute in Slots()) {
+        var escape = Attributes.ToAnsi(attribute, depth);
+        Assert.That(escape, Is.Not.Empty, $"{depth} slot {attribute}");
+        Assert.That(
+          seen.TryAdd(escape, attribute),
+          Is.True,
+          $"{depth}: attribute {attribute} paints the same as {(seen.TryGetValue(escape, out var other) ? other : (byte)0)}"
+        );
+      }
+
+      Assert.That(seen, Has.Count.EqualTo(Attributes.SlotCount), $"{depth} defines every slot");
+    }
+  }
+
+  /// <summary>
+  /// The 256-colour palette uses the 256-colour form and the 24-bit one uses the 24-bit form. The
+  /// two tables sit one under the other in the source and are edited by copying a line from one into
+  /// the other, which is a silent way to send a terminal an escape it will render as text.
+  /// </summary>
+  [Test]
+  public void NoPaletteSpeaksAnotherPalettesLanguage() {
+    foreach (var attribute in Slots()) {
+      var ansi256 = Attributes.ToAnsi(attribute, ColorDepth.Ansi256);
+      Assert.That(ansi256, Does.Not.Contain("38;2;"), $"slot {attribute} at 256 colours");
+      Assert.That(ansi256, Does.Not.Contain("48;2;"), $"slot {attribute} at 256 colours");
+
+      var trueColor = Attributes.ToAnsi(attribute, ColorDepth.TrueColor);
+      Assert.That(trueColor, Does.Not.Contain("38;5;"), $"slot {attribute} at 24 bits");
+      Assert.That(trueColor, Does.Not.Contain("48;5;"), $"slot {attribute} at 24 bits");
+    }
+
+    // And the slots that carry a background really do carry one at 256 colours: a header drawn as a
+    // foreground colour on the terminal's own background is not a header bar, it is a line of
+    // coloured text (PRD §57.4).
+    Assert.That(Attributes.ToAnsi(Attributes.Header, ColorDepth.Ansi256), Does.Contain("48;5;"));
+    Assert.That(Attributes.ToAnsi((byte)(Attributes.Normal | Attributes.Marked), ColorDepth.Ansi256), Does.Contain("38;5;"));
+  }
+
+  /// <summary>
+  /// No combination of the flags can fall off the end of a palette. The flags are a bitfield and the
+  /// palettes are arrays, so an attribute nobody thought of is an index nobody sized for — and it
+  /// would throw while painting, on somebody's terminal, long after the tests went green.
+  /// </summary>
+  [Test]
+  public void EveryAttributeAnyCellCanCarryPaintsSomething() {
+    for (var attribute = 0; attribute <= byte.MaxValue; ++attribute)
+      foreach (var depth in Enum.GetValues<ColorDepth>()) {
+        string? painted = null;
+        Assert.That(
+          () => painted = Attributes.ToAnsi((byte)attribute, depth),
+          Throws.Nothing,
+          $"attribute {attribute} at {depth}"
+        );
+
+        Assert.That(painted, Is.Not.Null.And.Not.Empty, $"attribute {attribute} at {depth}");
+      }
+  }
+
+  /// <summary>
+  /// A 256-colour terminal gets the same characters a monochrome one does. Colour is an attribute
+  /// plane beside the text and must not move a single cell — a palette change that shifted the
+  /// layout would be caught by no golden frame, because the goldens are text.
+  /// </summary>
+  [Test]
+  public void ColourChangesNothingAboutWhereTheCharactersGo() {
+    var monochrome = GoldenFrameTests.Frame(120, 30, ColorDepth.None);
+    var rich = GoldenFrameTests.Frame(120, 30, ColorDepth.Ansi256);
+
+    Assert.That(rich, Is.EqualTo(monochrome));
+  }
+
+  /// <summary>
+  /// And the frame really is painted in 256 colours rather than merely permitted to be: flushed to
+  /// a writer it carries the escapes, and more than one of them.
+  /// </summary>
+  [Test]
+  public void AWholeFrameAt256ColoursCarriesTheEscapes() {
+    var (ui, probe) = Machine(depth: ColorDepth.Ansi256);
+    using (probe) {
+      var written = new StringWriter();
+      ui.Screen.Flush(written);
+      var text = written.ToString();
+
+      Assert.That(text, Does.Contain("38;5;"), "the 256-colour cube reached the terminal");
+      Assert.That(Distinct(text), Is.GreaterThan(3), "and more than one colour of it");
+    }
+
+    static int Distinct(string text) {
+      var found = new HashSet<string>(StringComparer.Ordinal);
+      var at = text.IndexOf("[", StringComparison.Ordinal);
+      while (at >= 0) {
+        var end = text.IndexOf('m', at);
+        if (end < 0)
+          break;
+
+        found.Add(text[at..(end + 1)]);
+        at = text.IndexOf("[", end, StringComparison.Ordinal);
+      }
+
+      return found.Count;
+    }
+  }
+
+  /// <summary>
+  /// Which palette the terminal actually gets, decided from the environment rather than guessed.
+  /// </summary>
+  /// <remarks>
+  /// The tests above all pass the depth in, which proves the palettes are right and says nothing
+  /// about whether the program ever picks the right one. This is the only place that choice is made,
+  /// and until now nothing read it — so a 256-colour terminal getting sixteen, or an honest
+  /// <c>NO_COLOR</c> being ignored, was invisible.
+  /// </remarks>
+  [TestCase(null, null, null, ColorDepth.None, TestName = "nothing said at all")]
+  [TestCase(null, null, "dumb", ColorDepth.None, TestName = "a dumb terminal")]
+  [TestCase(null, null, "xterm", ColorDepth.Ansi16, TestName = "the original sixteen")]
+  [TestCase(null, null, "xterm-256color", ColorDepth.Ansi256, TestName = "the 256-colour cube")]
+  [TestCase(null, null, "xterm-direct", ColorDepth.Ansi256, TestName = "a direct-colour terminfo")]
+  [TestCase(null, "truecolor", "xterm", ColorDepth.TrueColor, TestName = "COLORTERM outranks TERM")]
+  [TestCase(null, "24bit", "xterm-256color", ColorDepth.TrueColor, TestName = "and its other spelling")]
+  [TestCase("1", "truecolor", "xterm-256color", ColorDepth.None, TestName = "NO_COLOR outranks everything")]
+  [TestCase(null, "yes", "xterm-256color", ColorDepth.Ansi256, TestName = "a COLORTERM nobody defined is not 24-bit")]
+  [NonParallelizable]
+  public void TheDepthIsReadOffTheEnvironment(string? noColor, string? colorTerm, string? term, ColorDepth expected) {
+    var was = (
+      No: Environment.GetEnvironmentVariable("NO_COLOR"),
+      Color: Environment.GetEnvironmentVariable("COLORTERM"),
+      Term: Environment.GetEnvironmentVariable("TERM")
+    );
+
+    try {
+      Environment.SetEnvironmentVariable("NO_COLOR", noColor);
+      Environment.SetEnvironmentVariable("COLORTERM", colorTerm);
+      Environment.SetEnvironmentVariable("TERM", term);
+
+      Assert.That(TerminalHost.DetectColorDepth(), Is.EqualTo(expected));
+    } finally {
+      Environment.SetEnvironmentVariable("NO_COLOR", was.No);
+      Environment.SetEnvironmentVariable("COLORTERM", was.Color);
+      Environment.SetEnvironmentVariable("TERM", was.Term);
+    }
+  }
+
+  /// <summary>Every attribute a cell can carry that is not one of the flag combinations.</summary>
+  private static IEnumerable<byte> Slots() {
+    for (byte colour = Attributes.Normal; colour <= Attributes.Selected; ++colour)
+      yield return colour;
+
+    // The two the flags reach and a plain colour does not.
+    yield return Attributes.Marked;
+    yield return Attributes.Match;
+  }
+
   [Test]
   public void AMatchedRunIsVisibleWithoutColourAtAll() {
     // Reverse video is all a monochrome terminal has, and a highlight that is only a colour is

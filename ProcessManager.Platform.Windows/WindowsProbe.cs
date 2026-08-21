@@ -577,6 +577,9 @@ public sealed class WindowsProbe : ISystemProbe {
   /// </summary>
   public IReadOnlyList<ServiceRecord> GetServices() => [];
 
+  /// <summary>What this machine calls its port numbers, read once (PRD §40).</summary>
+  public Query.ServiceNames DescribePortNames() => WindowsServiceNameReader.Read();
+
   /// <summary>
   /// Not read yet: the per-device counters come from the performance-counter API or from
   /// IOCTL_STORAGE_QUERY_PROPERTY, and neither is written (PRD §48, §49). The snapshot carries no

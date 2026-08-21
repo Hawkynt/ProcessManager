@@ -17,9 +17,6 @@ namespace Hawkynt.ProcessManager.App;
 /// </remarks>
 internal static class ConnectionsReport {
 
-  private static ServiceNames ServiceNames()
-    => OperatingSystem.IsLinux() ? Platform.Linux.ServiceNameReader.Read() : Query.ServiceNames.Empty;
-
   public static int Run(Sampler sampler, ISystemProbe probe, CommandLineOptions options) {
     var connections = probe.GetConnections();
     if (connections.Count == 0) {
@@ -37,10 +34,11 @@ internal static class ConnectionsReport {
     sampler.Sample();
     var names = Names(sampler.Current);
 
-    // Port names come from the machine's own file and cost one read; ss and netstat both name ports
-    // by default and this does too. Addresses are another matter — resolving one asks somebody else
-    // a question — so that happens only when it was asked for (PRD §40).
-    var services = options.NumericEndpoints ? null : ServiceNames();
+    // Port names come from the machine's own file and cost one read, asked of the probe so that this
+    // listing and the two interactive views cannot disagree about what 443 is called (PRD §58); ss
+    // and netstat both name ports by default and this does too. Addresses are another matter —
+    // resolving one asks somebody else a question — so that happens only when it was asked for.
+    var services = options.NumericEndpoints ? null : probe.DescribePortNames();
     using var hosts = options.ResolveHostnames ? new HostnameCache { Enabled = true } : null;
     if (hosts is not null)
       // Nothing is known on the first pass, so ask for every address and then give the lookups a

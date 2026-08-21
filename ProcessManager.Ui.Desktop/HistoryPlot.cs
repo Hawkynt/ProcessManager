@@ -84,7 +84,20 @@ public sealed class HistoryPlot : OwnerDrawnControl {
   public string ScaleLabel { get; set; } = string.Empty;
 
   /// <summary>Drawn in the top-left corner, so a wall of plots is readable without a legend.</summary>
-  public string Caption { get; set; } = string.Empty;
+  /// <remarks>
+  /// It is painted rather than written as text, so nothing announces it: a plot has no <c>Text</c>
+  /// for the toolkit to fall back on, and a wall of them reads as "graph, graph, graph". Setting the
+  /// caption therefore names the control too, unless a caller has already named it something better
+  /// (PRD §74).
+  /// </remarks>
+  public string Caption {
+    get;
+    set {
+      field = value;
+      if (string.IsNullOrEmpty(this.AccessibleName))
+        this.AccessibleName = value;
+    }
+  } = string.Empty;
 
   /// <summary>How many seconds the width covers (PRD §45.4).</summary>
   public int SpanSeconds { get; set; } = 60;

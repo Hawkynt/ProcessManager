@@ -124,6 +124,7 @@ public sealed class DetailPane : IDisposable {
     this._modules.ContextMenuStrip = this.BuildModuleMenu();
     this._handles.ContextMenuStrip = this.BuildHandleMenu();
 
+    this._tabs.AccessibleName = "Process detail";
     this._tabs.Dock = DockStyle.Fill;
     this._overview.Dock = DockStyle.Fill;
     this._hint.Dock = DockStyle.Bottom;
@@ -319,6 +320,9 @@ public sealed class DetailPane : IDisposable {
     }
 
     void AddList(string title, TreeListView list, params (string Header, int Width)[] columns) {
+      // The tab carries the title; the list inside it has no text of its own, so a reader who moves
+      // from the tab strip into the table would otherwise be told only that it is a table (PRD §74).
+      list.AccessibleName = title;
       list.Dock = DockStyle.Fill;
       list.ShowColumnHeaders = true;
       for (var i = 0; i < columns.Length; ++i) {
@@ -1121,10 +1125,13 @@ public sealed class DetailPane : IDisposable {
     // read whole either way, and a per-row lookup would read them once per socket the process holds.
     this._endpoints.Clear();
     this._socketReferences.Clear();
+    // The same named ports the network tab shows. A socket described as :631 on one tab and :ipp on
+    // the next is one window disagreeing with itself about one socket (PRD §40).
+    var services = this._probe.DescribePortNames();
     foreach (var connection in this._probe.GetConnections(this._key)) {
       this._endpoints[connection.Inode] = connection.RemotePort == 0
-        ? $"{Humanize.LocalEndpoint(connection)} {connection.State}"
-        : $"{Humanize.LocalEndpoint(connection)} → {Humanize.RemoteEndpoint(connection)}";
+        ? $"{Humanize.LocalEndpoint(connection, services, null)} {connection.State}"
+        : $"{Humanize.LocalEndpoint(connection, services, null)} → {Humanize.RemoteEndpoint(connection, services, null)}";
       this._socketReferences[connection.Inode] = connection.References;
     }
 
@@ -1210,14 +1217,20 @@ public sealed class DetailPane : IDisposable {
     // here waits: a name that is not back yet shows the address, and the next fill shows the name
     // (PRD §40).
     var hosts = this._hostnames;
+
+    // Named ports, from the machine's own file by way of the probe. Free where the CLI is free: the
+    // table is read once and kept, and asking for it per fill costs a dictionary lookup rather than
+    // a read. Without this the window said 443 where --connections said https, which is the one
+    // thing the parity contract is for (PRD §40, §58).
+    var services = this._probe.DescribePortNames();
     Fill(this._network, connections.Count, i => {
       var connection = connections[i];
       var statistics = connection.Statistics;
       return [
         connection.Protocol.ToString(),
         Humanize.SocketKindName(connection.Kind),
-        Humanize.LocalEndpoint(connection, null, hosts),
-        Humanize.RemoteEndpoint(connection, null, hosts),
+        Humanize.LocalEndpoint(connection, services, hosts),
+        Humanize.RemoteEndpoint(connection, services, hosts),
         connection.State,
         Humanize.SocketUser(connection),
         connection.Interface ?? "—",

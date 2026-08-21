@@ -556,7 +556,13 @@ also reachable through the export key, which writes a file no terminal setting c
 Named **column sets**. Each stores its visible fields and their ordering; widths come from the
 registry, and sorting and grouping are not stored in a set. How many columns are pinned is kept per
 front-end rather than per set — the window and the terminal keep their own column orders, and five
-pinned columns in a wide list mean nothing at all in an eighty-column terminal.
+pinned columns in a wide list mean nothing at all in an eighty-column terminal. Applying a set
+therefore keeps whatever was pinned and clamps it to the new set's width rather than dropping it: a
+reader who pinned the name column pinned it because they want it there whatever else the table shows.
+
+Reachable from both front-ends — the terminal's column chooser and the window's **Column sets**
+submenu — and from `--columns @name`. A set the settings file names shadows a preset of the same
+name, which is what keeps a preset improvable instead of something to be worked around.
 
 - [x] Basic
 - [x] Performance — as `cpu`
@@ -2132,7 +2138,8 @@ Linux addition — what the kernel reports and Windows has no equivalent for:
       together are read as the switch being off rather than as a thread that has never been given a
       processor, which is not something that can be true of a thread there is a file to read (§72.3)
 
-Still unticked and why:
+Still unticked and why — each re-checked against a live `/proc/[pid]/task/[tid]/` rather than taken
+on trust, since a kernel that grew a file would turn a refusal into a gap without anything saying so:
 
 - **Cycles** and **cycles delta** — no file under `/proc` carries a per-thread cycle count. The only
   route is `perf_event_open`, which needs a descriptor held open per thread for the life of the view
@@ -2141,7 +2148,9 @@ Still unticked and why:
   ordinary desktop is not a column, and the process-wide `Cycles` counter has said `n/a` on Linux for
   the same reason since §8.
 - **Ideal processor** and **TEB / TLS information** — no Linux equivalent. The scheduler has no
-  notion of a thread's preferred processor that it will name, and the thread pointer is readable only
+  notion of a thread's preferred processor that it will name — the closest thing in
+  `/proc/[pid]/task/[tid]/sched` is `numa_preferred_nid`, which is a memory node rather than a
+  processor and reads `-1` on a machine with one node — and the thread pointer is readable only
   through `ptrace(ARCH_GET_FS)`, which means stopping the thread to ask.
 - **Wait duration** — deliberately left. `schedstat` reports cumulative time queued for a processor,
   which is not how long the current wait has lasted, and labelling it as such would be exactly the
@@ -2149,8 +2158,12 @@ Still unticked and why:
 - **Description** — Linux gives a thread one name, `comm`, and it is already the Name column. A
   Description column would repeat it.
 - **Service association** — a thread may be moved into its own cgroup under v2's threaded mode, so
-  `/proc/[pid]/task/[tid]/cgroup` is a real per-thread reading; it is one more file per thread for a
-  column that is the same value on every row of almost every process, and is not read yet.
+  `/proc/[pid]/task/[tid]/cgroup` is a real per-thread reading. Checked again rather than assumed:
+  the file is there for every task, and for an ordinary process it is byte for byte the process's
+  own. Reading it would be a *sixth* file per thread in the one view this section re-reads on every
+  tick — the five it already reads are the 78 µs a thread measured above — spent on a column that
+  says the same thing on every row of almost every process. That is the §5.4 trade this view is
+  built around, so it stays unread and the reason stays written down.
 - **AppDomain / runtime context** — needs the runtime's own introspection, not the kernel's (§80).
 
 Actions:
@@ -2670,9 +2683,10 @@ Endpoints are enumerated on both platforms and attributed to processes.
 
 - [x] Process
 - [x] PID
-- [ ] 🟡 User — Linux reads the uid the kernel charges the socket to, which is the socket's own owner
-      rather than the owning process's; they differ for a descriptor passed between processes. The
-      Windows owner table carries no uid at all
+- [x] 🟡 User — Linux reads the uid the kernel charges the socket to, which is the socket's own owner
+      rather than the owning process's; they differ for a descriptor passed between processes. A
+      socket in `TIME_WAIT` has no structure left to charge, so it reads unknown and not `root`. The
+      Windows owner table carries no uid at all, which is why the tick is amber
 - [x] Protocol
 - [x] Address family
 - [x] State
@@ -2684,16 +2698,27 @@ Endpoints are enumerated on both platforms and attributed to processes.
 - [x] Remote address
 - [x] Remote port
 - [x] Remote hostname — as above
-- [ ] 🟡 Service name — from the machine's own `/etc/services`, in `--connections`; `-n` turns it off,
-      as it does for `ss`. **The window's network tab shows numbers instead**, and that is a gap
-      rather than a decision: reading the file is `ProcessManager.Platform.Linux`'s job (§8.1) and the
-      desktop project references only `ProcessManager.Core`, so naming a port there needs a probe
-      method the interface has not got. It is one addition across three probes, and it is the kind of
-      front-end disagreement §58 exists to stop
-- [ ] 🟡 Interface — Linux, from the address the socket is bound to. `/proc/net/if_inet6` names it
+- [x] 🟡 Service name — from the machine's own `/etc/services`, in all three front-ends; `-n` turns it
+      off on the command line, as it does for `ss`. The window and the terminal used to show numbers
+      where `--connections` showed names, because reading the file is the platform project's job
+      (§8.1) and the front-ends reference only `ProcessManager.Core`. The seam is
+      `ISystemProbe.DescribePortNames`, which hands back the parsed table read once and held: the
+      Linux probe reads `/etc/services`, the Windows probe
+      `%SystemRoot%\System32\drivers\etc\services` — the same file in the same format, which is why
+      only the path is platform-specific and the parser is shared and tested on every leg. A probe
+      that has not learnt to look answers with an empty table, so a port keeps its number rather
+      than acquiring an invented name. Amber because macOS, whose probe is a stub, is on that
+      default. Four surfaces show an endpoint and all four were found by grep rather than by memory:
+      the lower pane's network tab, the machine-wide network view behind the rail, the descriptor
+      list's socket summary — a socket described as `:631` on one tab and `:ipp` on the next is one
+      window disagreeing with itself — and the terminal's own tab. One test renders the same socket
+      through two front-ends and holds their cells together, which is what §58 asks for rather than a
+      promise in prose
+- [x] 🟡 Interface — Linux, from the address the socket is bound to. `/proc/net/if_inet6` names it
       outright for IPv6; an IPv4 address is on the interface whose on-link subnet contains it, longest
       prefix first. A socket on the wildcard address is on all of them and shows `*`; an address no
-      route claims — a multicast group, a point-to-point peer — is left unknown rather than guessed at
+      route claims — a multicast group, a point-to-point peer — is left unknown rather than guessed at.
+      Amber because Windows has no equivalent reading yet
 - [ ] Connection creation time
 - [ ] Connection age
 - [x] Bytes sent / received — payload each way over the connection's life, retransmissions included.
@@ -2772,10 +2797,18 @@ Protocols:
 
 Actions:
 
-- [ ] 🟡 Go to process — the window's network tab shows one process's own sockets, so the owner is
-      already the selected row of the tree and there is nowhere to go. It becomes a real command when
-      there is a machine-wide connection view to invoke it from
-- [ ] 🟡 Process properties — as above
+- [x] Go to process — it became a real command the moment there was a machine-wide connection view to
+      invoke it from. In the lower pane's network tab there is still nowhere to go — every socket
+      there belongs to the selected process by construction — so it lives on the view behind the
+      rail, which shows the whole machine's sockets and the pid of each. Double-clicking a row did
+      this already and from nowhere else, and a gesture with no menu item is, for somebody who works
+      from a menu, the same as a command that is not there (§25.3). A socket whose owner this account
+      may not see says so rather than navigating nowhere: the kernel gives an unprivileged reader the
+      socket and withholds the inode's owner, and the difference between "nobody owns it" and "you
+      may not ask" is the whole of §72.3
+- [x] Process properties — the same row, through the same navigation: the owner is selected in the
+      process list and the existing command opened on it, so one code path decides which process a
+      properties window is about rather than two that have to agree about identity (§8.2)
 - [x] Copy endpoint — both ends of the selected row, as one line worth pasting into a search. Taken
       from the drawn cells rather than re-read: a connection can close between a right-click and a
       menu choice, and what the reader asked to copy is what they were looking at
@@ -4191,8 +4224,16 @@ GUI:
       top of the window and insertion order is very nearly the reverse of reading order. A test holds
       the numbers to the reading
 - [ ] 🟡 Screen-reader labels — every container, graph, strip and field in the main window names
-      itself and says what it is. **The rows do not.** The toolkit has no per-item accessibility —
-      no object per row, no way to say "firefox, 4 % CPU" as the selection moves — so a reader lands
+      itself and says what it is, and so now does every textless control of the lower pane, the
+      properties window and the performance window — thirteen lists, nine plots, a second rail and a
+      composition bar that the main window's own naming never reached. Three of those fixes are
+      structural rather than one-by-one, because a list of controls written out by hand goes stale
+      the next time somebody adds one: a plot takes its name from the caption it paints, a tab's
+      content takes the tab's title, and a record table is told what it is a list of when it is
+      built. A sweep of the real control tree of all four windows fails on a new textless control, and
+      a second test refuses a name that merely repeats the role. **The rows do not name themselves.**
+      The toolkit has no per-item accessibility — no object per row, no way to say "firefox, 4 %
+      CPU" as the selection moves — so a reader lands
       on the process list, is told it is a tree, and finds nothing inside it. That is a gap in
       NativeForms rather than here, and this box stays open until it is closed there
 - [ ] Scalable text — **and this is a refusal rather than an omission.** Scaling only this program's
@@ -4661,7 +4702,7 @@ a naive parser hands the attacker the parse.
 
 # 99. Testing strategy
 
-**802 tests pass on every leg, under both a UTF-8 and a `C` locale.**
+**1943 tests pass on every leg, under both a UTF-8 and a `C` locale.**
 
 ## Unit tests
 
@@ -4704,7 +4745,15 @@ Windows parsing on Linux.
 
 - [x] Sampling budget enforced as a build gate (§71.2)
 - [x] 10 000 processes
-- [ ] 100 000 threads
+- [x] 100 000 threads — as records and not as a recorded tree. The probe reads five files per thread,
+      so a fixture at this size would be half a million files in the repository and would measure the
+      filesystem the tests happen to run on. The layer that has to survive the size is the one above
+      it: §29 re-reads the thread tab on *every* tick while it is open, so `ThreadDelta` does a
+      hundred thousand keyed lookups a second on such a machine. Measured at 22 ms against 2.5 ms for
+      ten thousand — linear — allocating nothing per tick once its buffers are grown, and holding
+      exactly one generation of history after twelve rounds of a hundred thousand entirely new
+      threads. That last one is counted rather than weighed: asking the garbage collector reads the
+      large-object heap's refusal to compact discarded records as a leak
 - [x] 1 000 000 resource rows
 - [x] Rapid process churn
 - [x] 100 % CPU load — a sample taken while every core is saturated is still a whole sample
@@ -4715,24 +4764,66 @@ Windows parsing on Linux.
 
 - [x] Sorting while data changes — three tests, added after the reordering bug in §12
 - [x] Tree expansion
-- [ ] Selected-process termination
-- [ ] Lower pane
-- [ ] 🟡 Column sets
-- [ ] Accessibility
-- [ ] 🟡 Keyboard operation
+- [x] Selected-process termination — the menu item worked over the recorded machine, not the action
+      layer under it. What was untested was everything between: that the prompt names the process,
+      its pid and what is lost rather than asking "are you sure"; that answering **no** ends nothing,
+      a branch that had been written and never run; that **End task** asks the program and not the
+      user, because it is the reversible one; that ending a tree counts what goes with it; that a
+      refusal from the kernel is put in front of somebody rather than swallowed; and that with no row
+      selected nothing is asked and nothing happens. It needed a seam: every prompt went straight to
+      a static dialog that throws without a display, so `MainWindow.Confirm` and `Announce` are now
+      properties whose defaults are that dialog
+- [x] Lower pane — that it opens showing, that hiding and showing it again is a no-op, that whether
+      it was showing survives a save and a load, and that every one of its six tabs fills for the
+      selected process with every cell of every row drawn. The last is the one that matters: the
+      tabs read their cells out of a row's tag array by index, so a row shorter than the list has
+      columns throws while painting rather than while testing
+- [x] 🟡 Column sets — the sets were parsed, saved, carried through untouched and reachable from the
+      terminal alone, so the window had no way to apply one. It has a **Column sets** submenu now,
+      offering §94's presets and anything the file names, with a saved set shadowing a preset of the
+      same name. The pinned run is kept and clamped rather than dropped: somebody who pinned the name
+      column wants it pinned whatever else the table shows. Amber because there is still no way to
+      *save* the current columns as a set from either front-end — a set is written by hand into the
+      file
+- [x] Accessibility — a sweep of the real control tree of all four windows rather than a checklist
+      written out by hand, so a control added tomorrow and left unnamed fails it. It found every
+      table, every plot, both rails, the filter box, the composition bar and every strip unnamed (§74)
+- [x] 🟡 Keyboard operation — the window's twenty-two accelerators, read for the first time. The
+      terminal's bindings have been under test since they were written; the window's were lines in a
+      builder that compiled whatever it was given, so two items claiming one chord — of which one
+      silently never fires, and which one depends on the order they were added in — was a thing that
+      could be written, reviewed and shipped. Now: no chord claimed twice, every chord on an item
+      that does something rather than on a submenu header, no chord a bare letter or digit (the
+      filter box is where every keystroke is meant to be text), nothing destructive reachable by a
+      keystroke, and the nine §74 names by chord rather than by label, so an item renamed keeps
+      passing and an item whose chord was dropped does not. Amber because this is the inventory and
+      its rules: working an item needs a confirmation dialog and there is no display to open one on,
+      and tab order — §74's other open box — is not asserted at all
 
 ## TUI tests
 
 - [x] Golden-frame comparison at fixed dimensions
-- [ ] 🟡 80×24 · 120×30 · 160×50
-- [ ] 256-colour
+- [x] 80×24 · 120×30 · 160×50 — three goldens, because §57.1's breakpoints make these three different
+      layouts rather than one layout scaled. The unit tests compared all three and the CI job
+      compared only 120×30, so a change that took the narrow and the wide frames with it would have
+      been caught by a developer's own `dotnet test` and not by the gate; the job now walks all three
+- [x] 256-colour — every slot of the palette rather than one of them. The old test wrote a single
+      accented cell and looked for `38;5;`, which would pass on a table whose other nine slots had
+      been left identical. Now: every slot defined and *distinct* at each depth, so two meanings
+      cannot paint the same; no palette speaking another's language, because the 256-colour and
+      24-bit tables sit one under the other and are edited by copying a line across; every one of the
+      256 attribute bytes painting something, because the flags are a bitfield and the palettes are
+      arrays; a whole frame at 256 colours carrying the escapes; and the same frame's characters
+      identical to the monochrome one, since colour is a plane beside the text and must not move a
+      cell. `DetectColorDepth` is read too — the only place the choice is actually made, and until
+      now nothing tested it, so a 256-colour terminal getting sixteen was invisible
 - [x] Monochrome
 - [x] UTF-8
 - [x] ASCII fallback
 
 ## Self-test
 
-- [x] `procman --self-test` — 21 checks against live data, cross-validated against the .NET runtime's
+- [x] `procman --self-test` — 37 checks against live data, cross-validated against the .NET runtime's
       own view of the current process. Green on Linux and on a real Windows runner (NT 10.0.26100:
       145 processes, 8 threads, 47 modules, 159 handles of which 42 named, 149 environment variables).
 

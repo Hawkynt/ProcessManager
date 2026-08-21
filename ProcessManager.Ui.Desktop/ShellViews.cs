@@ -55,6 +55,7 @@ internal sealed class ShellViews(ISystemProbe probe) {
   // a column that does not exist. The last one is widened to whatever is actually there, so a wider
   // window spends the room on the widest value instead of on empty page (PRD §11).
   private readonly RecordTable _startup = new(
+    "Startup entries",
     ("Name", 220),
     ("Enabled", 150),
     ("Scope", 70),
@@ -101,6 +102,7 @@ internal sealed class ShellViews(ISystemProbe probe) {
   #region who is logged in (PRD §43)
 
   private readonly RecordTable _sessions = new(
+    "Sessions",
     ("User", 140),
     ("Terminal", 100),
     ("Kind", 110),
@@ -145,6 +147,7 @@ internal sealed class ShellViews(ISystemProbe probe) {
   #region what the machine runs in the background (PRD §41)
 
   private readonly RecordTable _services = new(
+    "Services",
     // Unit names run long — `NetworkManager-wait-online-initrd.service` is not unusual.
     ("Unit", 300),
     ("State", 78),
@@ -239,6 +242,7 @@ internal sealed class ShellViews(ISystemProbe probe) {
   #region what is on the network (PRD §40)
 
   private readonly RecordTable _network = new(
+    "Connections",
     ("Protocol", 70),
     ("Local", 175),
     ("Remote", 175),
@@ -272,6 +276,11 @@ internal sealed class ShellViews(ISystemProbe probe) {
       if (connection.Pid > 0)
         ++attributed;
 
+    // Named ports, as --connections names them and as ss does by default. The same table the lower
+    // pane's network tab and the terminal both ask the probe for, so all three say https where this
+    // one used to say 443 (PRD §40, §58).
+    var services = this._probe.DescribePortNames();
+
     this._network.Fill(
       connections.Count == 0
         ? "No sockets came back — /proc/net is empty, or this build does not read the connection tables here."
@@ -279,8 +288,8 @@ internal sealed class ShellViews(ISystemProbe probe) {
       connections.Count,
       i => [
         connections[i].Protocol.ToString(),
-        Humanize.LocalEndpoint(connections[i]),
-        Humanize.RemoteEndpoint(connections[i]),
+        Humanize.LocalEndpoint(connections[i], services, null),
+        Humanize.RemoteEndpoint(connections[i], services, null),
         connections[i].State,
         // A socket whose owner this account may not see is not a socket belonging to pid 0. Saying
         // "—" is the difference between "nobody owns it" and "you may not ask" (PRD §72.3).
@@ -300,6 +309,12 @@ internal sealed class ShellViews(ISystemProbe probe) {
       && int.TryParse(cells[4], NumberStyles.Integer, CultureInfo.InvariantCulture, out var pid)
         ? pid
         : -1;
+
+  /// <summary>The menu a right-click on a socket row opens (PRD §40).</summary>
+  public ContextMenuStrip? NetworkMenu {
+    get => this._network.ContextMenuStrip;
+    set => this._network.ContextMenuStrip = value;
+  }
 
   /// <summary>Raised when a socket row is opened, which is the gesture for "show me who owns this".</summary>
   public event EventHandler<MouseEventArgs>? NetworkRowOpened {

@@ -52,9 +52,9 @@ public sealed class PerformanceWindow : Form {
 
   private readonly ISystemProbe _probe;
   private readonly Sampler _sampler;
-  private readonly ResourceRail _rail = new();
+  private readonly ResourceRail _rail = new() { AccessibleName = "Resources", AccessibleRole = AccessibleRole.List };
   private readonly HistoryPlot _plot = new();
-  private readonly MenuStrip _menu = new();
+  private readonly MenuStrip _menu = new() { AccessibleName = "Main menu", AccessibleRole = AccessibleRole.MenuBar };
   private readonly CheckBox _perCore = new() { Text = "Per logical processor" };
 
   /// <summary>
@@ -74,7 +74,7 @@ public sealed class PerformanceWindow : Form {
   private readonly ComboBox _spanBox = new() { DropDownStyle = ComboBoxStyle.DropDownList };
 
   /// <summary>Memory's composition bar, and the line under it that names what the pointer is over.</summary>
-  private readonly CompositionBar _composition = new() { Visible = false };
+  private readonly CompositionBar _composition = new() { Visible = false, AccessibleName = "Memory composition", AccessibleRole = AccessibleRole.Graphic };
 
   private readonly Label _compositionHint = new() { Visible = false };
 

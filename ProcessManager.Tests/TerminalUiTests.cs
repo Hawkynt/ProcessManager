@@ -125,7 +125,11 @@ public sealed class GoldenFrameTests {
   }
 
   /// <summary>Composes the frame the golden files were taken from.</summary>
-  internal static string Frame(int width, int height) {
+  /// <param name="depth">
+  /// Monochrome for the goldens themselves, which are text. A caller passes something else to prove
+  /// that colour is an attribute plane beside the characters and does not move any of them.
+  /// </param>
+  internal static string Frame(int width, int height, ColorDepth depth = ColorDepth.None) {
     var fixtures = Path.Combine(TestContext.CurrentContext.TestDirectory, "Fixtures", "proc-desktop");
     using var probe = new LinuxProbe(new() {
       ProcRoot = fixtures,
@@ -139,7 +143,7 @@ public sealed class GoldenFrameTests {
     // Both pinned. The frame is compared byte for byte, so nothing about it may come from the
     // machine: the sample cost would differ every run, and the block characters would differ between
     // a UTF-8 desktop and a CI runner whose LANG is C — which is exactly how this first broke.
-    var ui = new TerminalUi(sampler, probe, null, width, height, ColorDepth.None) {
+    var ui = new TerminalUi(sampler, probe, null, width, height, depth) {
       ShowTiming = false,
       UseBlockCharacters = true,
     };

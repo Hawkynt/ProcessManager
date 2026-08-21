@@ -83,19 +83,29 @@ jobs:
       # against a golden frame. This is the only job that exercises the renderer at all — the unit
       # tests stop at the snapshot, and a layout that divides by a zero-width terminal passes every
       # one of them.
-      - name: Render the TUI against a fixture and compare to the golden frame
-        run: >
-          dotnet run --project ProcessManager.App --configuration Release --no-build -- --tui --tree --sort=pid
-          --probe-root ProcessManager.Tests/Fixtures/proc-desktop
-          --capture-size 120x30
-          --capture-frame "${{ runner.temp }}/tui.txt"
-          --compare-golden ProcessManager.Tests/Golden/tui-120x30.txt
-      - name: Upload the captured frame
+      #
+      # All three sizes, because they are three different layouts and not one layout scaled: §57.1's
+      # breakpoints drop the history columns below 120 and add them back above it, so a change that
+      # only ever ran at 120×30 here could take the narrow and the wide frames with it and this job
+      # would stay green (PRD §99).
+      - name: Render the TUI against a fixture and compare to the golden frames
+        run: |
+          for size in 80x24 120x30 160x50; do
+            echo "::group::$size"
+            dotnet run --project ProcessManager.App --configuration Release --no-build -- \
+              --tui --tree --sort=pid \
+              --probe-root ProcessManager.Tests/Fixtures/proc-desktop \
+              --capture-size "$size" \
+              --capture-frame "${{ runner.temp }}/tui-$size.txt" \
+              --compare-golden "ProcessManager.Tests/Golden/tui-$size.txt"
+            echo "::endgroup::"
+          done
+      - name: Upload the captured frames
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: tui-frame
-          path: ${{ runner.temp }}/tui.txt
+          name: tui-frames
+          path: ${{ runner.temp }}/tui-*.txt
           if-no-files-found: warn
 
   self-test:

@@ -27,6 +27,15 @@ public sealed class DetailPaneNetworkTests {
   private static readonly ProcessKey _Key = new(4242, 99);
 
   private sealed class StubProbe(params ConnectionRecord[] connections) : ISystemProbe {
+
+    /// <summary>
+    /// What this machine would call its ports. Empty by default, which is a machine with no such
+    /// file — so every test written before ports had names still reads numbers.
+    /// </summary>
+    public ServiceNames PortNames { get; init; } = ServiceNames.Empty;
+
+    public ServiceNames DescribePortNames() => this.PortNames;
+
     public string Description => "stub";
     public HostInfo DescribeHost() => new();
     public void Sample(SystemSnapshot snapshot) { }
@@ -108,8 +117,11 @@ public sealed class DetailPaneNetworkTests {
     this._panes.Clear();
   }
 
-  private TreeListView Network(params ConnectionRecord[] connections) {
-    var pane = new DetailPane(new StubProbe(connections));
+  private TreeListView Network(params ConnectionRecord[] connections)
+    => this.Network(new StubProbe(connections));
+
+  private TreeListView Network(StubProbe probe) {
+    var pane = new DetailPane(probe);
     this._panes.Add(pane);
     var tabs = (TabControl)pane.Control;
     pane.Select(_Key);
@@ -223,6 +235,93 @@ public sealed class DetailPaneNetworkTests {
 
     Assert.That(Cell(list, 0, "Remote"), Is.EqualTo("93.184.216.34:443"), "the address, not a name");
   }
+
+  #region named ports (PRD §40, §58)
+
+  /// <summary>Enough of a <c>/etc/services</c> to tell a named port from a numbered one.</summary>
+  private const string _Services = """
+    ssh    22/tcp
+    https 443/tcp
+    https 443/udp
+    """;
+
+  /// <summary>
+  /// The window names a port exactly as <c>--connections</c> does. It did not, for as long as the
+  /// file was read in the Linux project and this one references only the engine — so the same socket
+  /// read <c>:443</c> here and <c>:https</c> there, which is the front-end disagreement §58 exists
+  /// to stop.
+  /// </summary>
+  [Test]
+  public void APortWithANameIsShownByIt() {
+    var list = this.Network(new StubProbe(Established, Listener) { PortNames = ServiceNames.Parse(_Services) });
+
+    Assert.That(Cell(list, 0, "Remote"), Is.EqualTo("93.184.216.34:https"));
+    Assert.That(Cell(list, 1, "Local"), Is.EqualTo("192.168.1.5:ssh"));
+  }
+
+  /// <summary>
+  /// A port the machine does not declare keeps its number. The alternative — inventing a name — is
+  /// indistinguishable to a reader from one the machine really declares (PRD §5.3).
+  /// </summary>
+  [Test]
+  public void APortWithNoNameKeepsItsNumber() {
+    var list = this.Network(new StubProbe(Established) { PortNames = ServiceNames.Parse(_Services) });
+
+    Assert.That(Cell(list, 0, "Local"), Is.EqualTo("192.168.1.5:38658"));
+  }
+
+  /// <summary>
+  /// The same socket, read through the same probe, named the same way by both front-ends. This is
+  /// the parity contract itself rather than a description of it: the two views are built from
+  /// different code and the only thing that keeps them agreeing is a test that renders both
+  /// (PRD §58).
+  /// </summary>
+  [Test]
+  public void TheTerminalNamesThePortTheWindowNames() {
+    var probe = new StubProbe(Established, Listener) { PortNames = ServiceNames.Parse(_Services) };
+    var window = this.Network(probe);
+
+    var view = new Ui.Terminal.DetailView(probe);
+    view.Open(_Key);
+    while (view.Tab != Ui.Terminal.DetailTab.Network)
+      view.NextTab();
+
+    var process = new ProcessRecord { Key = _Key, Name = "stub" };
+    var screen = new Ui.Terminal.TerminalScreen(120, 24, Ui.Terminal.ColorDepth.None);
+    screen.BeginFrame();
+    view.Draw(screen, in process);
+    var frame = screen.Capture();
+
+    Assert.That(Cell(window, 0, "Remote"), Is.EqualTo("93.184.216.34:https"));
+    Assert.That(frame, Does.Contain("93.184.216.34:https"), "and the terminal says the same");
+    Assert.That(Cell(window, 1, "Local"), Is.EqualTo("192.168.1.5:ssh"));
+    Assert.That(frame, Does.Contain("192.168.1.5:ssh"));
+  }
+
+  /// <summary>
+  /// Naming the port must not change what a search for the far end sends. The term is taken off the
+  /// drawn cell, so the moment the cell said <c>:https</c> instead of <c>:443</c> the splitter that
+  /// drops the port had a new shape to cope with.
+  /// </summary>
+  [Test]
+  public void ANamedPortIsStillDroppedFromTheSearchTerm() {
+    var probe = new StubProbe(Established) { PortNames = ServiceNames.Parse(_Services) };
+    var list = this.Network(probe);
+    var actions = new RecordingLauncher();
+    var pane = this._panes[^1];
+    pane.Actions = actions;
+
+    list.SelectedNode = list.Nodes[0];
+    pane.RefreshNetworkMenu();
+    NetworkItem(list, "Search remote address").PerformClick();
+
+    Assert.That(actions.Launched, Has.Count.EqualTo(1));
+    // The whole query and not a substring of it: the scheme of the search URL is itself "https", so
+    // an assertion that the argument merely lacks the word would pass on a query that carried it.
+    Assert.That(actions.Launched[0].Arguments[0], Does.EndWith("q=93.184.216.34"));
+  }
+
+  #endregion
 
   #region searching for the far end (PRD §40)
 

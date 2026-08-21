@@ -25,7 +25,12 @@ internal sealed class RecordTable {
   private readonly Label _heading = new();
   private readonly TreeListView _list = new();
 
-  public RecordTable(params (string Header, int Width)[] columns) {
+  /// <param name="what">
+  /// What this is a list of, for a screen reader. The heading above it says the same thing and more,
+  /// but a heading is a separate control: a reader who tabs into the table hears the table's own
+  /// name and nothing of the label beside it (PRD §74).
+  /// </param>
+  public RecordTable(string what, params (string Header, int Width)[] columns) {
     ArgumentNullException.ThrowIfNull(columns);
 
     this._minimumLast = columns.Length > 0 ? columns[^1].Width : 120;
@@ -33,6 +38,7 @@ internal sealed class RecordTable {
     this._heading.Dock = DockStyle.Top;
     this._heading.Height = 22;
 
+    this._list.AccessibleName = what;
     this._list.Dock = DockStyle.Fill;
     this._list.ShowColumnHeaders = true;
     // The same seventeen pixels the process tree uses, so two tables in one window are one table's
