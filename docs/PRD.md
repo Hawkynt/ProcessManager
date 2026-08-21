@@ -31,8 +31,8 @@ shorthand:
 it is not known*. An unticked box must never become a zero on screen. This is restated here because
 it is the single requirement most likely to be broken while filling the tables in.
 
-**Counting, as of the last update:** **799 of 1337 boxes are ticked** — 113 of 198 in the field
-registry (§14–22), 686 of 1139 across the capabilities. A further 116 are marked 🟡, meaning some of
+**Counting, as of the last update:** **866 of 1356 boxes are ticked** — 122 of 205 in the field
+registry (§14–22), 744 of 1151 across the capabilities. A further 109 are marked 🟡, meaning some of
 the work behind them is already done. §100 tracks the phases; §101 defines when this may be called
 finished.
 
@@ -623,7 +623,8 @@ term all use it, and it never changes even when the display name differs per pla
 - [x] `name` — friendly process/executable name
 - [x] `exe.name` — the file that is running, from `image.path`. Differs from `name` when
       a process renames itself, not yet its own field
-- [ ] `app.name` — human-readable product/application identity
+- [x] `app.name` — from the desktop entry that starts the program; "several" where more than one
+      does, because naming one of eight would be wrong most of the time
 - [x] `pid` — process identifier
 - [x] `ppid` — parent process identifier
 - [x] `instance.id` — PID plus creation-time-safe unique identity (`ProcessKey`)
@@ -653,8 +654,10 @@ term all use it, and it never changes even when the display name differs per pla
 - [ ] `product` — product metadata
 - [ ] `product.version`
 - [ ] `file.version`
-- [ ] `package` — MSIX / Flatpak / Snap / `.app`
-- [ ] `app.id` — platform application ID
+- [ ] 🟡 `package` — the distribution's own database, Flatpak, snap and AppImage; MSIX and `.app`
+      are Windows and macOS
+- [ ] 🟡 `app.id` — read for Flatpak and snap; neither could be verified live on the machine this
+      was written on, which has neither installed
 - [ ] `bundle.id` — macOS bundle identifier
 - [x] `container.id` — every runtime writes its own cgroup shape and they all bury a long
       hexadecimal id somewhere, so the id is looked for rather than the layout: there is always
@@ -671,7 +674,8 @@ term all use it, and it never changes even when the display name differs per pla
 - [x] `exe.size` — of the resolved target, not of the `/proc` link. Asking the link its length gives
       nought, which is how this first reported every program as being no bytes long
 - [x] `exe.modified`
-- [ ] `exe.created`
+- [ ] 🟡 `exe.created` — `statx` where the filesystem carries a birth time, and honestly unknown
+      where it does not, which is most of them
 - [ ] `subsystem` — GUI/console/native; PE only, `n/a` for ELF
 - [x] `interpreter` — `PT_INTERP`, or the shebang's program for a script. A shebang is as real a way
       to start a program on Linux as an ELF header, and reporting "not an executable" for every shell
@@ -680,7 +684,7 @@ term all use it, and it never changes even when the display name differs per pla
       **No interpreter and no permission to look are different answers.** The first means statically
       linked; the second means nobody could check. Collapsing them made the report call every other
       user's process statically linked — a confident claim made out of an absence (§5.3)
-- [ ] `runtime` — native/.NET/JVM/Python, from the module list
+- [x] `runtime` — native, .NET, JVM or Python, from the module list rather than guessed from a name
 
 # 15. Process table — CPU fields
 
@@ -1198,8 +1202,8 @@ Categories:
       other is a process a user started that is root now, which is the more interesting of the two
 - [ ] Packaged application — needs `package` (§14)
 - [ ] Managed runtime — needs `runtime` (§14)
-- [ ] Unsigned executable — needs `signature.status` (§21)
-- [ ] Invalid signature
+- [x] Unsigned — no signature stands behind the package, which is most of a machine built locally executable — needs `signature.status` (§21)
+- [x] Invalid signature — the image no longer matches what the package recorded
 - [ ] Suspicious reputation — needs opt-in reputation
 - [x] High CPU
 - [x] High memory
@@ -3575,19 +3579,20 @@ The classes exist in the action broker; the confirmation policy that reads them 
 
 # 70. Reputation and signature verification
 
-- [ ] The program distinguishes, and never conflates: hash calculation · local signature verification ·
+- [x] The program distinguishes, and never conflates: hash calculation · local signature verification ·
       trust-chain verification · online reputation query · file submission
 
 Status vocabulary — exactly these, no synonyms:
 
-- [ ] Verified
-- [ ] Valid but untrusted chain
+- [x] Verified — the image still matches the digest its package recorded
+- [ ] Valid but untrusted chain — a package database records that something signed, not who, so
+      this needs a real chain and Linux packaging does not offer one
 - [ ] Unsigned
 - [ ] Invalid signature
-- [ ] Revoked
-- [ ] Expired
-- [ ] Verification error
-- [ ] Not checked
+- [ ] Revoked — needs a revocation list, which no package database keeps
+- [ ] Expired — needs a certificate with a validity period, which a package signature is not
+- [x] Verification error — the databases could not be read
+- [x] Not checked — nobody asked; verification is opt-in and costs a read of the file
 
 - [ ] Online providers are plugins or integrations with explicit privacy controls
 
