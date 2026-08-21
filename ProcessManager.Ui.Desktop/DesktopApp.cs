@@ -133,7 +133,11 @@ public static class DesktopApp {
           // it passes. Shown rather than shown modally: a modal one would block this callback and
           // the loop would never be told to exit.
           if (window.OpenExecutableProperties() is { } file) {
-            description += $"file box:     {file.Text}\n";
+            // How many facts it holds rather than which file it described. The count is the
+            // empty-box detector — a layout that lost its label reports one line and a picture of a
+            // grey rectangle — and the name of a program on the capturing machine belongs in neither
+            // a log nor a repository.
+            description += $"file box:     {file.Description.Split('\n').Length} lines\n";
             var filePng = Path.Combine(directory, "file.png");
             var fileSize = GtkCapture.Window(filePng, out var fileFailure, file.Text);
             description += fileSize is { } shown
