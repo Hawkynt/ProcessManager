@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using Hawkynt.ProcessManager.Model;
 using Hawkynt.ProcessManager.Query;
 using Hawkynt.ProcessManager.Sampling;
 
@@ -87,6 +88,18 @@ public sealed record UserSettings {
 
   /// <summary>Draw the terminal's history columns with block characters rather than ASCII.</summary>
   public bool BlockCharacters { get; init; } = true;
+
+  /// <summary>
+  /// How the terminal draws an in-row history, or null to let it decide from the terminal (PRD §57.4).
+  /// </summary>
+  /// <remarks>
+  /// Null is the default and is not the same as any of the four: it means the terminal reads the
+  /// locale and the <c>TERM</c> it was given and picks what that terminal can actually draw. Somebody
+  /// who has said "braille" has said it about every terminal they will ever run this in, which is a
+  /// stronger claim and is theirs to make — so a stated style is honoured even where the font may not
+  /// have the glyphs, and the empty column that results is the answer to a question they asked.
+  /// </remarks>
+  public GraphStyle? TerminalGraphs { get; init; }
 
   /// <summary>The columns the window opens with.</summary>
   public ProcessField[] DesktopColumns { get; init; } = [];
@@ -426,6 +439,20 @@ public sealed record UserSettings {
 
           break;
 
+        case "tui.graphs":
+          // "auto" is written out as the absence of a stated style rather than as a fifth member of
+          // the enum, so that a file saying "auto" and a file saying nothing mean the same thing.
+          settings = value.ToLowerInvariant() switch {
+            "auto" => settings with { TerminalGraphs = null },
+            "blocks" => settings with { TerminalGraphs = GraphStyle.Blocks },
+            "braille" => settings with { TerminalGraphs = GraphStyle.Braille },
+            "ascii" => settings with { TerminalGraphs = GraphStyle.Ascii },
+            "numbers" or "none" => settings with { TerminalGraphs = GraphStyle.Numbers },
+            _ => settings,
+          };
+
+          break;
+
         case "columns.desktop":
           if (TryParseFields(value, out var desktop))
             settings = settings with { DesktopColumns = desktop };
@@ -646,6 +673,18 @@ public sealed record UserSettings {
       text.AppendLine();
       text.AppendLine("# The performance page opens tightened up, with its diagnostics block open.");
       text.AppendLine("performance.density=compact");
+    }
+
+    if (this.TerminalGraphs is { } graphs) {
+      text.AppendLine();
+      text.AppendLine("# How the terminal draws an in-row history: blocks, braille, ascii or numbers.");
+      text.AppendLine("# Leave it out, or say auto, to let the terminal pick what it can draw.");
+      text.Append("tui.graphs=").AppendLine(graphs switch {
+        GraphStyle.Braille => "braille",
+        GraphStyle.Ascii => "ascii",
+        GraphStyle.Numbers => "numbers",
+        _ => "blocks",
+      });
     }
 
     if (!this.TerminalMouse) {

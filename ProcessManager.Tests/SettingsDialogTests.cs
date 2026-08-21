@@ -200,4 +200,23 @@ public sealed class SettingsDialogTests {
     Assert.That(round.CpuMode, Is.EqualTo(CpuPercentMode.PerCore));
   }
 
+
+  /// <summary>
+  /// No two pickers wear the same caption, and none is unlabelled.
+  /// </summary>
+  /// <remarks>
+  /// The captions used to be matched by a chain of reference comparisons whose last branch was
+  /// "otherwise it must be the grouping one". Adding a fourth picker therefore gave it the third
+  /// one's label and put it in the third one's row — a defect a green suite could not see and a
+  /// screenshot showed at once.
+  /// </remarks>
+  [Test]
+  public void EveryPickerHasItsOwnCaption() {
+    var captions = Dialog(new()).PickerCaptions;
+
+    Assert.That(captions, Is.Unique);
+    Assert.That(captions, Has.None.Empty);
+    Assert.That(captions, Has.Count.GreaterThanOrEqualTo(4));
+  }
+
 }

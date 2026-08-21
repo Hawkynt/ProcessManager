@@ -4036,10 +4036,14 @@ about a preferences file (§81).
 - [ ] **History** — enable persistence · retention · storage size
 - [ ] **Privacy** — telemetry · crash reporting · recent commands · saved searches
 - [ ] 🟡 **TUI** — key bindings are a `keys.conf` beside the settings file (§57.3), the mouse is
-      `tui.mouse` and the block ramp is `blocks`. The colours are not settable at all, and the
-      braille style is per run rather than remembered: `GraphStyle` lives in the terminal assembly
-      and the settings record is in Core, so persisting it means moving the enum — worth doing and
-      not worth doing quietly inside an accessibility change
+      `tui.mouse`, and how a history column is drawn is `tui.graphs`: blocks, braille, punctuation,
+      the figures, or `auto` to let the terminal decide from what it can draw. `GraphStyle` moved
+      into Core to make that possible, which is the whole of why it lives there rather than beside
+      the painter. Saying nothing and saying `auto` are the same thing, and the older `blocks=false`
+      still means punctuation. The picker in the settings box replaced a tickbox that could only ever
+      say "these two or those two", which left braille — twice the samples in the same width —
+      reachable from a flag and from nowhere a person would look. **The colours are still not
+      settable at all**, and that is what keeps this partial
 - [ ] **Advanced** — expensive collectors · debugging functionality · plugins · experimental APIs
 
 ---

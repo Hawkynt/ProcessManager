@@ -1,5 +1,6 @@
 using System.Globalization;
 using Hawkynt.NativeForms;
+using Hawkynt.ProcessManager.Model;
 using Hawkynt.ProcessManager.Query;
 using Hawkynt.ProcessManager.Sampling;
 using Hawkynt.ProcessManager.Settings;
@@ -108,7 +109,30 @@ public sealed class SettingsDialog : Form {
   private readonly Label _groupingCaption = new() { Text = "Group the process list by" };
   private readonly ComboBox _grouping = new() { DropDownStyle = ComboBoxStyle.DropDownList };
 
-  private readonly CheckBox _blocks = new() { Text = "Terminal: draw history columns with block characters" };
+  /// <summary>
+  /// How the terminal draws a history column, including letting it decide for itself.
+  /// </summary>
+  /// <remarks>
+  /// A picker rather than the tickbox this used to be. The tickbox could only say "blocks or ASCII",
+  /// which left the braille style — twice the samples in the same width — reachable from a flag and
+  /// from nowhere a person would find it, and unremembered between runs either way.
+  /// </remarks>
+  private readonly ComboBox _graphs = new() { DropDownStyle = ComboBoxStyle.DropDownList };
+
+  private readonly Label _graphsCaption = new() { Text = "Terminal history columns" };
+
+  /// <summary>
+  /// The offered styles, in the order of how much a terminal has to be able to draw. Null is first
+  /// because it is the default and because it is the answer that is right on a terminal nobody here
+  /// has seen.
+  /// </summary>
+  private static readonly (GraphStyle? Style, string Label)[] _Graphs = [
+    (null, "whatever the terminal can draw"),
+    (GraphStyle.Blocks, "blocks — 1 sample a column, 8 levels"),
+    (GraphStyle.Braille, "braille — 2 samples a column, 4 levels"),
+    (GraphStyle.Ascii, "punctuation, for a plainer terminal"),
+    (GraphStyle.Numbers, "no plot — the figures instead"),
+  ];
   private readonly CheckBox _mouse = new() { Text = "Terminal: read the mouse" };
 
   private readonly Label _file = new();
@@ -211,7 +235,7 @@ public sealed class SettingsDialog : Form {
     this.Pair(this._groupingCaption, this._grouping);
 
     this.Section("The terminal front-end", _HeadingGap);
-    this.Row(this._blocks);
+    this.Pair(this._graphsCaption, this._graphs);
     this.Row(this._mouse);
 
     // A picker's caption is a separate label, so the picker itself has no text to be announced by
@@ -220,7 +244,6 @@ public sealed class SettingsDialog : Form {
     foreach (var (picker, caption) in (ReadOnlySpan<(ComboBox Picker, Label Caption)>)[
       (this._interval, this._intervalCaption),
       (this._cpuMode, this._cpuCaption),
-      (this._grouping, this._groupingCaption),
     ]) {
       picker.AccessibleName = caption.Text;
       caption.AccessibleRole = AccessibleRole.StaticText;
@@ -284,7 +307,10 @@ public sealed class SettingsDialog : Form {
         CompactPerformancePage = this._compact.Checked,
         CpuMode = this._cpuMode.SelectedIndex == 1 ? CpuPercentMode.PerCore : CpuPercentMode.Normalized,
         Grouping = _Groupings[Math.Clamp(this._grouping.SelectedIndex, 0, _Groupings.Length - 1)],
-        BlockCharacters = this._blocks.Checked,
+        // The older key is kept in step rather than left behind: a build without tui.graphs reads
+        // only that one, and it must not come back saying ASCII because somebody chose braille here.
+        TerminalGraphs = _Graphs[Math.Clamp(this._graphs.SelectedIndex, 0, _Graphs.Length - 1)].Style,
+        BlockCharacters = _Graphs[Math.Clamp(this._graphs.SelectedIndex, 0, _Graphs.Length - 1)].Style != GraphStyle.Ascii,
         TerminalMouse = this._mouse.Checked,
         ManualRefresh = manual,
       };
@@ -320,11 +346,47 @@ public sealed class SettingsDialog : Form {
   /// <summary>How many settings the box offers — the empty-box detector a picture cannot give.</summary>
   public int RowCount => this._rows.Count;
 
-  private string CaptionOf(ComboBox picker) {
-    if (ReferenceEquals(picker, this._interval))
-      return this._intervalCaption.Text;
+  /// <summary>
+  /// What every picker in the box is called, in the order they appear.
+  /// </summary>
+  /// <remarks>
+  /// Exposed for one assertion: that no two of them share a caption. They used to be matched by a
+  /// chain of comparisons ending in "otherwise it is the last one", so a fourth picker came up
+  /// wearing the third one's label, in the third one's place — visible in a photograph and to
+  /// nothing else.
+  /// </remarks>
+  public IReadOnlyList<string> PickerCaptions {
+    get {
+      var captions = new List<string>();
+      foreach (var (picker, _) in this.Pickers())
+        captions.Add(this.CaptionOf(picker));
 
-    return ReferenceEquals(picker, this._cpuMode) ? this._cpuCaption.Text : this._groupingCaption.Text;
+      return captions;
+    }
+  }
+
+  /// <summary>
+  /// Every picker and the label that names it.
+  /// </summary>
+  /// <remarks>
+  /// One table rather than a chain of comparisons ending in "otherwise it must be the last one".
+  /// That fallthrough was silent and wrong the moment a fourth picker was added: it came up wearing
+  /// the third one's caption, in the third one's place, and no assertion could see it — only a
+  /// photograph could.
+  /// </remarks>
+  private (ComboBox Picker, Label Caption)[] Pickers() => [
+    (this._interval, this._intervalCaption),
+    (this._cpuMode, this._cpuCaption),
+    (this._grouping, this._groupingCaption),
+    (this._graphs, this._graphsCaption),
+  ];
+
+  private string CaptionOf(ComboBox picker) {
+    foreach (var (candidate, caption) in this.Pickers())
+      if (ReferenceEquals(candidate, picker))
+        return caption.Text;
+
+    return string.Empty;
   }
 
   #region filling and reading back
@@ -335,7 +397,19 @@ public sealed class SettingsDialog : Form {
     this._hideTabs.Checked = settings.HideUnavailableTabs;
     this._busiest.Checked = settings.PerformanceOpensOnBusiest;
     this._compact.Checked = settings.CompactPerformancePage;
-    this._blocks.Checked = settings.BlockCharacters;
+    if (this._graphs.Items.Count == 0)
+      foreach (var (_, label) in _Graphs)
+        this._graphs.Items.Add(label);
+
+    // An older file that only said "blocks=false" states no style, and opens showing the punctuation
+    // ramp rather than "whatever this terminal can draw" — which is what it was actually asking for.
+    var chosen = settings.TerminalGraphs ?? (settings.BlockCharacters ? null : GraphStyle.Ascii);
+    this._graphs.SelectedIndex = 0;
+    for (var i = 0; i < _Graphs.Length; ++i)
+      if (_Graphs[i].Style == chosen) {
+        this._graphs.SelectedIndex = i;
+        break;
+      }
     this._mouse.Checked = settings.TerminalMouse;
     this._cpuMode.SelectedIndex = settings.CpuMode == CpuPercentMode.PerCore ? 1 : 0;
 
@@ -513,10 +587,12 @@ public sealed class SettingsDialog : Form {
   }
 
   private Label CaptionFor(Control field) {
-    if (ReferenceEquals(field, this._interval))
-      return this._intervalCaption;
+    foreach (var (picker, caption) in this.Pickers())
+      if (ReferenceEquals(picker, field))
+        return caption;
 
-    return ReferenceEquals(field, this._cpuMode) ? this._cpuCaption : this._groupingCaption;
+    // Only reachable for a row that is not a picker at all, which the caller does not ask about.
+    return this._groupingCaption;
   }
 
   #endregion
