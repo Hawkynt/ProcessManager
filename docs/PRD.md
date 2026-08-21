@@ -511,17 +511,19 @@ Every table:
       two arrows say "sorted twice" and nothing about which one wins
 - [x] Keyboard sort — `F6`/`Shift+F6` step the sort through the columns that are showing and `F7`
       reverses it, in both front-ends
-- [ ] 🟡 Freeze / pin columns — terminal only; the first column is pinned by default and `#` moves
-      the boundary. The window's list paints every column from one horizontal offset and has no
-      pinned region to paint into, so this needs a seam in the toolkit rather than work here
+- [x] Freeze / pin columns — the first column is pinned in both front-ends, and the boundary moves
+      with `#` in the terminal and Ctrl+Shift+P in the window. A count of leading columns rather than
+      a set of ticked ones: a pinned third column with two scrolling ones in front of it leaves a
+      hole beside it that nothing can fill
 - [x] Auto-size column / all columns — measured against the rows on screen rather than every
       process, because a column fitted to the widest value in the whole table is usually fitted to
       something scrolled out of sight
 - [x] Copy cell — `y` in the terminal, over OSC 52; `Ctrl+Shift+C` in the window
 - [x] Copy row — `Y` in the terminal, `Ctrl+C` in the window
-- [ ] 🟡 Copy selected rows / columns — the rows are done in both front-ends: one key copies every
-      ticked row with a header line. A column is not, in either — there is no cell selection to copy
-      one from (§95)
+- [x] Copy selected rows / columns — one key copies every ticked row with a header line; `Ctrl+Y` in
+      the terminal and Ctrl+Shift+D in the window take one column down every row, the ticked ones if
+      any are ticked and everything on screen otherwise. A column copy wants a column and not a cell
+      selection, and both front-ends have had a column cursor since their headers grew gestures (§95)
 - [x] Export table — `X` in the terminal and Ctrl+E in the window, in whichever of the six formats
       the file name asks for
 - [x] Text filter
@@ -552,7 +554,9 @@ that took the text — which is why the status line says the text was *offered* 
 also reachable through the export key, which writes a file no terminal setting can veto.
 
 Named **column sets**. Each stores its visible fields and their ordering; widths come from the
-registry, and sorting, grouping and pinned columns are not stored yet.
+registry, and sorting and grouping are not stored in a set. How many columns are pinned is kept per
+front-end rather than per set — the window and the terminal keep their own column orders, and five
+pinned columns in a wide list mean nothing at all in an eighty-column terminal.
 
 - [x] Basic
 - [x] Performance — as `cpu`
@@ -560,7 +564,11 @@ registry, and sorting, grouping and pinned columns are not stored yet.
 - [x] Security
 - [x] I/O debugging — as `io`
 - [ ] Network — blocked on §18
-- [ ] 🟡 Full forensic — `expert` is close, but has none of the security or I/O detail
+- [x] Full forensic — everything `expert` has, plus who the process really is and what it is doing
+      to the disk. Deliberately the dearest set there is: the package, the digest and the descriptor
+      count each cost a reading nothing else takes, and asking for a forensic table is asking to pay
+      for them (§5.4). It is also wider than any terminal, which is what the pinned run and the
+      sideways scroll are for
 - [x] Minimal recovery — as `minimal`
 
 Reachable as `--columns @security`. A set saved in the file replaces a built-in preset of the same
@@ -573,10 +581,19 @@ everybody's settings could never be improved again.
 
 # 12. Update / refresh system
 
-- [ ] 🟡 Intervals 250 ms · 500 ms · **1 s** · 2 s · 5 s · 10 s · paused · manual — settable from
-      the CLI and persisted; the in-app picker and pause are TUI-only
+- [x] Intervals 250 ms · 500 ms · **1 s** · 2 s · 5 s · 10 s · paused · manual — settable from the
+      CLI, persisted, and pickable in both front-ends: View ▸ Refresh in the window and `d` in the
+      terminal, over one list of rates the two share
 - [x] Default 1 second
-- [ ] 🟡 Pause while preserving selection
+- [x] Pause while preserving selection
+
+**Paused and by hand are two entries.** Both stop the tick, and only the second is remembered: a
+pause is flipped for a few seconds to read a row that will not hold still, and a monitor that opened
+paused because it was paused when it was last closed is a monitor showing a table of nothing at all.
+The rate underneath is kept either way, so switching the tick back on returns to the rate somebody
+chose rather than to the default. Neither disturbs the list — nothing is rebuilt while the tick is
+off, so the selection, the expanded nodes and the scroll position are where they were left, and both
+front-ends say on screen which of the two states they are in.
 
 Refresh preserves:
 
@@ -3507,6 +3524,8 @@ and a terminal that gave it all of them drew nothing at all of whatever was orde
 - [x] `c` columns
 - [x] `p` pause
 - [x] `r` refresh
+- [x] `d` how often it samples — the picker of §12, on the letter every other terminal monitor binds
+      a sampling delay to
 - [x] `x` action menu
 - [x] `t` terminate / end-task menu
 - [x] `S` suspend / resume
@@ -4243,6 +4262,15 @@ protection · hash · reputation
 **Network:** name · PID · send · receive · connections · listening ports
 
 - [ ] Blocked on §18
+
+**Full forensic:** the expert set, plus effective user · privilege change · capabilities ·
+security context · seccomp · no-new-privileges · tracer · read rate · write rate · descriptors ·
+package · SHA-256
+
+- [x] Available. The dearest set in the file by a wide margin, and the only one where that is the
+      point: the package, the digest and the descriptor count each cost a reading the sampler does
+      not otherwise take. It is twenty-five columns, which is wider than any terminal — the pinned
+      run holds the name still and the rest is reached by scrolling sideways
 
 # 95. Copy behaviour
 
