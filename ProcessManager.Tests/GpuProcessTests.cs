@@ -14,9 +14,18 @@ namespace Hawkynt.ProcessManager.Tests;
 /// interface is a text file, and a text file is testable on every CI leg (PRD §9.1, §9.2). What
 /// cannot be recorded is NVML, which is a library — so the tests that matter about it are the ones
 /// asserting what happens when it is not there, which is the case on every machine running this.
+/// <para>
+/// Run twice, like the probe's own fixture tests: once down the syscall path this machine would
+/// use, once down the portable one the Windows and macOS legs are forced onto. They must agree
+/// field for field, and the first time they did not was the descriptor listing — <c>getdents64</c>
+/// returns every entry and the managed path was returning only the directories, so the descriptors
+/// under <c>fdinfo</c>, which are files, were invisible off Linux. Running both here is what turns
+/// that from somebody else's red CI into a failure on the machine it can be debugged on.
+/// </para>
 /// </remarks>
-[TestFixture]
-public sealed class GpuProcessTests {
+[TestFixture(false, TestName = "GpuProcessTests (syscalls)")]
+[TestFixture(true, TestName = "GpuProcessTests (portable file access)")]
+public sealed class GpuProcessTests(bool portable) {
 
   #region the kernel's own client accounting
 
@@ -180,7 +189,8 @@ public sealed class GpuProcessTests {
   private static string SysRootWithNvidia
     => Path.Combine(TestContext.CurrentContext.TestDirectory, "Fixtures", "sys-gpu-nvidia");
 
-  private static LinuxProbeOptions Options(bool gpu, string? sysRoot = null) => new() {
+  private LinuxProbeOptions Options(bool gpu, string? sysRoot = null) => new() {
+    UsePortableFileAccess = portable,
     ProcRoot = ProcRoot,
     SysRoot = sysRoot ?? SysRoot,
     PasswdPath = Path.Combine(ProcRoot, "passwd"),
@@ -199,8 +209,8 @@ public sealed class GpuProcessTests {
     return default;
   }
 
-  private static SystemSnapshot Sampled(bool gpu, string? sysRoot = null) {
-    using var probe = new LinuxProbe(Options(gpu, sysRoot));
+  private SystemSnapshot Sampled(bool gpu, string? sysRoot = null) {
+    using var probe = new LinuxProbe(this.Options(gpu, sysRoot));
     var snapshot = new SystemSnapshot();
     probe.Sample(snapshot);
     return snapshot;
@@ -213,7 +223,7 @@ public sealed class GpuProcessTests {
   /// </summary>
   [Test]
   public void WithTheCollectorOffEveryGraphicsFieldSaysSoRatherThanReadingNought() {
-    var snapshot = Sampled(gpu: false);
+    var snapshot = this.Sampled(gpu: false);
     var record = Find(snapshot, 100);
 
     Assert.Multiple(() => {
@@ -229,7 +239,7 @@ public sealed class GpuProcessTests {
 
   [Test]
   public void OneClientHeldThroughTwoDescriptorsIsCountedOnce() {
-    var record = Find(Sampled(gpu: true), 100);
+    var record = Find(this.Sampled(gpu: true), 100);
 
     // The fixture holds the same client on descriptors 3 and 7. Summing them would report eight
     // seconds of rendering where the kernel counted four, and 48 MB of memory where it counted 24.
@@ -239,7 +249,7 @@ public sealed class GpuProcessTests {
 
   [Test]
   public void TwoDifferentClientsOfOneProcessDoAddUp() {
-    var record = Find(Sampled(gpu: true), 200);
+    var record = Find(this.Sampled(gpu: true), 200);
 
     Assert.That(record.GpuGraphicsNs.Value, Is.EqualTo(1_000_000_000ul), "500 ms on each of two clients");
     Assert.That(record.GpuDedicatedBytes.Value, Is.EqualTo((524_288ul + 1024) * 1024));
@@ -247,7 +257,7 @@ public sealed class GpuProcessTests {
 
   [Test]
   public void EachProcessIsNamedWithTheAdapterItsClientsAreOn() {
-    var snapshot = Sampled(gpu: true);
+    var snapshot = this.Sampled(gpu: true);
 
     Assert.That(Find(snapshot, 100).GpuAdapter, Is.EqualTo("card0"), "the Intel part, by PCI address");
     Assert.That(Find(snapshot, 200).GpuAdapter, Is.EqualTo("card1"), "the AMD card, by PCI address");
@@ -259,7 +269,7 @@ public sealed class GpuProcessTests {
   /// </summary>
   [Test]
   public void AProcessWithNoClientReadsAsAMeasuredNoughtAndNamesNoAdapter() {
-    var record = Find(Sampled(gpu: true), 300);
+    var record = Find(this.Sampled(gpu: true), 300);
 
     Assert.Multiple(() => {
       Assert.That(record.GpuGraphicsNs.HasValue, Is.True);
@@ -276,7 +286,7 @@ public sealed class GpuProcessTests {
   /// </summary>
   [Test]
   public void AnEngineTheDriverDoesNotPublishSaysSoRatherThanReadingNought() {
-    var record = Find(Sampled(gpu: true), 100);
+    var record = Find(this.Sampled(gpu: true), 100);
 
     Assert.That(record.GpuComputeNs.HasValue, Is.False);
     Assert.That(record.GpuComputeNs.Reason, Is.EqualTo(UnknownReason.NotImplementedHere));
@@ -298,7 +308,7 @@ public sealed class GpuProcessTests {
   /// </remarks>
   [Test]
   public void AnAdapterNothingCanBeAskedAboutMakesNoughtUnsayableForEveryProcess() {
-    var record = Find(Sampled(gpu: true, SysRootWithNvidia), 300);
+    var record = Find(this.Sampled(gpu: true, SysRootWithNvidia), 300);
 
     Assert.Multiple(() => {
       Assert.That(record.GpuDedicatedBytes.HasValue, Is.False, "a card here cannot be read, so this is not nought");
@@ -314,7 +324,7 @@ public sealed class GpuProcessTests {
   /// </summary>
   [Test]
   public void AnUnreadableCardDoesNotSilenceTheOnesThatAnswer() {
-    var record = Find(Sampled(gpu: true, SysRootWithNvidia), 100);
+    var record = Find(this.Sampled(gpu: true, SysRootWithNvidia), 100);
 
     Assert.That(record.GpuGraphicsNs.Value, Is.EqualTo(4_000_000_000ul));
     Assert.That(record.GpuAdapter, Is.EqualTo("card0"));
@@ -331,6 +341,7 @@ public sealed class GpuProcessTests {
   public void AMachineWhoseAdaptersCannotBeReadRendersCapabilityStateAndNotANought() {
     var desktop = Path.Combine(TestContext.CurrentContext.TestDirectory, "Fixtures", "proc-desktop");
     using var probe = new LinuxProbe(new() {
+      UsePortableFileAccess = portable,
       ProcRoot = desktop,
       // A tree with no /sys/class/drm in it at all, which is what a machine with no adapter the
       // program can name looks like from here.
@@ -372,7 +383,7 @@ public sealed class GpuProcessTests {
   /// </summary>
   [Test]
   public void WithoutTheVendorLibraryTheReadingsItAloneHasCarryAReason() {
-    var record = Find(Sampled(gpu: true), 100);
+    var record = Find(this.Sampled(gpu: true), 100);
 
     Assert.That(record.GpuBusyPercent.HasValue, Is.False);
     Assert.That(record.GpuBusyEngine, Is.EqualTo(GpuEngine.Unknown));

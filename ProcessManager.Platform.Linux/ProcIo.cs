@@ -38,7 +38,10 @@ internal abstract class ProcIo {
   /// <summary>Counts a directory's entries, excluding <c>.</c> and <c>..</c>. -1 on failure.</summary>
   public abstract int CountDirectoryEntries(scoped ReadOnlySpan<byte> nulTerminatedPath, Span<byte> scratch, out int errno);
 
-  /// <summary>Collects the numeric directory names — the process ids under <c>/proc</c>.</summary>
+  /// <summary>
+  /// Collects the numerically named entries — the process ids under <c>/proc</c>, and the open
+  /// descriptors under <c>/proc/[pid]/fdinfo</c>, which are files rather than directories.
+  /// </summary>
   public abstract bool ListNumericEntries(scoped ReadOnlySpan<byte> nulTerminatedPath, Span<byte> scratch, List<int> pids);
 
   /// <summary>Resolves a symlink, or null.</summary>
@@ -146,10 +149,17 @@ internal sealed class ManagedProcIo : ProcIo {
     }
   }
 
+  /// <remarks>
+  /// Every entry, not only the directories. <c>getdents64</c> does not filter by type and neither
+  /// may this, or the two paths answer differently — which they did: the pids under <c>/proc</c> are
+  /// directories, but the descriptors under <c>/proc/[pid]/fdinfo</c> are files, so the portable
+  /// path found none of them and the graphics figures were empty on every leg but Linux while the
+  /// parser behind them was perfectly sound.
+  /// </remarks>
   public override bool ListNumericEntries(scoped ReadOnlySpan<byte> nulTerminatedPath, Span<byte> scratch, List<int> pids) {
     var path = Decode(nulTerminatedPath);
     try {
-      foreach (var entry in Directory.EnumerateDirectories(path))
+      foreach (var entry in Directory.EnumerateFileSystemEntries(path))
         if (int.TryParse(Path.GetFileName(entry), out var pid) && pid > 0)
           pids.Add(pid);
 
