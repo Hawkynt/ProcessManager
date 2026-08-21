@@ -2619,9 +2619,9 @@ public sealed class MainWindow : Form {
   /// <remarks>
   /// The tree is one of the entries rather than a separate toggle, because picking one of these is
   /// picking how the list is arranged and the tree is one of the answers. §83's other three —
-  /// application, package and publisher — are absent: naming a group needs something to read it off,
-  /// and this program has no notion of an application, no package database and no signature
-  /// verification. A heading that guessed would be a heading that is not true.
+  /// application and publisher — are absent: naming a group needs something to read it off, and this
+  /// program has no notion of an application and no signature verification. A heading that guessed
+  /// would be a heading that is not true.
   /// </remarks>
   private ToolStripMenuItem BuildGroupingMenu() {
     var menu = new ToolStripMenuItem("Group by");
@@ -2634,6 +2634,7 @@ public sealed class MainWindow : Form {
       (ProcessGrouping.Executable, "Executable"),
       (ProcessGrouping.Container, "Container"),
       (ProcessGrouping.Cgroup, "Cgroup"),
+      (ProcessGrouping.Package, "Package"),
     ]) {
       var chosen = grouping;
       menu.DropDownItems.Add(Item(label, () => this.GroupBy(chosen)));

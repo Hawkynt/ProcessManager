@@ -150,6 +150,7 @@ public sealed class GroupingTests {
       ProcessGrouping.Executable,
       ProcessGrouping.Container,
       ProcessGrouping.Cgroup,
+      ProcessGrouping.Package,
     ]) {
       var view = new ProcessView { Grouping = grouping };
       view.Rebuild(snapshot, delta);
@@ -160,6 +161,40 @@ public sealed class GroupingTests {
         Assert.That(group.Label, Does.Not.EqualTo("—"), grouping.ToString());
       }
     }
+  }
+
+  /// <summary>
+  /// "Nobody looked" and "nothing claims this file" are different answers, and only the second is a
+  /// finding. A heading that said "not packaged" for a session that never read a package database
+  /// would be the confident zero this project keeps finding (PRD §72.3, §5.4).
+  /// </summary>
+  [Test]
+  public void APackageNobodyLookedUpSaysSoRatherThanSayingNotPackaged() {
+    var (snapshot, delta) = Machine();
+    var view = new ProcessView { Grouping = ProcessGrouping.Package };
+    view.Rebuild(snapshot, delta);
+
+    // The fixture's records are default-constructed, which is exactly the state of a run that did
+    // not ask for package identity.
+    Assert.That(Labels(view), Is.EqualTo(new[] { "package not looked up" }));
+
+    var records = snapshot.Processes;
+    var checkedOne = records[0];
+    checkedOne.Package = PackageIdentity.NotPackaged;
+    var packaged = records[1];
+    packaged.Package = new(PackageSource.Pacman, "bash", "5.3.15-1", null, UnknownReason.None);
+
+    var second = new SystemSnapshot();
+    var buffer = second.PrepareProcesses(2);
+    buffer[0] = checkedOne;
+    buffer[1] = packaged;
+
+    var secondDelta = new SnapshotDelta();
+    secondDelta.Update(null, second, CpuPercentMode.Normalized);
+
+    var after = new ProcessView { Grouping = ProcessGrouping.Package, SortColumn = ProcessField.Pid, SortDescending = false };
+    after.Rebuild(second, secondDelta);
+    Assert.That(Labels(after), Is.EqualTo(new[] { "not packaged", "bash 5.3.15-1" }));
   }
 
   [Test]

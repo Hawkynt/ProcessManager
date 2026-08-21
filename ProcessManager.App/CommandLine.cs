@@ -247,6 +247,10 @@ internal sealed record CommandLineOptions {
   public bool WantsPackageIdentity
     => this.Wants(ProcessField.Package)
     || this.Wants(ProcessField.ApplicationId)
+    // Grouping by package is somebody naming the column as much as a --columns argument is: the
+    // headings are the field, and a run that did not collect it would head every row "package not
+    // looked up" (PRD §83).
+    || this.Grouping == ProcessGrouping.Package
     || this.WantsPackageVerification;
 
   /// <summary>
@@ -588,7 +592,9 @@ internal sealed record CommandLineOptions {
           break;
         case "--group": {
           if (!TryValue(args, ref i, inlineValue, out var grouping))
-            return options with { Error = "--group needs one of: none, tree, user, session, service, executable, container, cgroup" };
+            return options with {
+              Error = "--group needs one of: none, tree, user, session, service, executable, container, cgroup, package",
+            };
           if (!UserSettings.TryParseGrouping(grouping, out var parsedGrouping))
             return options with { Error = $"there is no grouping called '{grouping}'" };
 
@@ -866,7 +872,7 @@ internal sealed record CommandLineOptions {
       --tree             show the process tree (with --kill: the whole subtree)
       --flat             start with a flat list sorted by CPU rather than a tree
       --group <what>     group the rows: none, tree, user, session, service, executable,
-                         container, cgroup
+                         container, cgroup, package
       --user             only this user's processes
       --interval <s>     seconds between samples (default 1)
       --json             the same as --format=json

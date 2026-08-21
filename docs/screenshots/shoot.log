@@ -15,7 +15,7 @@ command bar:  {X=0,Y=26,Width=1240,Height=30}, 7 items
 content:      {X=168,Y=190,Width=1072,Height=608} showing Processes
 plots:        cpu {X=6,Y=6,Width=392,Height=92}, memory {X=404,Y=6,Width=392,Height=92}, cores {X=802,Y=6,Width=432,Height=92}
 topology:     16 logical, 1 socket(s), hybrid False
-status:       20 of 20 processes  ·  CPU 93.2% (normalized)  ·  memory 125G total, 71.5G free  ·  sample 1.3 ms
+status:       20 of 20 processes  ·  CPU 57.6% (normalized)  ·  memory 125G total, 81.7G free  ·  sample 1.6 ms
 capture:      1240x820 -> docs/screenshots/desktop.png
 title:        Process Manager
 bounds:       {X=0,Y=0,Width=1240,Height=820}
@@ -51,7 +51,7 @@ command bar:  {X=0,Y=26,Width=1240,Height=30}, 7 items
 content:      {X=168,Y=190,Width=1072,Height=608} showing Processes
 plots:        cpu {X=6,Y=6,Width=392,Height=92}, memory {X=404,Y=6,Width=392,Height=92}, cores {X=802,Y=6,Width=432,Height=92}
 topology:     16 logical, 1 socket(s), hybrid False
-status:       7 of 20 processes  ·  CPU 89.3% (normalized)  ·  memory 125G total, 71.4G free  ·  sample 1.3 ms
+status:       7 of 20 processes  ·  CPU 57.6% (normalized)  ·  memory 125G total, 81.7G free  ·  sample 1.6 ms
 filtered capture: 1240x820 -> docs/screenshots/desktop-filtered.png
 columns opened:  name:260* pid:70 cpu:78 ws:92 private:96
 columns fitted:  name:114* pid:44 cpu:69 ws:105 private:112
@@ -99,10 +99,10 @@ page expanded: 1180x780 -> docs/screenshots/performance-expanded.png
 shell views:
   Processes        20 row(s) — 20 rows
   Performance      (opens a window of its own)
-  Startup          23 row(s) — 23 entries, 13 of which will run.  As of 17:23:25.
-  Users            4 row(s) — 4 records, 1 of them somebody logged in.  As of 17:23:25.
-  Services         372 row(s) — 372 units, 1 running.  As of 17:23:25.  Starting and stopping them is not implemented yet.
-  Network          3295 row(s) — 3295 sockets, 10 of them traceable to a process from this account.  As of 17:23:25.
+  Startup          23 row(s) — 23 entries, 13 of which will run.  As of 17:41:09.
+  Users            4 row(s) — 4 records, 1 of them somebody logged in.  As of 17:41:09.
+  Services         372 row(s) — 372 units, 1 running.  As of 17:41:09.  Starting and stopping them is not implemented yet.
+  Network          1839 row(s) — 1839 sockets, 10 of them traceable to a process from this account.  As of 17:41:09.
   Find resources   (opens a window of its own)
 properties:   12 tabs, 26 facts on General
 properties general: 1280x640 -> docs/screenshots/properties.png
@@ -117,7 +117,7 @@ properties graphs: 1280x640 -> docs/screenshots/properties-performance.png
 file box:     8 lines
 file capture: 720x249 -> docs/screenshots/file.png
 detail window:procman (43), 1280x640
-detail tab:   Threads, 19 row(s), 21 columns
+detail tab:   Threads, 18 row(s), 21 columns
 thread shot:  1280x640 -> docs/screenshots/threads.png
 stack window: 1 row(s), 8 columns
 stack frames: 1 (0 kernel)

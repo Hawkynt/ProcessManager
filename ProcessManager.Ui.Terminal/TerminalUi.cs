@@ -1449,6 +1449,7 @@ public sealed class TerminalUi {
     (ProcessGrouping.Executable, "Executable", "the image on disk"),
     (ProcessGrouping.Container, "Container", "its container id"),
     (ProcessGrouping.Cgroup, "Cgroup", "the whole cgroup path"),
+    (ProcessGrouping.Package, "Package", "where the image came from"),
   ];
 
   private void GroupBy(ProcessGrouping grouping) {

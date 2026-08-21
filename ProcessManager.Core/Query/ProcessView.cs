@@ -38,10 +38,9 @@ public readonly record struct ProcessGroup(string Label, int Count);
 /// once. <see cref="ProcessView.TreeMode"/> remains as the name the rest of the program already uses
 /// for <see cref="ParentTree"/>.
 /// <para>
-/// §83's remaining three — application, package and publisher — are not here. Naming a group needs
-/// something to read it off, and this program has no notion of an application, no package database
-/// and no signature verification; a grouping that guessed would put processes under headings that
-/// are not true.
+/// §83's remaining two — application and publisher — are not here. Naming a group needs something to
+/// read it off, and this program has no notion of an application and no signature verification; a
+/// grouping that guessed would put processes under headings that are not true.
 /// </para>
 /// </remarks>
 public enum ProcessGrouping : byte {
@@ -69,6 +68,9 @@ public enum ProcessGrouping : byte {
 
   /// <summary>By the whole cgroup path, which is finer than either service or container.</summary>
   Cgroup,
+
+  /// <summary>By the package the executable came out of.</summary>
+  Package,
 
 }
 
@@ -413,6 +415,20 @@ public sealed class ProcessView {
       case ProcessGrouping.Container:
         return FieldAccessor.RawText(ProcessField.ContainerId, in process, delta, index)
           ?? "not in a container";
+
+      // Reading a package costs a database lookup per image, so it is collected only when the run
+      // asked for it (PRD §5.4). "Nobody looked" and "nothing claims this file" are different
+      // answers, and only the second of them is a finding — a heading that said "not packaged" for
+      // a session that never looked would be the confident zero this project keeps finding
+      // (PRD §72.3).
+      case ProcessGrouping.Package:
+        return FieldAccessor.RawText(ProcessField.Package, in process, delta, index)
+          // Not the reason on its own: a record nobody filled in carries the default reason, which
+          // reads "the value is present". PackageSource.Unknown is the signal, exactly as that type
+          // says it is.
+          ?? (process.Package.Reason is UnknownReason.None or UnknownReason.NotSampledYet
+            ? "package not looked up"
+            : "package unknown — " + Humanize.Placeholder(process.Package.Reason));
 
       default:
         return FieldAccessor.RawText(ProcessField.Container, in process, delta, index) ?? "no cgroup";

@@ -3286,7 +3286,11 @@ sorted the table to find.
       naming the slice above it would report every program a user started as their session manager's
 - [x] container
 - [x] cgroup
-- [ ] package — needs a package database this program does not otherwise talk to
+- [ ] 🟡 package — off the same reader §14's package column uses, so a heading and that column can
+      never disagree. `--group package` and a saved `grouping=package` collect it and work; switching
+      to it in a running session heads every row "package not looked up" instead, because reading a
+      package costs a database lookup per image and the probe's expensive readings are chosen when it
+      is built (§5.4). Honest, and half a feature
 - [ ] publisher — needs the signature verification of §70, which is not built
 - [ ] Aggregations follow canonical query rules — a heading's key is read through the same accessor
       the columns and the filters use, so that half holds; but the aggregates themselves are §82's

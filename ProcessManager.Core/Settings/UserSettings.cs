@@ -527,6 +527,7 @@ public sealed record UserSettings {
     ProcessGrouping.Service => "service",
     ProcessGrouping.Executable => "executable",
     ProcessGrouping.Container => "container",
+    ProcessGrouping.Package => "package",
     _ => "cgroup",
   };
 
@@ -545,6 +546,7 @@ public sealed record UserSettings {
       case "executable" or "exe" or "image": grouping = ProcessGrouping.Executable; return true;
       case "container": grouping = ProcessGrouping.Container; return true;
       case "cgroup": grouping = ProcessGrouping.Cgroup; return true;
+      case "package" or "pkg": grouping = ProcessGrouping.Package; return true;
       default: return false;
     }
   }

@@ -147,7 +147,9 @@ public sealed class TerminalGroupingTests {
     using (probe) {
       ui.HandleKey(Key('G'));
       var frame = Frame(ui);
-      foreach (var word in (string[])["Nothing", "Parent tree", "User", "Session", "Service", "Executable", "Container", "Cgroup"])
+      foreach (var word in (string[])[
+        "Nothing", "Parent tree", "User", "Session", "Service", "Executable", "Container", "Cgroup", "Package",
+      ])
         Assert.That(frame, Does.Contain(word));
 
       // Down to "User" — the heading, then Nothing, Parent tree, User.
