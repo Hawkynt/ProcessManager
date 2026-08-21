@@ -29,6 +29,8 @@ public sealed class SnapshotDelta {
   private Rate[] _readBytesPerSecond = [];
   private Rate[] _writeBytesPerSecond = [];
   private Rate[] _otherBytesPerSecond = [];
+  private Rate[] _readOperationsPerSecond = [];
+  private Rate[] _writeOperationsPerSecond = [];
   private Rate[] _pageFaultsPerSecond = [];
   private Rate[] _contextSwitchesPerSecond = [];
   private Rate[] _cyclesPerSecond = [];
@@ -119,6 +121,20 @@ public sealed class SnapshotDelta {
   public Rate ReadBytesPerSecond(int index) => this._readBytesPerSecond[index];
 
   public Rate WriteBytesPerSecond(int index) => this._writeBytesPerSecond[index];
+
+  /// <summary>
+  /// Read and write <em>calls</em> per second, which is a different reading from the byte rates
+  /// beside them (PRD §17).
+  /// </summary>
+  /// <remarks>
+  /// A process moving a megabyte a second in four operations and one moving it in forty thousand
+  /// are the same row under <see cref="ReadBytesPerSecond"/>, and only this says which of them is
+  /// the one making the machine unresponsive.
+  /// </remarks>
+  public Rate ReadOperationsPerSecond(int index) => this._readOperationsPerSecond[index];
+
+  /// <inheritdoc cref="ReadOperationsPerSecond"/>
+  public Rate WriteOperationsPerSecond(int index) => this._writeOperationsPerSecond[index];
 
   /// <summary>True when this process was not in the previous snapshot (the green flash).</summary>
   public bool IsNew(int index) => this._isNew[index];
@@ -246,6 +262,8 @@ public sealed class SnapshotDelta {
     EnsureLength(ref this._readBytesPerSecond, count);
     EnsureLength(ref this._writeBytesPerSecond, count);
     EnsureLength(ref this._otherBytesPerSecond, count);
+    EnsureLength(ref this._readOperationsPerSecond, count);
+    EnsureLength(ref this._writeOperationsPerSecond, count);
     EnsureLength(ref this._pageFaultsPerSecond, count);
     EnsureLength(ref this._contextSwitchesPerSecond, count);
     EnsureLength(ref this._cyclesPerSecond, count);
@@ -286,6 +304,8 @@ public sealed class SnapshotDelta {
         this._readBytesPerSecond[i] = Rate.NotSampledYet;
         this._writeBytesPerSecond[i] = Rate.NotSampledYet;
         this._otherBytesPerSecond[i] = Rate.NotSampledYet;
+        this._readOperationsPerSecond[i] = Rate.NotSampledYet;
+        this._writeOperationsPerSecond[i] = Rate.NotSampledYet;
         this._pageFaultsPerSecond[i] = Rate.NotSampledYet;
         this._contextSwitchesPerSecond[i] = Rate.NotSampledYet;
         this._cyclesPerSecond[i] = Rate.NotSampledYet;
@@ -321,6 +341,8 @@ public sealed class SnapshotDelta {
         this._readBytesPerSecond[i] = Rate.NotSampledYet;
         this._writeBytesPerSecond[i] = Rate.NotSampledYet;
         this._otherBytesPerSecond[i] = Rate.NotSampledYet;
+        this._readOperationsPerSecond[i] = Rate.NotSampledYet;
+        this._writeOperationsPerSecond[i] = Rate.NotSampledYet;
         this._pageFaultsPerSecond[i] = Rate.NotSampledYet;
         this._contextSwitchesPerSecond[i] = Rate.NotSampledYet;
         this._cyclesPerSecond[i] = Rate.NotSampledYet;
@@ -341,6 +363,10 @@ public sealed class SnapshotDelta {
       this._readBytesPerSecond[i] = RateCalculator.PerSecond(before.ReadBytes, process.ReadBytes, elapsed);
       this._writeBytesPerSecond[i] = RateCalculator.PerSecond(before.WriteBytes, process.WriteBytes, elapsed);
       this._otherBytesPerSecond[i] = RateCalculator.PerSecond(before.OtherBytes, process.OtherBytes, elapsed);
+      this._readOperationsPerSecond[i] =
+        RateCalculator.PerSecond(before.ReadOperations, process.ReadOperations, elapsed);
+      this._writeOperationsPerSecond[i] =
+        RateCalculator.PerSecond(before.WriteOperations, process.WriteOperations, elapsed);
       this._pageFaultsPerSecond[i] = RateCalculator.PerSecond(before.PageFaults, process.PageFaults, elapsed);
       this._contextSwitchesPerSecond[i] = RateCalculator.PerSecond(before.ContextSwitches, process.ContextSwitches, elapsed);
       this._cyclesPerSecond[i] = RateCalculator.PerSecond(before.Cycles, process.Cycles, elapsed);

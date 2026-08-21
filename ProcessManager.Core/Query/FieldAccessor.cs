@@ -47,6 +47,8 @@ public static class FieldAccessor {
       case ProcessField.ProportionalSwap: return Humanize.Bytes(process.ProportionalSwapBytes);
       case ProcessField.FileBackedSet: return Humanize.Bytes(process.FileBackedBytes);
       case ProcessField.SharedSet: return Humanize.Bytes(process.SharedResidentBytes);
+      case ProcessField.ShareableWorkingSet: return Humanize.Bytes(ShareableWorkingSet(in process));
+      case ProcessField.StackBytes: return Humanize.Bytes(process.StackBytes);
       case ProcessField.LastCpu:
         // -1 is the platform declining to say, not processor number minus one.
         return process.LastCpu >= 0
@@ -84,6 +86,16 @@ public static class FieldAccessor {
       case ProcessField.ReadBytesPerSecond:
       case ProcessField.WriteBytesPerSecond:
         return Humanize.BytesPerSecond(Rated(delta, index, field));
+
+      case ProcessField.ReadOperations: return Humanize.Count(process.ReadOperations);
+      case ProcessField.WriteOperations: return Humanize.Count(process.WriteOperations);
+      case ProcessField.OtherOperations: return Humanize.Count(process.OtherOperations);
+      case ProcessField.ReadOperationsDelta:
+      case ProcessField.WriteOperationsDelta:
+        return Humanize.Rate(Rated(delta, index, field));
+
+      case ProcessField.BlockIoWait: return Humanize.Duration(process.BlockIoWaitNs);
+      case ProcessField.IoPriority: return IoPriorityText(in process) ?? Humanize.Placeholder(process.IoPriorityValue.Reason);
 
       case ProcessField.GpuPercent:
       case ProcessField.GpuEnginePercent:
@@ -355,6 +367,16 @@ public static class FieldAccessor {
       case ProcessField.ProportionalSwap: return Number(process.ProportionalSwapBytes);
       case ProcessField.FileBackedSet: return Number(process.FileBackedBytes);
       case ProcessField.SharedSet: return Number(process.SharedResidentBytes);
+      case ProcessField.ShareableWorkingSet: return Number(ShareableWorkingSet(in process));
+      case ProcessField.StackBytes: return Number(process.StackBytes);
+      case ProcessField.ReadOperations: return Number(process.ReadOperations);
+      case ProcessField.WriteOperations: return Number(process.WriteOperations);
+      case ProcessField.OtherOperations: return Number(process.OtherOperations);
+      case ProcessField.BlockIoWait: return Number(process.BlockIoWaitNs);
+      // The packed value the kernel returns, which orders by class and then by level inside it —
+      // so sorting groups the real-time requesters together and puts the idle ones at the far end.
+      // A filter reads better through the words, which RawText carries.
+      case ProcessField.IoPriority: return Number(process.IoPriorityValue);
       case ProcessField.PrivateBytes: return Number(process.PrivateBytes);
       case ProcessField.PrivateWorkingSet: return Number(process.PrivateWorkingSetBytes);
       case ProcessField.WorkingSetBytes: return Number(process.WorkingSetBytes);
@@ -393,6 +415,8 @@ public static class FieldAccessor {
       case ProcessField.GpuEncodePercent:
       case ProcessField.GpuDecodePercent:
       case ProcessField.GpuDedicatedMemoryDelta:
+      case ProcessField.ReadOperationsDelta:
+      case ProcessField.WriteOperationsDelta:
       case ProcessField.CpuPercent:
       case ProcessField.CpuPercentPerCore:
       case ProcessField.CpuPercentDelta:
@@ -495,6 +519,10 @@ public static class FieldAccessor {
       ? null
       : Humanize.SchedulingPolicy(process.SchedulingPolicy),
     ProcessField.CpuAffinity => process.CpuAffinity,
+    // The words ionice prints, so "io.priority:idle" is the filter somebody would actually type.
+    // Textual at all because the exporter asks only for raw text on a field of state kind, and a
+    // state that renders a word and exports an empty cell is what §103's invariant catches.
+    ProcessField.IoPriority => IoPriorityText(in process),
     ProcessField.GpuAdapter => process.GpuAdapter,
     ProcessField.GpuEngineName => delta?.BusiestGpuEngine(index) is { } engine and not GpuEngine.Unknown
       ? EngineName(engine)
@@ -702,6 +730,64 @@ public static class FieldAccessor {
     return process.ApplicationNameReason == UnknownReason.None ? "none" : null;
   }
 
+  /// <summary>
+  /// The resident memory another process could be mapping too, or the reason there is none
+  /// (PRD §16).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The file-backed and shared halves added, wherever both are known — which on Linux is every
+  /// process with a <c>status</c> that could be read, because <c>VmRSS</c> is <c>RssAnon</c> plus
+  /// <c>RssFile</c> plus <c>RssShmem</c> by construction. <b>Not</b> the working set less its
+  /// private part, although that is the same quantity and is what Windows computes: the working set
+  /// on Linux comes out of <c>stat</c> and the three halves out of <c>status</c>, two files read a
+  /// few microseconds apart and without a lock, so the subtraction disagrees with the sum of the two
+  /// columns beside it by however much the process allocated in between. Measured on pid 1 of the
+  /// machine this was written on: 11,235,328 by subtraction against 11,317,248 by addition, eighty
+  /// kilobytes of drift in a row where all four numbers are on screen together.
+  /// </para>
+  /// <para>
+  /// The subtraction is the fall-back and only that, for a platform that reports a working set and a
+  /// private working set and no breakdown between them. A private set larger than the working set is
+  /// arithmetic that did not survive the same drift, and that is
+  /// <see cref="UnknownReason.CounterInvalid"/> rather than a nought — which would read as "this
+  /// process shares nothing", the commonest thing a process is not.
+  /// </para>
+  /// </remarks>
+  private static Counter ShareableWorkingSet(in ProcessRecord process) {
+    var fileBacked = process.FileBackedBytes;
+    var shared = process.SharedResidentBytes;
+    if (fileBacked.HasValue && shared.HasValue)
+      return Counter.Of(fileBacked.Value + shared.Value);
+
+    var resident = process.WorkingSetBytes;
+    if (!resident.HasValue)
+      return resident;
+
+    var privately = process.PrivateWorkingSetBytes;
+    if (!privately.HasValue)
+      return privately;
+
+    return resident.Value >= privately.Value
+      ? Counter.Of(resident.Value - privately.Value)
+      : Counter.Unknown(UnknownReason.CounterInvalid);
+  }
+
+  /// <summary>
+  /// The I/O scheduling class in the words <c>ionice</c> prints, or <see langword="null"/> when
+  /// nobody asked and nobody could tell (PRD §17).
+  /// </summary>
+  /// <remarks>
+  /// "default" is a reading and by far the commonest one: it is the kernel saying nothing has been
+  /// set for this process and the nice value decides. Which is exactly why the counter is kept
+  /// packed rather than unpacked into the record — <see cref="Model.IoPriorityClass.None"/> is what
+  /// a struct nobody filled would already say, and the two must not be the same cell (PRD §72.3).
+  /// </remarks>
+  private static string? IoPriorityText(in ProcessRecord process)
+    => process.IoPriorityValue.TryGetValue(out var packed)
+      ? Model.IoPriority.Unpack((int)packed).ToString()
+      : null;
+
   #region graphics (PRD §19)
 
   /// <summary>
@@ -771,6 +857,8 @@ public static class FieldAccessor {
       ProcessField.IoTotalRate => delta.IoTotalBytesPerSecond(index),
       ProcessField.ReadBytesPerSecond => delta.ReadBytesPerSecond(index),
       ProcessField.WriteBytesPerSecond => delta.WriteBytesPerSecond(index),
+      ProcessField.ReadOperationsDelta => delta.ReadOperationsPerSecond(index),
+      ProcessField.WriteOperationsDelta => delta.WriteOperationsPerSecond(index),
       ProcessField.GpuPercent => delta.GpuPercent(index),
       ProcessField.GpuEnginePercent => delta.GpuEnginePercent(index),
       ProcessField.GpuGraphicsPercent => delta.GpuGraphicsPercent(index),

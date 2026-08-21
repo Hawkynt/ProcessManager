@@ -225,6 +225,16 @@ internal sealed record CommandLineOptions {
   public bool WantsCpuAffinity => this.Wants(ProcessField.CpuAffinity);
 
   /// <summary>
+  /// Whether anything this run asked for needs each process's I/O scheduling class (PRD §5.4, §17).
+  /// </summary>
+  /// <remarks>
+  /// The same rule again, for the one reading that is a syscall rather than a file: the kernel
+  /// publishes the I/O priority nowhere under <c>/proc</c>, so a column nobody named would cost six
+  /// hundred <c>ioprio_get</c> calls a second for nothing.
+  /// </remarks>
+  public bool WantsIoPriority => this.Wants(ProcessField.IoPriority);
+
+  /// <summary>
   /// Whether anything this run asked for needs each process's cgroup read (PRD §5.4, §15).
   /// </summary>
   /// <remarks>

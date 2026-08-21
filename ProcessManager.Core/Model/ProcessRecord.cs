@@ -221,6 +221,18 @@ public struct ProcessRecord {
   public Counter SharedResidentBytes;
 
   /// <summary>
+  /// The stack segment the kernel accounts to the process — <c>VmStk</c> on Linux (PRD §16).
+  /// </summary>
+  /// <remarks>
+  /// The <em>main</em> thread's stack and only that. Every other thread's stack is an ordinary
+  /// anonymous mapping made by whoever created the thread, and the kernel keeps no separate figure
+  /// for those: a thread pool with two hundred eight-megabyte stacks reports the same few kilobytes
+  /// here as a single-threaded program. Which is why the column says "main stack" rather than
+  /// "stacks" — the larger number is real and this is not it (PRD §5.3).
+  /// </remarks>
+  public Counter StackBytes;
+
+  /// <summary>
   /// Proportional set size: private pages in full, plus each shared page divided by the number of
   /// processes mapping it.
   /// </summary>
@@ -282,6 +294,72 @@ public struct ProcessRecord {
 
   /// <summary>Bytes this process caused to be written, cumulative.</summary>
   public Counter WriteBytes;
+
+  /// <summary>
+  /// How many read and write <em>operations</em> the process has made — <c>syscr</c> and
+  /// <c>syscw</c> on Linux, <c>ReadOperationCount</c> and <c>WriteOperationCount</c> on Windows
+  /// (PRD §17).
+  /// </summary>
+  /// <remarks>
+  /// A different question from the byte counters beside them, and the pair together is the one worth
+  /// having: a process moving a gigabyte in a thousand operations and one moving it in a million are
+  /// the same row under <see cref="ReadBytes"/> and very different machines to be sitting in front
+  /// of. Free on both platforms — the lines are in a file already being read on one and fields of a
+  /// structure already queried on the other.
+  /// <para>
+  /// Linux counts <em>system calls</em> here and not requests to a device: a read served from the
+  /// page cache counts, which is exactly what makes the ratio against <see cref="ReadBytes"/> — the
+  /// bytes that did reach a device — worth reading.
+  /// </para>
+  /// </remarks>
+  public Counter ReadOperations;
+
+  /// <inheritdoc cref="ReadOperations"/>
+  public Counter WriteOperations;
+
+  /// <summary>
+  /// Operations that were neither reads nor writes — ioctls, mostly. Windows only.
+  /// </summary>
+  /// <remarks>
+  /// The count beside <see cref="OtherBytes"/>, and it has no Linux counterpart: <c>/proc/[pid]/io</c>
+  /// counts <c>syscr</c> and <c>syscw</c> and has no third figure of any kind, so a nought here on
+  /// Linux would be a claim the kernel never made (PRD §5.3).
+  /// </remarks>
+  public Counter OtherOperations;
+
+  /// <summary>
+  /// Nanoseconds the process has spent waiting for block I/O, where the kernel accounts for it
+  /// (PRD §17).
+  /// </summary>
+  /// <remarks>
+  /// Linux's <c>delayacct_blkio_ticks</c>, field 42 of <c>stat</c>. The reading that separates a
+  /// process that is slow because it is computing from one that is slow because it is waiting for a
+  /// disk, which no other column on the row can say.
+  /// <para>
+  /// Delay accounting is compiled in on ordinary distribution kernels and <b>switched off</b>:
+  /// <c>kernel.task_delayacct</c> has defaulted to 0 since 5.14, and with it off the kernel writes a
+  /// literal 0 into that field for every process on the machine. So a probe must ask whether the
+  /// accounting is on before believing the number — otherwise the column is a table-wide row of
+  /// noughts that reads as "nothing here ever waits for a disk", which is the same lie as any other
+  /// <c>default(Counter)</c> (PRD §72.3).
+  /// </para>
+  /// </remarks>
+  public Counter BlockIoWaitNs;
+
+  /// <summary>
+  /// The process's I/O scheduling priority, packed the way <c>ioprio_get</c> returns it (PRD §17).
+  /// </summary>
+  /// <remarks>
+  /// Kept packed rather than as an <see cref="IoPriority"/> so that "the syscall refused" stays
+  /// distinct from "the process has none set" — the second is a real answer and the commonest one,
+  /// and <see cref="IoPriorityClass.None"/> is what a struct nobody filled would already say
+  /// (PRD §72.3).
+  /// <para>
+  /// A syscall per process per sample, so it is filled only when a column or a filter names it
+  /// (PRD §5.4).
+  /// </para>
+  /// </remarks>
+  public Counter IoPriorityValue;
 
   /// <summary>Open handles (Windows) or file descriptors (Unix).</summary>
   public Counter HandleCount;

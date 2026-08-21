@@ -52,6 +52,18 @@ public sealed record LinuxProbeOptions {
   public bool ReadSecurityStatus { get; init; }
 
   /// <summary>
+  /// Ask <c>ioprio_get</c> what each process's disk scheduling class is (PRD §17).
+  /// </summary>
+  /// <remarks>
+  /// Off, and the only per-process reading here that is a syscall rather than a file: the kernel
+  /// publishes the I/O priority nowhere in <c>/proc</c>, so there is no line already in front of the
+  /// sampler to take it from. Cheap for one process and six hundred syscalls a sample for a column
+  /// nobody opened, which is what §5.4 exists to prevent — so nothing turns it on but somebody
+  /// naming the column or filtering on it.
+  /// </remarks>
+  public bool ReadIoPriority { get; init; }
+
+  /// <summary>
   /// Read <c>cpu.stat</c> from each process's cgroup, for the throttling column (PRD §15, §38).
   /// </summary>
   /// <remarks>
