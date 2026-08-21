@@ -232,7 +232,9 @@ public static class PerformanceReport {
     SnapshotDelta? delta = null,
     Func<string, DiskInfo>? describeDisk = null,
     Func<string, NetworkInterfaceInfo>? describeInterface = null,
-    Func<IReadOnlyList<GpuInfo>>? describeGpus = null
+    Func<IReadOnlyList<GpuInfo>>? describeGpus = null,
+    Func<IReadOnlyList<BatteryInfo>>? describeBatteries = null,
+    Func<IReadOnlyList<SensorGroup>>? describeSensors = null
   ) {
     ArgumentNullException.ThrowIfNull(host);
     ArgumentNullException.ThrowIfNull(snapshot);
@@ -303,6 +305,40 @@ public static class PerformanceReport {
         RailDetail: gpu.TemperatureMilliCelsius.HasValue ? Celsius(gpu.TemperatureMilliCelsius) : string.Empty,
         RailTitle: $"GPU {adapter++}",
         Graphs: GpuGraphs(gpu)
+      ));
+    }
+
+    // One per battery, and only where there is one: a desktop gets no heading rather than a battery
+    // reported at nought per cent, which is what a page that assumed one would draw (PRD §45.3).
+    var pack = 0;
+    foreach (var battery in SensorSources.Ask(describeBatteries ?? SensorSources.Batteries)) {
+      var charge = battery.ChargePercent.HasValue
+        ? Rate.Of(battery.ChargePercent.Value)
+        : Rate.Unknown(battery.ChargePercent.Reason);
+
+      sections.Add(new(
+        battery.Model is null ? $"Battery — {battery.Name}" : $"Battery — {battery.Model}",
+        BuildBattery(battery),
+        charge,
+        100,
+        Percent(charge),
+        RailDetail: BatteryDetail(battery),
+        RailTitle: pack++ == 0 ? "Battery" : $"Battery {pack}"
+      ));
+    }
+
+    // One per sensor chip. Grouped the way the machine groups them, because seventy degrees means
+    // nothing until you know whether it came from the processor, an SSD or the wireless card.
+    foreach (var group in SensorSources.Ask(describeSensors ?? SensorSources.Sensors)) {
+      var hottest = Hottest(group);
+      sections.Add(new(
+        $"Sensors — {group.Name}",
+        BuildSensors(group),
+        hottest,
+        100,
+        hottest.HasValue ? Celsius(Counter.Of((ulong)(hottest.Value * 1000))) : string.Empty,
+        RailDetail: hottest.HasValue ? Celsius(Counter.Of((ulong)(hottest.Value * 1000))) : string.Empty,
+        RailTitle: group.Name
       ));
     }
 
@@ -697,6 +733,137 @@ public static class PerformanceReport {
 
   private static Rate AsRate(Counter counter)
     => counter.HasValue ? Rate.Of(counter.Value) : Rate.Unknown(counter.Reason);
+
+  /// <summary>
+  /// A battery: what it is doing, then what it is (PRD §45.3).
+  /// </summary>
+  /// <remarks>
+  /// Health is a hardware fact rather than a live one even though it is computed from two live
+  /// figures: it answers "is this pack worn out", which nobody asks twice a second.
+  /// </remarks>
+  private static PerformanceRow[] BuildBattery(BatteryInfo battery) {
+    var rows = new List<PerformanceRow> {
+      new("Charge", AsPercent(battery.ChargePercent)),
+      // The driver's own word where it used one, because a driver that says something outside the
+      // documented five knows something about its hardware that a fixed list does not.
+      new("State", battery.StateText ?? Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform)),
+      new("Supply", battery.OnExternalPower ? "mains" : "battery"),
+      new("Draw", Watts(battery.PowerMicrowatts)),
+      new("Remaining", Remaining(battery)),
+      new("Energy", WattHours(battery.EnergyNowMicrowattHours)),
+      new("Voltage", Volts(battery.VoltageMicrovolts)),
+      new("Health", AsPercent(battery.HealthPercent), Level: PerformanceRowLevel.Hardware),
+      new("Full charge", WattHours(battery.EnergyFullMicrowattHours), Level: PerformanceRowLevel.Hardware),
+      new("Design charge", WattHours(battery.EnergyDesignMicrowattHours), Level: PerformanceRowLevel.Hardware),
+      new("Cycles", Humanize.Count(battery.CycleCount), Level: PerformanceRowLevel.Hardware),
+      new("Chemistry", battery.Technology ?? Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform), Level: PerformanceRowLevel.Hardware),
+      new("Manufacturer", battery.Manufacturer ?? Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform), Level: PerformanceRowLevel.Hardware),
+      new("Model", battery.Model ?? battery.Name, Level: PerformanceRowLevel.Hardware),
+    };
+
+    return [.. rows];
+  }
+
+  /// <summary>
+  /// Every channel a sensor chip publishes, in its own units.
+  /// </summary>
+  /// <remarks>
+  /// A chip's channels are all live readings; none of them describes the hardware, and a chip with
+  /// forty voltage rails would bury the two temperatures somebody opened the page for — so the
+  /// temperatures and fans come first and the electrical channels go into the collapsed block.
+  /// </remarks>
+  private static PerformanceRow[] BuildSensors(SensorGroup group) {
+    var rows = new List<PerformanceRow>();
+    foreach (var reading in group.Readings)
+      if (reading.Kind is SensorKind.Temperature or SensorKind.Fan)
+        rows.Add(new(reading.Label, SensorValue(reading)));
+
+    foreach (var reading in group.Readings)
+      if (reading.Kind is not (SensorKind.Temperature or SensorKind.Fan))
+        rows.Add(new(reading.Label, SensorValue(reading), Level: PerformanceRowLevel.Diagnostic));
+
+    return [.. rows];
+  }
+
+  private static string SensorValue(SensorReading reading) => reading.Kind switch {
+    SensorKind.Temperature => Celsius(reading.Value),
+    SensorKind.Fan => reading.Value.HasValue
+      ? string.Format(CultureInfo.InvariantCulture, "{0} rpm", reading.Value.Value)
+      : Humanize.Placeholder(reading.Value.Reason),
+    // Millivolts and milliamps here, where the battery's own attributes are micro. The chip and the
+    // power supply publish the same rail in units a thousand apart.
+    SensorKind.Voltage => reading.Value.HasValue
+      ? string.Format(CultureInfo.InvariantCulture, "{0:0.00} V", reading.Value.Value / 1_000d)
+      : Humanize.Placeholder(reading.Value.Reason),
+    SensorKind.Current => reading.Value.HasValue
+      ? string.Format(CultureInfo.InvariantCulture, "{0:0.000} A", reading.Value.Value / 1_000d)
+      : Humanize.Placeholder(reading.Value.Reason),
+    SensorKind.Power => Watts(reading.Value),
+    _ => Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform),
+  };
+
+  /// <summary>
+  /// The hottest thing a chip reports, for the rail.
+  /// </summary>
+  /// <remarks>
+  /// A chip with no temperature at all — a fan controller, a voltage monitor — measures nothing this
+  /// can summarise, and says so rather than plotting a line along the floor (PRD §72.3).
+  /// </remarks>
+  private static Rate Hottest(SensorGroup group) {
+    var hottest = Rate.Unknown(UnknownReason.NotSupportedOnPlatform);
+    foreach (var reading in group.Readings) {
+      if (reading.Kind != SensorKind.Temperature || !reading.Value.HasValue)
+        continue;
+
+      var degrees = reading.Value.Value / 1000d;
+      if (!hottest.HasValue || degrees > hottest.Value)
+        hottest = Rate.Of(degrees);
+    }
+
+    return hottest;
+  }
+
+  private static string BatteryDetail(BatteryInfo battery) {
+    if (!battery.ChargePercent.HasValue)
+      return string.Empty;
+
+    var charge = string.Format(CultureInfo.InvariantCulture, "{0} %", battery.ChargePercent.Value);
+    return battery.OnExternalPower ? charge + ", mains" : charge;
+  }
+
+  /// <summary>
+  /// How long the battery has left, in words a reader can act on.
+  /// </summary>
+  /// <remarks>
+  /// Nothing at all while the machine is plugged in and full: "0:00 remaining" on a full battery is
+  /// alarming and wrong, and there is genuinely no answer to give.
+  /// </remarks>
+  private static string Remaining(BatteryInfo battery) {
+    if (battery.HoursRemaining is not { } hours)
+      return Humanize.Placeholder(
+        battery.State == ChargeState.Full ? UnknownReason.NotSupportedOnPlatform : UnknownReason.NotSampledYet
+      );
+
+    var whole = (int)hours;
+    var minutes = (int)Math.Round((hours - whole) * 60);
+    return string.Format(
+      CultureInfo.InvariantCulture,
+      "{0}:{1:00} {2}",
+      whole,
+      minutes,
+      battery.State == ChargeState.Charging ? "to full" : "remaining"
+    );
+  }
+
+  private static string WattHours(Counter microwattHours)
+    => microwattHours.HasValue
+      ? string.Format(CultureInfo.InvariantCulture, "{0:0.0} Wh", microwattHours.Value / 1_000_000d)
+      : Humanize.Placeholder(microwattHours.Reason);
+
+  private static string Volts(Counter microvolts)
+    => microvolts.HasValue
+      ? string.Format(CultureInfo.InvariantCulture, "{0:0.00} V", microvolts.Value / 1_000_000d)
+      : Humanize.Placeholder(microvolts.Reason);
 
   private static PerformanceRow[] BuildGpu(GpuInfo gpu) {
     var rows = new List<PerformanceRow> {

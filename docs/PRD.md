@@ -1821,8 +1821,10 @@ Four levels, and nothing may jump a level:
 - [x] Each disk (§48) — one section per device
 - [x] Each network adapter (§49) — one section per interface
 - [x] Each GPU (§50)
-- [ ] Battery
-- [ ] Optional sensors and devices
+- [x] Battery — charge, draw, time remaining, health against design capacity, chemistry and
+      cycle count; both the µAh and the µWh families of battery are read
+- [x] Optional sensors and devices — every hwmon chip, grouped by chip, with temperatures and
+      fans first and the electrical channels in the collapsed block
 
 - [ ] The page opens on whatever is under the greatest meaningful load rather than always on the
       processor, with a setting to turn that off
