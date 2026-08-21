@@ -143,20 +143,38 @@ internal static class WindowsObjectTally {
   }
 
   /// <summary>
-  /// Every distinct object type index in the table, with one handle of each and the process holding
-  /// it — enough to go and ask what that type is called.
+  /// A few candidate handles of every distinct object type index in the table, with the process
+  /// holding each — enough to go and ask what that type is called.
   /// </summary>
+  /// <param name="preferredPid">
+  /// A process whose handles should be offered first, which the caller sets to its own: a process
+  /// can always duplicate out of itself, and no other candidate is guaranteed to work at all.
+  /// </param>
+  /// <param name="perType">How many candidates to keep for each index.</param>
   /// <remarks>
+  /// <para>
   /// Bounded by the number of object types a kernel has, which is a few dozen, rather than by the
-  /// number of handles, which is a million: one sample of each index is all the naming pass needs,
-  /// and taking more would be duplicating a handle per row of the whole table.
+  /// number of handles, which can be a million.
+  /// </para>
+  /// <para>
+  /// <strong>Why more than one candidate.</strong> The first version kept exactly one — the first
+  /// handle of each index in the table — and learnt nothing at all on a real Windows while working
+  /// perfectly under Wine. The table is ordered by process and the first process in it is the System
+  /// process, so the first handle of very nearly every type belongs to something that will not open
+  /// for <c>PROCESS_DUP_HANDLE</c> at any privilege. Preferring the caller's own handles fixes the
+  /// common case outright, and keeping several of each fixes the rest.
+  /// </para>
   /// </remarks>
-  public static List<(ushort Index, int Pid, nint Handle)> SampleTypes(ReadOnlySpan<byte> buffer) {
+  public static List<(ushort Index, int Pid, nint Handle)> SampleTypes(
+    ReadOnlySpan<byte> buffer,
+    int preferredPid = 0,
+    int perType = 4
+  ) {
     var result = new List<(ushort, int, nint)>();
-    if (buffer.Length < _HeaderSize)
+    if (buffer.Length < _HeaderSize || perType < 1)
       return result;
 
-    var seen = new HashSet<ushort>();
+    var kept = new Dictionary<ushort, List<(int Pid, nint Handle)>>();
     var declared = (ulong)MemoryMarshal.Read<nuint>(buffer);
     var room = (ulong)((buffer.Length - _HeaderSize) / _EntrySize);
     var count = Math.Min(declared, room);
@@ -166,9 +184,26 @@ internal static class WindowsObjectTally {
         buffer.Slice(_HeaderSize + ((int)i * _EntrySize), _EntrySize)
       );
 
-      if (seen.Add(entry.ObjectTypeIndex))
-        result.Add((entry.ObjectTypeIndex, (int)entry.UniqueProcessId, entry.HandleValue));
+      var pid = (int)entry.UniqueProcessId;
+      if (!kept.TryGetValue(entry.ObjectTypeIndex, out var candidates))
+        kept[entry.ObjectTypeIndex] = candidates = new(perType);
+
+      // The caller's own handles go to the front however late they appear, because they are the only
+      // ones certain to duplicate; everything else fills the remaining room in table order.
+      if (pid == preferredPid && preferredPid != 0)
+        candidates.Insert(0, (pid, entry.HandleValue));
+      else if (candidates.Count < perType)
+        candidates.Add((pid, entry.HandleValue));
+      else
+        continue;
+
+      if (candidates.Count > perType)
+        candidates.RemoveAt(candidates.Count - 1);
     }
+
+    foreach (var (index, candidates) in kept)
+      foreach (var (pid, handle) in candidates)
+        result.Add((index, pid, handle));
 
     return result;
   }

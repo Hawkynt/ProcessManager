@@ -111,25 +111,58 @@ public sealed class WindowsObjectTallyTests {
   }
 
   /// <summary>
-  /// Every distinct type index is sampled once, whatever the size of the table.
+  /// A bounded number of candidates per type index, whatever the size of the table.
   /// </summary>
   /// <remarks>
-  /// The naming pass duplicates a handle per sample, so sampling per row rather than per index would
-  /// mean a million duplications to learn a few dozen facts.
+  /// The naming pass duplicates a handle per candidate, so sampling per row rather than per index
+  /// would mean a million duplications to learn a few dozen facts.
   /// </remarks>
   [Test]
-  public void EveryTypeIsSampledOnceAndOnlyOnce() {
+  public void EachTypeIsSampledAFewTimesAndNoMore() {
     var handles = new List<(int, ushort)>();
     for (var i = 0; i < 500; ++i)
       handles.Add((1000 + (i % 7), (ushort)(i % 12)));
 
-    var samples = WindowsObjectTally.SampleTypes(Table([.. handles]));
-    Assert.That(samples, Has.Count.EqualTo(12));
-    Assert.That(samples.Select(sample => sample.Index), Is.Unique);
+    var samples = WindowsObjectTally.SampleTypes(Table([.. handles]), preferredPid: 0, perType: 4);
+    Assert.That(samples.Select(sample => sample.Index).Distinct().Count(), Is.EqualTo(12));
+    foreach (var group in samples.GroupBy(sample => sample.Index))
+      Assert.That(group.Count(), Is.LessThanOrEqualTo(4), $"type {group.Key}");
+
     // The sample has to carry the owner too: a handle value only means anything in the process that
     // holds it, so naming the type means duplicating it out of that process first.
     foreach (var sample in samples)
       Assert.That(sample.Pid, Is.InRange(1000, 1006));
+  }
+
+  /// <summary>
+  /// The caller's own handles come first, however late in the table they appear.
+  /// </summary>
+  /// <remarks>
+  /// This is the whole reason more than one candidate is kept, and it was found by running against
+  /// a real kernel rather than by thinking about it. The table is ordered by process and the first
+  /// process in it is the System process, so the first handle of very nearly every type belongs to
+  /// something that will not open for <c>PROCESS_DUP_HANDLE</c> at any privilege — and a pass that
+  /// kept one candidate each learnt nothing at all on Windows while working perfectly under Wine.
+  /// A process can always duplicate out of itself, so its own handles are the only candidates
+  /// certain to answer.
+  /// </remarks>
+  [Test]
+  public void TheCallersOwnHandlesAreTriedFirst() {
+    // The System process holds the first handle of every type, exactly as it does on a real machine,
+    // and this process holds one of each much later on.
+    var handles = new List<(int, ushort)>();
+    for (ushort type = 10; type < 14; ++type)
+      for (var i = 0; i < 30; ++i)
+        handles.Add((4, type));
+
+    for (ushort type = 10; type < 14; ++type)
+      handles.Add((4242, type));
+
+    var samples = WindowsObjectTally.SampleTypes(Table([.. handles]), preferredPid: 4242);
+    foreach (var group in samples.GroupBy(sample => sample.Index)) {
+      Assert.That(group.First().Pid, Is.EqualTo(4242), $"type {group.Key}: our own handle must be tried first");
+      Assert.That(group.Count(), Is.LessThanOrEqualTo(4), $"type {group.Key}");
+    }
   }
 
   /// <summary>

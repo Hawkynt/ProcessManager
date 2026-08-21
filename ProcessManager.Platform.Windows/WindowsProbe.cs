@@ -395,31 +395,39 @@ public sealed class WindowsProbe : ISystemProbe {
       return;
 
     var self = Native.GetCurrentProcess();
-    foreach (var (index, pid, handle) in WindowsObjectTally.SampleTypes(table)) {
-      if (!this._askedTypes.Add(index))
+    var pid = Environment.ProcessId;
+    foreach (var (index, owningPid, handle) in WindowsObjectTally.SampleTypes(table, pid)) {
+      // Asked about once ever, whether or not it turned out to be one of the five. An index is only
+      // recorded as asked when something actually answered, so a type whose every candidate refused
+      // is tried again from a later sample rather than written off.
+      if (this._askedTypes.Contains(index))
         continue;
 
-      var owner = Native.OpenProcess(Native.PROCESS_DUP_HANDLE, false, pid);
-      if (owner == 0) {
-        // Nothing was learnt, so the index must be asked about again next time — a handle of it held
-        // by a process this user can open may turn up in any later sample.
-        this._askedTypes.Remove(index);
+      var owner = owningPid == pid
+        ? self
+        : Native.OpenProcess(Native.PROCESS_DUP_HANDLE, false, owningPid);
+
+      if (owner == 0)
         continue;
-      }
 
       try {
-        if (!Native.DuplicateHandle(owner, handle, self, out var copy, 0, false, Native.DUPLICATE_SAME_ACCESS)) {
-          this._askedTypes.Remove(index);
+        if (!Native.DuplicateHandle(owner, handle, self, out var copy, 0, false, Native.DUPLICATE_SAME_ACCESS))
           continue;
-        }
 
         try {
-          this._objectTypes = this._objectTypes.With(HandleNameResolver.QueryType(copy), index);
+          var name = HandleNameResolver.QueryType(copy);
+          if (name is null)
+            continue;
+
+          this._askedTypes.Add(index);
+          this._objectTypes = this._objectTypes.With(name, index);
         } finally {
           Native.CloseHandle(copy);
         }
       } finally {
-        Native.CloseHandle(owner);
+        // Never the pseudo-handle for this process, which is not a real handle and must not be closed.
+        if (owner != self)
+          Native.CloseHandle(owner);
       }
     }
   }
