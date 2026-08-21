@@ -104,8 +104,9 @@ thread continuously consuming logical CPU 7."
 ## 3.1 Primary — MUST
 
 - [ ] 🟡 Replace everyday Task Manager workflows — process management, and views of services, startup
-      and users; services can now be commanded from every front-end, but a startup entry still cannot
-      be turned off at all
+      and users; services can now be commanded from every front-end, and a startup entry can be
+      turned on and off from the window. Neither is reachable from the terminal's own view, because
+      the terminal has no services or startup view — only the process's own unit
 - [x] Replace Process Explorer tree and lower-pane workflows — the pane is docked under the tree with
       overview, threads, modules, handles, environment and network, and pins to one process in a window
 - [ ] Replace the majority of System Informer process-inspection workflows
@@ -3015,13 +3016,24 @@ Sources:
 
 - [ ] Windows: registered startup applications · Startup folders · Run registry mechanisms ·
       supported startup tasks
-- [ ] Linux: XDG autostart · systemd user services categorised as login startup
+- [ ] 🟡 Linux: XDG autostart ✔ — read and switchable. systemd user services categorised as login
+      startup are not: a user unit wanted by `default.target` is a login-time entry by any reasonable
+      reading, and nothing here looks for one
 - [ ] macOS: login items · user launch agents
 
 Actions:
 
-- [ ] Enable · disable · reveal executable · reveal configuration · properties · run now
-- [ ] Delete entry — only where safe and explicit
+- [ ] 🟡 Enable ✔ · disable ✔ — from a right-click on the window's Startup page, through the
+      specification's own `Hidden=true`. A user's own entry is edited where it is; a system-wide one
+      is never written to, because that file belongs to a package and the next update would overwrite
+      whatever we did — it is switched off by writing a file of the same name into the user's own
+      directory, which is the specification's override and the mechanism every desktop's own switch
+      uses. Switching it back on removes that override rather than writing "not hidden" into it, so
+      the package's file speaks again and a new command in it is not frozen out for ever. Reveal
+      executable, reveal configuration, properties and run now are not written
+- [ ] Delete entry — only where safe and explicit. Deliberately after the switch rather than beside
+      it: turning an entry off is reversible from the item next to it, and deleting a package's file
+      is not reversible at all
 
 - [ ] Impact categories are computed only where a **reliable measurement** exists; where it does not,
       the column says so rather than inventing a "Medium"
@@ -4561,7 +4573,8 @@ that has a tab for it. That drift is what made an earlier version of this matrix
 - [x] Processes
 - [x] Performance — twenty-two resources on the rail, each with its own graphs and figures
 - [ ] App / usage history — nothing keeps a per-application total across sessions
-- [ ] 🟡 Startup — a window view listing every entry and which will run; nothing can turn one off yet
+- [x] Startup — a window view listing every entry and which will run, and a right-click that turns
+      one on or off
 - [x] Users — a window view of who is logged in and what their processes cost
 - [x] Details
 - [x] Services — a window view of every unit and its state, and a right-click that starts, stops,
@@ -4575,7 +4588,7 @@ that has a tab for it. That drift is what made an earlier version of this matrix
 - [ ] Dumps
 - [ ] 🟡 Wait chains — each thread says what it is blocked in and which syscall it is in; nothing follows the chain from one process to the next
 - [x] Process search / filter
-- [ ] Startup enable / disable
+- [x] Startup enable / disable
 - [ ] User session control
 - [x] Service controls
 - [x] Kernel vs user CPU graph
@@ -4637,7 +4650,7 @@ that has a tab for it. That drift is what made an earlier version of this matrix
 - [x] Resource selector
 - [x] CPU · memory · disks · networks pages
 - [x] Services — listed in a view of its own, and controlled from it
-- [ ] 🟡 Startup — listed in a view of its own; not enabled or disabled
+- [x] Startup — listed in a view of its own, and enabled or disabled from it
 - [x] Users
 - [ ] Minimal cognitive overhead for ordinary users
 
@@ -5006,7 +5019,8 @@ v1 does not ship unless every one of these is true:
 - [x] The user can inspect active network endpoints — the pane's network tab, and `--connections`
 - [x] The user can inspect services — and start, stop, restart, reload, enable and disable them
       from the window, the terminal and the command line
-- [ ] The user can manage common startup items
+- [x] The user can manage common startup items — every XDG autostart entry, turned on and off from
+      the window's Startup page
 - [x] The user can inspect logged-in sessions — a window view and `--users`
 - [x] The user can view CPU, memory, disk and network performance — thirteen resource pages, each
       with its own graphs

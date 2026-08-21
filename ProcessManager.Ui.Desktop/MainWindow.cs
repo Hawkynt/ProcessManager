@@ -20,6 +20,7 @@ public sealed class MainWindow : Form {
   private readonly ISystemProbe _probe;
   private readonly IProcessActions? _actions;
   private readonly IServiceControl? _services;
+  private readonly IStartupControl? _startup;
   private readonly ProcessView _view = new() { TreeMode = true, SortColumn = ProcessField.CpuPercent, SortDescending = true };
   private readonly ProcessTreeBinder _binder;
   private readonly TreeListView _tree = new();
@@ -65,7 +66,8 @@ public sealed class MainWindow : Form {
     Sampler sampler,
     ISystemProbe probe,
     IProcessActions? actions,
-    IServiceControl? services = null
+    IServiceControl? services = null,
+    IStartupControl? startup = null
   ) {
     ArgumentNullException.ThrowIfNull(sampler);
     ArgumentNullException.ThrowIfNull(probe);
@@ -74,6 +76,7 @@ public sealed class MainWindow : Form {
     this._probe = probe;
     this._actions = actions;
     this._services = services;
+    this._startup = startup;
     this._binder = new(this._tree);
     this._details = new(probe) { Actions = actions };
     this._shell = new(probe);
@@ -1871,6 +1874,10 @@ public sealed class MainWindow : Form {
     // lifetime, and embedding a second copy of it here would mean two of everything it samples.
     this.AddView("Performance", null, this.ShowPerformance, () => "opens the performance window", () => 0);
     this.AddView("Startup", this._shell.StartupControl, this._shell.RefreshStartup, () => this._shell.StartupText, () => this._shell.StartupRows);
+    if (this._startup is { IsAvailable: true }) {
+      this._shell.StartupMenu = this.StartupMenu();
+      this._shell.StartupIsSwitchable();
+    }
     this.AddView("Users", this._shell.SessionsControl, this._shell.RefreshSessions, () => this._shell.SessionsText, () => this._shell.SessionsRows);
     this.AddView("Services", this._shell.ServicesControl, this._shell.RefreshServices, () => this._shell.ServicesText, () => this._shell.ServicesRows);
     if (this._services is { IsAvailable: true }) {
@@ -2546,6 +2553,37 @@ public sealed class MainWindow : Form {
   /// so that nobody reaches for "disable" meaning "stop". Both wordings say which they are.
   /// </para>
   /// </remarks>
+  /// <summary>
+  /// On and off, for the login entry under the pointer (PRD §42).
+  /// </summary>
+  /// <remarks>
+  /// Two items rather than one that toggles, because the reader is looking at a list where a row can
+  /// be off for a reason that is not this switch — not for this desktop, or its program is missing —
+  /// and a single "toggle" would have to guess which way it was going.
+  /// </remarks>
+  private ContextMenuStrip StartupMenu() {
+    var menu = new ContextMenuStrip();
+    menu.Items.Add(Item("Run this at login", () => this.SwitchStartup(true)));
+    menu.Items.Add(Item("Do not run this at login", () => this.SwitchStartup(false)));
+    return menu;
+  }
+
+  /// <summary>
+  /// Writes the switch, and says what happened.
+  /// </summary>
+  /// <remarks>
+  /// Not confirmed. Nothing stops or starts here and the change is reversible by the item beside it,
+  /// which is the test §67 uses for what needs asking about — a prompt on something this cheap to
+  /// undo teaches people to dismiss prompts.
+  /// </remarks>
+  private void SwitchStartup(bool enabled) {
+    if (this._startup is null || this._shell.SelectedStartup is not { } entry)
+      return;
+
+    this.Report(this._startup.SetEnabled(in entry, enabled));
+    this._shell.RefreshStartup();
+  }
+
   private ContextMenuStrip ServiceMenu() {
     var menu = new ContextMenuStrip();
     menu.Items.Add(Item("Start", () => this.CommandService(ServiceCommand.Start)));
