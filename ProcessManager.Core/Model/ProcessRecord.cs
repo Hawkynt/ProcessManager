@@ -252,6 +252,54 @@ public struct ProcessRecord {
   public int EffectiveUserId;
 
   /// <summary>
+  /// The account <see cref="EffectiveUserId"/> resolves to, or <see langword="null"/> when the name
+  /// service could not answer.
+  /// </summary>
+  /// <remarks>
+  /// Its own field rather than a second look-up at render time. <see cref="UserName"/> is the real
+  /// uid's name — who started the process — and this is the effective one's — whose authority it is
+  /// running with. For all but a handful of processes they are the same string, and for the handful
+  /// where they are not, that difference is the whole point of a security column (PRD §21).
+  /// </remarks>
+  public string? EffectiveUserName;
+
+  /// <summary>
+  /// The saved set-user id: the identity a process that has dropped privileges may take back.
+  /// </summary>
+  /// <remarks>
+  /// -1 when unknown, the same convention <see cref="UserId"/> uses. A process whose real and
+  /// effective ids are an ordinary user while the saved one is root has not given anything up — it
+  /// can call <c>seteuid(0)</c> whenever it likes — and no other field says so.
+  /// </remarks>
+  public int SavedUserId;
+
+  /// <summary>The filesystem user id, which decides what the process may open. -1 when unknown.</summary>
+  public int FilesystemUserId;
+
+  /// <summary>Real, effective, saved and filesystem group ids; -1 when unknown.</summary>
+  public int GroupId;
+  public int EffectiveGroupId;
+  public int SavedGroupId;
+  public int FilesystemGroupId;
+
+  /// <summary>
+  /// The supplementary groups, as the numbers <c>status</c> writes them, separated by spaces.
+  /// </summary>
+  /// <remarks>
+  /// Text rather than a list because a list is an allocation per process per sample against a budget
+  /// of zero (PRD §4), and null unless it was asked for, for the same reason
+  /// <see cref="SecurityContext"/> is (PRD §5.4). The empty string is a real answer — a process in no
+  /// supplementary group at all, which is what every kernel thread is.
+  /// </remarks>
+  public string? SupplementaryGroups;
+
+  /// <summary>
+  /// Why <see cref="SupplementaryGroups"/> is <see langword="null"/>: not asked for, not readable,
+  /// or a kernel that does not write the line.
+  /// </summary>
+  public UnknownReason SupplementaryGroupsReason;
+
+  /// <summary>
   /// 1 when the process runs with administrative authority, 0 when it does not.
   /// </summary>
   /// <remarks>
@@ -272,11 +320,45 @@ public struct ProcessRecord {
   /// <summary>Linux seccomp mode: 0 disabled, 1 strict, 2 filtered.</summary>
   public Counter SeccompMode;
 
+  /// <summary>
+  /// How many seccomp filter programs are attached, where the kernel reports it.
+  /// </summary>
+  /// <remarks>
+  /// <c>Seccomp_filters</c> arrived in 5.9; an older kernel leaves this unknown rather than zero.
+  /// Distinct from <see cref="SeccompMode"/> because a mode of 2 with several filters is a process
+  /// something has sandboxed more than once — a browser renderer inside a container, typically —
+  /// and the mode alone cannot say that.
+  /// </remarks>
+  public Counter SeccompFilters;
+
   /// <summary>Linux <c>no_new_privs</c>: 1 when the process can never gain privileges.</summary>
   public Counter NoNewPrivileges;
 
-  /// <summary>Linux effective capability mask.</summary>
+  /// <summary>
+  /// Linux effective capability mask: what the process may do <em>right now</em>.
+  /// </summary>
+  /// <remarks>
+  /// The five masks are five different questions and are kept apart for that reason. Effective is
+  /// what the kernel checks on a privileged operation; <see cref="PermittedCapabilities"/> is what
+  /// the process may raise into it without asking anybody; <see cref="BoundingCapabilities"/> is the
+  /// ceiling nothing it execs can exceed; <see cref="InheritableCapabilities"/> and
+  /// <see cref="AmbientCapabilities"/> are what survives an <c>execve</c>, the second without the
+  /// file needing capabilities of its own. Showing only the effective set hides a process that has
+  /// dropped a capability for now and can take it back at any instant.
+  /// </remarks>
   public Counter EffectiveCapabilities;
+
+  /// <summary>Linux permitted capability mask — what may be raised into the effective set.</summary>
+  public Counter PermittedCapabilities;
+
+  /// <summary>Linux inheritable capability mask — what a file with the bits set may keep.</summary>
+  public Counter InheritableCapabilities;
+
+  /// <summary>Linux bounding capability set — the ceiling on anything this process execs.</summary>
+  public Counter BoundingCapabilities;
+
+  /// <summary>Linux ambient capability set — what survives an exec of an unprivileged file.</summary>
+  public Counter AmbientCapabilities;
 
   /// <summary>
   /// The LSM label — an SELinux context or an AppArmor profile — or <see langword="null"/>.
