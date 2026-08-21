@@ -200,6 +200,24 @@ public sealed class GpuProcessTests(bool portable) {
     ReadGpuUsage = gpu,
   };
 
+  /// <summary>
+  /// A process whose only graphics descriptor is fd 0 is still a graphics process.
+  /// </summary>
+  /// <remarks>
+  /// The shared numeric listing keeps names from 1 upwards, which is right for pids — there is no
+  /// process nought — and quietly loses fd 0 for anything else. Descriptors start at nought, and a
+  /// program started with its standard input closed gets nought for whatever it opens next. Every
+  /// other process in this fixture has its card on a higher descriptor, which is why nothing caught
+  /// this: the fixture agreed with the bug.
+  /// </remarks>
+  [Test]
+  public void AGraphicsDescriptorAtDescriptorZeroIsNotSkipped() {
+    var process = Find(this.Sampled(gpu: true), 400);
+
+    Assert.That(process.GpuGraphicsNs.HasValue, Is.True, "fd 0 was never read");
+    Assert.That(process.GpuGraphicsNs.Value, Is.EqualTo(2_000_000_000ul));
+  }
+
   private static ProcessRecord Find(SystemSnapshot snapshot, int pid) {
     foreach (var process in snapshot.Processes)
       if (process.Pid == pid)

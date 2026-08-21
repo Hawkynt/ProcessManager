@@ -483,7 +483,13 @@ internal sealed class LinuxGpuAccounting {
   private bool ListDescriptors(ReadOnlySpan<byte> path, DescriptorCache cache, int pid) {
     cache.RescanAt = this._sample + _RescanInterval + pid % _RescanInterval;
     this._descriptors.Clear();
-    return this._io.ListNumericEntries(path, this._scratch, this._descriptors) && this._descriptors.Count > 0;
+    // Descriptors start at nought, and nought is standard input rather than a name nobody uses. The
+    // default here is 1, which is right for pids — there is no process nought — and quietly loses
+    // fd 0 for everything else. A program that has its card open on fd 0 is unusual and entirely
+    // legal: anything started with its standard input closed gets the next descriptor the kernel
+    // hands out, and that is nought.
+    return this._io.ListNumericEntries(path, this._scratch, this._descriptors, minimum: 0)
+      && this._descriptors.Count > 0;
   }
 
   /// <summary>Which of a process's descriptors were graphics ones, and when to look again.</summary>
