@@ -163,6 +163,10 @@ public static class PerformanceReport {
 
     var sections = new List<PerformanceSection> {
       new("System", BuildSystem(host, snapshot)),
+      // What is using the machine, rather than how much of it is used. A sorted table answers this
+      // only if somebody already sorted it by the right column, and answering three resources means
+      // sorting three times and losing their place each time (PRD §51).
+      new("Activity", BuildActivity(snapshot, delta)),
       new(
         "Processor",
         BuildProcessor(host, snapshot, delta),
@@ -395,6 +399,36 @@ public static class PerformanceReport {
     if (host.Virtualisation is { } virtualisation)
       rows.Add(new("Virtualised", virtualisation));
 
+    return [.. rows];
+  }
+
+  /// <summary>
+  /// The four "what is using this" lists, and how fast the machine is churning (PRD §51).
+  /// </summary>
+  /// <remarks>
+  /// The entries are flattened into rows so this page needs no new shape — the label carries the
+  /// place in the list and the value carries the process, which reads the way a top-five list reads
+  /// aloud. A resource nothing is using at all gets one row saying so rather than five blank ones.
+  /// </remarks>
+  private static PerformanceRow[] BuildActivity(SystemSnapshot snapshot, SnapshotDelta? delta) {
+    var rows = new List<PerformanceRow>();
+    foreach (var (heading, id) in new (string, ProcessField)[] {
+      ("Processor", ProcessField.CpuPercent),
+      ("Memory", ProcessField.WorkingSetBytes),
+      ("Reading", ProcessField.ReadBytesPerSecond),
+      ("Writing", ProcessField.WriteBytesPerSecond),
+    }) {
+      var top = SystemActivity.Top(snapshot, delta, id);
+      if (top.Count == 0) {
+        rows.Add(new(heading, delta is null ? Pending : "nothing"));
+        continue;
+      }
+
+      for (var i = 0; i < top.Count; ++i)
+        rows.Add(new(i == 0 ? heading : string.Empty, $"{top[i].Name}  ({top[i].Value})"));
+    }
+
+    rows.AddRange(SystemActivity.Rates(snapshot, delta));
     return [.. rows];
   }
 
