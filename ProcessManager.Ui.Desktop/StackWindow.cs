@@ -286,7 +286,15 @@ public sealed class StackWindow : Form {
       return;
     }
 
-    new FilePropertiesDialog(module).ShowDialog();
+    new FilePropertiesDialog(
+      module,
+      [],
+      actions: null,
+      // The same verify delegate the modules view hangs on its own box: a frame's module is a file
+      // like any other, and the question of whether its bytes are still the ones its package shipped
+      // is the one somebody reading an unfamiliar frame is most likely to ask (PRD §25.6, §70).
+      image => this._probe.DescribeImage(image, verify: true)
+    ).ShowDialog();
   }
 
   private void Save() {

@@ -30,11 +30,17 @@ public sealed class FilePropertiesDialog : Form {
   private const int _ButtonHeight = 28;
 
   /// <summary>
-  /// The band the hash and its verdict occupy: the digest, the verdict word, and the sentence
-  /// naming what was compared. Reserved whether or not there is a verdict to put in it, so that
-  /// pressing the button does not resize the window under the reader's hand.
+  /// The band the hash and its verdicts occupy: the digest, the package, the two verdict words and a
+  /// sentence apiece naming what each of them compared. Reserved whether or not there is anything to
+  /// put in it, so that pressing the button does not resize the window under the reader's hand.
   /// </summary>
-  private const int _HashLines = 3;
+  /// <remarks>
+  /// Seven and not three since the trust chain arrived beside the signature. §70's whole design is
+  /// that one word answers five questions and the heading says which was asked, so the two headings
+  /// have to be on screen together — a box showing only "Unsigned" cannot say whether the bytes
+  /// changed or nobody signed for them (PRD §70).
+  /// </remarks>
+  private const int _HashLines = 7;
 
   private readonly Label _facts = new();
   private readonly Label _hash = new();
@@ -141,13 +147,24 @@ public sealed class FilePropertiesDialog : Form {
   public string Description => $"{this._facts.Text}\n{this._hash.Text}";
 
   /// <summary>
-  /// The hash and the verdict, as two statements and never as one (PRD §31, §70).
+  /// The hash and the two verdicts, as three statements and never as one (PRD §25.6, §31, §70).
   /// </summary>
   /// <remarks>
-  /// On separate lines on purpose. The hash says what the bytes are; the verdict says whether the
-  /// party that shipped them still recognises them, and it carries the sentence naming what was
-  /// actually compared — because "Unsigned" on its own is read as an accusation when what it means
-  /// on most Linux machines is that a package manager records a digest and nobody's signature.
+  /// <para>
+  /// On separate lines on purpose. The hash says what the bytes are; the signature says whether the
+  /// party that shipped them still recognises them; the trust chain says whether anybody this machine
+  /// trusts signed for that party. Each carries the sentence naming what was actually compared —
+  /// because "Unsigned" on its own is read as an accusation when what it means on most Linux machines
+  /// is that a package manager records a digest and nobody's signature.
+  /// </para>
+  /// <para>
+  /// The chain is here rather than folded into the line above it, which is the whole of §70's first
+  /// requirement: a locally built package whose files are untouched is <em>Verified</em> in the first
+  /// and <em>Unsigned</em> in the second, and one word carrying both findings is how this program used
+  /// to report a developer's own build as suspect. Where nothing on the machine keeps such a record at
+  /// all, the row says so — <c>dpkg</c> stores no signature over an installed file, which is a
+  /// different statement from "nobody signed it" (PRD §72.3).
+  /// </para>
   /// </remarks>
   private static string Verified(Model.ImageTrust trust) {
     var digest = trust.Sha256 is { Length: 64 } hex
@@ -156,11 +173,26 @@ public sealed class FilePropertiesDialog : Form {
 
     var lines = new List<string> {
       $"sha-256     {digest}",
+      // Which package claims the file, because both verdicts below are about that package and a
+      // reader who cannot see which one was asked cannot check the answer.
+      $"package     {trust.Package.Text ?? Query.Humanize.Placeholder(trust.Package.Reason)}",
       $"signature   {Model.SignatureStatusText.Text(trust.Signature)}",
     };
 
     if (trust.Detail is { Length: > 0 } detail)
       lines.Add($"            {detail}");
+
+    lines.Add(trust.TrustChain == Model.SignatureStatus.NotChecked
+      ? $"trust chain {Query.Humanize.Placeholder(trust.ChainReason)}"
+      : $"trust chain {Model.SignatureStatusText.Text(trust.TrustChain)}");
+
+    if (trust.ChainDetail is { Length: > 0 } chain)
+      lines.Add($"            {chain}");
+
+    // Who assembled the package, and deliberately not called a signer: nobody signed the file, and
+    // this is the name the database records rather than a name any signature carries (PRD §31).
+    if (trust.Publisher is { Length: > 0 } publisher)
+      lines.Add($"packager    {publisher}");
 
     return string.Join('\n', lines);
   }

@@ -27,6 +27,49 @@ public readonly record struct ActionResult(ActionOutcome Outcome, string? Detail
 
 }
 
+/// <summary>What to ask one of a process's windows to do (PRD §39).</summary>
+/// <remarks>
+/// <para>
+/// Every one of these is a <em>request to the window manager</em> and not an operation on the process.
+/// That is the whole character of the group: nothing here signals anything, nothing here can lose
+/// somebody's work, and any of them may simply be declined — a window manager is free to ignore a
+/// request, and a full-screen window that refuses to be minimised has not failed, it has answered.
+/// </para>
+/// <para>
+/// <see cref="None"/> is nought so that a default-constructed command is not one of the five. A
+/// request nobody filled in must not turn out to be "close" (PRD §72.3).
+/// </para>
+/// </remarks>
+public enum WindowCommand : byte {
+
+  /// <summary>Nobody asked for anything.</summary>
+  None = 0,
+
+  /// <summary>Bring it to the front and give it the keyboard.</summary>
+  Foreground,
+
+  /// <summary>Put it away without closing it.</summary>
+  Minimize,
+
+  /// <summary>Fill the screen with it.</summary>
+  Maximize,
+
+  /// <summary>Undo both of the two above: back on screen, back to its own size.</summary>
+  Restore,
+
+  /// <summary>
+  /// Ask it to close, the way its own close button does.
+  /// </summary>
+  /// <remarks>
+  /// The one member of this enum that a program may refuse in a way somebody cares about: an editor
+  /// with a modified buffer puts up "save your changes?" and carries on running, which is the correct
+  /// outcome rather than a failed action. It is the same request <see cref="IProcessActions.EndTask"/>
+  /// makes of every window at once, aimed at one of them (PRD §25.1).
+  /// </remarks>
+  Close,
+
+}
+
 /// <summary>
 /// Everything that changes the state of the machine. Separate from <see cref="ISystemProbe"/> so
 /// that a read-only front-end (or a test) can hold the one without the other.
@@ -228,6 +271,29 @@ public interface IProcessActions {
   /// <summary>One thread's CPU affinity, as a bit mask of logical cores.</summary>
   ActionResult SetThreadAffinity(ProcessKey key, int threadId, ulong mask)
     => ActionResult.Fail(ActionOutcome.NotSupportedOnPlatform, "this platform has no per-thread affinity");
+
+  /// <summary>
+  /// Asks one of a process's windows to come forward, go away, grow, shrink or close (PRD §39).
+  /// </summary>
+  /// <param name="window">
+  /// The native window identifier out of <see cref="Model.WindowRecord.Handle"/> — an X11 window id
+  /// here, an <c>HWND</c> on Windows.
+  /// </param>
+  /// <remarks>
+  /// <para>
+  /// The process key is required and re-validated even though the target is a window, for the reason
+  /// the per-thread calls require one: a window id, like a tid, is a number in a space the system
+  /// reuses, and a stale one may name a live window of an unrelated program. Both are checked — the
+  /// key first, then that the window still says it belongs to that process — so a click cannot land
+  /// on somebody else's window under the name it was aimed at (PRD §8.2).
+  /// </para>
+  /// <para>
+  /// None of this changes the process itself, which is why it is not grouped with the items that do:
+  /// every one of them is a request the window manager is free to decline (PRD §5.5).
+  /// </para>
+  /// </remarks>
+  ActionResult CommandWindow(ProcessKey key, ulong window, WindowCommand command)
+    => ActionResult.Fail(ActionOutcome.NotSupportedOnPlatform, "this platform's windows cannot be commanded here");
 
   /// <summary>
   /// Starts a process (PRD §54).

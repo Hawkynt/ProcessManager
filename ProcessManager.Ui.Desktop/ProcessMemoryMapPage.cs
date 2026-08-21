@@ -231,6 +231,7 @@ internal sealed class ProcessMemoryMapPage {
     menu.Items.Add(Item("Copy path", () => this.Copy(_PathColumn)));
     menu.Items.Add(Item("Copy row", this.CopyRow));
     menu.Items.Add(new ToolStripSeparator());
+    menu.Items.Add(Item("Region properties…", this.ShowRegionProperties));
     menu.Items.Add(Item("File properties…", this.ShowFileProperties));
     return menu;
 
@@ -267,6 +268,46 @@ internal sealed class ProcessMemoryMapPage {
   }
 
   /// <summary>
+  /// Everything one mapping is, in a box (PRD §25.5, §34).
+  /// </summary>
+  /// <remarks>
+  /// The row is one line high and the answers are not: a path, the kernel's whole <c>VmFlags</c> line
+  /// and eight counters do not fit a table, and the two that a reader most often wants — what the
+  /// four permission characters mean, and how many other mappings of the same file this process has —
+  /// are not in the row at all.
+  /// <para>
+  /// Matched back to the reading by start address rather than by row index. The list is re-read by a
+  /// button underneath it, and an index taken when the menu was built would name a different mapping
+  /// afterwards — an address names the same region or none.
+  /// </para>
+  /// </remarks>
+  private void ShowRegionProperties() {
+    if (this._table.Selected is not { } cells || cells.Length == 0)
+      return;
+
+    var regions = this._reading.Regions;
+    for (var i = 0; i < regions.Count; ++i) {
+      if (!string.Equals(Humanize.Address(regions[i].Start), cells[_StartColumn], StringComparison.Ordinal))
+        continue;
+
+      new MemoryRegionDialog(
+        regions[i],
+        regions,
+        this._actions,
+        image => this._probe.DescribeImage(image, verify: true)
+      ).ShowDialog();
+
+      return;
+    }
+
+    MessageBox.Show(
+      "That mapping is no longer in the list. The map was re-read since the row was drawn, and an "
+      + "address space changes while a process runs.",
+      "Process Manager"
+    );
+  }
+
+  /// <summary>
   /// What the file behind a mapping is, on disk.
   /// </summary>
   /// <remarks>
@@ -295,7 +336,15 @@ internal sealed class ProcessMemoryMapPage {
       return;
     }
 
-    new FilePropertiesDialog(path, [], this._actions).ShowDialog();
+    // The same box the modules view opens, with the same verify delegate behind its hash button: a
+    // mapped file is a file, and asking whoever shipped it whether these are still its bytes is the
+    // same question here as it is there (PRD §25.6, §70).
+    new FilePropertiesDialog(
+      path,
+      [],
+      this._actions,
+      image => this._probe.DescribeImage(image, verify: true)
+    ).ShowDialog();
   }
 
   #endregion
