@@ -87,6 +87,11 @@ internal static class ProbeFactory {
   /// Whether anything on this run asked when each image file was created. One <c>statx</c> per
   /// process, on a path nothing else reads.
   /// </param>
+  /// <param name="wantIoPriority">
+  /// Whether anything on this run asked which disk scheduling class each process is in. It is the
+  /// one per-process reading that is a syscall rather than a file — the kernel publishes it nowhere
+  /// under <c>/proc</c> — so it happens only when a column or a filter names it (PRD §5.4, §17).
+  /// </param>
   /// <param name="wantSecurityStatus">
   /// Whether anything on this run asked for the mitigation states, the umask, the tracer or the
   /// descriptor-table size. The lines are in a file already open, so this buys no read — it buys
@@ -111,7 +116,8 @@ internal static class ProbeFactory {
     bool wantApplicationName = false,
     bool wantRuntime = false,
     bool wantImageCreationTime = false,
-    bool wantSecurityStatus = false
+    bool wantSecurityStatus = false,
+    bool wantIoPriority = false
   ) {
     if (OperatingSystem.IsLinux()) {
       // A recorded tree is somebody else's machine; asking a helper about pids in it would be asking
@@ -147,6 +153,7 @@ internal static class ProbeFactory {
             ReadRuntime = wantRuntime,
             ReadImageCreationTime = wantImageCreationTime,
             ReadSecurityStatus = wantSecurityStatus,
+            ReadIoPriority = wantIoPriority,
           }
           // A recorded tree was captured by somebody else, so the live user's id would refuse every
           // file in it. Root reads everything, which is what a replay wants (PRD §9.1).
@@ -186,6 +193,10 @@ internal static class ProbeFactory {
             // The recorded tree carries each process's status verbatim, so these five lines
             // replay exactly as they were captured.
             ReadSecurityStatus = wantSecurityStatus,
+            // The I/O priority is the one field with no file behind it: ioprio_get asks the running
+            // kernel about a live pid, and the pids in a recorded tree belong to somebody else's
+            // machine. Asking would describe whatever happens to hold those numbers here (PRD §9.1).
+            ReadIoPriority = false,
           }
       );
     }

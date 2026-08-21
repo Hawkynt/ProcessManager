@@ -135,8 +135,42 @@ public sealed partial class LinuxProbe : ISystemProbe {
     // descriptor walk that joins them to processes visits every process exactly once.
     this._sockets?.BeginSample();
     this.ReadSystem(snapshot);
+    // Before the process loop, because it decides whether one field of every process's stat line
+    // means anything at all.
+    this.ReadDelayAccounting();
     this.ReadProcesses(snapshot);
     this.PruneCache();
+  }
+
+  /// <summary>
+  /// Whether this machine accounts for the time its tasks spend waiting on block I/O (PRD §17).
+  /// </summary>
+  /// <remarks>
+  /// <c>delayacct_blkio_ticks</c> is field 42 of every <c>stat</c> line whether or not anything is
+  /// counting, and when nothing is the kernel writes a nought there for every process on the
+  /// machine. So the field cannot be read without this: a column of noughts saying "nothing here
+  /// ever waits for a disk" is indistinguishable from a real measurement and is the exact shape of
+  /// <c>default(Counter)</c> the rest of this file is written against (PRD §72.3).
+  /// </remarks>
+  private bool _delayAccounting;
+
+  /// <summary>
+  /// Re-read every sample rather than once, because it is a sysctl somebody can turn on while this
+  /// is running — which is precisely what a reader who has just found the column disabled will do.
+  /// One thirty-byte file against the six hundred this sample is about to open.
+  /// </summary>
+  private void ReadDelayAccounting() {
+    // A kernel built without CONFIG_TASK_DELAY_ACCT has no such file, and that is the same answer
+    // as having it switched off: the number in field 42 means nothing either way.
+    this._delayAccounting = false;
+
+    Span<byte> pathBuffer = stackalloc byte[ProcPath.MaxLength];
+    var path = ProcPath.Build(pathBuffer, this._procRootUtf8, "sys/kernel/task_delayacct"u8);
+    if (!this._reader.TryRead(path, out var content, out _))
+      return;
+
+    var value = new AsciiScanner(content).NextField();
+    this._delayAccounting = !value.IsEmpty && AsciiScanner.ParseUInt64(value) != 0;
   }
 
   #region system-wide
@@ -906,6 +940,13 @@ public sealed partial class LinuxProbe : ISystemProbe {
     if (!ParseStat(content, this._nanosecondsPerTick, this._options.PageSize, ref record))
       return false;
 
+    // The gate on field 42, applied where the machine is known rather than inside the parser, which
+    // is only entitled to say what the line held. With delay accounting off the kernel writes a
+    // nought there for every process, and believing it would put a table-wide column of noughts on
+    // screen reading "nothing here has ever waited for a disk" (PRD §17, §72.3).
+    if (!this._delayAccounting)
+      record.BlockIoWaitNs = Counter.NotSupported;
+
     record.Key = new(pid, record.Key.StartTicks);
     record.StartTimeUtcTicks = this._bootTimeUtcTicks
       + (long)(record.Key.StartTicks * this._nanosecondsPerTick / 100);          // ns → 100 ns ticks
@@ -916,6 +957,7 @@ public sealed partial class LinuxProbe : ISystemProbe {
 
     this.ReadStatus(cache, ref record);
     this.ReadIo(cache, ref record);
+    this.ReadIoPriority(ref record);
     this.ReadFileDescriptorCount(cache, ref record);
     // After the key exists, and keyed on the pid only within this one sample: the GPU figures were
     // gathered a moment ago from the same instant, and nothing is carried over between samples, so a
@@ -995,6 +1037,12 @@ public sealed partial class LinuxProbe : ISystemProbe {
     // chances to miscount a positional line whose next-door neighbours are all plausible small
     // integers, and one parser that counts once cannot disagree with itself.
     var policy = scanner.NextField();                      // 41 policy
+    // 42 delayacct_blkio_ticks — how long the task has been parked waiting for a block device,
+    // which is the one reading that separates "slow because it is computing" from "slow because it
+    // is waiting for a disk". Read here for the same reason the policy is, and reported as what the
+    // line held: whether the machine's delay accounting is switched on at all is a question about
+    // the machine and not about this line, and the caller is where that is known (PRD §17).
+    var blockIoTicks = scanner.NextField();                // 42 delayacct_blkio_ticks
 
     record.Key = new(0, startTicks);
     // A stat line that stops short — an old kernel, a truncated read, a fixture — leaves the class
@@ -1002,6 +1050,12 @@ public sealed partial class LinuxProbe : ISystemProbe {
     record.SchedulingPolicy = policy.IsEmpty
       ? SchedulingPolicy.Unknown
       : MapSchedulingPolicy(AsciiScanner.ParseUInt64(policy));
+    // A stat line that stops short leaves this unknown for the same reason the class above it is
+    // left unknown: a nought would be the kernel saying this task has never waited for a disk,
+    // which is a finding and not the absence of one.
+    record.BlockIoWaitNs = blockIoTicks.IsEmpty
+      ? Counter.NotSupported
+      : Counter.Of((ulong)(AsciiScanner.ParseUInt64(blockIoTicks) * nanosecondsPerTick));
     record.UserTimeNs = Counter.Of((ulong)(utime * nanosecondsPerTick));
     record.KernelTimeNs = Counter.Of((ulong)(stime * nanosecondsPerTick));
     record.CpuTimeNs = Counter.Of((ulong)((utime + stime) * nanosecondsPerTick));
@@ -1027,6 +1081,7 @@ public sealed partial class LinuxProbe : ISystemProbe {
     // whatever it counts. Every one of these has to be stated (PRD §5.3).
     record.FileBackedBytes = Counter.NotSupported;
     record.SharedResidentBytes = Counter.NotSupported;
+    record.StackBytes = Counter.NotSupported;
     record.ProportionalBytes = Counter.NotSampledYet;
     record.ProportionalSwapBytes = Counter.NotSampledYet;
     record.UniqueBytes = Counter.NotSampledYet;
@@ -1038,10 +1093,19 @@ public sealed partial class LinuxProbe : ISystemProbe {
     record.PeakNonPagedPoolBytes = Counter.NotSupported;
     // Linux does not count cycles per process. Saying so beats a zero (PRD §3.4).
     record.Cycles = Counter.NotSupported;
+    // /proc/[pid]/io counts syscr and syscw and has no third figure of any kind, so the "other"
+    // pair is a Windows quantity with no Linux counterpart rather than a nought (PRD §17).
     record.OtherBytes = Counter.NotSupported;
+    record.OtherOperations = Counter.NotSupported;
     record.SwapBytes = Counter.NotSupported;
     record.ReadBytes = Counter.NotSupported;
     record.WriteBytes = Counter.NotSupported;
+    record.ReadOperations = Counter.NotSupported;
+    record.WriteOperations = Counter.NotSupported;
+    // ioprio_get is a syscall per process and nobody has made it yet — which is not the same
+    // statement as the process having no I/O class set, because "none" is a real class and the
+    // ordinary one (PRD §5.4, §72.3).
+    record.IoPriorityValue = Counter.NotSampledYet;
     record.HandleCount = Counter.NotSupported;
     record.SocketCount = Counter.NotSupported;
     record.FileCount = Counter.NotSupported;
@@ -1143,6 +1207,7 @@ public sealed partial class LinuxProbe : ISystemProbe {
     if (!this._reader.TryRead(cache.StatusPath, out var content, out var errno)) {
       if (errno is Native.EACCES or Native.EPERM) {
         record.PrivateBytes = Counter.NotPermitted;
+        record.StackBytes = Counter.NotPermitted;
         record.ContextSwitches = Counter.NotPermitted;
         record.IsElevated = Counter.NotPermitted;
         record.SeccompMode = Counter.NotPermitted;
@@ -1167,6 +1232,8 @@ public sealed partial class LinuxProbe : ISystemProbe {
     }
 
     ulong rssAnon = 0, swap = 0, voluntary = 0, involuntary = 0, data = 0, peakVirtual = 0, peakRss = 0;
+    var stack = 0ul;
+    var haveStack = false;
     var haveRssAnon = false;
     var rssFile = 0ul;
     var haveRssFile = false;
@@ -1261,7 +1328,13 @@ public sealed partial class LinuxProbe : ISystemProbe {
         peakRss = value * 1024;
       else if (TryValue(line, "VmSwap:"u8, out value))
         swap = value * 1024;
-      else if (TryValue(line, "voluntary_ctxt_switches:"u8, out value))
+      else if (TryValue(line, "VmStk:"u8, out value)) {
+        // The main thread's stack segment, and a flag rather than a test against nought: a kernel
+        // thread has no Vm lines at all, and a nought here would report one as having a stack of
+        // nothing rather than as having no such measurement (PRD §72.3).
+        stack = value * 1024;
+        haveStack = true;
+      } else if (TryValue(line, "voluntary_ctxt_switches:"u8, out value))
         voluntary = value;
       else if (TryValue(line, "nonvoluntary_ctxt_switches:"u8, out value))
         involuntary = value;
@@ -1298,6 +1371,9 @@ public sealed partial class LinuxProbe : ISystemProbe {
 
     if (haveRssShmem)
       record.SharedResidentBytes = Counter.Of(rssShmem);
+
+    if (haveStack)
+      record.StackBytes = Counter.Of(stack);
 
     // A kernel too old to report the effective uid leaves this unknown rather than guessing that
     // the real uid is also the effective one, which is false for every setuid process there is.
@@ -1434,6 +1510,8 @@ public sealed partial class LinuxProbe : ISystemProbe {
     if (!this.MayRead(record)) {
       record.ReadBytes = Counter.NotPermitted;
       record.WriteBytes = Counter.NotPermitted;
+      record.ReadOperations = Counter.NotPermitted;
+      record.WriteOperations = Counter.NotPermitted;
       return;
     }
 
@@ -1444,17 +1522,82 @@ public sealed partial class LinuxProbe : ISystemProbe {
         ? Counter.NotPermitted
         : Counter.Unknown(UnknownReason.ProcessExited);
       record.WriteBytes = record.ReadBytes;
+      // The operation counts come out of the same file and so share its fate exactly. Set from the
+      // same reason rather than left alone: default(Counter) would report a process whose I/O we
+      // may not read as having made no calls at all (PRD §72.3).
+      record.ReadOperations = record.ReadBytes;
+      record.WriteOperations = record.ReadBytes;
       return;
     }
 
     var scanner = new AsciiScanner(content);
     while (!scanner.IsEmpty) {
       var line = scanner.NextLine();
-      if (TryValue(line, "read_bytes:"u8, out var value))
-        record.ReadBytes = Counter.Of(value);
-      else if (TryValue(line, "write_bytes:"u8, out value))
-        record.WriteBytes = Counter.Of(value);
+      if (line.IsEmpty)
+        continue;
+
+      // Dispatched on the first byte rather than run down a chain of labels. The file has seven
+      // lines and four of them are wanted, and this rejects "cancelled_write_bytes" — the longest
+      // of the seven — without a single comparison. It is cheaper than the two-label chain it
+      // replaces even while recognising twice as many labels, which is what made room for the
+      // operation counts: the lesson of §71.2 is that what a parse loop costs is the room its
+      // labels take up, so the way to add two is to stop carrying the others past every line.
+      ulong value;
+      switch (line[0]) {
+        case (byte)'r':
+          if (TryValue(line, "read_bytes:"u8, out value))
+            record.ReadBytes = Counter.Of(value);
+
+          break;
+        case (byte)'w':
+          if (TryValue(line, "write_bytes:"u8, out value))
+            record.WriteBytes = Counter.Of(value);
+
+          break;
+        // Read and write *calls*, which is the question the byte counters beside them cannot
+        // answer: a gigabyte moved in a thousand operations and the same gigabyte moved in a
+        // million are one figure under read_bytes and two very different machines (PRD §17).
+        case (byte)'s':
+          if (TryValue(line, "syscr:"u8, out value))
+            record.ReadOperations = Counter.Of(value);
+          else if (TryValue(line, "syscw:"u8, out value))
+            record.WriteOperations = Counter.Of(value);
+
+          break;
+      }
     }
+  }
+
+  /// <summary>
+  /// The process's I/O scheduling priority, through <c>ioprio_get</c> (PRD §17).
+  /// </summary>
+  /// <remarks>
+  /// A syscall per process per sample and no file to read it out of, which is what puts it behind a
+  /// switch that only somebody naming the column flips (PRD §5.4). It needs no privilege — the
+  /// kernel checks only that the task exists and that the security module allows the question — so
+  /// the ordinary failure here is a process that exited between being listed and being asked.
+  /// <para>
+  /// A return of zero is a reading and the commonest one: <c>IOPRIO_CLASS_NONE</c>, meaning nothing
+  /// has been set and the nice value decides. It must not become the same cell as a refusal, which
+  /// is why the packed value is kept in a <see cref="Counter"/> rather than unpacked into a class
+  /// whose zero already means "none" (PRD §72.3).
+  /// </para>
+  /// </remarks>
+  private void ReadIoPriority(ref ProcessRecord record) {
+    if (!this._options.ReadIoPriority)
+      return;
+
+    if (!Native.SupportsIoPriority) {
+      // An architecture this build has no syscall number for. A fact about us, not about the
+      // kernel, which has the call on every port Linux runs on.
+      record.IoPriorityValue = Counter.Unknown(UnknownReason.NotImplementedHere);
+      return;
+    }
+
+    var packed = Native.GetIoPriority(record.Pid);
+    record.IoPriorityValue = packed >= 0
+      ? Counter.Of((ulong)packed)
+      : Counter.Unknown(UnknownReason.ProcessExited);
   }
 
   /// <summary>

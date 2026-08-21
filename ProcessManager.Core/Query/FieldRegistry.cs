@@ -121,6 +121,17 @@ public static class FieldRegistry {
     new(ProcessField.SharedSet, "ws.shared", "Shared WS", "ShmWS",
       "The resident memory in shared segments — tmpfs, shared anonymous mappings, System V shared memory.",
       FieldKind.Instant, FieldUnit.Bytes, _ALL, FieldCost.Free, 62, 7, true, true),
+    // PRD §16. The working set less its private half — the same subtraction Windows makes for its
+    // own "Shareable WS", and on Linux exactly the file-backed and shared columns beside it added
+    // together. Derived here rather than read, because both halves are already on the row: a third
+    // counter in the record would be a number that can disagree with the two it is made of.
+    new(ProcessField.ShareableWorkingSet, "ws.shareable", "Shareable WS", "ShrWS",
+      "The resident memory another process could be mapping too — the working set less its private part. A large shareable set is a process holding libraries and file data the rest of the machine is holding as well, and it costs far less than the same figure in private pages.",
+      FieldKind.Instant, FieldUnit.Bytes, _ALL, FieldCost.Free, 106, 7, true, true),
+    new(ProcessField.StackBytes, "stack.commit", "Main stack", "Stack",
+      "How much stack the kernel accounts to the process. The main thread's and only the main thread's: every other thread's stack is an ordinary anonymous mapping and the kernel keeps no figure for it, so a thread pool with two hundred stacks reports the same few kilobytes here as a single-threaded program.",
+      FieldKind.Instant, FieldUnit.Bytes, _LINUX, FieldCost.Free, 92, 7, true, true,
+      Aliases: "stack vmstk"),
     new(ProcessField.MemoryHistory, "memory.history", "Memory history", "Mem hist",
       "The last sixty seconds of committed private memory.",
       FieldKind.Graph, FieldUnit.Bytes, _ALL, FieldCost.Derived, 90, 12, false, false,
@@ -170,6 +181,44 @@ public static class FieldRegistry {
       "Bytes this process caused to be written, per second.",
       FieldKind.Rate, FieldUnit.BytesPerSecond, _ALL, FieldCost.Derived, 104, 8, true, true,
       Aliases: "write"),
+    // PRD §17. The operation counts beside the byte counts, and the pair is the point: a process
+    // moving a gigabyte in a thousand operations and one moving it in a million are the same row
+    // under the byte columns and very different machines to be sitting in front of. Free on both
+    // platforms — syscr and syscw are lines of a file the sampler already reads, and Windows has
+    // ReadOperationCount and WriteOperationCount in the structure it already queries.
+    new(ProcessField.ReadOperations, "io.read.ops", "I/O read operations", "Rd ops",
+      "How many read calls this process has made. Not the same question as how many bytes: a million one-byte reads and one large one move the same data and cost the machine completely differently.",
+      FieldKind.Cumulative, FieldUnit.Count, _ALL, FieldCost.Free, 150, 8, true, true,
+      Aliases: "syscr"),
+    new(ProcessField.ReadOperationsDelta, "io.read.ops.delta", "I/O read op rate", "Rd op/s",
+      "Read calls this interval. A process making tens of thousands a second is one to look at whatever its byte rate says.",
+      FieldKind.Rate, FieldUnit.CountPerSecond, _ALL, FieldCost.Derived, 132, 8, true, true),
+    new(ProcessField.WriteOperations, "io.write.ops", "I/O write operations", "Wr ops",
+      "How many write calls this process has made.",
+      FieldKind.Cumulative, FieldUnit.Count, _ALL, FieldCost.Free, 154, 8, true, true,
+      Aliases: "syscw"),
+    new(ProcessField.WriteOperationsDelta, "io.write.ops.delta", "I/O write op rate", "Wr op/s",
+      "Write calls this interval.",
+      FieldKind.Rate, FieldUnit.CountPerSecond, _ALL, FieldCost.Derived, 136, 8, true, true),
+    new(ProcessField.OtherOperations, "io.other.ops", "I/O other operations", "Ot ops",
+      "Operations that were neither reads nor writes — ioctls, mostly. Windows keeps this count; /proc/[pid]/io has no third figure of any kind, so on Linux it is absent rather than nought.",
+      FieldKind.Cumulative, FieldUnit.Count, _WINDOWS, FieldCost.Free, 156, 8, true, true),
+    // PRD §17. The column that separates "slow because it is computing" from "slow because it is
+    // waiting for a disk". Free — field 42 of the stat line the sampler already parses — and
+    // conditional on the machine's delay accounting being switched on, which since 5.14 it is not
+    // by default: with it off the kernel writes a literal nought there for every process, and a
+    // table-wide column of noughts reading "nothing here ever waits" is the same lie as any other
+    // unfilled counter (PRD §72.3).
+    new(ProcessField.BlockIoWait, "io.wait", "I/O wait", "IOwait",
+      "How long this process has spent waiting for block I/O rather than running. Needs the kernel's delay accounting, which is compiled in and switched off on an ordinary machine — sysctl kernel.task_delayacct=1 turns it on, and until it is, this says so rather than reporting nought.",
+      FieldKind.Cumulative, FieldUnit.Nanoseconds, _LINUX, FieldCost.Free, 96, 9, true, true,
+      Aliases: "iowait blkio"),
+    // PRD §17. A syscall per process per sample — ioprio_get has no file to read it out of — so it
+    // is High and nothing turns it on but somebody naming the column (PRD §5.4).
+    new(ProcessField.IoPriority, "io.priority", "I/O priority", "IOPri",
+      "Which class of the disk scheduler this process's requests belong to. The one control that stops a backup or an indexer making a machine unusable without slowing it down much: \"default\" is the ordinary answer and means the kernel derives it from the nice value.",
+      FieldKind.State, FieldUnit.None, _LINUX, FieldCost.High, 120, 12, false, false,
+      Aliases: "ioprio ionice"),
     new(ProcessField.IoHistory, "io.history", "I/O history", "I/O hist",
       "The last sixty seconds of read and write traffic.",
       FieldKind.Graph, FieldUnit.BytesPerSecond, _ALL, FieldCost.Derived, 90, 12, false, false,

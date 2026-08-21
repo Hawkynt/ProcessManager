@@ -85,6 +85,45 @@ internal static class SystemProcessInformationReader {
       record.PageFaults = Counter.Of(entry.PageFaultCount);
       record.Cycles = Counter.Of(entry.CycleTime);
 
+      // PRD §16, §72.3. Five memory fields with nothing behind them here, and every one of them was
+      // reading as a confident nought: a record is zeroed per entry, and a Counter nobody assigns
+      // has reason None, which means "the value is present". Windows reported 0 B file-backed,
+      // 0 B shared, 0 B proportional, 0 B swapped-proportional and 0 B unique for every process on
+      // the machine, all five of them indistinguishable from a real measurement.
+      //
+      // The split of a working set into its file-backed and shared halves is reachable through
+      // QueryWorkingSetEx, which is a call per process and is not written — a fact about us. A
+      // proportional set is not reachable at all: Windows keeps no share-of-a-shared-page accounting
+      // anywhere, which is a fact about the platform, and the two must not say the same thing
+      // (PRD §7).
+      record.FileBackedBytes = Counter.Unknown(UnknownReason.NotImplementedHere);
+      record.SharedResidentBytes = Counter.Unknown(UnknownReason.NotImplementedHere);
+      record.UniqueBytes = Counter.Unknown(UnknownReason.NotImplementedHere);
+      record.ProportionalBytes = Counter.NotSupported;
+      record.ProportionalSwapBytes = Counter.NotSupported;
+
+      // PRD §19, §72.3. The same defect, eleven fields wide: every GPU counter read as a measured
+      // nought on Windows, so a card that was busy rendering showed 0.0 % against every engine and
+      // 0 B of adapter memory for every process — which is precisely the "unsupported stack renders
+      // a zero" that §19 forbids and asserts against on the other platform. Windows publishes all of
+      // this through its own GPU performance counters, which is what Task Manager reads and what
+      // §100 will read; until then the honest mark is the one that says this program has not built
+      // it, not the one that says the machine cannot answer.
+      var noGraphics = Counter.Unknown(UnknownReason.NotImplementedHere);
+      record.GpuGraphicsNs = noGraphics;
+      record.GpuComputeNs = noGraphics;
+      record.GpuCopyNs = noGraphics;
+      record.GpuEncodeNs = noGraphics;
+      record.GpuDecodeNs = noGraphics;
+      record.GpuBusyPercent = noGraphics;
+      record.GpuEncodePercent = noGraphics;
+      record.GpuDecodePercent = noGraphics;
+      record.GpuDedicatedBytes = noGraphics;
+      record.GpuSharedBytes = noGraphics;
+      record.GpuBusyEngine = GpuEngine.Unknown;
+      record.GpuAdapter = null;
+      record.GpuAdapterReason = UnknownReason.NotImplementedHere;
+
       anyPrivateBytes |= entry.PrivatePageCount != 0;
       anyPrivateWorkingSet |= entry.WorkingSetPrivateSize > 0;
       anyPageFaults |= entry.PageFaultCount != 0;
@@ -92,6 +131,23 @@ internal static class SystemProcessInformationReader {
       record.ReadBytes = Counter.Of((ulong)Math.Max(0, entry.ReadTransferCount));
       record.WriteBytes = Counter.Of((ulong)Math.Max(0, entry.WriteTransferCount));
       record.OtherBytes = Counter.Of((ulong)Math.Max(0, entry.OtherTransferCount));
+      // The operation counts sit beside the transfer counts in the same structure, so all three
+      // are free here — including the "other" one, which Linux has no counterpart for at all
+      // (PRD §17).
+      record.ReadOperations = Counter.Of((ulong)Math.Max(0, entry.ReadOperationCount));
+      record.WriteOperations = Counter.Of((ulong)Math.Max(0, entry.WriteOperationCount));
+      record.OtherOperations = Counter.Of((ulong)Math.Max(0, entry.OtherOperationCount));
+      // Windows accounts no I/O wait time to a process. The nearest thing is a thread's wait reason,
+      // which is a state at an instant rather than a duration, and folding one into the other would
+      // be the false equivalence §5.3 forbids.
+      record.BlockIoWaitNs = Counter.NotSupported;
+      // Windows has an I/O priority per process and reports it through NtQueryInformationProcess's
+      // ProcessIoPriority, which is not read here — a fact about us rather than about the machine
+      // (PRD §7, §17).
+      record.IoPriorityValue = Counter.Unknown(UnknownReason.NotImplementedHere);
+      // Every thread's stack commit is reachable through its TEB, and summing them is not written.
+      // Unbuilt rather than unanswerable, and the same statement the descriptor split above makes.
+      record.StackBytes = Counter.Unknown(UnknownReason.NotImplementedHere);
       record.HandleCount = Counter.Of(entry.HandleCount);
       // Windows has all three object types and a handle table to count them in; walking it is not
       // written, so this is a fact about us rather than about the machine (PRD §7, §20).
