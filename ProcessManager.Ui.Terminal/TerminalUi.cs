@@ -30,9 +30,19 @@ public sealed class TerminalUi {
   private InputMode _mode;
   private string _input = string.Empty;
   private ProcessKey _confirmTarget;
-  private bool _confirmTree;
+  private PendingAction _pending;
 
-  private enum InputMode : byte { Normal, Search, Filter, ConfirmKill, Detail }
+  private enum InputMode : byte { Normal, Search, Filter, Confirm, SchedulingClass, Detail }
+
+  /// <summary>
+  /// What the pending confirmation will do if it is answered yes.
+  /// </summary>
+  /// <remarks>
+  /// The action is decided when the key is pressed and carried out when it is confirmed, so the
+  /// prompt and the deed cannot disagree about which one was asked for — which a pair of booleans
+  /// was one added action away from allowing.
+  /// </remarks>
+  private enum PendingAction : byte { None, Terminate, TerminateTree, Restart }
 
   public TerminalUi(Sampler sampler, ISystemProbe probe, IProcessActions? actions, int width, int height, ColorDepth depth) {
     ArgumentNullException.ThrowIfNull(sampler);
@@ -159,8 +169,10 @@ public sealed class TerminalUi {
     switch (this._mode) {
       case InputMode.Search or InputMode.Filter:
         return this.HandleTextInput(key);
-      case InputMode.ConfirmKill:
+      case InputMode.Confirm:
         return this.HandleConfirm(key);
+      case InputMode.SchedulingClass:
+        return this.HandleSchedulingClass(key);
       case InputMode.Detail:
         return this.HandleDetail(key);
       default:
@@ -178,7 +190,7 @@ public sealed class TerminalUi {
       case ConsoleKey.End: this.MoveSelection(int.MaxValue / 2); return true;
       case ConsoleKey.F5: this._view.TreeMode = !this._view.TreeMode; return true;
       case ConsoleKey.F6: this.NextSortColumn(); return true;
-      case ConsoleKey.F9: this.BeginKill(tree: false); return true;
+      case ConsoleKey.F9: this.Confirm(PendingAction.Terminate); return true;
       case ConsoleKey.F10 or ConsoleKey.Escape: this.ShouldQuit = true; return false;
       case ConsoleKey.F3: this.BeginInput(InputMode.Search); return true;
       case ConsoleKey.Enter: this.OpenDetail(); return true;
@@ -190,8 +202,11 @@ public sealed class TerminalUi {
       case '/': this.BeginInput(InputMode.Search); return true;
       case '\\': this.BeginInput(InputMode.Filter); return true;
       case 'u': this.ToggleUserFilter(); return true;
-      case 'k': this.BeginKill(tree: false); return true;
-      case 'K': this.BeginKill(tree: true); return true;
+      case 'k': this.Confirm(PendingAction.Terminate); return true;
+      case 'K': this.Confirm(PendingAction.TerminateTree); return true;
+      case 'R': this.Confirm(PendingAction.Restart); return true;
+      case 'e': this.EndTask(); return true;
+      case 's': this.BeginSchedulingClass(); return true;
       case 'I': this._view.SortDescending = !this._view.SortDescending; return true;
       case 'h': this.FillHandleCounts(); return true;
       case 'i': this.OpenDetail(); return true;
@@ -275,7 +290,9 @@ public sealed class TerminalUi {
   }
 
   private bool HandleConfirm(ConsoleKeyInfo key) {
+    var pending = this._pending;
     this._mode = InputMode.Normal;
+    this._pending = PendingAction.None;
     if (key.KeyChar is not ('y' or 'Y')) {
       this.Say("cancelled", Attributes.Dim);
       return true;
@@ -286,17 +303,102 @@ public sealed class TerminalUi {
       return true;
     }
 
-    if (this._confirmTree)
-      this.KillTree(this._confirmTarget);
-    else {
-      var result = this._actions.Terminate(this._confirmTarget);
-      this.Say(
-        result.Succeeded ? $"sent SIGTERM to {this._confirmTarget.Pid}" : result.Detail ?? "failed",
-        result.Succeeded ? Attributes.Good : Attributes.Bad
-      );
+    switch (pending) {
+      case PendingAction.TerminateTree:
+        this.KillTree(this._confirmTarget);
+        return true;
+      case PendingAction.Restart: {
+        var restarted = this._actions.Restart(this._confirmTarget);
+        this.Report(
+          restarted.Outcome,
+          $"{this._confirmTarget.Pid} started again as {restarted.Pid}"
+        );
+
+        return true;
+      }
+      default: {
+        var result = this._actions.Terminate(this._confirmTarget);
+        this.Report(result, $"sent SIGTERM to {this._confirmTarget.Pid}");
+        return true;
+      }
+    }
+  }
+
+  /// <summary>
+  /// Picks a scheduler class for the selected process with one more key (PRD §25.2).
+  /// </summary>
+  /// <remarks>
+  /// The initial of each class rather than a numbered list, because the classes have initials that
+  /// do not collide and a number would have to be looked up in the prompt every time.
+  /// </remarks>
+  private bool HandleSchedulingClass(ConsoleKeyInfo key) {
+    this._mode = InputMode.Normal;
+    var chosen = char.ToLowerInvariant(key.KeyChar) switch {
+      'o' => SchedulingPolicy.Other,
+      'b' => SchedulingPolicy.Batch,
+      'i' => SchedulingPolicy.Idle,
+      'r' => SchedulingPolicy.RoundRobin,
+      'f' => SchedulingPolicy.Fifo,
+      _ => SchedulingPolicy.Unknown,
+    };
+
+    if (chosen == SchedulingPolicy.Unknown) {
+      this.Say("cancelled", Attributes.Dim);
+      return true;
     }
 
+    if (this._actions is null) {
+      this.Say("no actions are available in this build", Attributes.Bad);
+      return true;
+    }
+
+    // The real-time classes take their lowest static priority; anything above it is a decision for a
+    // prompt rather than for one keystroke in a list (PRD §68).
+    var priority = chosen is SchedulingPolicy.Fifo or SchedulingPolicy.RoundRobin ? 1 : 0;
+    this.Report(
+      this._actions.SetSchedulingClass(this._confirmTarget, chosen, priority),
+      $"{this._confirmTarget.Pid} now runs under {Humanize.SchedulingPolicy(chosen)}"
+    );
+
     return true;
+  }
+
+  /// <summary>
+  /// Asks the program to close rather than telling it to (PRD §25.1).
+  /// </summary>
+  /// <remarks>
+  /// Not confirmed, and that is the distinction from <c>k</c>: this one asks, the program may put up
+  /// its own dialog and may decline, and nothing has been lost if it does.
+  /// </remarks>
+  private void EndTask() {
+    if (this._selectedKey.IsNone) {
+      this.Say("nothing selected", Attributes.Dim);
+      return;
+    }
+
+    if (this._actions is null) {
+      this.Say("no actions are available in this build", Attributes.Bad);
+      return;
+    }
+
+    this.Report(this._actions.EndTask(this._selectedKey), $"asked {this._selectedKey.Pid} to end");
+  }
+
+  /// <summary>
+  /// Puts an action's answer on the status line, preferring what the action itself had to say.
+  /// </summary>
+  /// <remarks>
+  /// A success with a detail is a success that carries information the outcome does not — "its
+  /// window was asked to close" against "it has no window, so SIGTERM was sent" — and losing it in
+  /// favour of a generic sentence would throw away the only part worth reading (PRD §72.3).
+  /// </remarks>
+  private void Report(ActionResult result, string succeeded) {
+    if (!result.Succeeded) {
+      this.Say(result.Detail ?? "failed", Attributes.Bad);
+      return;
+    }
+
+    this.Say(result.Detail is { Length: > 0 } detail ? detail : succeeded, Attributes.Good);
   }
 
   private void MoveSelection(int delta) {
@@ -360,29 +462,33 @@ public sealed class TerminalUi {
     this.Say($"sorted by {columns[index].Header()}", Attributes.Accent);
   }
 
-  private void BeginKill(bool tree) {
+  private void Confirm(PendingAction action) {
     if (this._selectedKey.IsNone) {
       this.Say("nothing selected", Attributes.Dim);
       return;
     }
 
     this._confirmTarget = this._selectedKey;
-    this._confirmTree = tree;
-    this._mode = InputMode.ConfirmKill;
+    this._pending = action;
+    this._mode = InputMode.Confirm;
+  }
+
+  private void BeginSchedulingClass() {
+    if (this._selectedKey.IsNone) {
+      this.Say("nothing selected", Attributes.Dim);
+      return;
+    }
+
+    this._confirmTarget = this._selectedKey;
+    this._mode = InputMode.SchedulingClass;
   }
 
   private void KillTree(ProcessKey root) {
-    // Deepest first — see ProcessTree.DescendantsFirst for why the order is not incidental.
+    // Deepest first — see ProcessTree.DescendantsFirst for why the order is not incidental. The walk
+    // is done here and the ending in the action layer, which is where the accounting and the
+    // per-process identity re-check live (PRD §25.1).
     var order = ProcessTree.DescendantsFirst(this._sampler.Current, root.Pid);
-    var killed = 0;
-    foreach (var key in order)
-      if (this._actions!.Terminate(key).Succeeded)
-        ++killed;
-
-    this.Say(
-      $"sent SIGTERM to {killed} of {order.Count} processes",
-      killed == order.Count ? Attributes.Good : Attributes.Warn
-    );
+    this.Report(this._actions!.TerminateTree(order), $"sent SIGTERM to {order.Count} processes");
   }
 
   /// <summary>
@@ -622,6 +728,27 @@ public sealed class TerminalUi {
     }
   }
 
+  /// <summary>
+  /// The confirmation, which names the action, the target, its pid and what it costs (PRD §90).
+  /// </summary>
+  /// <remarks>
+  /// One line and no dialog, so every word has to earn its place — but the count of processes under
+  /// a tree does earn it. A shell on its own and a shell with a build under it are the same row and
+  /// very different requests, and the number is the only thing that says which one this is.
+  /// </remarks>
+  private string ConfirmationText() {
+    var name = this._sampler.Current.TryGetProcess(this._confirmTarget, out var record) ? record.Name : "?";
+    var target = $"{name} (PID {this._confirmTarget.Pid})";
+    return this._pending switch {
+      PendingAction.TerminateTree
+        => $"Terminate {target} and the {Math.Max(0, ProcessTree.DescendantsFirst(this._sampler.Current, this._confirmTarget.Pid).Count - 1)} "
+          + "processes under it? Unsaved work in them is lost. y/N",
+      PendingAction.Restart
+        => $"Stop {target} and start it again with the same arguments? Unsaved work in it is lost. y/N",
+      _ => $"Terminate {target}? It is not asked to save anything first. y/N",
+    };
+  }
+
   private void DrawStatus() {
     var y = this._screen.Height - 1;
     this._screen.Fill(0, y, this._screen.Width, ' ', Attributes.Header);
@@ -630,15 +757,23 @@ public sealed class TerminalUi {
       case InputMode.Search or InputMode.Filter:
         this._screen.Write(0, y, $"Search: {this._input}_", Attributes.Header);
         return;
-      case InputMode.ConfirmKill: {
-        var name = this._sampler.Current.TryGetProcess(this._confirmTarget, out var record) ? record.Name : "?";
-        var what = this._confirmTree ? "and every process under it" : "";
-        this._screen.Write(0, y, $"Send SIGTERM to {name} ({this._confirmTarget.Pid}) {what}? y/N", Attributes.Header);
+      case InputMode.Confirm: {
+        this._screen.Write(0, y, this.ConfirmationText(), Attributes.Header);
+        return;
+      }
+      case InputMode.SchedulingClass: {
+        var name = this._sampler.Current.TryGetProcess(this._confirmTarget, out var chosen) ? chosen.Name : "?";
+        this._screen.Write(
+          0, y,
+          $"Scheduler class for {name} (PID {this._confirmTarget.Pid}): o normal · b batch · i idle · r real-time RR · f real-time FIFO",
+          Attributes.Header
+        );
+
         return;
       }
     }
 
-    var keys = "F5 tree  F6 sort  F9 kill  Enter details  / search  u user  h handles  C cpu%  q quit";
+    var keys = "F5 tree  F6 sort  e end task  k kill  K kill tree  R restart  s class  / search  u user  Enter details  q quit";
     this._screen.Write(0, y, keys, Attributes.Header);
 
     var right = this._message.Length > 0 ? this._message : string.Empty;

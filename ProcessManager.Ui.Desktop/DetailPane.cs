@@ -46,9 +46,10 @@ public sealed class DetailPane {
   private ProcessKey Key => this._key;
 
   public DetailPane(ISystemProbe probe) {
-    this._threads.ContextMenuStrip = this.BuildThreadMenu();
     ArgumentNullException.ThrowIfNull(probe);
     this._probe = probe;
+    this._threads.ContextMenuStrip = this.BuildThreadMenu();
+    this._modules.ContextMenuStrip = this.BuildModuleMenu();
 
     this._tabs.Dock = DockStyle.Fill;
     this._overview.Dock = DockStyle.Fill;
@@ -236,6 +237,85 @@ public sealed class DetailPane {
     menu.Items.Add(priority);
     menu.Items.Add(ThreadItem("Set thread affinity…", this.ChooseThreadAffinity));
     return menu;
+  }
+
+  /// <summary>
+  /// What can be done with a loaded image (PRD §25.6).
+  /// </summary>
+  /// <remarks>
+  /// All of it is about the file on disk rather than the mapping, and none of it changes anything.
+  /// Unloading a module is deliberately absent: on Linux there is no supported way to make another
+  /// process drop a shared object, and an item that could only ever refuse is a lie dressed as a
+  /// feature (PRD §32).
+  /// </remarks>
+  private ContextMenuStrip BuildModuleMenu() {
+    var menu = new ContextMenuStrip();
+    menu.Items.Add(ModuleItem("Copy path", path => Clipboard.SetText(path)));
+    menu.Items.Add(ModuleItem("Open folder", this.RevealModule));
+    menu.Items.Add(ModuleItem("File properties…", path => new FilePropertiesDialog(path, this.ModuleFacts(path), this.Actions).ShowDialog()));
+    return menu;
+  }
+
+  private ToolStripMenuItem ModuleItem(string text, Action<string> action) {
+    var item = new ToolStripMenuItem(text);
+    item.Click += (_, _) => {
+      if (this.SelectedModulePath is { } path)
+        action(path);
+    };
+
+    return item;
+  }
+
+  /// <summary>
+  /// The path in the selected module row, or null when nothing is selected.
+  /// </summary>
+  /// <remarks>
+  /// The suffix the modules view adds to a deleted image is stripped here rather than being carried
+  /// into a file name. It is a warning printed beside the path — the image is still mapped and still
+  /// running while the file on disk is gone — and it was never part of the path itself (PRD §31).
+  /// </remarks>
+  private string? SelectedModulePath {
+    get {
+      if (this._modules.SelectedNode?.Text is not { Length: > 0 } text)
+        return null;
+
+      const string DeletedSuffix = "  (deleted)";
+      return text.EndsWith(DeletedSuffix, StringComparison.Ordinal) ? text[..^DeletedSuffix.Length] : text;
+    }
+  }
+
+  /// <summary>What the modules view already read about this image, so the dialog need not read it again.</summary>
+  private List<KeyValuePair<string, string>> ModuleFacts(string path) {
+    var extra = new List<KeyValuePair<string, string>>();
+    foreach (var module in this._probe.GetModules(this._key)) {
+      if (!string.Equals(module.Path, path, StringComparison.Ordinal))
+        continue;
+
+      extra.Add(new("image type", Humanize.ImageType(module.Type)));
+      extra.Add(new("architecture", module.Architecture ?? "—"));
+      extra.Add(new("soname", module.Soname ?? "—"));
+      extra.Add(new("mapped at", Humanize.Address(module.BaseAddress)));
+      extra.Add(new("mappings", module.MappingCount.ToString(CultureInfo.InvariantCulture)));
+      break;
+    }
+
+    return extra;
+  }
+
+  private void RevealModule(string path) {
+    if (this.Actions is null) {
+      MessageBox.Show("This build has no actions for this platform.", "Process Manager");
+      return;
+    }
+
+    if (Abstractions.DesktopOpen.Reveal(path) is not { } request) {
+      MessageBox.Show("This platform has no desktop opener to hand the folder to.", "Process Manager");
+      return;
+    }
+
+    var result = this.Actions.Launch(request);
+    if (!result.Outcome.Succeeded)
+      MessageBox.Show(result.Outcome.Detail ?? result.Outcome.Outcome.ToString(), "Process Manager");
   }
 
   private ToolStripMenuItem ThreadItem(string text, Func<int, ActionResult> action) {

@@ -1,3 +1,4 @@
+using Hawkynt.ProcessManager.Model;
 using Hawkynt.ProcessManager.Query;
 using Hawkynt.ProcessManager.Sampling;
 using Hawkynt.ProcessManager.Settings;
@@ -5,7 +6,7 @@ using Hawkynt.ProcessManager.Settings;
 namespace Hawkynt.ProcessManager.App;
 
 /// <summary>Which face of the program the arguments asked for.</summary>
-internal enum RunMode : byte { Desktop, Terminal, List, Find, Kill, SelfTest, HelperCheck, Help, HelpFields, Host, Startup, Users, Services, Connections, Limits, Run, Version }
+internal enum RunMode : byte { Desktop, Terminal, List, Find, Kill, EndTask, Restart, Scheduling, SelfTest, HelperCheck, Help, HelpFields, Host, Startup, Users, Services, Connections, Limits, Run, Version }
 
 /// <summary>
 /// Which sockets <c>--connections</c> lists.
@@ -45,6 +46,11 @@ internal sealed record CommandLineOptions {
   public bool AllUsers { get; init; } = true;
   public bool KillTree { get; init; }
   public int TargetPid { get; init; }
+
+  /// <summary>The scheduler class --scheduling asked for, and its static priority (PRD §25.2).</summary>
+  public SchedulingPolicy SchedulingClass { get; init; } = SchedulingPolicy.Unknown;
+
+  public int SchedulingPriority { get; init; }
 
 
   /// <summary>The program to start and its arguments, for <c>--run</c> (PRD §54).</summary>
@@ -377,6 +383,42 @@ internal sealed record CommandLineOptions {
           explicitMode = true;
           break;
         }
+        case "--end-task": {
+          if (!TryValue(args, ref i, inlineValue, out var pid) || !int.TryParse(pid, out var asked))
+            return options with { Error = "--end-task needs a pid" };
+
+          options = options with { Mode = RunMode.EndTask, TargetPid = asked };
+          explicitMode = true;
+          break;
+        }
+        case "--restart": {
+          if (!TryValue(args, ref i, inlineValue, out var pid) || !int.TryParse(pid, out var again))
+            return options with { Error = "--restart needs a pid" };
+
+          options = options with { Mode = RunMode.Restart, TargetPid = again };
+          explicitMode = true;
+          break;
+        }
+        case "--scheduling": {
+          // Two values, like --limits takes one: the pid and the class are one request and giving
+          // either without the other is not a thing anybody means.
+          if (i + 2 >= args.Length || !int.TryParse(args[i + 1], out var scheduled))
+            return options with { Error = $"--scheduling needs a pid and a class ({SchedulingClasses.Vocabulary})" };
+
+          if (!SchedulingClasses.TryParse(args[i + 2], out var policy, out var priority))
+            return options with { Error = $"unknown scheduler class '{args[i + 2]}'; it is one of {SchedulingClasses.Vocabulary}" };
+
+          options = options with {
+            Mode = RunMode.Scheduling,
+            TargetPid = scheduled,
+            SchedulingClass = policy,
+            SchedulingPriority = priority,
+          };
+
+          explicitMode = true;
+          i += 2;
+          break;
+        }
         case "--tree":
           options = options with { TreeMode = true, KillTree = true };
           break;
@@ -603,6 +645,9 @@ internal sealed record CommandLineOptions {
       procman --connections[=what]   every socket and who owns it: inet (default), unix or all
       procman --help-fields          every field that can be sorted, filtered or shown
       procman --kill <pid> [--tree]  end a process, optionally with its descendants
+      procman --end-task <pid>       ask a process to close: its window first, SIGTERM if it has none
+      procman --restart <pid>        end it and start it again with the same arguments and directory
+      procman --scheduling <pid> <c> move it into a scheduler class: other, batch, idle, rr, fifo
 
     Options:
       --sort <field>     any field key; see --help-fields for the list

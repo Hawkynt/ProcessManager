@@ -31,8 +31,8 @@ shorthand:
 it is not known*. An unticked box must never become a zero on screen. This is restated here because
 it is the single requirement most likely to be broken while filling the tables in.
 
-**Counting, as of the last update:** **673 of 1343 boxes are ticked** — 99 of 198 in the field
-registry (§14–22), 574 of 1145 across the capabilities. A further 136 are marked 🟡, meaning some of
+**Counting, as of the last update:** **684 of 1343 boxes are ticked** — 99 of 198 in the field
+registry (§14–22), 585 of 1145 across the capabilities. A further 136 are marked 🟡, meaning some of
 the work behind them is already done. §100 tracks the phases; §101 defines when this may be called
 finished.
 
@@ -993,21 +993,54 @@ guessing: a colour claiming "unsigned" without having checked a signature is wor
 
 ## 25.1 Lifecycle
 
-- [ ] 🟡 End task gracefully — `SIGTERM` on Unix; Windows `WM_CLOSE` to the main window is missing
+- [ ] 🟡 End task gracefully — on a Linux desktop this is now `WM_DELETE_WINDOW` to every window the
+      process owns, falling back to `SIGTERM` for a process that has none. Windows `WM_CLOSE` to the
+      main window is still missing
 - [x] Terminate
-- [ ] Terminate process tree
-- [ ] Restart
+- [x] Terminate process tree
+- [x] Restart
 - [x] Suspend
 - [x] Resume
 
 - [x] "End task" and "Terminate" remain semantically distinct — the first asks, the second does not.
       A UI that blurs them loses somebody's unsaved work.
 
+**Ending a task politely means asking the window, not signalling the process.** `WM_DELETE_WINDOW`
+is the message a close button sends and the one a toolkit's own handler is written for: it is what
+makes an editor offer to save rather than vanish, and it can be declined, which is the whole
+distinction from terminate. It is sent to the window rather than routed through the window manager's
+`_NET_CLOSE_WINDOW` because it then arrives whether or not there is a window manager running to
+forward it. A window that does not list the protocol has said it does not handle being asked and is
+not counted as asked; the only thing left for one of those is `XKillClient`, which severs a
+connection rather than requesting anything and is not a polite close by any reading.
+
+The two outcomes are reported distinctly — "its window was asked to close" against "it has no window,
+so SIGTERM was sent instead" — because only one of them can still be refused by the program (§72.3).
+
+**A restart reads everything it needs before it sends anything**, because none of it survives the
+process: the `exe` link, the `cwd` link and the argument vector all vanish with it. If the process
+has not gone five seconds later, no replacement is started — two copies of a program guarding a
+socket or a lock file is a worse outcome than a restart that says it did not happen, and escalating
+to `SIGKILL` is a decision for whoever is watching rather than for a menu item.
+
+The replacement inherits *this* program's environment and not the old process's, deliberately.
+`/proc/[pid]/environ` is the block the kernel laid down at `exec`, so for anything that has since
+called `setenv` it is stale, and nothing outside can tell a stale block from a current one. Copying
+it would produce a restart that quietly differs from the process it replaced (§5.3).
+
+A tree is ended deepest first, and every key in it is re-validated on its own before it is signalled:
+a pid recycled halfway through a large tree is refused rather than acted on (§8.2). A member that has
+already gone counts as ended, because killing a parent routinely takes its children with it and
+reporting that race as a failure would make the ordinary case look broken. The refusal names how much
+of the tree went.
+
 ## 25.2 Scheduling
 
 - [x] Set priority
 - [x] Set nice value
-- [ ] Set scheduling class
+- [x] **Set scheduling class** — the control nice cannot express: a task at `SCHED_IDLE` does not
+      merely queue last, it runs only when the machine has nothing else to run at all, which is what
+      makes a re-index invisible rather than merely quieter
 - [x] Set processor affinity — through the helper where it needs privilege, and from a dialog whose
       boxes name what each core *is*: on a hybrid part "CPU 14" says nothing and "CPU 14 (E)" says
       which half of the machine is being pinned to (§46)
@@ -1034,21 +1067,65 @@ A thread is checked to belong to the process the key names, not merely to exist.
 the same space as a pid, so a stale one may name a live thread of an unrelated process — checking
 only the process would let the syscall land there (§8.2).
 
+**The scheduler class is not nice on a different scale.** Nice orders processes *within*
+`SCHED_OTHER`; a class change is a change of the rules they are ordered by, and the two controls are
+offered separately for that reason. The classes are named as the kernel names them — `SCHED_IDLE`,
+not "Low" — so that what a menu did can be checked against what `chrt` reports (§5.3).
+
+`SCHED_DEADLINE` and `SCHED_EXT` are named as unreachable rather than attempted: a deadline task is
+described by a runtime, a period and a deadline that `sched_setscheduler` has nowhere to put, and the
+extensible class belongs to whichever BPF scheduler is loaded, if any. **Raising into a real-time
+class is deliberately not routed through the privileged helper**, for the reason the real-time I/O
+class is not — a `SCHED_FIFO` task that spins never yields the processor it is on (§68).
+
+**Leaving `SCHED_IDLE` needs privilege and going into it does not**, which is surprising enough that
+the refusal says so. The kernel scores `SCHED_IDLE` as nice 20, so moving out of it is a promotion
+and is permitted only where `RLIMIT_NICE` reaches that far — at the default limit of 0 it never does.
+Reported first as a plain "not permitted", which sends somebody looking for a permission that is not
+the one in the way; found by asking `chrt` rather than by asking the code.
+
+Still unticked and why: a **CPU set** is a cgroup on Linux and an unrelated Win32 API on Windows, and
+the two share a name and nothing else; **page priority** has no Linux equivalent at all; and
+**efficiency mode / platform QoS** is a Windows and macOS concept whose nearest Linux relative is a
+combination of two controls already here, which is not the same thing and would be exactly the false
+equivalence §5.3 forbids.
+
 ## 25.3 Navigation
 
 - [x] Open properties (§26)
 - [x] Expand / collapse tree
-- [ ] Go to parent
-- [ ] Go to children
+- [x] Go to parent
+- [x] Go to children
 - [ ] Go to owning service
 - [ ] Go to package
 - [ ] Go to executable
-- [ ] Reveal in file manager
-- [ ] Open file properties
+- [x] Reveal in file manager
+- [x] Open file properties — path, size, modification time, permissions, architecture and interpreter,
+      with a SHA-256 on request
 - [x] Copy path
 - [x] Copy command line
-- [ ] Search Internet
+- [x] Search Internet — confirmed, and the confirmation names the engine before it goes
 - [ ] Inspect binary (§53)
+
+Navigation is grouped under one menu and none of it changes anything, which is what keeps it away
+from the items that do (§5.5).
+
+**A parent that is not in the list is the ordinary case rather than an error**: a process whose
+parent has exited was reparented to init, and one belonging to another user is filtered out of the
+view. Both are said out loud, because "nothing happened" is what a broken menu item looks like too.
+Going to the children opens the tree rather than offering a list of them: they are already on screen
+a row below, and a dialog listing what the window shows better would be answering the wrong question.
+
+**Searching the web is the only item here that leaves the machine, so it is the only one that asks
+first.** It puts the name of something running on this machine onto somebody else's server, and a
+menu item that did that quietly would be a disclosure dressed as a convenience (§70). The engine is
+named in the confirmation rather than taken from the session's default, because the session's default
+is not discoverable without opening a browser to ask it.
+
+Still unticked and why: **go to owning service** and **go to executable** are navigations to views
+that do not exist yet — the services list is CLI-only and there is no binary inspector to land in
+(§41, §53). **Go to package** would mean asking `dpkg`, `rpm` or `pacman` which package owns a file,
+which is a subprocess per query against a database whose format is the distribution's to change.
 
 ## 25.4 Diagnostics
 
@@ -1079,14 +1156,25 @@ only the process would let the syscall land there (§8.2).
 ## 25.6 Modules
 
 - [ ] View module
-- [ ] Reveal module file
+- [x] Reveal module file
 - [ ] Verify signature
-- [ ] Hash file
+- [x] **Hash file** — SHA-256, computed on request and never as a side effect
 - [ ] Open binary inspector
 - [ ] Search reputation
-- [ ] Copy path
+- [x] Copy path
 - [ ] Inspect mapped memory
 - [ ] Unload module — expert-only, with an explicit instability warning
+
+**A hash is not a verdict.** It says what the bytes are and nothing about whether they are signed,
+trusted or known; the four stay separate operations and this program never conflates them (§70).
+
+It is asked for rather than computed, because hashing is the one operation here whose cost is the
+size of the file: doing it for every module a process has loaded would read a gigabyte to fill a
+column nobody looked at (§5.4).
+
+- ∅ **Unloading a module on Linux** — there is no supported way to make another process drop a shared
+  object, and an item that could only ever refuse is a lie dressed as a feature. The same reasoning
+  §32 records for closing a foreign descriptor.
 
 ---
 

@@ -70,6 +70,44 @@ internal static partial class X11Windows {
     nint display, nint source, nint destination, int sourceX, int sourceY,
     out int x, out int y, out nint child);
 
+  [LibraryImport(_Library, EntryPoint = "XSendEvent")]
+  private static partial int SendEvent(
+    nint display, nint window, [MarshalAs(UnmanagedType.Bool)] bool propagate, long eventMask, ref XClientMessageEvent send);
+
+  [LibraryImport(_Library, EntryPoint = "XFlush")]
+  private static partial int Flush(nint display);
+
+  /// <summary>
+  /// <c>XClientMessageEvent</c>, padded to the size of the whole <c>XEvent</c> union.
+  /// </summary>
+  /// <remarks>
+  /// <c>XSendEvent</c> takes an <c>XEvent*</c> and Xlib copies the union's full 24 <c>long</c>s out
+  /// of it regardless of which member was filled in. Handing it a struct the size of the client
+  /// message alone would have it read 96 bytes past the end of ours, so the padding is not
+  /// decoration — it is the difference between a close request and a random stack read.
+  /// </remarks>
+  [StructLayout(LayoutKind.Sequential)]
+  private struct XClientMessageEvent {
+    // int, then the padding the next field's alignment forces — not one 64-bit field. They occupy
+    // the same eight bytes on a little-endian machine and not on any other, and a 33 written into
+    // the high half of a word Xlib reads as an int is a message the server discards in silence.
+    public int Type;
+    private readonly int _typePadding;
+    public nuint Serial;
+    public int SendEventFlag;
+    public nint Display;
+    public nint Window;
+    public nint MessageType;
+    public int Format;
+    public nint Data0, Data1, Data2, Data3, Data4;
+    private readonly nint _pad0, _pad1, _pad2, _pad3, _pad4, _pad5, _pad6, _pad7, _pad8, _pad9, _pad10, _pad11;
+  }
+
+  private const int _ClientMessage = 33;
+
+  /// <summary>Format 32: the message's payload is read as the five <c>long</c>s of <c>data.l</c>.</summary>
+  private const int _LongFormat = 32;
+
   [StructLayout(LayoutKind.Sequential)]
   private struct XWindowAttributes {
     public int X, Y, Width, Height, BorderWidth, Depth;
@@ -183,6 +221,93 @@ internal static partial class X11Windows {
       return window == 0 ? null : Describe(display, window) ?? Owner(display, window);
     } finally {
       CloseDisplay(display);
+    }
+  }
+
+  /// <summary>
+  /// Asks every window a process owns to close itself, the way its close button would (PRD §25.1).
+  /// </summary>
+  /// <returns>
+  /// Whether the session could be asked at all, and how many windows were asked. The pair is needed
+  /// because zero windows and no session are different answers: the first says this process has no
+  /// user interface to ask, and the second says nothing here can tell us either way — and only the
+  /// first justifies falling back to a signal (PRD §5.3).
+  /// </returns>
+  /// <remarks>
+  /// <para>
+  /// <c>WM_DELETE_WINDOW</c>, sent to the window itself, rather than the window manager's
+  /// <c>_NET_CLOSE_WINDOW</c>. It is the same message in the end — the window manager's job is to
+  /// forward one as the other — but this one arrives whether or not there is a window manager
+  /// running to do the forwarding, and it is the message the toolkit's own handler is written for.
+  /// It is what makes an editor put up "save your changes?" instead of vanishing.
+  /// </para>
+  /// <para>
+  /// A window that does not list <c>WM_DELETE_WINDOW</c> in its <c>WM_PROTOCOLS</c> has said it does
+  /// not handle being asked, and is not counted as asked. The only thing left for such a window is
+  /// <c>XKillClient</c>, which severs the connection rather than requesting anything, and is
+  /// therefore not a polite close by any reading.
+  /// </para>
+  /// </remarks>
+  public static (bool SessionAnswered, int Asked) AskToClose(int pid) {
+    if (!Available || pid <= 0)
+      return (false, 0);
+
+    var display = OpenDisplay(null);
+    if (display == 0)
+      return (false, 0);
+
+    try {
+      var protocols = InternAtom(display, "WM_PROTOCOLS", onlyIfExists: false);
+      var deleteWindow = InternAtom(display, "WM_DELETE_WINDOW", onlyIfExists: false);
+      if (protocols == 0 || deleteWindow == 0)
+        return (false, 0);
+
+      var asked = 0;
+      foreach (var handle in TopLevels(display, DefaultRootWindow(display))) {
+        if (ReadCardinal(display, handle, "_NET_WM_PID") != pid || !Handles(display, handle, protocols, deleteWindow))
+          continue;
+
+        var message = new XClientMessageEvent {
+          Type = _ClientMessage,
+          Window = handle,
+          MessageType = protocols,
+          Format = _LongFormat,
+          Data0 = deleteWindow,
+          // CurrentTime. A real timestamp would be better manners and there is none to hand: this
+          // program selects no events, so it has never seen one the server issued.
+          Data1 = 0,
+        };
+
+        if (SendEvent(display, handle, propagate: false, 0, ref message) != 0)
+          ++asked;
+      }
+
+      // Xlib buffers requests. Without this the close messages sit in the client's queue until the
+      // next call that happens to flush, and the display is closed underneath them.
+      Flush(display);
+      return (true, asked);
+    } finally {
+      CloseDisplay(display);
+    }
+  }
+
+  /// <summary>Whether a window lists <paramref name="protocol"/> among the ones it handles.</summary>
+  private static bool Handles(nint display, nint window, nint protocolsAtom, nint protocol) {
+    if (GetWindowProperty(display, window, protocolsAtom, 0, 64, false, _AnyPropertyType,
+          out _, out var format, out var count, out _, out var data) != _Success || data == 0)
+      return false;
+
+    try {
+      if (format != 32)
+        return false;
+
+      for (var i = 0ul; i < count; ++i)
+        if (Marshal.ReadIntPtr(data, (int)i * nint.Size) == protocol)
+          return true;
+
+      return false;
+    } finally {
+      Free(data);
     }
   }
 
