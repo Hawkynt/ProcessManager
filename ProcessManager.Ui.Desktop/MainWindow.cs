@@ -19,6 +19,7 @@ public sealed class MainWindow : Form {
   private readonly Sampler _sampler;
   private readonly ISystemProbe _probe;
   private readonly IProcessActions? _actions;
+  private readonly IServiceControl? _services;
   private readonly ProcessView _view = new() { TreeMode = true, SortColumn = ProcessField.CpuPercent, SortDescending = true };
   private readonly ProcessTreeBinder _binder;
   private readonly TreeListView _tree = new();
@@ -60,13 +61,19 @@ public sealed class MainWindow : Form {
   /// </remarks>
   private Func<UserSettings, bool>? _save;
 
-  public MainWindow(Sampler sampler, ISystemProbe probe, IProcessActions? actions) {
+  public MainWindow(
+    Sampler sampler,
+    ISystemProbe probe,
+    IProcessActions? actions,
+    IServiceControl? services = null
+  ) {
     ArgumentNullException.ThrowIfNull(sampler);
     ArgumentNullException.ThrowIfNull(probe);
 
     this._sampler = sampler;
     this._probe = probe;
     this._actions = actions;
+    this._services = services;
     this._binder = new(this._tree);
     this._details = new(probe) { Actions = actions };
     this._shell = new(probe);
@@ -1860,6 +1867,10 @@ public sealed class MainWindow : Form {
     this.AddView("Startup", this._shell.StartupControl, this._shell.RefreshStartup, () => this._shell.StartupText, () => this._shell.StartupRows);
     this.AddView("Users", this._shell.SessionsControl, this._shell.RefreshSessions, () => this._shell.SessionsText, () => this._shell.SessionsRows);
     this.AddView("Services", this._shell.ServicesControl, this._shell.RefreshServices, () => this._shell.ServicesText, () => this._shell.ServicesRows);
+    if (this._services is { IsAvailable: true }) {
+      this._shell.ServicesMenu = this.ServiceMenu();
+      this._shell.ServicesAreCommandable();
+    }
     this.AddView("Network", this._shell.NetworkControl, this.RefreshNetwork, () => this._shell.NetworkText, () => this._shell.NetworkRows);
     this.AddView("Find resources", null, this.FindResource, () => "opens the find dialog", () => 0);
 
@@ -2440,6 +2451,86 @@ public sealed class MainWindow : Form {
   /// close" and "it has no window, so SIGTERM was sent" are both successes and are not the same
   /// thing to have happened (PRD §72.3).
   /// </remarks>
+  /// <summary>
+  /// Start, stop and the rest, for the unit under the pointer (PRD §41).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Every one of these was reachable from <c>--service</c> and from nowhere in either front-end,
+  /// which §91 counts as not having the capability at all: a person looking at a list of units and
+  /// wanting to stop one does not go and read the help. The list is the same six the command line
+  /// takes, in the order somebody reaches for them.
+  /// </para>
+  /// <para>
+  /// Reload is not restart and is offered separately, because for a unit that supports it — a web
+  /// server, a name daemon — it re-reads the configuration without dropping what it is holding, and
+  /// a person who wanted that and got a restart has lost every connection on the machine.
+  /// </para>
+  /// <para>
+  /// Enable and disable are about the next boot rather than about now, and are separated by a rule
+  /// so that nobody reaches for "disable" meaning "stop". Both wordings say which they are.
+  /// </para>
+  /// </remarks>
+  private ContextMenuStrip ServiceMenu() {
+    var menu = new ContextMenuStrip();
+    menu.Items.Add(Item("Start", () => this.CommandService(ServiceCommand.Start)));
+    menu.Items.Add(Item("Stop", () => this.CommandService(ServiceCommand.Stop)));
+    menu.Items.Add(Item("Restart", () => this.CommandService(ServiceCommand.Restart)));
+    menu.Items.Add(Item("Reload its configuration", () => this.CommandService(ServiceCommand.Reload)));
+    menu.Items.Add(new ToolStripSeparator());
+    menu.Items.Add(Item("Start it at boot", () => this.CommandService(ServiceCommand.Enable)));
+    menu.Items.Add(Item("Do not start it at boot", () => this.CommandService(ServiceCommand.Disable)));
+    return menu;
+  }
+
+  /// <summary>
+  /// Asks the manager, having asked the person first.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Confirmed by the same setting that guards ending a process, and named the same way: the verb
+  /// and the unit, so that a menu opened over one row and used after the list refreshed underneath
+  /// it cannot act on a unit nobody chose (PRD §6.4).
+  /// </para>
+  /// <para>
+  /// Stopping a service is at least as destructive as ending a process and often more so — one of
+  /// these is the thing keeping the machine on the network — so the confirmation is not skipped for
+  /// the two that stop something, whatever the setting says. Enabling and disabling change only what
+  /// happens next time and are asked about under the same setting as everything else.
+  /// </para>
+  /// <para>
+  /// The list is refreshed afterwards whatever happened, including after a refusal: a failed stop
+  /// still leaves the reader looking at a row, and it should be the row as it is now.
+  /// </para>
+  /// </remarks>
+  private void CommandService(ServiceCommand command) {
+    if (this._services is null || this._shell.SelectedService is not { Length: > 0 } unit)
+      return;
+
+    var verb = IServiceControl.Verb(command);
+    var stops = command is ServiceCommand.Stop or ServiceCommand.Restart;
+    if (stops || this._settings.ConfirmDestructiveActions) {
+      var consequence = command switch {
+        ServiceCommand.Stop => "Whatever it is doing for the machine stops with it.",
+        ServiceCommand.Restart => "Everything it is holding open is dropped.",
+        ServiceCommand.Enable => "This is about the next boot. It does not start it now.",
+        ServiceCommand.Disable => "This is about the next boot. It does not stop it now.",
+        _ => null,
+      };
+
+      var question = $"{char.ToUpper(verb[0], CultureInfo.CurrentCulture)}{verb[1..]} {unit}?";
+      if (MessageBox.Show(
+        consequence is null ? question : $"{question}\n\n{consequence}",
+        "Process Manager",
+        MessageBoxButtons.YesNo
+      ) != DialogResult.Yes)
+        return;
+    }
+
+    this.Report(this._services.Apply(command, unit));
+    this._shell.RefreshServices();
+  }
+
   private void Report(ActionResult result) {
     if (!result.Succeeded)
       MessageBox.Show(result.Detail ?? result.Outcome.ToString(), "Process Manager");

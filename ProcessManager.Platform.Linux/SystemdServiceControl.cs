@@ -2,16 +2,6 @@ using Hawkynt.ProcessManager.Abstractions;
 
 namespace Hawkynt.ProcessManager.Platform.Linux;
 
-/// <summary>What may be asked of a unit (PRD §41).</summary>
-public enum ServiceCommand : byte {
-  Start,
-  Stop,
-  Restart,
-  Reload,
-  Enable,
-  Disable,
-}
-
 /// <summary>
 /// Starting and stopping systemd units (PRD §41).
 /// </summary>
@@ -31,7 +21,7 @@ public enum ServiceCommand : byte {
 /// refusal is the one that happens before anything is run.
 /// </para>
 /// </remarks>
-public sealed class SystemdServiceControl {
+public sealed class SystemdServiceControl : IServiceControl {
 
   private readonly Func<string, IReadOnlyList<string>, (int Code, string Output, string Error)> _run;
 
@@ -45,7 +35,10 @@ public sealed class SystemdServiceControl {
   ) => this._run = run ?? Run;
 
   /// <summary>Whether the manager is even there to be asked.</summary>
-  public static bool IsAvailable => Directory.Exists("/run/systemd/system");
+  public static bool IsPresent => Directory.Exists("/run/systemd/system");
+
+  /// <inheritdoc />
+  bool IServiceControl.IsAvailable => IsPresent;
 
   /// <summary>
   /// Asks the manager to do something to a unit.
@@ -59,7 +52,7 @@ public sealed class SystemdServiceControl {
     if (Validate(unit) is { } refusal)
       return refusal;
 
-    if (!IsAvailable)
+    if (!IsPresent)
       return ActionResult.Fail(
         ActionOutcome.NotSupportedOnPlatform,
         "there is no systemd on this machine, so there is no manager to ask"
@@ -75,7 +68,7 @@ public sealed class SystemdServiceControl {
     // manager were broken. Refusing at once and saying why is a better answer than a long pause and
     // a misleading one.
     arguments.Add("--no-ask-password");
-    arguments.Add(Verb(command));
+    arguments.Add(IServiceControl.Verb(command));
     // Everything after this is a name, whatever it looks like.
     arguments.Add("--");
     arguments.Add(unit);
@@ -86,7 +79,7 @@ public sealed class SystemdServiceControl {
 
     var detail = error.Trim();
     if (detail.Length == 0)
-      detail = $"systemctl {Verb(command)} {unit} exited with {code}";
+      detail = $"systemctl {IServiceControl.Verb(command)} {unit} exited with {code}";
 
     // The manager's own words, verbatim, whatever they are. Classifying a refusal by matching its
     // text was the first version of this and it is wrong: systemctl's messages are translated, and
@@ -138,16 +131,6 @@ public sealed class SystemdServiceControl {
 
     return null;
   }
-
-  private static string Verb(ServiceCommand command) => command switch {
-    ServiceCommand.Start => "start",
-    ServiceCommand.Stop => "stop",
-    ServiceCommand.Restart => "restart",
-    ServiceCommand.Reload => "reload",
-    ServiceCommand.Enable => "enable",
-    ServiceCommand.Disable => "disable",
-    _ => "status",
-  };
 
   private static (int Code, string Output, string Error) Run(string program, IReadOnlyList<string> arguments) {
     var start = new System.Diagnostics.ProcessStartInfo(program) {

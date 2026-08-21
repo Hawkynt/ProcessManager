@@ -104,8 +104,8 @@ thread continuously consuming logical CPU 7."
 ## 3.1 Primary — MUST
 
 - [ ] 🟡 Replace everyday Task Manager workflows — process management, and views of services, startup
-      and users; a service can be started and stopped from the command line but not from the window,
-      and a startup entry cannot be turned off at all
+      and users; services can now be commanded from every front-end, but a startup entry still cannot
+      be turned off at all
 - [x] Replace Process Explorer tree and lower-pane workflows — the pane is docked under the tree with
       overview, threads, modules, handles, environment and network, and pins to one process in a window
 - [ ] Replace the majority of System Informer process-inspection workflows
@@ -2806,9 +2806,8 @@ Actions:
 
 # 41. Services view
 
-Read on Linux; unbuilt on Windows and macOS. Control is written for systemd and reachable from the
-command line; neither front-end offers it as a menu item yet. One process's own unit is a page of the
-properties window (§26), which is the first of this that either front-end shows.
+Read on Linux; unbuilt on Windows and macOS. Control is written for systemd and reachable from all
+three front-ends. One process's own unit is also a page of the properties window (§26).
 
 Shared columns:
 
@@ -2834,9 +2833,13 @@ launchd-specific:
 
 Actions:
 
-- [ ] 🟡 Start · stop · restart · enable · disable · reload — from `--service`, through systemctl and
-      whatever polkit decides; no menu item in either front-end yet, and pause/continue is not a
-      thing systemd offers
+- [x] Start · stop · restart · enable · disable · reload — through systemctl and whatever polkit
+      decides, from `--service`, from a right-click on the window's Services page, and from the
+      terminal's action menu on any process that belongs to a unit. Pause and continue are absent
+      because systemd does not offer them, not because they are unwritten. The two that stop
+      something are confirmed whatever the confirmation setting says: one of these units is what
+      keeps the machine on the network. Enable and disable are worded as being about the next boot,
+      so that nobody reaches for "disable" meaning "stop"
 - [ ] Open configuration · reveal executable · go to process · properties · copy ·
       inspect dependencies
 
@@ -2863,7 +2866,18 @@ Three shapes of running service had to be handled, and each was found by compari
 With all three handled, the list matches `systemctl list-units --state=running` exactly on this
 machine: 22 against 22, with no difference in either direction.
 
-The control verbs still need the privileged helper (§68), and none of them is written.
+**The control verbs go through polkit rather than through the privileged helper (§68).** systemctl
+already carries the machine's own policy, so an ordinary user gets the prompt their desktop is
+configured to give and a session that cannot prompt gets a refusal instead of a hang — which is not
+a hypothetical: run `systemctl reload` on a unit from a terminal with no agent and it waits for the
+prompt until the connection times out, then reports the timeout as though the manager were broken.
+`--no-ask-password` turns that into an immediate refusal carrying the real reason. Routing this
+through the helper instead would mean reimplementing the policy decision that polkit exists to make.
+
+The refusal is classified by matching systemctl's message, and **nothing depends on that match**:
+systemd's messages are translated, and this machine answers in German. A refusal on a non-English
+desktop is filed as an ordinary failure and still shows the reader exactly what the manager said,
+which is the part that matters.
 
 # 42. Startup applications
 
@@ -4413,19 +4427,20 @@ that has a tab for it. That drift is what made an earlier version of this matrix
 - [ ] 🟡 Startup — a window view listing every entry and which will run; nothing can turn one off yet
 - [x] Users — a window view of who is logged in and what their processes cost
 - [x] Details
-- [ ] 🟡 Services — a window view of every unit and its state; starting and stopping are not written
+- [x] Services — a window view of every unit and its state, and a right-click that starts, stops,
+      restarts, reloads, enables or disables one
 - [ ] 🟡 Run new task — `--run` starts a program with a directory, environment and priority; no dialog
 - [x] End task
 - [ ] Restart supported applications
 - [x] Priority
 - [x] Affinity
-- [ ] Efficiency / QoS — refused rather than unwritten: the nearest Linux relatives are the scheduling class and the I/O class, both already settable, and mapping a QoS class onto them is the false equivalence §5.3 forbids
+- ∅ Efficiency / QoS — refused rather than unwritten: the nearest Linux relatives are the scheduling class and the I/O class, both already settable, and mapping a QoS class onto them is the false equivalence §5.3 forbids
 - [ ] Dumps
 - [ ] 🟡 Wait chains — each thread says what it is blocked in and which syscall it is in; nothing follows the chain from one process to the next
 - [x] Process search / filter
 - [ ] Startup enable / disable
 - [ ] User session control
-- [ ] Service controls
+- [x] Service controls
 - [x] Kernel vs user CPU graph
 
 ## Process Explorer
@@ -4458,8 +4473,8 @@ that has a tab for it. That drift is what made an earlier version of this matrix
 - [x] Modules
 - [x] Threads
 - [ ] 🟡 Stack traces — the kernel stack where the machine permits it, with symbols where the image still carries them; a user-space walk needs the driver §4 rules out
-- [ ] 🟡 Services — listed in a view, and started, stopped or enabled from the command line; no
-      menu item in either front-end
+- [x] Services — listed in a view, and started, stopped, restarted, reloaded, enabled or disabled
+      from the window's Services page, from the terminal's action menu, and from `--service`
 - [x] Network connections
 - [x] Disk activity — per-process I/O columns, and a page per disk with its own throughput and queue
 - [x] GPU data — the adapter's own figures, and per process the memory and the time on each engine
@@ -4468,7 +4483,9 @@ that has a tab for it. That drift is what made an earlier version of this matrix
 - [x] Security / token information — all five capability sets by name, both id quartets, seccomp mode and filter count, no-new-privs and the LSM label
 - [x] File / resource ownership search
 - [x] Advanced process scheduling
-- [ ] Detailed service control
+- [x] Detailed service control — all six verbs systemd offers, in all three front-ends, each
+      carrying the manager's own answer rather than a word of ours. Pause and continue are not
+      offered because systemd has no such thing
 - [ ] 🟡 Binary inspection — the ELF header and the mapped images; nothing disassembles
 - [ ] 🟡 Runtime inspection — each process and each loaded image says whether it is native, .NET,
       a JVM or Python, read from the module list rather than guessed from a name; nothing
@@ -4482,7 +4499,7 @@ that has a tab for it. That drift is what made an earlier version of this matrix
 - [x] Attractive resource graphs — a graticule, a filled area, a selectable time axis and a cursor that reads a sample
 - [x] Resource selector
 - [x] CPU · memory · disks · networks pages
-- [ ] 🟡 Services — listed in a view of its own; not controlled
+- [x] Services — listed in a view of its own, and controlled from it
 - [ ] 🟡 Startup — listed in a view of its own; not enabled or disabled
 - [x] Users
 - [ ] Minimal cognitive overhead for ordinary users
@@ -4800,8 +4817,8 @@ v1 does not ship unless every one of these is true:
 - [x] The user can inspect process path and command line
 - [x] The user can inspect the process tree
 - [x] The user can inspect active network endpoints — the pane's network tab, and `--connections`
-- [ ] 🟡 The user can inspect services — and start and stop them from the command line, but not from
-      either front-end
+- [x] The user can inspect services — and start, stop, restart, reload, enable and disable them
+      from the window, the terminal and the command line
 - [ ] The user can manage common startup items
 - [x] The user can inspect logged-in sessions — a window view and `--users`
 - [x] The user can view CPU, memory, disk and network performance — thirteen resource pages, each

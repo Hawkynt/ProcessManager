@@ -251,6 +251,23 @@ internal static class ProbeFactory {
   }
 
   /// <summary>
+  /// The thing that can change what runs in the background, or null where nothing can.
+  /// </summary>
+  /// <remarks>
+  /// Null rather than an object that refuses everything: a front-end asking for this is deciding
+  /// whether to offer the commands at all, and a menu of items that all answer "not on this
+  /// platform" is worse than no menu. Windows returns null until the service control manager is
+  /// written — it is not read yet either, so there is nothing there to command.
+  /// </remarks>
+  public static IServiceControl? CreateServiceControl() {
+    if (!OperatingSystem.IsLinux())
+      return null;
+
+    var control = new Platform.Linux.SystemdServiceControl();
+    return ((IServiceControl)control).IsAvailable ? control : null;
+  }
+
+  /// <summary>
   /// Where the helper is. The installed path first, because that is the one the polkit policy names
   /// and therefore the only one that can actually be elevated; the build layout second, so that
   /// `--helper-check` works from a source tree.

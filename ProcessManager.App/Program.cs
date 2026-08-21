@@ -128,7 +128,7 @@ internal static class Program {
         // Only when this run said so: otherwise the terminal decides from the locale, which is the
         // one thing a capture may not do and a person watching wants.
         Graphs = options.AsciiOnly ? GraphStyle.Ascii : options.GraphStyle == GraphStyle.Blocks ? null : options.GraphStyle,
-      });
+      }, ProbeFactory.CreateServiceControl());
 
       return _ExitOk;
     }
@@ -246,6 +246,7 @@ internal static class Program {
       sampler,
       probe,
       actions,
+      ProbeFactory.CreateServiceControl(),
       options.ShootPath,
       options.ShootHoldSeconds,
       options.FlatRequested,
