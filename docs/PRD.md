@@ -4724,7 +4724,17 @@ Windows parsing on Linux.
 - [x] Accessibility — a sweep of the real control tree of all three windows rather than a checklist
       written out by hand, so a control added tomorrow and left unnamed fails it. It found every
       table, every plot, the rail, the filter box and both strips unnamed (§74)
-- [ ] 🟡 Keyboard operation
+- [x] 🟡 Keyboard operation — the window's twenty-two accelerators, read for the first time. The
+      terminal's bindings have been under test since they were written; the window's were lines in a
+      builder that compiled whatever it was given, so two items claiming one chord — of which one
+      silently never fires, and which one depends on the order they were added in — was a thing that
+      could be written, reviewed and shipped. Now: no chord claimed twice, every chord on an item
+      that does something rather than on a submenu header, no chord a bare letter or digit (the
+      filter box is where every keystroke is meant to be text), nothing destructive reachable by a
+      keystroke, and the nine §74 names by chord rather than by label, so an item renamed keeps
+      passing and an item whose chord was dropped does not. Amber because this is the inventory and
+      its rules: working an item needs a confirmation dialog and there is no display to open one on,
+      and tab order — §74's other open box — is not asserted at all
 
 ## TUI tests
 
