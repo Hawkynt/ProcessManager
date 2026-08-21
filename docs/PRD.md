@@ -656,7 +656,11 @@ term all use it, and it never changes even when the display name differs per pla
 - [x] `exe.name` — the file that is running, from `image.path`. Differs from `name` when
       a process renames itself, not yet its own field
 - [x] `app.name` — from the desktop entry that starts the program; "several" where more than one
-      does, because naming one of eight would be wrong most of the time
+      does, because naming one of eight would be wrong most of the time. **Windows says the question
+      does not apply**, which it had not been saying: the field was left at its default there and a
+      default reason means "the value is present", so the column read "none" — a real Linux answer,
+      meaning the machine has no entry for the program. The nearest Windows equivalent is the version
+      resource, which is its own column
 - [x] `pid` — process identifier
 - [x] `ppid` — parent process identifier
 - [x] `instance.id` — PID plus creation-time-safe unique identity (`ProcessKey`)
@@ -803,7 +807,11 @@ term all use it, and it never changes even when the display name differs per pla
       **No interpreter and no permission to look are different answers.** The first means statically
       linked; the second means nobody could check. Collapsing them made the report call every other
       user's process statically linked — a confident claim made out of an absence (§5.3)
-- [x] `runtime` — native, .NET, JVM or Python, from the module list rather than guessed from a name
+- [x] `runtime` — native, .NET, JVM or Python, from the module list rather than guessed from a name.
+      **Windows says nobody has looked**, rather than rendering an empty placeholder that read as an
+      answer. Deliberately not "not supported": the module list is perfectly readable there through
+      Toolhelp32 and this program has not read it, and that is a different sentence to somebody
+      deciding whether to go and find out elsewhere
 
 # 15. Process table — CPU fields
 

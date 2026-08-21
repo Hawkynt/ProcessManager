@@ -523,6 +523,29 @@ internal static class SelfTest {
       "an ordinary process is PROTECTION_LEVEL_NONE, which is 0xFFFFFFFE"
     );
 
+    // The two fields that used to come back as a confident answer nobody had given: app.name read
+    // "none", which on Linux means the machine has no desktop entry for the program, and runtime
+    // rendered an empty placeholder. Neither was a statement this platform had made. Checked here
+    // rather than only in a unit test because the defect was in the probe rather than in the
+    // rendering, and this is the leg that runs the probe (PRD §72.3, §14).
+    CheckOnWindowsOnly(
+      failures,
+      notes,
+      "app.name says it does not apply",
+      FieldAccessor.Text(ProcessField.ApplicationName, in self, null, 0),
+      self.ApplicationNameReason == UnknownReason.NotSupportedOnPlatform,
+      "Windows has no desktop entry to name a program by; the version resource is its own column"
+    );
+
+    CheckOnWindowsOnly(
+      failures,
+      notes,
+      "runtime says nobody looked",
+      FieldAccessor.Text(ProcessField.Runtime, in self, null, 0),
+      self.RuntimeReason == UnknownReason.NotImplementedHere,
+      "the module list is readable here and this program has not read it — which is not the same as cannot"
+    );
+
     Check(
       failures,
       notes,
