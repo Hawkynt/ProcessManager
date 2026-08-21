@@ -139,6 +139,11 @@ public enum ProcessField : byte {
   ApplicationId,
   ApplicationName,
   PackageStatus,
+  ImageSignature,
+  ImageSigner,
+  CertificateSubject,
+  CertificateIssuer,
+  SignatureTimestamp,
   TrustChain,
   Reputation,
   Runtime,
@@ -150,6 +155,9 @@ public enum ProcessField : byte {
   ImageFileVersion,
   Subsystem,
   Emulation,
+
+  BackgroundQualityOfService,
+  EcoMode,
 
   ThreadCount,
   HandleCount,

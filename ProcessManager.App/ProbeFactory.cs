@@ -111,6 +111,16 @@ internal static class ProbeFactory {
   /// the files rather than a syscall, and it is read once per image rather than once per process
   /// (PRD §5.4, §14).
   /// </param>
+  /// <param name="wantImageSignatures">
+  /// Whether anything on this run asked whether each image's own signature still covers it. The
+  /// dearest of the Windows readings — the whole file digested and a public-key signature verified
+  /// over that digest — and done once per image rather than once per process (PRD §5.4, §21, §70).
+  /// </param>
+  /// <param name="wantPowerThrottling">
+  /// Whether anything on this run asked what Windows has been told to do about each process's energy
+  /// use. One call per process per sample and uncacheable, because the state can be changed while
+  /// the table is open (PRD §5.4, §22).
+  /// </param>
   /// <param name="wantSecurityStatus">
   /// Whether anything on this run asked for the mitigation states, the umask, the tracer or the
   /// descriptor-table size. The lines are in a file already open, so this buys no read — it buys
@@ -140,7 +150,9 @@ internal static class ProbeFactory {
     bool wantWindowsMitigations = false,
     bool wantObjectCounts = false,
     bool wantGuiObjectCounts = false,
-    bool wantImageVersions = false
+    bool wantImageVersions = false,
+    bool wantImageSignatures = false,
+    bool wantPowerThrottling = false
   ) {
     if (OperatingSystem.IsLinux()) {
       // A recorded tree is somebody else's machine; asking a helper about pids in it would be asking
@@ -230,6 +242,8 @@ internal static class ProbeFactory {
         ReadObjectCounts = wantObjectCounts,
         ReadGuiObjectCounts = wantGuiObjectCounts,
         ReadImageVersions = wantImageVersions,
+        ReadSignatures = wantImageSignatures,
+        ReadPowerThrottling = wantPowerThrottling,
       });
 
     if (OperatingSystem.IsMacOS())

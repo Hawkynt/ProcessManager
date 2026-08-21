@@ -110,6 +110,21 @@ public struct ProcessRecord {
     record.ImageProductVersion = null;
     record.ImageFileVersion = null;
     record.ImageVersionReason = UnknownReason.NotSupportedOnPlatform;
+    // PRD §21. An ELF carries no embedded signature and never did, so the five signature readings
+    // are not a Linux gap but a Windows concept — "n/a" and not an empty cell that reads like one
+    // (PRD §5.3). What a Linux machine can say about a file's provenance is its package's, which is
+    // PackageStatus and TrustChain and is a different question already asked elsewhere.
+    record.ImageSignature = SignatureStatus.NotChecked;
+    record.ImageSignatureDetail = null;
+    record.ImageSignatureReason = UnknownReason.NotSupportedOnPlatform;
+    record.ImageSigner = null;
+    record.CertificateSubject = null;
+    record.CertificateIssuer = null;
+    record.SignatureTimestampUtcTicks = Counter.NotSupported;
+    // PRD §22. The one energy field any platform will answer per process, and Linux is not it: there
+    // is no per-process energy quality of service here at all, only a scheduler class, which §15
+    // already reports as itself rather than dressed as an energy reading.
+    record.PowerThrottling = Counter.NotSupported;
   }
 
   /// <summary>Identity across samples. See <see cref="ProcessKey"/> for why it is a pair.</summary>
@@ -756,6 +771,27 @@ public struct ProcessRecord {
   /// <inheritdoc cref="DepPolicy"/>
   public Counter BinarySignaturePolicy;
 
+  /// <summary>
+  /// Windows' per-process power throttling, as the two masks its structure carries (PRD §22).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The one field in §22 that is a reading rather than a model. It does not say how much energy a
+  /// process is using — nothing on any platform says that per process, and §22 refuses the eight
+  /// columns that would pretend to — it says which of Windows' energy behaviours have been asked for
+  /// on this process's behalf, which is a documented state with a documented call behind it.
+  /// </para>
+  /// <para>
+  /// Both masks, packed: the control mask in the low thirty-two bits and the state mask above them.
+  /// Two masks and not one because they answer different questions, and the pair has a third answer
+  /// the single word cannot express — a bit that is not in the control mask at all is one the system
+  /// is managing, which is neither "throttled" nor "not throttled" and is what most of a machine's
+  /// table is (PRD §72.3). The bits are decoded where the column is rendered, in portable code with
+  /// a test per state.
+  /// </para>
+  /// </remarks>
+  public Counter PowerThrottling;
+
   /// <summary>Linux seccomp mode: 0 disabled, 1 strict, 2 filtered.</summary>
   public Counter SeccompMode;
 
@@ -934,6 +970,72 @@ public struct ProcessRecord {
   /// (PRD §72.3).
   /// </remarks>
   public UnknownReason TrustChainReason;
+
+  /// <summary>
+  /// Whether the image's own embedded signature still covers the bytes that are running (PRD §21,
+  /// §70).
+  /// </summary>
+  /// <remarks>
+  /// The same one of §70's five questions <see cref="PackageStatus"/> answers, asked of a different
+  /// kind of evidence, which is why it is a field of its own rather than the same one wearing a
+  /// second name. A PE image carries a signature inside it and an ELF does not; a Linux package
+  /// database records a digest for a file and Windows has no such database. Folding the two together
+  /// would make one column mean "the packaging system still recognises these bytes" on one machine
+  /// and "the publisher's signature still covers them" on the other, which is precisely the false
+  /// equivalence §5.3 forbids.
+  /// <para>
+  /// Never a trust chain: nothing behind this asks whether the certificate chains to a root this
+  /// machine believes in. That is <see cref="TrustChain"/>, and it stays unanswered on Windows.
+  /// </para>
+  /// </remarks>
+  public SignatureStatus ImageSignature;
+
+  /// <summary>
+  /// One sentence naming what was actually compared, so the word above is never the whole story.
+  /// </summary>
+  public string? ImageSignatureDetail;
+
+  /// <summary>
+  /// Why <see cref="ImageSignature"/> is <see cref="SignatureStatus.NotChecked"/>: nobody asked, no
+  /// image to read, or a platform whose executables carry no signature to check at all.
+  /// </summary>
+  public UnknownReason ImageSignatureReason;
+
+  /// <summary>
+  /// Who the signing certificate says signed the image, by its common name (PRD §21).
+  /// </summary>
+  /// <remarks>
+  /// Read out of the signature rather than out of the version resource, which is the difference
+  /// between this and <see cref="ImageCompany"/>: a company name in a version resource is a string
+  /// the publisher typed and anybody may type it, while this one is bound to a private key the
+  /// signature was made with. That binding is what <see cref="ImageSignature"/> reports on, and
+  /// without it this is a claim like any other — which is why the two are never read apart.
+  /// </remarks>
+  public string? ImageSigner;
+
+  /// <summary>The signing certificate's whole subject, where its common name is not enough.</summary>
+  public string? CertificateSubject;
+
+  /// <summary>
+  /// Who issued the signing certificate.
+  /// </summary>
+  /// <remarks>
+  /// Who put their name to the signer, and not who this machine trusts — those are the same fact
+  /// only on a machine whose root store happens to contain this issuer, and nothing here has looked.
+  /// </remarks>
+  public string? CertificateIssuer;
+
+  /// <summary>
+  /// When the signature was countersigned, in UTC ticks; nought where nothing countersigned it
+  /// (PRD §21).
+  /// </summary>
+  /// <remarks>
+  /// Its own field because a countersigned timestamp is what keeps a signature valid after the
+  /// certificate behind it has expired, which is the ordinary state of most signed software. Nought
+  /// is a real answer — a great deal of software is signed and never dated — and is not the same
+  /// finding as an unknown, which is why it is a value rather than a reason.
+  /// </remarks>
+  public Counter SignatureTimestampUtcTicks;
 
   /// <summary>
   /// What a person calls the program, out of the desktop entry that starts it (PRD §14).

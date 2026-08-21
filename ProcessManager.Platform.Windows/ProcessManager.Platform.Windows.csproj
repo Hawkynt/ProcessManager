@@ -11,6 +11,16 @@
     <ProjectReference Include="..\ProcessManager.Core\ProcessManager.Core.csproj" />
   </ItemGroup>
 
+  <!-- PRD §21. The only package reference in the product, and it is Microsoft's own implementation
+       of the format Authenticode is built on: PKCS#7 signed data, its countersignatures and its
+       attribute encodings. The alternative was a hand-written ASN.1 walk over somebody else's file,
+       reaching a public-key verification at the end of it — which is the one kind of code in this
+       repository that must not be home-made. Trim- and AOT-clean, and forwarded to the shared
+       framework rather than carried, so a published build gains no file from it. -->
+  <ItemGroup>
+    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.11" />
+  </ItemGroup>
+
   <!-- The structure walk is tested by replaying a buffer through it (PRD §9.4); making it public API
        just to be testable would put an implementation detail of one platform in the product surface. -->
   <ItemGroup>

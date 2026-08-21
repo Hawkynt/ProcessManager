@@ -448,6 +448,38 @@ internal sealed record CommandLineOptions {
     || this.Wants(ProcessField.CodeIntegrityGuard);
 
   /// <summary>
+  /// Whether anything this run asked for needs each image's own signature checked (PRD §5.4, §21,
+  /// §70).
+  /// </summary>
+  /// <remarks>
+  /// The dearest read the Windows probe can be asked for: the whole image digested, and a public-key
+  /// signature verified over that digest. Once per image rather than once per process, but still not
+  /// something to do for a column nobody opened. Asking for any one of the five buys all five —
+  /// they come out of one verification of one file.
+  /// </remarks>
+  public bool WantsImageSignatures
+    => this.WantsEverythingWindowsCanAnswer
+    || this.Wants(ProcessField.ImageSignature)
+    || this.Wants(ProcessField.ImageSigner)
+    || this.Wants(ProcessField.CertificateSubject)
+    || this.Wants(ProcessField.CertificateIssuer)
+    || this.Wants(ProcessField.SignatureTimestamp);
+
+  /// <summary>
+  /// Whether anything this run asked for needs each process's power-throttling state (PRD §5.4,
+  /// §22).
+  /// </summary>
+  /// <remarks>
+  /// One <c>OpenProcess</c> and one call per process per <em>sample</em>, and uncacheable, because a
+  /// state that can be changed from Task Manager while the table is open is exactly the state a
+  /// column watching it must not remember. Both columns are one reading, so either buys both.
+  /// </remarks>
+  public bool WantsPowerThrottling
+    => this.WantsEverythingWindowsCanAnswer
+    || this.Wants(ProcessField.BackgroundQualityOfService)
+    || this.Wants(ProcessField.EcoMode);
+
+  /// <summary>
   /// Whether anything this run asked for needs the machine's handle table tallied by type
   /// (PRD §5.4, §20).
   /// </summary>

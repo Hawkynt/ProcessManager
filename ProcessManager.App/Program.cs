@@ -73,7 +73,9 @@ internal static class Program {
       options.WantsWindowsMitigations,
       options.WantsObjectCounts,
       options.WantsGuiObjectCounts,
-      options.WantsImageVersions
+      options.WantsImageVersions,
+      options.WantsImageSignatures,
+      options.WantsPowerThrottling
     );
     if (probe is null) {
       Console.Error.WriteLine($"procman: there is no probe for this platform yet ({Environment.OSVersion.Platform}).");
