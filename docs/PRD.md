@@ -1206,12 +1206,17 @@ Categories:
       application that brought its own filesystem with it, which is what Windows means by the word
 - [x] Managed runtime — from `runtime` (§14), which reads the module list rather than the name.
       `native` is a finding and is not coloured; `unknown` is nobody having looked and is not either
-- [ ] Unsigned executable — **refused, not deferred.** §21 makes `signature.status` a Windows and
-      macOS field because a Linux binary carries no signature to check. What signs a Linux program is
-      its package, and `package.status` answers that — a different question, with `Unsigned` in it
-      meaning "no package on this machine claims these bytes", which is true of everything anybody
-      compiles. Painting that row "unsigned" is exactly the conflation §70 keeps five separate fields
-      to prevent
+- [ ] Unsigned executable — **refused, not deferred.** §21 keeps `signature.status` a Windows and
+      macOS field because a Linux binary carries no signature to check. The two columns that come
+      nearest each answer something else: `package.status` is whether the bytes still match what the
+      package recorded, and `trust.chain` is whether anybody this machine trusts signed for that
+      package. `Unsigned` in the trust chain is the ordinary reading for a package built on the
+      machine it runs on, so a colour taken from it would paint every developer's own build as
+      suspect.
+
+      §70's whole design is that the word is meaningless without the column it is in — the same
+      vocabulary answers five questions, and which one was asked is the heading. **A row colour has
+      no heading.** That is the argument, and it does not depend on which of the five is read
 - [ ] Invalid signature — as above: there is no signature to be invalid
 - [ ] Suspicious reputation — needs opt-in reputation, and §97 promises nothing about an executable
       leaves this machine unasked. There is no provider to ask

@@ -111,8 +111,8 @@ public sealed class LegendWindow : Form {
     "Both cost a read, and nothing is claimed about a process nobody asked about.",
     "",
     "Not distinguished: packed, unsigned, invalid-signature and suspicious processes. A Linux binary",
-    "carries no signature to check — what signs one is its package — and a colour that is sometimes",
-    "right is worse than none.",
+    "carries no signature to check, and the columns that come nearest each answer a different",
+    "question — which a row colour has no heading to say. A colour sometimes right is worse than none.",
   ];
 
   private readonly Button _thresholds = new() { Text = "Thresholds…" };
