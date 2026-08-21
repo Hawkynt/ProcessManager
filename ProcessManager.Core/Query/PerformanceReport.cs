@@ -235,6 +235,11 @@ public static class PerformanceReport {
   /// What a disk is, by name. Optional: without it the devices still appear with their rates, just
   /// without a model or a capacity.
   /// </param>
+  /// <param name="topology">
+  /// How the logical processors are arranged. Optional: without it a core says what it is doing and
+  /// not where it sits, and the machine gets no per-node view — which is the honest shape for a
+  /// machine that does not publish one (PRD §46).
+  /// </param>
   public static IReadOnlyList<PerformanceSection> Build(
     HostInfo host,
     SystemSnapshot snapshot,
@@ -243,7 +248,8 @@ public static class PerformanceReport {
     Func<string, NetworkInterfaceInfo>? describeInterface = null,
     Func<IReadOnlyList<GpuInfo>>? describeGpus = null,
     Func<IReadOnlyList<BatteryInfo>>? describeBatteries = null,
-    Func<IReadOnlyList<SensorGroup>>? describeSensors = null
+    Func<IReadOnlyList<SensorGroup>>? describeSensors = null,
+    CpuTopology? topology = null
   ) {
     ArgumentNullException.ThrowIfNull(host);
     ArgumentNullException.ThrowIfNull(snapshot);
@@ -259,7 +265,7 @@ public static class PerformanceReport {
       new("Activity", BuildActivity(snapshot, delta)),
       new(
         "Processor",
-        BuildProcessor(host, snapshot, delta),
+        BuildProcessor(host, snapshot, delta, topology),
         utilisation,
         100,
         Percent(utilisation),
@@ -287,7 +293,7 @@ public static class PerformanceReport {
       var busy = delta!.PerCoreBusyPercent(core);
       sections.Add(new(
         $"Core {core}",
-        BuildCore(core, delta),
+        BuildCore(core, delta, topology),
         busy,
         100,
         Percent(busy),
@@ -296,6 +302,8 @@ public static class PerformanceReport {
         PartOf: "Processor"
       ));
     }
+
+    AddNodes(sections, delta, topology);
 
     // One per adapter, and only where there is an adapter: a machine with no discrete graphics gets
     // no heading rather than an empty one (PRD §50).
@@ -557,7 +565,12 @@ public static class PerformanceReport {
     return [.. rows];
   }
 
-  private static PerformanceRow[] BuildProcessor(HostInfo host, SystemSnapshot snapshot, SnapshotDelta? delta) {
+  private static PerformanceRow[] BuildProcessor(
+    HostInfo host,
+    SystemSnapshot snapshot,
+    SnapshotDelta? delta,
+    CpuTopology? topology
+  ) {
     var rows = new List<PerformanceRow> {
       // Live: what it is doing. Utilisation and speed are the two largest figures on the page.
       new("Utilisation", Percent(delta?.SystemCpuPercent)),
@@ -565,6 +578,12 @@ public static class PerformanceReport {
       new("User time", Percent(delta?.SystemUserPercent)),
       new("Kernel time", Percent(delta?.SystemKernelPercent)),
       new("Processes", Humanize.Count(Counter.Of((ulong)snapshot.ProcessCount))),
+      new("Threads", Humanize.Count(Counter.Of((ulong)Math.Max(0, snapshot.System.TotalThreads)))),
+      // §46's handle count, in this kernel's own word for it. Descriptors rather than handles,
+      // because that is what Linux hands out and calling them handles would be describing this
+      // machine in another system's vocabulary (PRD §5.3).
+      new("Descriptors", Humanize.Count(snapshot.System.OpenDescriptors)),
+      new("Uptime", Uptime(snapshot.System.UptimeSeconds)),
       // Pressure, not utilisation: a processor at 100 % is not in trouble if nothing is waiting for
       // it, and one at 60 % with things queued behind it is (PRD §46).
       new("Stalled on CPU", Pressure(snapshot.System.CpuPressure.Some)),
@@ -584,6 +603,26 @@ public static class PerformanceReport {
 
     if (host.CpuSignature is { } signature)
       rows.Add(new("Signature", signature, Level: PerformanceRowLevel.Hardware));
+
+    // What the clock is allowed to do, and who is deciding. Only where cpufreq is present at all: a
+    // virtual machine whose clock its host owns has no policy, and three unknown rows would say the
+    // machine had one nobody could read (PRD §5.3).
+    if (host.CpuMinimumHertz.HasValue || host.CpuMaximumHertz.HasValue)
+      rows.Add(new("Speed range", $"{Hertz(host.CpuMinimumHertz)} – {Hertz(host.CpuMaximumHertz)}", Level: PerformanceRowLevel.Hardware));
+
+    if (host.CpuGovernor is { Length: > 0 } governor)
+      rows.Add(new(
+        "Governor",
+        host.CpuScalingDriver is { Length: > 0 } driver ? $"{governor}  ({driver})" : governor,
+        Level: PerformanceRowLevel.Hardware
+      ));
+
+    // Only on a part that has both kinds. On anything else the row would answer a question the
+    // machine does not raise (PRD §46).
+    if (topology is { IsHybrid: true })
+      rows.Add(new("Core kinds", CoreKinds(topology), Level: PerformanceRowLevel.Hardware));
+
+    AddProcessorCounters(rows, snapshot, delta);
 
     // What the silicon can actually do, from CPUID — grouped rather than listed, because sixty rows
     // of one word each is a data dump and five sentences is a specification (PRD §46). Level four
@@ -614,6 +653,82 @@ public static class PerformanceReport {
   }
 
   /// <summary>
+  /// "8 performance, 8 efficiency" — the two halves of a hybrid part, counted in logical processors.
+  /// </summary>
+  private static string CoreKinds(CpuTopology topology) {
+    var performance = 0;
+    var efficiency = 0;
+    foreach (var core in topology.Cores)
+      switch (core.Kind) {
+        case CoreKind.Performance: ++performance; break;
+        case CoreKind.Efficiency: ++efficiency; break;
+        default: break;
+      }
+
+    return $"{performance.ToString(CultureInfo.InvariantCulture)} performance, {efficiency.ToString(CultureInfo.InvariantCulture)} efficiency";
+  }
+
+  /// <summary>
+  /// The machine's own bookkeeping: switches, interrupts and deferred work (PRD §46).
+  /// </summary>
+  /// <remarks>
+  /// Level four rather than beside the utilisation, which is where §46 puts them: these are
+  /// diagnostics and not status, and a reader glancing at the page is asking how busy the processor
+  /// is rather than how many times a second it changed its mind.
+  /// <para>
+  /// Each is the rate with its cumulative total beside it, because the two answer different
+  /// questions — the rate says what the machine is doing now, and the total says how much of it the
+  /// machine has done since it booted, which is the figure a second reading is differenced against.
+  /// </para>
+  /// <para>
+  /// The interrupt shares are already inside the kernel time above and are broken out for the one
+  /// question kernel time cannot answer: whether the kernel is in there for a process or for a
+  /// device. A machine at 30 % kernel of which 25 is soft IRQ is an adapter drowning it, not a
+  /// program doing system calls.
+  /// </para>
+  /// </remarks>
+  private static void AddProcessorCounters(List<PerformanceRow> rows, SystemSnapshot snapshot, SnapshotDelta? delta) {
+    void Add(string label, string value) => rows.Add(new(label, value, PerformanceRowLevel.Diagnostic));
+
+    var system = snapshot.System;
+    Add("Context switches", Churn(delta?.SystemContextSwitchesPerSecond, system.ContextSwitches));
+    Add("Interrupts", Churn(delta?.SystemInterruptsPerSecond, system.Interrupts));
+    // What Windows calls a DPC. The name is this machine's rather than that one's, with the
+    // equivalence in the tooltip's place — the heading — instead of in the figure (PRD §5.3).
+    Add("Soft interrupts (deferred)", Churn(delta?.SystemSoftInterruptsPerSecond, system.SoftInterrupts));
+    Add("Interrupt time", $"{Percent(delta?.SystemInterruptPercent)} hard, {Percent(delta?.SystemSoftInterruptPercent)} deferred");
+    // Linux keeps no machine-wide system-call counter. It can be had per process with ptrace or a
+    // BPF probe, and both are far more intrusive than a performance page has any business being —
+    // so this is refused rather than approximated from the context-switch count, which is a
+    // different number that happens to move at a similar speed (PRD §5.3, §46).
+    Add("System calls", Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform));
+    Add("Descriptor limit", DescriptorCeiling(system.DescriptorLimit));
+    Add("Forks", Humanize.Count(system.ProcessesCreated));
+  }
+
+  /// <summary>A rate with the counter it was differenced from: "12.4k/s  (3.52G since boot)".</summary>
+  private static string Churn(Rate? perSecond, Counter total) {
+    var rate = Humanize.Rate(perSecond ?? Rate.NotSampledYet);
+    return total.HasValue ? $"{rate}/s  ({Humanize.Rate(Rate.Of(total.Value))} since boot)" : rate + "/s";
+  }
+
+  /// <summary>
+  /// The kernel's ceiling on open descriptors, where it is one worth printing.
+  /// </summary>
+  /// <remarks>
+  /// <c>fs.file-max</c> is derived from how much memory the machine has and on anything modern is
+  /// nine quintillion, which is not a limit anybody is going to reach and reads as a typographical
+  /// error next to a five-figure count. Above a billion it is reported as unlimited in words rather
+  /// than as a number nobody can use.
+  /// </remarks>
+  private static string DescriptorCeiling(Counter limit) {
+    if (!limit.HasValue)
+      return Humanize.Placeholder(limit.Reason);
+
+    return limit.Value > 1_000_000_000 ? "no practical limit" : Humanize.Count(limit);
+  }
+
+  /// <summary>
   /// One line of features, or none at all where the processor reports none of that kind.
   /// </summary>
   /// <remarks>
@@ -631,19 +746,201 @@ public static class PerformanceReport {
   }
 
   /// <summary>
-  /// One logical processor's own figures.
+  /// What a section holding a NUMA node is grouped under.
+  /// </summary>
+  /// <remarks>
+  /// Not <c>Processor</c>, which the cores already use: a front-end asking for the processor's parts
+  /// wants one of the two lists and never both interleaved, and the two views are a choice rather
+  /// than a sum (PRD §46).
+  /// </remarks>
+  public const string NodeGroup = "Processor nodes";
+
+  /// <summary>
+  /// One section per NUMA node, where the machine has more than one (PRD §46).
+  /// </summary>
+  /// <remarks>
+  /// Aggregated from the per-core figures rather than read separately, because the kernel publishes
+  /// no per-node CPU line: a node's utilisation is the mean of its processors', which is the same
+  /// arithmetic the machine-wide figure is.
+  /// <para>
+  /// Only where there is more than one node. "Node 0 is the whole machine" is not a distribution,
+  /// and offering a per-node view of it would put a second copy of the processor's own graph on the
+  /// page (§47 makes the same argument about per-node memory).
+  /// </para>
+  /// </remarks>
+  private static void AddNodes(List<PerformanceSection> sections, SnapshotDelta? delta, CpuTopology? topology) {
+    if (delta is null || topology is null)
+      return;
+
+    var nodes = topology.Nodes;
+    if (nodes.Count < 2)
+      return;
+
+    foreach (var node in nodes) {
+      var members = topology.OnNode(node);
+      var busy = MeanOf(members, delta.PerCoreBusyPercent);
+      sections.Add(new(
+        $"Node {node.ToString(CultureInfo.InvariantCulture)}",
+        BuildNode(node, members, delta),
+        busy,
+        100,
+        Percent(busy),
+        MeanOf(members, delta.PerCoreKernelPercent),
+        "kernel",
+        PartOf: NodeGroup
+      ));
+    }
+  }
+
+  private static PerformanceRow[] BuildNode(int node, IReadOnlyList<CoreDescriptor> members, SnapshotDelta delta) {
+    var rows = new List<PerformanceRow> {
+      new("NUMA node", node.ToString(CultureInfo.InvariantCulture)),
+      new("Utilisation", Percent(MeanOf(members, delta.PerCoreBusyPercent))),
+      new("User time", Percent(MeanOf(members, delta.PerCoreUserPercent))),
+      new("Kernel time", Percent(MeanOf(members, delta.PerCoreKernelPercent))),
+      new("Logical processors", members.Count.ToString(CultureInfo.InvariantCulture), PerformanceRowLevel.Hardware),
+    };
+
+    // Which processors they are, so somebody about to pin a thread to this node knows what to pin it
+    // to. Ranges rather than a list of forty numbers.
+    if (members.Count > 0)
+      rows.Add(new("Processors", Ranges(members), PerformanceRowLevel.Hardware));
+
+    return [.. rows];
+  }
+
+  /// <summary>
+  /// The mean of one reading across a group of processors.
+  /// </summary>
+  /// <remarks>
+  /// Unknown when every member is, rather than nought: a node whose cores have not been sampled yet
+  /// has no utilisation, and averaging no readings into a zero would draw an idle node (PRD §5.3).
+  /// Members that are individually unreadable are left out of the mean rather than counted as idle —
+  /// a hot-unplugged core must not halve the node's figure.
+  /// </remarks>
+  private static Rate MeanOf(IReadOnlyList<CoreDescriptor> members, Func<int, Rate> reading) {
+    var total = 0d;
+    var counted = 0;
+    var reason = UnknownReason.NotSampledYet;
+    foreach (var member in members) {
+      var value = reading(member.Logical);
+      if (!value.HasValue) {
+        reason = value.Reason;
+        continue;
+      }
+
+      total += value.Value;
+      ++counted;
+    }
+
+    return counted > 0 ? Rate.Of(total / counted) : Rate.Unknown(reason);
+  }
+
+  /// <summary>"0-7, 16-23" — a run of processor numbers written the way the kernel writes them.</summary>
+  private static string Ranges(IReadOnlyList<CoreDescriptor> members) {
+    var numbers = new List<int>(members.Count);
+    foreach (var member in members)
+      numbers.Add(member.Logical);
+
+    numbers.Sort();
+    var text = new System.Text.StringBuilder();
+    for (var i = 0; i < numbers.Count;) {
+      var start = i;
+      while (i + 1 < numbers.Count && numbers[i + 1] == numbers[i] + 1)
+        ++i;
+
+      if (text.Length > 0)
+        text.Append(", ");
+
+      text.Append(numbers[start].ToString(CultureInfo.InvariantCulture));
+      if (i > start)
+        text.Append('-').Append(numbers[i].ToString(CultureInfo.InvariantCulture));
+
+      ++i;
+    }
+
+    return text.ToString();
+  }
+
+  /// <summary>
+  /// One logical processor's own figures, and where it sits (PRD §46).
   /// </summary>
   /// <remarks>
   /// User and kernel do not add up to busy, and deliberately: steal time is busy from this machine's
   /// point of view and belongs to neither, so a virtual machine losing a third of its core to the
   /// hypervisor shows it as the gap rather than hiding it in one of the two.
+  /// <para>
+  /// The placement rows are what turn a number into a reading: two logical processors sharing one
+  /// physical core do not do twice the work of one, and a saturated efficiency core beside an idle
+  /// performance core is a scheduling problem rather than a busy machine. A machine that publishes
+  /// no topology gets no such rows rather than a column of unknowns (§5.3).
+  /// </para>
   /// </remarks>
-  private static PerformanceRow[] BuildCore(int core, SnapshotDelta delta) => [
-    new("Logical processor", core.ToString(CultureInfo.InvariantCulture)),
-    new("Utilisation", Percent(delta.PerCoreBusyPercent(core))),
-    new("User time", Percent(delta.PerCoreUserPercent(core))),
-    new("Kernel time", Percent(delta.PerCoreKernelPercent(core))),
-  ];
+  private static PerformanceRow[] BuildCore(int core, SnapshotDelta delta, CpuTopology? topology) {
+    var rows = new List<PerformanceRow> {
+      new("Logical processor", core.ToString(CultureInfo.InvariantCulture)),
+      new("Utilisation", Percent(delta.PerCoreBusyPercent(core))),
+      new("User time", Percent(delta.PerCoreUserPercent(core))),
+      new("Kernel time", Percent(delta.PerCoreKernelPercent(core))),
+    };
+
+    if (Placement(topology, core) is not { } placement)
+      return [.. rows];
+
+    if (placement.Package >= 0)
+      rows.Add(new("Socket", placement.Package.ToString(CultureInfo.InvariantCulture), PerformanceRowLevel.Hardware));
+
+    if (placement.Core >= 0) {
+      rows.Add(new("Physical core", placement.Core.ToString(CultureInfo.InvariantCulture), PerformanceRowLevel.Hardware));
+      var siblings = SiblingsOf(topology!, placement);
+      if (siblings.Length > 0)
+        rows.Add(new("SMT sibling", siblings, PerformanceRowLevel.Hardware));
+    }
+
+    if (placement.Kind != CoreKind.Unknown)
+      rows.Add(new("Kind", placement.Kind == CoreKind.Performance ? "performance" : "efficiency", PerformanceRowLevel.Hardware));
+
+    if (placement.Node >= 0)
+      rows.Add(new("NUMA node", placement.Node.ToString(CultureInfo.InvariantCulture), PerformanceRowLevel.Hardware));
+
+    return [.. rows];
+  }
+
+  private static CoreDescriptor? Placement(CpuTopology? topology, int logical) {
+    foreach (var core in topology?.Cores ?? [])
+      if (core.Logical == logical)
+        return core;
+
+    return null;
+  }
+
+  /// <summary>
+  /// The other logical processors on the same physical core, which is what SMT means here.
+  /// </summary>
+  /// <remarks>
+  /// Empty on a part with no SMT, and empty rather than "none": a row saying a core has no sibling
+  /// on a machine where nothing does is a row on every page for no reason.
+  /// </remarks>
+  private static string SiblingsOf(CpuTopology topology, CoreDescriptor of) {
+    var siblings = new List<int>();
+    foreach (var core in topology.Cores)
+      if (core.Package == of.Package && core.Core == of.Core && core.Logical != of.Logical)
+        siblings.Add(core.Logical);
+
+    if (siblings.Count == 0)
+      return string.Empty;
+
+    siblings.Sort();
+    var text = new System.Text.StringBuilder();
+    foreach (var sibling in siblings) {
+      if (text.Length > 0)
+        text.Append(", ");
+
+      text.Append(sibling.ToString(CultureInfo.InvariantCulture));
+    }
+
+    return text.ToString();
+  }
 
   /// <summary>
   /// One graphics adapter's figures (PRD §50).

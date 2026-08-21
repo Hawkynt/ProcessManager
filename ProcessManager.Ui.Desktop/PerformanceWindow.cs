@@ -56,6 +56,19 @@ public sealed class PerformanceWindow : Form {
   private readonly HistoryPlot _plot = new();
   private readonly MenuStrip _menu = new();
   private readonly CheckBox _perCore = new() { Text = "Per logical processor" };
+
+  /// <summary>
+  /// The third of §46's graph modes, and only on a machine that has more than one node.
+  /// </summary>
+  /// <remarks>
+  /// Beside the per-core box rather than replacing it, and the two are exclusive: they are two ways
+  /// of dividing the same processor and showing both at once would put a node's plot beside the
+  /// plots of the very cores it is the mean of.
+  /// </remarks>
+  private readonly CheckBox _perNode = new() { Text = "Per NUMA node", Visible = false };
+
+  /// <summary>How the processors are arranged, read once — nothing repartitions while we watch.</summary>
+  private readonly CpuTopology _topology;
   private readonly Button _pause = new() { Text = "Pause" };
   private readonly Button _inspect = new() { Text = "Expand" };
   private readonly ComboBox _spanBox = new() { DropDownStyle = ComboBoxStyle.DropDownList };
@@ -140,6 +153,7 @@ public sealed class PerformanceWindow : Form {
 
     this._probe = probe;
     this._sampler = sampler;
+    this._topology = probe.DescribeTopology();
 
     this.Text = "System information";
     // A secondary window closing must not take the program with it. Form.QuitsOnClose defaults to
@@ -173,9 +187,24 @@ public sealed class PerformanceWindow : Form {
     // The processor's two views, as one box rather than as twenty rail entries: a machine with
     // twenty cores would bury the disks under them, and the question "overall or per core" is one
     // switch and not twenty destinations (PRD §46).
-    this._perCore.CheckedChanged += (_, _) => this.ShowSelected(force: true);
+    this._perCore.CheckedChanged += (_, _) => {
+      if (this._perCore.Checked)
+        this._perNode.Checked = false;
+
+      this.ShowSelected(force: true);
+    };
+
     this._perCore.Visible = false;
     this.Controls.Add(this._perCore);
+
+    this._perNode.CheckedChanged += (_, _) => {
+      if (this._perNode.Checked)
+        this._perCore.Checked = false;
+
+      this.ShowSelected(force: true);
+    };
+
+    this.Controls.Add(this._perNode);
 
     this.BuildGraphControls();
 
@@ -378,6 +407,9 @@ public sealed class PerformanceWindow : Form {
     graph.DropDownItems.Add(new ToolStripSeparator());
     graph.DropDownItems.Add(Item("Expand…", this.Inspect));
     graph.DropDownItems.Add(Item("Show logical processors", () => this._perCore.Checked = !this._perCore.Checked));
+    // Does nothing on a machine with one node, like Ctrl+6 on a machine with no discrete graphics:
+    // the mode has nothing to divide, and landing somewhere else would be worse than doing nothing.
+    graph.DropDownItems.Add(Item("Show NUMA nodes", () => this._perNode.Checked = !this._perNode.Checked));
     this._menu.Items.Add(graph);
 
     var copy = new ToolStripMenuItem("Copy");
@@ -617,7 +649,8 @@ public sealed class PerformanceWindow : Form {
       this._sampler.Delta,
       this._probe.DescribeDisk,
       this._probe.DescribeInterface,
-      this._probe.DescribeGpus
+      this._probe.DescribeGpus,
+      topology: this._topology
     );
 
     this.RecordHistory();
@@ -826,7 +859,8 @@ public sealed class PerformanceWindow : Form {
     // and the inspection view, plus the processor's own switch on the left where it belongs to the
     // page rather than to the graphs.
     var strip = top + 30;
-    this._perCore.Bounds = new(left, strip, 220, 22);
+    this._perCore.Bounds = new(left, strip, 200, 22);
+    this._perNode.Bounds = new(left + 206, strip, 160, 22);
     this._inspect.Bounds = new(left + width - 90, strip, 90, 24);
     this._pause.Bounds = new(left + width - 186, strip, 90, 24);
     // A little taller than the buttons beside it: a drop-down list draws its own frame inside its
@@ -1041,16 +1075,26 @@ public sealed class PerformanceWindow : Form {
     this._diagnostics = DiagnosticsOf(chosen);
     this.ApplyLayout();
 
-    var parts = this.PartsOf(title);
-    this._perCore.Visible = parts.Count > 0;
-    this._perCore.Text = $"Per logical processor ({parts.Count})";
-    var split = this._perCore.Visible && this._perCore.Checked;
+    var cores = this.PartsOf(title);
+    // Only the processor has nodes under it, and only on a machine with more than one — the report
+    // builds none otherwise, so this is empty rather than switched off by name here.
+    var nodes = this.PartsOf(PerformanceReport.NodeGroup);
+    this._perCore.Visible = cores.Count > 0;
+    this._perCore.Text = $"Per logical processor ({cores.Count})";
+    this._perNode.Visible = cores.Count > 0 && nodes.Count > 0;
+    this._perNode.Text = $"Per NUMA node ({nodes.Count})";
 
-    // Three shapes, in order of specificity: the cores when asked for, a resource's own stack of
+    List<PerformanceSection> parts = this._perNode.Visible && this._perNode.Checked ? nodes
+      : this._perCore.Visible && this._perCore.Checked ? cores
+      : [];
+
+    var split = parts.Count > 0;
+
+    // Three shapes, in order of specificity: the parts when asked for, a resource's own stack of
     // series where it has more than one, and otherwise the single plot.
     var series = chosen.Series;
     var stacked = !split && series.Count > 1;
-    this.LayOutPlots(split ? parts : [], stacked ? (title, series) : default);
+    this.LayOutPlots(parts, stacked ? (title, series) : default);
     this._plot.Visible = !split && !stacked && series.Count > 0;
     this.ShowComposition(chosen);
 

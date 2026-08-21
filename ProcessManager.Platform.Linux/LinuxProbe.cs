@@ -20,6 +20,7 @@ public sealed class LinuxProbe : ISystemProbe {
   private static ReadOnlySpan<byte> _btimePrefix => "btime "u8;
   private static ReadOnlySpan<byte> _ctxtPrefix => "ctxt "u8;
   private static ReadOnlySpan<byte> _intrPrefix => "intr "u8;
+  private static ReadOnlySpan<byte> _softirqPrefix => "softirq "u8;
   private static ReadOnlySpan<byte> _procsPrefix => "processes "u8;
   private static ReadOnlySpan<byte> _procsRunningPrefix => "procs_running "u8;
 
@@ -144,6 +145,38 @@ public sealed class LinuxProbe : ISystemProbe {
     this.ReadLoadAverage(ref system);
     this.ReadPressure(ref system);
     this.ReadUptime(ref system);
+    this.ReadDescriptorCount(ref system);
+  }
+
+  /// <summary>
+  /// How many descriptors the whole machine has open — §46's handle count (PRD §46).
+  /// </summary>
+  /// <remarks>
+  /// <c>file-nr</c> is three numbers: allocated, free, and the ceiling. The middle one has been
+  /// nought since the kernel stopped keeping a free list in 2.6 and is skipped rather than reported
+  /// as a real zero. One file of thirty bytes a sample, which is what makes a machine-wide figure
+  /// affordable where the per-process one is not (§3.5).
+  /// </remarks>
+  private void ReadDescriptorCount(ref SystemCounters system) {
+    // Before the read: a kernel with no such file — a lockdown mount, a recorded tree that predates
+    // this — must not report a machine with nothing open (PRD §5.3).
+    system.OpenDescriptors = Counter.NotSupported;
+    system.DescriptorLimit = Counter.NotSupported;
+
+    Span<byte> pathBuffer = stackalloc byte[ProcPath.MaxLength];
+    if (!this._reader.TryRead(ProcPath.Build(pathBuffer, this._procRootUtf8, "sys/fs/file-nr"u8), out var content, out _))
+      return;
+
+    var scanner = new AsciiScanner(content);
+    var open = scanner.NextField();
+    if (open.IsEmpty)
+      return;
+
+    system.OpenDescriptors = Counter.Of(AsciiScanner.ParseUInt64(open));
+    scanner.Skip(1);
+    var limit = scanner.NextField();
+    if (!limit.IsEmpty)
+      system.DescriptorLimit = Counter.Of(AsciiScanner.ParseUInt64(limit));
   }
 
   private void ReadStat(SystemSnapshot snapshot, ref SystemCounters system) {
@@ -189,6 +222,10 @@ public sealed class LinuxProbe : ISystemProbe {
         system.ContextSwitches = Counter.Of(AsciiScanner.ParseUInt64(line[_ctxtPrefix.Length..]));
       else if (AsciiScanner.StartsWith(line, _intrPrefix))
         system.Interrupts = Counter.Of(AsciiScanner.ParseUInt64(line[_intrPrefix.Length..]));
+      // The first number on each of these two lines is the total; the rest is one column per vector,
+      // which is what /proc/interrupts and /proc/softirqs break out and this page does not need.
+      else if (AsciiScanner.StartsWith(line, _softirqPrefix))
+        system.SoftInterrupts = Counter.Of(AsciiScanner.ParseUInt64(line[_softirqPrefix.Length..]));
       else if (AsciiScanner.StartsWith(line, _procsPrefix))
         system.ProcessesCreated = Counter.Of(AsciiScanner.ParseUInt64(line[_procsPrefix.Length..]));
       else if (AsciiScanner.StartsWith(line, _procsRunningPrefix))

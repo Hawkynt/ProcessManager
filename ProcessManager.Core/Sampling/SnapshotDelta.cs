@@ -199,6 +199,27 @@ public sealed class SnapshotDelta {
   /// </remarks>
   public Rate SystemContextSwitchesPerSecond { get; private set; } = Rate.NotSampledYet;
 
+  /// <summary>Hard interrupts across the whole machine, per second (PRD §46).</summary>
+  public Rate SystemInterruptsPerSecond { get; private set; } = Rate.NotSampledYet;
+
+  /// <summary>
+  /// Soft interrupts per second — the kernel's deferred work, and the closest thing this machine has
+  /// to a DPC rate (PRD §46).
+  /// </summary>
+  public Rate SystemSoftInterruptsPerSecond { get; private set; } = Rate.NotSampledYet;
+
+  /// <summary>
+  /// How much of the interval the machine spent servicing interrupts, hard and deferred.
+  /// </summary>
+  /// <remarks>
+  /// Both of these are already inside <see cref="SystemKernelPercent"/> and are broken out because
+  /// the question they answer is a different one: kernel time says the machine is in the kernel, and
+  /// only these say it is in there on behalf of a device rather than on behalf of a process.
+  /// </remarks>
+  public Rate SystemInterruptPercent { get; private set; } = Rate.NotSampledYet;
+
+  public Rate SystemSoftInterruptPercent { get; private set; } = Rate.NotSampledYet;
+
   /// <summary>The machine's kernel and user time, the same split as the per-core figures.</summary>
   public Rate SystemKernelPercent { get; private set; } = Rate.NotSampledYet;
 
@@ -252,6 +273,10 @@ public sealed class SnapshotDelta {
       this.SystemKernelPercent = Rate.NotSampledYet;
       this.SystemUserPercent = Rate.NotSampledYet;
       this.SystemContextSwitchesPerSecond = Rate.NotSampledYet;
+      this.SystemInterruptsPerSecond = Rate.NotSampledYet;
+      this.SystemSoftInterruptsPerSecond = Rate.NotSampledYet;
+      this.SystemInterruptPercent = Rate.NotSampledYet;
+      this.SystemSoftInterruptPercent = Rate.NotSampledYet;
       this.PerCoreCount = 0;
       var processes = current.Processes;
       for (var i = 0; i < processes.Length; ++i) {
@@ -338,6 +363,12 @@ public sealed class SnapshotDelta {
     this.SystemUserPercent = RateCalculator.UserPercent(previous.System.Cpu, current.System.Cpu);
     this.SystemContextSwitchesPerSecond =
       RateCalculator.PerSecond(previous.System.ContextSwitches, current.System.ContextSwitches, elapsed);
+    this.SystemInterruptsPerSecond =
+      RateCalculator.PerSecond(previous.System.Interrupts, current.System.Interrupts, elapsed);
+    this.SystemSoftInterruptsPerSecond =
+      RateCalculator.PerSecond(previous.System.SoftInterrupts, current.System.SoftInterrupts, elapsed);
+    this.SystemInterruptPercent = RateCalculator.InterruptPercent(previous.System.Cpu, current.System.Cpu);
+    this.SystemSoftInterruptPercent = RateCalculator.SoftInterruptPercent(previous.System.Cpu, current.System.Cpu);
 
     var coreCount = Math.Min(previous.PerCoreCount, current.PerCoreCount);
     EnsureLength(ref this._perCoreBusy, coreCount);

@@ -33,7 +33,11 @@ public enum CoreKind {
 /// saturating both does not give twice the work of saturating one.
 /// </param>
 /// <param name="Kind">Performance, efficiency, or unknown.</param>
-public readonly record struct CoreDescriptor(int Logical, int Package, int Core, CoreKind Kind);
+/// <param name="Node">
+/// Which NUMA node its memory is local to, or -1 where the kernel publishes no node map — which is
+/// every machine built without <c>CONFIG_NUMA</c> and every container that hides it.
+/// </param>
+public readonly record struct CoreDescriptor(int Logical, int Package, int Core, CoreKind Kind, int Node = -1);
 
 /// <summary>
 /// How the machine's logical processors are arranged (PRD §46).
@@ -79,6 +83,41 @@ public sealed record CpuTopology(IReadOnlyList<CoreDescriptor> Cores) {
   }
 
   /// <summary>
+  /// The NUMA nodes that have processors on them, in order (PRD §46).
+  /// </summary>
+  /// <remarks>
+  /// Empty on a machine that publishes no node map, and deliberately not "one node containing
+  /// everything" in that case: a single-node machine and a machine that will not say are different
+  /// answers, and only one of them is worth offering a per-node view of (PRD §5.3).
+  /// <para>
+  /// A node with memory and no processors — a CXL expander, a persistent-memory node — is not here,
+  /// because this is the list of things whose utilisation can be plotted.
+  /// </para>
+  /// </remarks>
+  public IReadOnlyList<int> Nodes {
+    get {
+      var nodes = new List<int>();
+      foreach (var core in this.Cores)
+        if (core.Node >= 0 && !nodes.Contains(core.Node))
+          nodes.Add(core.Node);
+
+      nodes.Sort();
+      return nodes;
+    }
+  }
+
+  /// <summary>The logical processors on one NUMA node, in the same order <see cref="Of"/> uses.</summary>
+  public IReadOnlyList<CoreDescriptor> OnNode(int node) {
+    var members = new List<CoreDescriptor>();
+    foreach (var core in this.Cores)
+      if (core.Node == node)
+        members.Add(core);
+
+    members.Sort(Order);
+    return members;
+  }
+
+  /// <summary>
   /// The logical processors of one socket, performance cores first and efficiency cores after, each
   /// group in core order with SMT siblings adjacent.
   /// </summary>
@@ -93,16 +132,18 @@ public sealed record CpuTopology(IReadOnlyList<CoreDescriptor> Cores) {
       if (core.Package == package)
         members.Add(core);
 
-    members.Sort(static (a, b) => {
-      var kind = Rank(a.Kind).CompareTo(Rank(b.Kind));
-      if (kind != 0)
-        return kind;
-
-      var core = a.Core.CompareTo(b.Core);
-      return core != 0 ? core : a.Logical.CompareTo(b.Logical);
-    });
-
+    members.Sort(Order);
     return members;
+  }
+
+  /// <summary>Fastest kind first, then by physical core, so SMT siblings land next to each other.</summary>
+  private static int Order(CoreDescriptor a, CoreDescriptor b) {
+    var kind = Rank(a.Kind).CompareTo(Rank(b.Kind));
+    if (kind != 0)
+      return kind;
+
+    var core = a.Core.CompareTo(b.Core);
+    return core != 0 ? core : a.Logical.CompareTo(b.Logical);
   }
 
   /// <summary>Performance before efficiency before unknown, which is fastest-first.</summary>

@@ -113,6 +113,22 @@ public static class RateCalculator {
       current.KernelNs + current.IrqNs + current.SoftIrqNs
     );
 
+  /// <summary>
+  /// How much of the interval went to hard interrupt handlers (PRD §46).
+  /// </summary>
+  /// <remarks>
+  /// Part of <see cref="KernelPercent"/> rather than beside it: the two are not added anywhere, and
+  /// a reader comparing them is asking how much of the kernel's time was a device's fault.
+  /// </remarks>
+  public static Rate InterruptPercent(in CpuTimes previous, in CpuTimes current)
+    => PortionPercent(previous, current, previous.IrqNs, current.IrqNs);
+
+  /// <summary>
+  /// And how much to the deferred half — softirq, which is what a DPC is on this machine.
+  /// </summary>
+  public static Rate SoftInterruptPercent(in CpuTimes previous, in CpuTimes current)
+    => PortionPercent(previous, current, previous.SoftIrqNs, current.SoftIrqNs);
+
   /// <summary>How much of the interval this core spent running user code, nice time included.</summary>
   public static Rate UserPercent(in CpuTimes previous, in CpuTimes current)
     => PortionPercent(
