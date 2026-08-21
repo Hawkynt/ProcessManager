@@ -108,6 +108,34 @@ public static class DesktopApp {
             ? $"capture:      {taken.Width}x{taken.Height} -> {png}\n"
             : $"capture:      none — {failure}\n";
 
+          // The same table with headings in it. Grouped by executable rather than by user, because
+          // inside the capture's private pid namespace every process belongs to one account and a
+          // picture with one heading in it proves nothing about how a list of them looks (PRD §83).
+          var groupedPng = Path.Combine(directory, "desktop-grouped.png");
+          // Put back at the end, because the window writes its settings once a second: a capture run
+          // that left the list grouped would change the layout of whoever regenerated the pictures.
+          var opened = window.Grouping;
+          description += window.ShowGrouping(Query.ProcessGrouping.Executable);
+          var groupedSize = GtkCapture.Window(groupedPng, out var groupedFailure, window.Text);
+          description += groupedSize is { } grouped
+            ? $"grouped capture: {grouped.Width}x{grouped.Height} -> {groupedPng}\n"
+            : $"grouped capture: none — {groupedFailure}\n";
+
+          window.ShowGrouping(opened);
+
+          // The filter box, with something in it. Match highlighting is measured text drawn behind
+          // other text, which is the shape of defect that passes every test and is one column out on
+          // screen (PRD §11).
+          var filteredPng = Path.Combine(directory, "desktop-filtered.png");
+          description += window.ShowFilter("ba");
+          var filteredSize = GtkCapture.Window(filteredPng, out var filteredFailure, window.Text);
+          description += filteredSize is { } filtered
+            ? $"filtered capture: {filtered.Width}x{filtered.Height} -> {filteredPng}\n"
+            : $"filtered capture: none — {filteredFailure}\n";
+
+          window.ShowFilter(string.Empty);
+          description += window.ExerciseColumns();
+
           // And the performance page, which is where most of §45 lives and none of it was ever
           // photographed. It was opened at the start of the hold rather than here, so its graphs
           // have a history to draw: opened at capture time it has exactly one sample, and every

@@ -40,6 +40,12 @@ written — CPU, memory and I/O history, one pixel per sample, sharing one scale
 compared with each other. The plots read as instruments rather than as part of the desktop: black
 ground, green graticule, filled area.
 
+[![The same table, grouped by executable](docs/screenshots/desktop-grouped.png)](docs/screenshots/desktop-grouped.png)
+
+The same table with headings in it. A list can be nested by parentage, or headed by user, session,
+service, executable, container or cgroup — and a heading is not a process: it is not counted, cannot
+be selected, and nothing can be done to it.
+
 [![The terminal UI](docs/screenshots/tui.svg)](docs/screenshots/tui.svg)
 
 The same three histories in the terminal, drawn with the eighth-block characters
