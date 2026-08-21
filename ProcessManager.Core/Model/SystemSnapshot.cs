@@ -358,12 +358,38 @@ public sealed class SystemSnapshot {
     }
   }
 
+  /// <summary>
+  /// Hands a probe the span of records to fill, every one of them already saying that the readings
+  /// only one platform can take have not been taken.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// <c>default(Counter)</c> is a <em>confident nought</em>, and this program has already shipped one
+  /// of those: <c>default(SystemCounters)</c> reported machines as having no free memory at all. The
+  /// same shape of bug on a security column is worse — a mitigation policy nobody filled would read
+  /// as a mitigation that is switched off, and a protection level nobody filled would read as
+  /// <c>PROTECTION_LEVEL_WINTCB_LIGHT</c>, which is a real and high level rather than "none"
+  /// (PRD §72.3).
+  /// </para>
+  /// <para>
+  /// The established way out of that is for each probe to say <c>Counter.NotSupported</c> for
+  /// everything its platform cannot answer, and the probes do that for the readings they know about.
+  /// It does not scale to a reading a probe has never heard of: the Windows-only fields added for
+  /// PRD §20 and §21 are not something the Linux or macOS probe should have to know exists in order
+  /// to avoid claiming a value for it. So the default is set here, once, where a record is handed
+  /// out — a record starts out knowing nothing, and a probe that can answer overwrites it.
+  /// </para>
+  /// </remarks>
   internal Span<ProcessRecord> PrepareProcesses(int count) {
     if (this._processes.Length < count)
       Array.Resize(ref this._processes, Math.Max(count, this._processes.Length * 2));
 
     this.ProcessCount = count;
-    return this._processes.AsSpan(0, count);
+    var span = this._processes.AsSpan(0, count);
+    for (var i = 0; i < span.Length; ++i)
+      ProcessRecord.ClearPlatformReadings(ref span[i]);
+
+    return span;
   }
 
   private DiskCounters[] _disks = [];

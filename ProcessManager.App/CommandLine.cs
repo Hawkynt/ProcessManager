@@ -406,6 +406,85 @@ internal sealed record CommandLineOptions {
   /// request for it, and a separate switch would only be a way to get an empty column by forgetting
   /// it (PRD §5.4).
   /// </remarks>
+  /// <summary>
+  /// Whether this run is the self-test, which asks for every Windows-only reading there is.
+  /// </summary>
+  /// <remarks>
+  /// The four switches below are what §5.4 asks for: nothing pays for a reading unless a column or a
+  /// filter names it. The consequence, though, is that the interop behind those columns would never
+  /// run anywhere — <c>--self-test</c> names no columns, and it is the only thing in the whole
+  /// pipeline that executes the Windows probe against a real kernel (PRD §9.4). So the self-test
+  /// names all of them. It costs a walk of the handle table and a file read per image, once, in a
+  /// diagnostic that already takes two samples a second apart; and on any other platform these four
+  /// switches are read by nothing at all.
+  /// </remarks>
+  private bool WantsEverythingWindowsCanAnswer => this.Mode == RunMode.SelfTest;
+
+  /// <summary>
+  /// Whether anything this run asked for needs the Windows mitigation policies (PRD §5.4, §21).
+  /// </summary>
+  /// <remarks>
+  /// A second <c>OpenProcess</c> per process with a stronger access right than anything else in the
+  /// sampler takes, plus six calls on it. Once per process rather than once per sample, because a
+  /// process's mitigation policy does not change except by its own hand — but still not something to
+  /// do for a column nobody opened.
+  /// </remarks>
+  public bool WantsWindowsMitigations
+    => this.WantsEverythingWindowsCanAnswer
+    || this.Wants(ProcessField.DataExecutionPrevention)
+    || this.Wants(ProcessField.AddressSpaceRandomisation)
+    || this.Wants(ProcessField.ControlFlowGuard)
+    || this.Wants(ProcessField.ShadowStackPolicy)
+    || this.Wants(ProcessField.ArbitraryCodeGuard)
+    || this.Wants(ProcessField.CodeIntegrityGuard);
+
+  /// <summary>
+  /// Whether anything this run asked for needs the machine's handle table tallied by type
+  /// (PRD §5.4, §20).
+  /// </summary>
+  /// <remarks>
+  /// One query for the whole machine rather than one per process, because Windows has no per-process
+  /// handle query at all — which makes it cheaper than the Linux equivalent and still megabytes of
+  /// table per sample. Naming any of the five buys all five: they come out of one pass.
+  /// </remarks>
+  public bool WantsObjectCounts
+    => this.WantsEverythingWindowsCanAnswer
+    || this.Wants(ProcessField.EventObjectCount)
+    || this.Wants(ProcessField.SemaphoreObjectCount)
+    || this.Wants(ProcessField.MutexObjectCount)
+    || this.Wants(ProcessField.SectionObjectCount)
+    || this.Wants(ProcessField.RegistryKeyCount);
+
+  /// <summary>
+  /// Whether anything this run asked for needs the desktop object quotas (PRD §5.4, §20, §39).
+  /// </summary>
+  /// <remarks>
+  /// Its own switch rather than sharing the one above, because the cost has a different shape: two
+  /// calls per process per <em>sample</em>, uncacheable, since the whole point of the column is that
+  /// the number moves.
+  /// </remarks>
+  public bool WantsGuiObjectCounts
+    => this.WantsEverythingWindowsCanAnswer
+    || this.Wants(ProcessField.UserObjectCount)
+    || this.Wants(ProcessField.GdiObjectCount);
+
+  /// <summary>
+  /// Whether anything this run asked for needs each image's version resource read (PRD §5.4, §14).
+  /// </summary>
+  /// <remarks>
+  /// The cost is the size of a file rather than a syscall, and the subsystem is bought by the same
+  /// read because it is in the same file's header — so naming any one of the six turns on the one
+  /// pass that answers all of them.
+  /// </remarks>
+  public bool WantsImageVersions
+    => this.WantsEverythingWindowsCanAnswer
+    || this.Wants(ProcessField.ImageDescription)
+    || this.Wants(ProcessField.ImageCompany)
+    || this.Wants(ProcessField.ImageProduct)
+    || this.Wants(ProcessField.ImageProductVersion)
+    || this.Wants(ProcessField.ImageFileVersion)
+    || this.Wants(ProcessField.Subsystem);
+
   private bool Wants(ProcessField wanted) {
     // Both lists, because both are somebody naming the column. The terminal's differs from the
     // file's — it keeps the drawn histories, and it can come from the settings file rather than from

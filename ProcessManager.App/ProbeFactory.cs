@@ -92,6 +92,25 @@ internal static class ProbeFactory {
   /// one per-process reading that is a syscall rather than a file — the kernel publishes it nowhere
   /// under <c>/proc</c> — so it happens only when a column or a filter names it (PRD §5.4, §17).
   /// </param>
+  /// <param name="wantWindowsMitigations">
+  /// Whether anything on this run asked for the Windows per-process mitigation policies. They cost a
+  /// second <c>OpenProcess</c> with a stronger access right and six calls on it, once per process,
+  /// so nothing pays for them unless a column or a filter names one of the six (PRD §5.4, §21).
+  /// </param>
+  /// <param name="wantObjectCounts">
+  /// Whether anything on this run asked how many events, semaphores, mutexes, sections or registry
+  /// keys each process holds. It costs one walk of the machine's whole handle table per sample —
+  /// there is no per-process handle query on Windows — so the same rule applies (PRD §20).
+  /// </param>
+  /// <param name="wantGuiObjectCounts">
+  /// Whether anything on this run asked for the USER and GDI quotas. Two calls per process per
+  /// sample, and uncacheable, because the number moving is the whole point of the column (PRD §20).
+  /// </param>
+  /// <param name="wantImageVersions">
+  /// Whether anything on this run asked what each image says about itself. Its cost is the size of
+  /// the files rather than a syscall, and it is read once per image rather than once per process
+  /// (PRD §5.4, §14).
+  /// </param>
   /// <param name="wantSecurityStatus">
   /// Whether anything on this run asked for the mitigation states, the umask, the tracer or the
   /// descriptor-table size. The lines are in a file already open, so this buys no read — it buys
@@ -117,7 +136,11 @@ internal static class ProbeFactory {
     bool wantRuntime = false,
     bool wantImageCreationTime = false,
     bool wantSecurityStatus = false,
-    bool wantIoPriority = false
+    bool wantIoPriority = false,
+    bool wantWindowsMitigations = false,
+    bool wantObjectCounts = false,
+    bool wantGuiObjectCounts = false,
+    bool wantImageVersions = false
   ) {
     if (OperatingSystem.IsLinux()) {
       // A recorded tree is somebody else's machine; asking a helper about pids in it would be asking
@@ -202,7 +225,12 @@ internal static class ProbeFactory {
     }
 
     if (OperatingSystem.IsWindows())
-      return new Platform.Windows.WindowsProbe();
+      return new Platform.Windows.WindowsProbe(new() {
+        ReadMitigations = wantWindowsMitigations,
+        ReadObjectCounts = wantObjectCounts,
+        ReadGuiObjectCounts = wantGuiObjectCounts,
+        ReadImageVersions = wantImageVersions,
+      });
 
     if (OperatingSystem.IsMacOS())
       return new Platform.MacOS.MacOsProbe();

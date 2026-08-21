@@ -119,6 +119,23 @@ public static class FieldAccessor {
           ? IntegrityName(process.IntegrityLevel.Value)
           : Humanize.Placeholder(process.IntegrityLevel.Reason);
 
+      // PRD §21. Protected is derived from the level rather than read separately: there is one
+      // reading and two questions, and "is anything keeping other processes out" is answered by the
+      // same word that says which class of signer granted it.
+      case ProcessField.Protected: return YesNo(IsProtected(process.ProtectionLevel));
+      case ProcessField.ProtectionLevel:
+        return process.ProtectionLevel.HasValue
+          ? ProtectionLevelName(process.ProtectionLevel.Value)
+          : Humanize.Placeholder(process.ProtectionLevel.Reason);
+      case ProcessField.AppContainer: return YesNo(process.IsAppContainer);
+
+      case ProcessField.DataExecutionPrevention: return Mitigation(process.DepPolicy, MitigationPolicy.Dep);
+      case ProcessField.AddressSpaceRandomisation: return Mitigation(process.AslrPolicy, MitigationPolicy.Aslr);
+      case ProcessField.ControlFlowGuard: return Mitigation(process.ControlFlowGuardPolicy, MitigationPolicy.ControlFlowGuard);
+      case ProcessField.ShadowStackPolicy: return Mitigation(process.ShadowStackPolicy, MitigationPolicy.ShadowStack);
+      case ProcessField.ArbitraryCodeGuard: return Mitigation(process.DynamicCodePolicy, MitigationPolicy.DynamicCode);
+      case ProcessField.CodeIntegrityGuard: return Mitigation(process.BinarySignaturePolicy, MitigationPolicy.BinarySignature);
+
       case ProcessField.NoNewPrivileges: return YesNo(process.NoNewPrivileges);
       case ProcessField.Seccomp:
         if (!process.SeccompMode.HasValue)
@@ -227,6 +244,27 @@ public static class FieldAccessor {
                 ? UnknownReason.NotSupportedOnPlatform
                 : process.ImageCreatedUtcTicks.Reason);
 
+      // PRD §14. Null and a reason rather than an empty cell, because "this program ships no version
+      // resource" is a finding about a great many programs and "nobody asked" is not the same thing.
+      case ProcessField.ImageDescription:
+        return process.ImageDescription ?? Humanize.Placeholder(process.ImageVersionReason);
+      case ProcessField.ImageCompany:
+        return process.ImageCompany ?? Humanize.Placeholder(process.ImageVersionReason);
+      case ProcessField.ImageProduct:
+        return process.ImageProduct ?? Humanize.Placeholder(process.ImageVersionReason);
+      case ProcessField.ImageProductVersion:
+        return process.ImageProductVersion ?? Humanize.Placeholder(process.ImageVersionReason);
+      case ProcessField.ImageFileVersion:
+        return process.ImageFileVersion ?? Humanize.Placeholder(process.ImageVersionReason);
+      case ProcessField.Subsystem:
+        return process.Subsystem.HasValue
+          ? SubsystemName(process.Subsystem.Value)
+          : Humanize.Placeholder(process.Subsystem.Reason);
+      case ProcessField.Emulation:
+        return process.Emulation.HasValue
+          ? EmulationName(process.Emulation.Value)
+          : Humanize.Placeholder(process.Emulation.Reason);
+
       case ProcessField.PrivilegeChanged: return YesNo(PrivilegeChanged(in process));
       case ProcessField.EffectiveUserName:
         return process.EffectiveUserName ?? Humanize.Placeholder(UnknownReason.NotPermitted);
@@ -250,6 +288,13 @@ public static class FieldAccessor {
       case ProcessField.SocketCount: return Humanize.Count(process.SocketCount);
       case ProcessField.FileCount: return Humanize.Count(process.FileCount);
       case ProcessField.PipeCount: return Humanize.Count(process.PipeCount);
+      case ProcessField.EventObjectCount: return Humanize.Count(process.EventObjectCount);
+      case ProcessField.SemaphoreObjectCount: return Humanize.Count(process.SemaphoreObjectCount);
+      case ProcessField.MutexObjectCount: return Humanize.Count(process.MutexObjectCount);
+      case ProcessField.SectionObjectCount: return Humanize.Count(process.SectionObjectCount);
+      case ProcessField.RegistryKeyCount: return Humanize.Count(process.RegistryKeyCount);
+      case ProcessField.UserObjectCount: return Humanize.Count(process.UserObjectCount);
+      case ProcessField.GdiObjectCount: return Humanize.Count(process.GdiObjectCount);
       case ProcessField.DescriptorTableSize: return Humanize.Count(process.DescriptorTableSize);
       case ProcessField.TcpConnectionCount: return Humanize.Count(process.TcpSocketCount);
       case ProcessField.UdpSocketCount: return Humanize.Count(process.UdpSocketCount);
@@ -324,6 +369,23 @@ public static class FieldAccessor {
 
       case ProcessField.Elevated: return Number(process.IsElevated);
       case ProcessField.Integrity: return Number(process.IntegrityLevel);
+      // The subsystem and the emulated machine as their own identities, so sorting groups the
+      // console programs together and brings the translated processes to the top of the table —
+      // which is the only reason anybody sorts either column.
+      case ProcessField.Subsystem: return Number(process.Subsystem);
+      case ProcessField.Emulation: return Number(process.Emulation);
+      case ProcessField.Protected: return Number(IsProtected(process.ProtectionLevel));
+      case ProcessField.ProtectionLevel: return Number(process.ProtectionLevel);
+      case ProcessField.AppContainer: return Number(process.IsAppContainer);
+      // The policy words as the numbers they are, so that a filter can be handed the exact word a
+      // configuration set and the rows carrying it come back. Nothing sums them: a bitfield is a
+      // set, not a quantity.
+      case ProcessField.DataExecutionPrevention: return Number(process.DepPolicy);
+      case ProcessField.AddressSpaceRandomisation: return Number(process.AslrPolicy);
+      case ProcessField.ControlFlowGuard: return Number(process.ControlFlowGuardPolicy);
+      case ProcessField.ShadowStackPolicy: return Number(process.ShadowStackPolicy);
+      case ProcessField.ArbitraryCodeGuard: return Number(process.DynamicCodePolicy);
+      case ProcessField.CodeIntegrityGuard: return Number(process.BinarySignaturePolicy);
       case ProcessField.Seccomp: return Number(process.SeccompMode);
       case ProcessField.SeccompFilters: return Number(process.SeccompFilters);
       case ProcessField.NoNewPrivileges: return Number(process.NoNewPrivileges);
@@ -392,6 +454,13 @@ public static class FieldAccessor {
       case ProcessField.SocketCount: return Number(process.SocketCount);
       case ProcessField.FileCount: return Number(process.FileCount);
       case ProcessField.PipeCount: return Number(process.PipeCount);
+      case ProcessField.EventObjectCount: return Number(process.EventObjectCount);
+      case ProcessField.SemaphoreObjectCount: return Number(process.SemaphoreObjectCount);
+      case ProcessField.MutexObjectCount: return Number(process.MutexObjectCount);
+      case ProcessField.SectionObjectCount: return Number(process.SectionObjectCount);
+      case ProcessField.RegistryKeyCount: return Number(process.RegistryKeyCount);
+      case ProcessField.UserObjectCount: return Number(process.UserObjectCount);
+      case ProcessField.GdiObjectCount: return Number(process.GdiObjectCount);
       case ProcessField.TcpConnectionCount: return Number(process.TcpSocketCount);
       case ProcessField.UdpSocketCount: return Number(process.UdpSocketCount);
       case ProcessField.ListeningSocketCount: return Number(process.ListeningSocketCount);
@@ -469,6 +538,20 @@ public static class FieldAccessor {
     ProcessField.Elevated => Word(process.IsElevated),
     ProcessField.Integrity => process.IntegrityLevel.HasValue ? IntegrityName(process.IntegrityLevel.Value) : null,
     ProcessField.NoNewPrivileges => Word(process.NoNewPrivileges),
+    // The words these columns show, so "protected:yes" and "cig:microsoft" read the way they would
+    // be said. Textual at all because the exporter asks only for raw text on a field of state kind,
+    // and a state that renders a word and exports an empty cell is what §103's invariant catches.
+    ProcessField.Protected => Word(IsProtected(process.ProtectionLevel)),
+    ProcessField.ProtectionLevel => process.ProtectionLevel.HasValue
+      ? ProtectionLevelName(process.ProtectionLevel.Value)
+      : null,
+    ProcessField.AppContainer => Word(process.IsAppContainer),
+    ProcessField.DataExecutionPrevention => MitigationText(process.DepPolicy, MitigationPolicy.Dep),
+    ProcessField.AddressSpaceRandomisation => MitigationText(process.AslrPolicy, MitigationPolicy.Aslr),
+    ProcessField.ControlFlowGuard => MitigationText(process.ControlFlowGuardPolicy, MitigationPolicy.ControlFlowGuard),
+    ProcessField.ShadowStackPolicy => MitigationText(process.ShadowStackPolicy, MitigationPolicy.ShadowStack),
+    ProcessField.ArbitraryCodeGuard => MitigationText(process.DynamicCodePolicy, MitigationPolicy.DynamicCode),
+    ProcessField.CodeIntegrityGuard => MitigationText(process.BinarySignaturePolicy, MitigationPolicy.BinarySignature),
     ProcessField.Seccomp => process.SeccompMode.HasValue
       ? process.SeccompMode.Value switch { 0 => "off", 1 => "strict", 2 => "filter", _ => null }
       : null,
@@ -513,6 +596,19 @@ public static class FieldAccessor {
       ? null
       : process.TrustChain.Text(),
     ProcessField.Runtime => process.Runtime == ProcessRuntime.Unknown ? null : process.Runtime.Text(),
+    // PRD §14. The five version-resource strings as they are, so a filter can be handed a company
+    // name or a version read off a bug report and match on it. Textual at all because without it the
+    // column would render a value and the export would write an empty cell, which is precisely the
+    // seam §103's invariant exists to catch.
+    ProcessField.ImageDescription => process.ImageDescription,
+    ProcessField.ImageCompany => process.ImageCompany,
+    ProcessField.ImageProduct => process.ImageProduct,
+    ProcessField.ImageProductVersion => process.ImageProductVersion,
+    ProcessField.ImageFileVersion => process.ImageFileVersion,
+    // The words the columns show, so "subsystem:console" and "emulation:native" read the way they
+    // would be said aloud. The numeric forms still work, because Number covers both.
+    ProcessField.Subsystem => process.Subsystem.HasValue ? SubsystemName(process.Subsystem.Value) : null,
+    ProcessField.Emulation => process.Emulation.HasValue ? EmulationName(process.Emulation.Value) : null,
     // The kernel's own spelling, which is what "sched.class:SCHED_FIFO" is written as and what chrt
     // prints. Unknown has no text, so it matches neither that nor its negation.
     ProcessField.SchedulingClass => process.SchedulingPolicy == SchedulingPolicy.Unknown
@@ -597,6 +693,19 @@ public static class FieldAccessor {
         return string.Compare(a.Package.ApplicationId, b.Package.ApplicationId, StringComparison.OrdinalIgnoreCase);
       case ProcessField.ApplicationName:
         return string.Compare(ApplicationName(in a), ApplicationName(in b), StringComparison.OrdinalIgnoreCase);
+      // By the text, which groups every file of one publisher or one product together — the point of
+      // sorting a provenance column at all. Not by version order: "10.0.19041.1 (WinBuild…)" is a
+      // string a publisher typed and has no arithmetic in it.
+      case ProcessField.ImageDescription:
+        return string.Compare(a.ImageDescription, b.ImageDescription, StringComparison.OrdinalIgnoreCase);
+      case ProcessField.ImageCompany:
+        return string.Compare(a.ImageCompany, b.ImageCompany, StringComparison.OrdinalIgnoreCase);
+      case ProcessField.ImageProduct:
+        return string.Compare(a.ImageProduct, b.ImageProduct, StringComparison.OrdinalIgnoreCase);
+      case ProcessField.ImageProductVersion:
+        return string.Compare(a.ImageProductVersion, b.ImageProductVersion, StringComparison.OrdinalIgnoreCase);
+      case ProcessField.ImageFileVersion:
+        return string.Compare(a.ImageFileVersion, b.ImageFileVersion, StringComparison.OrdinalIgnoreCase);
     }
 
     var left = Number(field, in a, delta, indexA);
@@ -627,6 +736,216 @@ public static class FieldAccessor {
     0x4000 => "system",
     0x5000 => "protected",
     _ => "0x" + level.ToString("x", CultureInfo.InvariantCulture),
+  };
+
+  #region the Windows mitigation policies (PRD §21)
+
+  /// <summary>Which <c>PROCESS_MITIGATION_*</c> structure a stored flags word came out of.</summary>
+  private enum MitigationPolicy : byte {
+    Dep,
+    Aslr,
+    ControlFlowGuard,
+    ShadowStack,
+    DynamicCode,
+    BinarySignature,
+  }
+
+  /// <summary>
+  /// One mitigation policy as the words its bits stand for, or the reason there is no reading.
+  /// </summary>
+  /// <remarks>
+  /// "off" is a real answer and the ordinary one for most of these on most processes — the policy
+  /// was read and nothing in it was asked for — and it is emphatically not the same cell as a
+  /// process this user may not open. That distinction is the whole reason these are counters
+  /// (PRD §72.3).
+  /// </remarks>
+  private static string Mitigation(Counter policy, MitigationPolicy kind)
+    => MitigationText(policy, kind) ?? Humanize.Placeholder(policy.Reason);
+
+  /// <summary>The same, without a placeholder, for filtering and for export.</summary>
+  private static string? MitigationText(Counter policy, MitigationPolicy kind) {
+    if (!policy.TryGetValue(out var flags))
+      return null;
+
+    var words = kind switch {
+      MitigationPolicy.Dep => Dep(flags),
+      MitigationPolicy.Aslr => Aslr(flags),
+      MitigationPolicy.ControlFlowGuard => ControlFlowGuard(flags),
+      MitigationPolicy.ShadowStack => ShadowStack(flags),
+      MitigationPolicy.DynamicCode => DynamicCode(flags),
+      MitigationPolicy.BinarySignature => BinarySignature(flags),
+      _ => null,
+    };
+
+    return words is { Length: > 0 } ? words : "off";
+  }
+
+  /// <summary>
+  /// Every bit position below is out of the <c>PROCESS_MITIGATION_*</c> structure of the same name
+  /// in <c>winnt.h</c>, as Microsoft's own reference pages print it, and not out of anybody's
+  /// memory. Each structure is a union of a <c>DWORD Flags</c> with a bitfield, so bit 0 is the
+  /// first member the page lists and the numbering follows the order on the page.
+  /// </summary>
+  /// <remarks>
+  /// <c>PROCESS_MITIGATION_DEP_POLICY</c> is the one structure of the six that is not just the word:
+  /// it carries a <c>BOOLEAN Permanent</c> after the union, which the probe keeps in bit 32 — above
+  /// everything the word itself can occupy.
+  /// </remarks>
+  private static string Dep(ulong flags) {
+    if ((flags & 1) == 0)
+      return string.Empty;
+
+    // Permanent is the interesting half: DEP that cannot be turned off again is a stronger statement
+    // than DEP that happens to be on at the moment somebody looked.
+    return (flags & (1ul << 32)) != 0 ? "on (permanent)" : "on";
+  }
+
+  private static string Aslr(ulong flags) {
+    var words = new List<string>(4);
+    if ((flags & (1 << 0)) != 0) words.Add("bottom-up");
+    if ((flags & (1 << 1)) != 0) words.Add("force relocate");
+    if ((flags & (1 << 2)) != 0) words.Add("high entropy");
+    if ((flags & (1 << 3)) != 0) words.Add("no stripped images");
+    return string.Join(", ", words);
+  }
+
+  private static string ControlFlowGuard(ulong flags) {
+    if ((flags & (1 << 0)) == 0)
+      return string.Empty;
+
+    var words = new List<string>(4) { "on" };
+    if ((flags & (1 << 1)) != 0) words.Add("export suppression");
+    if ((flags & (1 << 2)) != 0) words.Add("strict");
+    if ((flags & (1 << 3)) != 0) words.Add("XFG");
+    else if ((flags & (1 << 4)) != 0) words.Add("XFG audit");
+    return string.Join(", ", words);
+  }
+
+  private static string ShadowStack(ulong flags) {
+    var words = new List<string>(4);
+    if ((flags & (1 << 0)) != 0)
+      // Strict is an upgrade of the same thing rather than a second thing, so it replaces the word
+      // rather than being listed beside it: "on, strict" would read as two policies.
+      words.Add((flags & (1 << 4)) != 0 ? "strict" : "on");
+
+    if ((flags & (1 << 1)) != 0) words.Add("audit");
+    if ((flags & (1 << 2)) != 0) words.Add("IP validation");
+    if ((flags & (1 << 5)) != 0) words.Add("non-CET blocked");
+    return string.Join(", ", words);
+  }
+
+  private static string DynamicCode(ulong flags) {
+    // Audit is its own state and not a weaker "on": the process is not actually stopped from
+    // generating code, it is only watched doing it, and reporting that as "on" would say a
+    // protection is in force when nothing is being prevented (PRD §5.3).
+    if ((flags & (1 << 0)) == 0)
+      return (flags & (1 << 3)) != 0 ? "audit" : string.Empty;
+
+    var words = new List<string>(3) { "on" };
+    if ((flags & (1 << 1)) != 0) words.Add("thread opt-out");
+    if ((flags & (1 << 2)) != 0) words.Add("remote downgrade");
+    return string.Join(", ", words);
+  }
+
+  private static string BinarySignature(ulong flags) {
+    var words = new List<string>(3);
+    // MitigationOptIn is Microsoft plus the store plus the hardware labs, which is a wider set than
+    // MicrosoftSignedOnly rather than a different one, so it is named for what it admits.
+    if ((flags & (1 << 2)) != 0) words.Add("Microsoft/store/WHQL");
+    else if ((flags & (1 << 0)) != 0) words.Add("Microsoft");
+
+    if ((flags & (1 << 1)) != 0) words.Add("store");
+    if ((flags & ((1 << 3) | (1 << 4))) != 0) words.Add("audit");
+    return string.Join(", ", words);
+  }
+
+  /// <summary>
+  /// Whether anything is keeping other processes out of this one.
+  /// </summary>
+  /// <remarks>
+  /// <c>PROTECTION_LEVEL_NONE</c> is <c>0xFFFFFFFE</c> and not <c>-1</c>, and nought is
+  /// <c>PROTECTION_LEVEL_WINTCB_LIGHT</c> — a real and rather high level. Both of those are why this
+  /// is written out rather than inlined as a comparison against zero somewhere.
+  /// </remarks>
+  private static Counter IsProtected(Counter level)
+    => level.TryGetValue(out var value) ? Counter.Of(value == _PROTECTION_LEVEL_NONE ? 0ul : 1ul) : level;
+
+  private const ulong _PROTECTION_LEVEL_NONE = 0xFFFF_FFFE;
+
+  /// <summary>
+  /// The <c>PROTECTION_LEVEL_*</c> values by name.
+  /// </summary>
+  /// <remarks>
+  /// The numbers are the ones <c>winbase.h</c> defines. They are not on any of Microsoft's reference
+  /// pages — the page for the structure prints the constant names and no values at all — so they
+  /// were taken from the header rather than from the documentation, which is stated here because it
+  /// is the weakest-sourced constant in this file. A level this build does not know shows as its
+  /// number, the same rule the integrity level follows.
+  /// </remarks>
+  private static string ProtectionLevelName(ulong level) => level switch {
+    0 => "WinTCB (light)",
+    1 => "Windows",
+    2 => "Windows (light)",
+    3 => "antimalware (light)",
+    4 => "LSA (light)",
+    5 => "WinTCB",
+    6 => "codegen (light)",
+    7 => "Authenticode",
+    8 => "PPL app",
+    _PROTECTION_LEVEL_NONE => "none",
+    0xFFFF_FFFF => "same",
+    _ => "0x" + level.ToString("x", CultureInfo.InvariantCulture),
+  };
+
+  #endregion
+
+  /// <summary>
+  /// The <c>IMAGE_SUBSYSTEM_*</c> values by name (PRD §14).
+  /// </summary>
+  /// <remarks>
+  /// The numbers are the "Windows Subsystem" table of Microsoft's PE format specification, not
+  /// anybody's memory of it. A subsystem this build does not know shows as its number rather than
+  /// being flattened into the nearest name there is — "0x11" is a true statement and "console" would
+  /// not be, which is the same rule the integrity level follows above.
+  /// </remarks>
+  private static string SubsystemName(ulong subsystem) => subsystem switch {
+    0 => "unknown",
+    1 => "native",
+    2 => "GUI",
+    3 => "console",
+    5 => "OS/2",
+    7 => "POSIX",
+    8 => "native Windows",
+    9 => "Windows CE",
+    10 => "EFI application",
+    11 => "EFI boot driver",
+    12 => "EFI runtime driver",
+    13 => "EFI ROM",
+    14 => "Xbox",
+    16 => "boot application",
+    _ => "0x" + subsystem.ToString("x", CultureInfo.InvariantCulture),
+  };
+
+  /// <summary>
+  /// Which instruction set a process is being translated from, by the name of the machine
+  /// (PRD §14).
+  /// </summary>
+  /// <remarks>
+  /// Nought is <c>IMAGE_FILE_MACHINE_UNKNOWN</c>, which is what <c>IsWow64Process2</c> reports for a
+  /// process that is <em>not</em> being translated — so it is a real answer here and the ordinary
+  /// one, and it says "native" rather than leaving a cell that reads like a hole (PRD §72.3). The
+  /// numbers are the PE format specification's machine-type table.
+  /// </remarks>
+  private static string EmulationName(ulong machine) => machine switch {
+    0x0000 => "native",
+    0x014C => "x86",
+    0x01C0 => "ARM",
+    0x01C4 => "ARM Thumb-2",
+    0x0200 => "Itanium",
+    0x8664 => "x64",
+    0xA641 => "ARM64EC",
+    0xAA64 => "ARM64",
+    _ => "0x" + machine.ToString("x4", CultureInfo.InvariantCulture),
   };
 
   /// <summary>A capability mask by name, or the reason there is none.</summary>

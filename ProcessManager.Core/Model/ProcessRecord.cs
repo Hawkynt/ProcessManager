@@ -72,6 +72,46 @@ public enum GpuEngine : byte {
 /// </remarks>
 public struct ProcessRecord {
 
+  /// <summary>
+  /// Sets every reading that only one platform can take to "this platform cannot" (PRD §72.3).
+  /// </summary>
+  /// <remarks>
+  /// Called for every record before a probe fills it, so that a probe which has never heard of a
+  /// field cannot be the reason that field claims a value. The alternative — each probe naming every
+  /// other platform's readings and refusing them one by one — is the arrangement the older fields
+  /// use, and it works only for as long as nobody adds a field without editing all three probes.
+  /// <para>
+  /// Only the Windows-only readings of §20 and §21 are here. The older per-platform counters are
+  /// still refused by the probes themselves; moving them would be a change to code that is working,
+  /// for no reading that is currently wrong.
+  /// </para>
+  /// </remarks>
+  public static void ClearPlatformReadings(ref ProcessRecord record) {
+    record.ProtectionLevel = Counter.NotSupported;
+    record.IsAppContainer = Counter.NotSupported;
+    record.Emulation = Counter.NotSupported;
+    record.Subsystem = Counter.NotSupported;
+    record.DepPolicy = Counter.NotSupported;
+    record.AslrPolicy = Counter.NotSupported;
+    record.ControlFlowGuardPolicy = Counter.NotSupported;
+    record.ShadowStackPolicy = Counter.NotSupported;
+    record.DynamicCodePolicy = Counter.NotSupported;
+    record.BinarySignaturePolicy = Counter.NotSupported;
+    record.EventObjectCount = Counter.NotSupported;
+    record.SemaphoreObjectCount = Counter.NotSupported;
+    record.MutexObjectCount = Counter.NotSupported;
+    record.SectionObjectCount = Counter.NotSupported;
+    record.RegistryKeyCount = Counter.NotSupported;
+    record.UserObjectCount = Counter.NotSupported;
+    record.GdiObjectCount = Counter.NotSupported;
+    record.ImageDescription = null;
+    record.ImageCompany = null;
+    record.ImageProduct = null;
+    record.ImageProductVersion = null;
+    record.ImageFileVersion = null;
+    record.ImageVersionReason = UnknownReason.NotSupportedOnPlatform;
+  }
+
   /// <summary>Identity across samples. See <see cref="ProcessKey"/> for why it is a pair.</summary>
   public ProcessKey Key;
 
@@ -384,6 +424,57 @@ public struct ProcessRecord {
   public Counter PipeCount;
 
   /// <summary>
+  /// The same handle table split by the kernel object types Windows has and Unix does not
+  /// (PRD §20).
+  /// </summary>
+  /// <remarks>
+  /// A count each, for the same reason the three above are counts each: a service holding ten
+  /// thousand registry keys and one holding ten thousand sections both show a large handle count and
+  /// have nothing else in common. None of the five has a Linux counterpart worth counting — an
+  /// <c>eventfd</c> is a descriptor and is already in <see cref="FileCount"/>'s neighbourhood, a
+  /// futex has no kernel object at all, and there is no registry — so on Linux these are not
+  /// unfilled, they are not applicable (PRD §5.3).
+  /// <para>
+  /// Filled only when asked for. The whole machine's handle table arrives in one query rather than
+  /// one per process, which makes this cheaper on Windows than the equivalent is on Linux, but it is
+  /// still megabytes of table per sample and §20 says the per-type tallies stay out of the sampling
+  /// loop until somebody names a column (PRD §5.4).
+  /// </para>
+  /// </remarks>
+  public Counter EventObjectCount;
+
+  /// <inheritdoc cref="EventObjectCount"/>
+  public Counter SemaphoreObjectCount;
+
+  /// <inheritdoc cref="EventObjectCount"/>
+  public Counter MutexObjectCount;
+
+  /// <inheritdoc cref="EventObjectCount"/>
+  public Counter SectionObjectCount;
+
+  /// <inheritdoc cref="EventObjectCount"/>
+  public Counter RegistryKeyCount;
+
+  /// <summary>
+  /// The window-manager and graphics objects charged to the process (PRD §20, §39).
+  /// </summary>
+  /// <remarks>
+  /// Not handles and not in the handle table: these are the desktop's own quotas — ten thousand of
+  /// each per process by default — and a program that exhausts one stops being able to draw while
+  /// every other counter on its row still looks healthy, which is exactly the failure no other
+  /// column would show.
+  /// <para>
+  /// Unlike the object tallies above, these change from moment to moment and cannot be cached for a
+  /// process's lifetime, so they cost a call each per process per sample and are asked for rather
+  /// than sampled (PRD §5.4).
+  /// </para>
+  /// </remarks>
+  public Counter UserObjectCount;
+
+  /// <inheritdoc cref="UserObjectCount"/>
+  public Counter GdiObjectCount;
+
+  /// <summary>
   /// How many sockets of each kind this process holds a descriptor on (PRD §18, §40).
   /// </summary>
   /// <remarks>
@@ -599,6 +690,71 @@ public struct ProcessRecord {
   /// number instead of being flattened into the nearest name we happen to know.
   /// </remarks>
   public Counter IntegrityLevel;
+
+  /// <summary>
+  /// The Windows protected-process level, as <c>ProcessProtectionLevelInfo</c> reports it (PRD §21).
+  /// </summary>
+  /// <remarks>
+  /// Kept as the raw <c>PROTECTION_LEVEL_*</c> value for the same reason
+  /// <see cref="IntegrityLevel"/> is raw. Two things about that value are worth stating here because
+  /// both are traps: <c>PROTECTION_LEVEL_NONE</c> is <c>0xFFFFFFFE</c> rather than the <c>-1</c> a
+  /// sentinel usually is, and <em>nought is a real level</em> — <c>PROTECTION_LEVEL_WINTCB_LIGHT</c>
+  /// — so a record nobody filled must not read as the most protected process on the machine. That is
+  /// why this is a <see cref="Counter"/> and not a number with a magic default (PRD §72.3).
+  /// </remarks>
+  public Counter ProtectionLevel;
+
+  /// <summary>
+  /// 1 when the process runs inside an AppContainer, 0 when it does not (PRD §21).
+  /// </summary>
+  /// <remarks>
+  /// <c>TokenIsAppContainer</c>, out of the same token the owner and the integrity level come from,
+  /// so it costs nothing beyond them. Not a Linux idea in any form: what confines a process there is
+  /// the seccomp mode, the LSM label and the namespace set, each of which is already its own field
+  /// and each of which says more than one sandbox flag could (PRD §5.3).
+  /// </remarks>
+  public Counter IsAppContainer;
+
+  /// <summary>
+  /// The six Windows per-process mitigation policies, each as the flags word its own structure
+  /// carries (PRD §21).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The raw word rather than a verdict, so that a bit Microsoft adds later is still visible instead
+  /// of being rounded into whichever of this build's words is nearest. Each is the <c>Flags</c>
+  /// member of the matching <c>PROCESS_MITIGATION_*</c> structure, which is a union over a bitfield —
+  /// so reading the word reads every named bit at once and the interpretation happens where the
+  /// column is rendered, on every platform, and can therefore be tested on any of them.
+  /// </para>
+  /// <para>
+  /// <see cref="DepPolicy"/> is the one that is not merely a word: its structure carries a
+  /// <c>BOOLEAN Permanent</c> outside the union, and that flag is kept in bit 32 — above the
+  /// thirty-two the word occupies, so nothing of the structure is lost and nothing is invented.
+  /// </para>
+  /// <para>
+  /// These are <em>requests</em>, which is what makes them Windows' own idea rather than a thing
+  /// Linux happens to spell differently: Linux publishes what is switched on for a task and has no
+  /// record of what was asked for, which is <see cref="ThreadFeatures"/> and the two speculation
+  /// fields, and those are deliberately not these (PRD §5.3).
+  /// </para>
+  /// </remarks>
+  public Counter DepPolicy;
+
+  /// <inheritdoc cref="DepPolicy"/>
+  public Counter AslrPolicy;
+
+  /// <inheritdoc cref="DepPolicy"/>
+  public Counter ControlFlowGuardPolicy;
+
+  /// <inheritdoc cref="DepPolicy"/>
+  public Counter ShadowStackPolicy;
+
+  /// <inheritdoc cref="DepPolicy"/>
+  public Counter DynamicCodePolicy;
+
+  /// <inheritdoc cref="DepPolicy"/>
+  public Counter BinarySignaturePolicy;
 
   /// <summary>Linux seccomp mode: 0 disabled, 1 strict, 2 filtered.</summary>
   public Counter SeccompMode;
@@ -837,6 +993,66 @@ public struct ProcessRecord {
   /// the table (PRD §72.3).
   /// </remarks>
   public Counter ImageCreatedUtcTicks;
+
+  /// <summary>
+  /// What the running image says about itself in its version resource (PRD §14).
+  /// </summary>
+  /// <remarks>
+  /// A PE keeps these five strings inside the file; an ELF has no such section and never did, so on
+  /// Linux the same facts come from the package database and live in <see cref="Package"/> and
+  /// <see cref="ApplicationName"/> instead. Keeping them apart is the point: a package's version is
+  /// not a file's version, and a column that showed one under the other's name would be stating
+  /// something false (PRD §5.3).
+  /// <para>
+  /// Read once per <em>image</em> rather than once per process — three hundred processes of one
+  /// runtime share one binary — and only when a column or a filter names one of them, because the
+  /// cost is opening and reading a file (PRD §5.4).
+  /// </para>
+  /// </remarks>
+  public string? ImageDescription;
+  public string? ImageCompany;
+  public string? ImageProduct;
+  public string? ImageProductVersion;
+  public string? ImageFileVersion;
+
+  /// <summary>
+  /// Why the five strings above are <see langword="null"/>: not asked for, no image to read, an
+  /// image this user may not open, or a program that ships no version resource at all.
+  /// </summary>
+  /// <remarks>
+  /// The last of those is the common one and is a finding rather than a gap — a great many programs
+  /// carry no version resource — which is why a string field cannot carry it and a reason must
+  /// (PRD §72.3).
+  /// </remarks>
+  public UnknownReason ImageVersionReason;
+
+  /// <summary>
+  /// The <c>IMAGE_SUBSYSTEM_*</c> value out of the image's optional header (PRD §14).
+  /// </summary>
+  /// <remarks>
+  /// What the loader is expected to give the program: a window station, a console, or nothing at
+  /// all. Kept as the raw number for the same reason <see cref="IntegrityLevel"/> is — a subsystem
+  /// Microsoft adds later shows as its number instead of being flattened into the nearest name this
+  /// build happens to know. PE only: an ELF declares no such thing, and the field renders as not
+  /// applicable there rather than as the unknown subsystem, which is a different statement.
+  /// </remarks>
+  public Counter Subsystem;
+
+  /// <summary>
+  /// Which instruction set the process is being translated from, or 0 when it is not (PRD §14).
+  /// </summary>
+  /// <remarks>
+  /// The <c>IMAGE_FILE_MACHINE_*</c> value <c>IsWow64Process2</c> reports for the process, which is
+  /// <c>IMAGE_FILE_MACHINE_UNKNOWN</c> — nought — for a process running natively. Nought is
+  /// therefore a real answer here and the ordinary one, and the counter's business is the other
+  /// case: a process that would not open, or a platform with no such notion.
+  /// <para>
+  /// The guest machine rather than the host's: every row on a machine shares the host, so naming it
+  /// per process would repeat one fact six hundred times, while what differs between rows — an x86
+  /// program on an x64 machine, an x64 program on an ARM64 one — is the half worth a column.
+  /// </para>
+  /// </remarks>
+  public Counter Emulation;
 
   /// <summary>
   /// The LSM label — an SELinux context or an AppArmor profile — or <see langword="null"/>.

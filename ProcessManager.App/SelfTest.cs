@@ -108,6 +108,7 @@ internal static class SelfTest {
 
     CheckSecurity(failures, notes, in self);
     CheckScheduling(failures, notes, in self);
+    CheckWindowsOnly(failures, notes, in self, expected);
 
     // CPU time only grows, and the probe read it first, so it must not exceed the later reading by
     // more than the interval could account for.
@@ -299,6 +300,51 @@ internal static class SelfTest {
       failures.Add($"{name} {Humanize.Bytes(peak)} is below the current {Humanize.Bytes(current)}");
   }
 
+  /// <summary>
+  /// Whether this is Wine rather than Windows.
+  /// </summary>
+  /// <remarks>
+  /// Told, rather than detected. Sniffing for an export in ntdll would mean interop in a file that
+  /// is compiled for every platform, to answer a question the thing running the test already knows —
+  /// so the leg that runs under wine says so, and nothing else has to guess.
+  /// <para>
+  /// Wine implements a great deal of Win32 and stubs the rest, and the stubs answer honestly: an
+  /// unimplemented call returns "not supported" and this program reports that faithfully. So a check
+  /// that asserts what a real Windows would say fails there for a reason that is neither a defect in
+  /// the program nor a defect in the reading — the machine genuinely cannot answer.
+  /// <para>
+  /// The leg is still worth running: it catches a call that crashes, one that returns nonsense, and
+  /// every reading Wine does implement. Only the assertions Wine cannot honour step aside, and they
+  /// say so rather than passing quietly.
+  /// </para>
+  /// </remarks>
+  private static bool OnWine { get; } =
+    Environment.GetEnvironmentVariable("PROCMAN_EMULATED") is "wine";
+
+  /// <summary>
+  /// A check that only a real Windows can answer.
+  /// </summary>
+  /// <remarks>
+  /// Reported as skipped under Wine rather than passed: a check that quietly succeeds where it was
+  /// never run is worse than one that fails, because it is counted.
+  /// </remarks>
+  private static void CheckOnWindowsOnly(
+    List<string> failures,
+    List<string> notes,
+    string name,
+    string value,
+    bool ok,
+    string why
+  ) {
+    if (!OnWine) {
+      Check(failures, notes, name, value, ok, why);
+      return;
+    }
+
+    Console.WriteLine($"  skip {name,-20} {value}  (wine does not implement this)");
+    notes.Add($"{name}: skipped, wine does not implement it");
+  }
+
   private static void Check(List<string> failures, List<string> notes, string name, string value, bool ok, string why) {
     Console.WriteLine($"  {(ok ? "ok  " : "FAIL")} {name,-20} {value}");
     if (ok)
@@ -415,6 +461,261 @@ internal static class SelfTest {
       $"stat says policy {expected}"
     );
   }
+
+  /// <summary>
+  /// The §14, §20 and §21 readings that only Windows can take, against what the runtime says about
+  /// the same process.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// This is the only place any of the interop behind those columns is ever executed. The parsing
+  /// halves — the PE walk, the mitigation bit decoding, the handle tally — are held against real
+  /// files and hand-built tables on every CI leg, and none of that can reach a
+  /// <c>GetProcessMitigationPolicy</c> or a <c>GetGuiResources</c>. A wrong structure size or a
+  /// wrong policy ordinal makes the call fail rather than crash, which is invisible on a screen and
+  /// is exactly what the <c>HasValue</c> checks below are for.
+  /// </para>
+  /// <para>
+  /// The strongest check here is the version resource. <c>FileVersionInfo</c> reads the same bytes
+  /// out of the same file through an entirely separate implementation, so agreeing with it is real
+  /// corroboration rather than this program agreeing with itself.
+  /// </para>
+  /// </remarks>
+  private static void CheckWindowsOnly(
+    List<string> failures,
+    List<string> notes,
+    in ProcessRecord self,
+    System.Diagnostics.Process expected
+  ) {
+    if (!OperatingSystem.IsWindows())
+      return;
+
+    // The bulk query carries the image's file name and not its path, so until this was written the
+    // Windows probe filled no path at all. The runtime's answer comes from a different call.
+    string? runtimePath = null;
+    try {
+      runtimePath = expected.MainModule?.FileName;
+    } catch (Exception) {
+      // A process may refuse its own module list under some hosts; the check is then skipped rather
+      // than failed, because nothing was disproved.
+    }
+
+    if (runtimePath is { Length: > 0 })
+      Check(
+        failures,
+        notes,
+        "image path",
+        $"{self.ImagePath}  (BCL: {runtimePath})",
+        string.Equals(self.ImagePath, runtimePath, StringComparison.OrdinalIgnoreCase),
+        "the probe's path and the runtime's must be the same file"
+      );
+
+    // Not protected, and not an AppContainer. Both are true of anything a person runs from a shell,
+    // and both would be false if the reading were coming back as a confident nought — PROTECTION
+    // LEVEL nought is WinTCB-light, which is the most protected thing on the machine.
+    CheckOnWindowsOnly(
+      failures,
+      notes,
+      "protection level",
+      Said(FieldAccessor.Text(ProcessField.ProtectionLevel, in self, null, 0), self.ProtectionLevel),
+      self.ProtectionLevel.HasValue && self.ProtectionLevel.Value == 0xFFFF_FFFE,
+      "an ordinary process is PROTECTION_LEVEL_NONE, which is 0xFFFFFFFE"
+    );
+
+    Check(
+      failures,
+      notes,
+      "appcontainer",
+      FieldAccessor.Text(ProcessField.AppContainer, in self, null, 0),
+      self.IsAppContainer.HasValue && self.IsAppContainer.Value == 0,
+      "a process started from a shell is not in an AppContainer"
+    );
+
+    // An independent answer to the same question: when the process architecture and the machine's
+    // are the same nothing is being translated, and when they differ something is.
+    var translated = System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture
+      != System.Runtime.InteropServices.RuntimeInformation.OSArchitecture;
+    var emulation = FieldAccessor.Text(ProcessField.Emulation, in self, null, 0);
+    Check(
+      failures,
+      notes,
+      "emulation",
+      $"{emulation}  (BCL: process {System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture}, "
+        + $"machine {System.Runtime.InteropServices.RuntimeInformation.OSArchitecture})",
+      self.Emulation.HasValue && (emulation == "native") != translated,
+      "IsWow64Process2 must agree with the runtime about whether this process is being translated"
+    );
+
+    CheckImageVersion(failures, notes, in self, runtimePath);
+    CheckMitigations(failures, notes, in self);
+    CheckObjectCounts(failures, notes, in self);
+  }
+
+  /// <summary>
+  /// The version resource, against <c>FileVersionInfo</c>'s reading of the very same file.
+  /// </summary>
+  /// <remarks>
+  /// A separate implementation of the same format, shipped by the same people who define it. Where
+  /// it and the PE walk disagree about a string, one of them is wrong about where that string is —
+  /// and it is not going to be the runtime's.
+  /// </remarks>
+  private static void CheckImageVersion(
+    List<string> failures,
+    List<string> notes,
+    in ProcessRecord self,
+    string? runtimePath
+  ) {
+    Check(
+      failures,
+      notes,
+      "subsystem",
+      FieldAccessor.Text(ProcessField.Subsystem, in self, null, 0),
+      self.Subsystem.HasValue,
+      "the image's optional header should have been read"
+    );
+
+    if (runtimePath is not { Length: > 0 })
+      return;
+
+    System.Diagnostics.FileVersionInfo version;
+    try {
+      version = System.Diagnostics.FileVersionInfo.GetVersionInfo(runtimePath);
+    } catch (Exception) {
+      return;
+    }
+
+    // Only the fields the runtime actually found. A host that ships no version resource leaves them
+    // all null, and there is then nothing to corroborate rather than something to fail.
+    foreach (var (name, field, other) in (ReadOnlySpan<(string, ProcessField, string?)>)[
+      ("description", ProcessField.ImageDescription, version.FileDescription),
+      ("company", ProcessField.ImageCompany, version.CompanyName),
+      ("product", ProcessField.ImageProduct, version.ProductName),
+      ("file version", ProcessField.ImageFileVersion, version.FileVersion),
+      ("product version", ProcessField.ImageProductVersion, version.ProductVersion),
+    ]) {
+      if (other is not { Length: > 0 })
+        continue;
+
+      var mine = FieldAccessor.RawText(field, in self);
+      Check(
+        failures,
+        notes,
+        name,
+        $"{mine}  (BCL: {other})",
+        string.Equals(mine, other, StringComparison.Ordinal),
+        "the PE walk and FileVersionInfo must read the same string out of the same file"
+      );
+    }
+  }
+
+  /// <summary>
+  /// The six mitigation policies. A process can always open <em>itself</em> with
+  /// <c>PROCESS_QUERY_INFORMATION</c>, so every one of these calls must succeed here.
+  /// </summary>
+  /// <remarks>
+  /// The value is not asserted, because what a runtime asks for is the runtime's business and
+  /// changes between versions. Whether the call succeeded is asserted, and that is the whole of what
+  /// a wrong structure size or a wrong policy ordinal would break — both make the call return FALSE
+  /// and leave the column looking like a mitigation that is simply switched off.
+  /// </remarks>
+  private static void CheckMitigations(List<string> failures, List<string> notes, in ProcessRecord self) {
+    foreach (var (name, field, counter) in (ReadOnlySpan<(string, ProcessField, Counter)>)[
+      ("dep", ProcessField.DataExecutionPrevention, self.DepPolicy),
+      ("aslr", ProcessField.AddressSpaceRandomisation, self.AslrPolicy),
+      ("cfg", ProcessField.ControlFlowGuard, self.ControlFlowGuardPolicy),
+      ("acg", ProcessField.ArbitraryCodeGuard, self.DynamicCodePolicy),
+      ("cig", ProcessField.CodeIntegrityGuard, self.BinarySignaturePolicy),
+    ])
+      Check(
+        failures,
+        notes,
+        name,
+        FieldAccessor.Text(field, in self, null, 0),
+        counter.HasValue,
+        "a process can open itself, so this policy should have been read"
+      );
+
+    // The shadow-stack policy arrived in Windows 10 2004 and is the one of the six that an older
+    // Windows legitimately refuses, so it is recorded rather than required.
+    if (self.ShadowStackPolicy.HasValue)
+      notes.Add($"cet: {FieldAccessor.Text(ProcessField.ShadowStackPolicy, in self, null, 0)}");
+    else
+      notes.Add("cet: not reported — ProcessUserShadowStackPolicy needs Windows 10 2004 or newer");
+
+    // On x64 data execution prevention is always on and cannot be turned off, so this one value is
+    // knowable independently of what any runtime asked for.
+    if (System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture
+        == System.Runtime.InteropServices.Architecture.X64)
+      CheckOnWindowsOnly(
+        failures,
+        notes,
+        "dep is on",
+        FieldAccessor.Text(ProcessField.DataExecutionPrevention, in self, null, 0),
+        self.DepPolicy.HasValue && (self.DepPolicy.Value & 1) != 0,
+        "a 64-bit process always has DEP enabled"
+      );
+  }
+
+  /// <summary>
+  /// The per-type handle tallies and the two desktop quotas.
+  /// </summary>
+  /// <remarks>
+  /// The tally proves more than it looks: the object type indices are the running kernel's, worked
+  /// out by duplicating one handle of each index and asking what it is called, so a count above
+  /// nought here means that whole discovery pass worked. A build that hard-coded the indices would
+  /// still produce numbers, which is why the check is that the count is plausible rather than that
+  /// it exists.
+  /// </remarks>
+  private static void CheckObjectCounts(List<string> failures, List<string> notes, in ProcessRecord self) {
+    Check(
+      failures,
+      notes,
+      "event handles",
+      Humanize.Count(self.EventObjectCount),
+      self.EventObjectCount.HasValue && self.EventObjectCount.Value > 0,
+      "a .NET process holds events, so the type index for them was found and counted"
+    );
+
+    Check(
+      failures,
+      notes,
+      "section handles",
+      Humanize.Count(self.SectionObjectCount),
+      self.SectionObjectCount.HasValue && self.SectionObjectCount.Value > 0,
+      "a process running from a mapped image holds at least one section"
+    );
+
+    // Recorded rather than required. An object type is only discoverable while some process on the
+    // machine holds a handle of it — the index is learnt by duplicating one and asking what it is —
+    // so a machine where nothing currently holds a semaphore honestly cannot fill that column, and
+    // demanding a number would be demanding one that does not exist (PRD §72.3).
+    foreach (var (name, counter) in (ReadOnlySpan<(string, Counter)>)[
+      ("semaphore handles", self.SemaphoreObjectCount),
+      ("mutex handles", self.MutexObjectCount),
+      ("registry keys", self.RegistryKeyCount),
+    ])
+      notes.Add($"{name}: {Said(Humanize.Count(counter), counter)}");
+
+    // These two are different: they are a call per process rather than a tally, so they have no
+    // discovery step to fail. Nought is the right answer for a console program, which is why the
+    // check is that the call answered rather than that the number is large.
+    foreach (var (name, counter) in (ReadOnlySpan<(string, Counter)>)[
+      ("user objects", self.UserObjectCount),
+      ("gdi objects", self.GdiObjectCount),
+    ])
+      CheckOnWindowsOnly(failures, notes, name, Said(Humanize.Count(counter), counter), counter.HasValue, "this count should have been read");
+  }
+
+  /// <summary>
+  /// What a column shows, and — when it shows no value — which reason it is carrying.
+  /// </summary>
+  /// <remarks>
+  /// The placeholders are a dash, an ellipsis and "n/a", which is right on a screen and useless in a
+  /// build log: a failing check has to say whether the call was refused or does not exist on this
+  /// Windows, because those two ask the reader to do completely different things.
+  /// </remarks>
+  private static string Said(string shown, Counter counter)
+    => counter.HasValue ? shown : $"{shown} ({counter.Reason})";
 
   private static void CheckSecurity(List<string> failures, List<string> notes, in ProcessRecord self) {
     if (OperatingSystem.IsWindows()) {
