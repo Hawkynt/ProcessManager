@@ -107,6 +107,7 @@ internal static class SelfTest {
       "a process that has run has faulted at least once");
 
     CheckSecurity(failures, notes, in self);
+    CheckScheduling(failures, notes, in self);
 
     // CPU time only grows, and the probe read it first, so it must not exceed the later reading by
     // more than the interval could account for.
@@ -363,6 +364,58 @@ internal static class SelfTest {
   /// this is the other half — that the real tokens and the real /proc files on a real machine feed
   /// that arithmetic the bytes it expects (PRD §9.4).
   /// </remarks>
+  /// <summary>
+  /// The scheduler class, read a second time and plainly (PRD §15).
+  /// </summary>
+  /// <remarks>
+  /// Field 41 of <c>stat</c> sits behind a command name that may contain spaces and brackets and
+  /// behind fourteen fields nothing else reads, which makes it exactly the kind of positional value
+  /// that a parser can miscount without anything looking wrong — the number beside it is a plausible
+  /// small integer too. So it is counted again here, by a completely different route, and the two
+  /// have to agree.
+  /// </remarks>
+  private static void CheckScheduling(List<string> failures, List<string> notes, in ProcessRecord self) {
+    if (!OperatingSystem.IsLinux())
+      return;
+
+    string line;
+    try {
+      line = File.ReadAllText("/proc/self/stat");
+    } catch (IOException) {
+      return;
+    }
+
+    var close = line.LastIndexOf(')');
+    if (close < 0)
+      return;
+
+    var fields = line[(close + 1)..].Split(' ', StringSplitOptions.RemoveEmptyEntries);
+    // State is field 3, so field 41 — the policy — is the thirty-ninth of what follows the name.
+    if (fields.Length < 39)
+      return;
+
+    var expected = fields[38];
+    var shown = FieldAccessor.Text(ProcessField.SchedulingClass, in self, null, 0);
+    Check(
+      failures,
+      notes,
+      "scheduler class",
+      $"{shown}  (stat field 41: {expected})",
+      shown == expected switch {
+        "0" => "SCHED_OTHER",
+        "1" => "SCHED_FIFO",
+        "2" => "SCHED_RR",
+        "3" => "SCHED_BATCH",
+        "5" => "SCHED_IDLE",
+        "6" => "SCHED_DEADLINE",
+        "7" => "SCHED_EXT",
+        // A class nobody has named yet must read as "no answer", never as the ordinary one.
+        _ => Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform),
+      },
+      $"stat says policy {expected}"
+    );
+  }
+
   private static void CheckSecurity(List<string> failures, List<string> notes, in ProcessRecord self) {
     if (OperatingSystem.IsWindows()) {
       // The BCL's own answer to "am I running elevated": the administrators group is enabled in the

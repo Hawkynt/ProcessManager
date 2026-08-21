@@ -152,7 +152,7 @@ public sealed class ImageHashTests {
     Assert.Multiple(() => {
       Assert.That(Parse("--columns=name,hash.sha256").WantsImageHashes, Is.True);
       Assert.That(Parse("--columns=name,hash.sha1").WantsImageHashes, Is.True);
-      Assert.That(Parse("--filter=hash.sha256~b424070").WantsImageHashes, Is.True);
+      Assert.That(Parse("--filter=hash.sha256:b424070").WantsImageHashes, Is.True);
       Assert.That(Parse("--columns=name,path").WantsImageHashes, Is.False);
     });
   }
