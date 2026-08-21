@@ -14,7 +14,7 @@ namespace Hawkynt.ProcessManager.Platform.Linux;
 /// (PRD §9.1). Nothing here computes a rate or a percentage: the probe reports counters, and
 /// <see cref="Sampling.SnapshotDelta"/> does the arithmetic (PRD §2).
 /// </remarks>
-public sealed class LinuxProbe : ISystemProbe {
+public sealed partial class LinuxProbe : ISystemProbe {
 
   private static ReadOnlySpan<byte> _cpuPrefix => "cpu"u8;
   private static ReadOnlySpan<byte> _btimePrefix => "btime "u8;

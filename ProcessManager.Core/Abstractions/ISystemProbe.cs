@@ -73,6 +73,36 @@ public interface ISystemProbe : IDisposable {
   /// <summary>Open handles / descriptors of one process.</summary>
   IReadOnlyList<HandleRecord> GetHandles(ProcessKey key);
 
+  /// <summary>
+  /// Every mapping in one process's address space (PRD §34).
+  /// </summary>
+  /// <remarks>
+  /// The dearest read in this interface, and the reason it is not folded into the module list: on
+  /// Linux the counters come from <c>smaps</c>, which makes the kernel walk the whole page table of
+  /// the process, and a browser has ten thousand mappings to walk. Called when somebody opens the
+  /// page and not on a tick (PRD §5.4).
+  /// <para>
+  /// A reading rather than a list, because every reason it can be empty produces an empty list: a
+  /// kernel thread has no address space, another user's process has one and will not show it, and a
+  /// platform that does not read them at all looks the same again (PRD §5.3).
+  /// </para>
+  /// </remarks>
+  MemoryMapReading GetMemoryRegions(ProcessKey key) => MemoryMapReading.NotImplemented;
+
+  /// <summary>
+  /// What confines one process, beyond the identity the sample already carries (PRD §36).
+  /// </summary>
+  /// <remarks>
+  /// On demand, for the process being looked at: the label is a file per process and the group list
+  /// is a string per process, and both were measured as the same order of cost as the descriptor
+  /// scan that had to leave the sample loop (PRD §5.4).
+  /// <para>
+  /// Null where the platform has no such notion or the process has gone, which a caller must never
+  /// render as "nothing confines it".
+  /// </para>
+  /// </remarks>
+  ProcessSecurity? DescribeSecurity(ProcessKey key) => null;
+
   /// <summary>Sockets owned by one process.</summary>
   IReadOnlyList<ConnectionRecord> GetConnections(ProcessKey key);
 

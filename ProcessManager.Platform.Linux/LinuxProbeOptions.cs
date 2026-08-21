@@ -93,6 +93,14 @@ public sealed record LinuxProbeOptions {
   /// <summary>Where the password file is, for uid → name.</summary>
   public string PasswdPath { get; init; } = "/etc/passwd";
 
+  /// <summary>Where the group file is, for gid → name (PRD §36).</summary>
+  /// <remarks>
+  /// Its own option rather than the password file's directory with the name changed, so that a
+  /// recorded machine can carry one without the other — which is what a fixture that cares about
+  /// group membership and not about logins actually looks like.
+  /// </remarks>
+  public string GroupPath { get; init; } = "/etc/group";
+
   /// <summary>
   /// <c>USER_HZ</c>. Defaults to <c>sysconf(_SC_CLK_TCK)</c> on the running machine; a fixture
   /// recorded elsewhere must state the value it was recorded with, or every CPU time is wrong by a
