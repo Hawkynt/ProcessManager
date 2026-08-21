@@ -7,7 +7,7 @@ using Hawkynt.ProcessManager.Ui.Terminal;
 namespace Hawkynt.ProcessManager.App;
 
 /// <summary>Which face of the program the arguments asked for.</summary>
-internal enum RunMode : byte { Desktop, Terminal, List, Find, Kill, EndTask, Restart, Scheduling, Signal, ResourceLimit, OutOfMemory, Freezer, SelfTest, HelperCheck, Help, HelpFields, Host, Startup, Users, Services, ServiceControl, Connections, Limits, Run, Version, Settings }
+internal enum RunMode : byte { Desktop, Terminal, List, Find, Kill, EndTask, Restart, Scheduling, Signal, ResourceLimit, OutOfMemory, Freezer, SelfTest, HelperCheck, Help, HelpFields, Host, Startup, Users, Services, ServiceControl, Connections, Limits, Environment, Run, Version, Settings }
 
 /// <summary>
 /// What <see cref="RunMode.Settings"/> was asked to do to the settings file (PRD §67).
@@ -1111,6 +1111,16 @@ internal sealed record CommandLineOptions {
           explicitMode = true;
           break;
 
+        case "--environment":
+        case "--env":
+          if (i + 1 >= args.Length || !int.TryParse(args[i + 1], out var envPid))
+            return options with { Error = "--environment needs a pid" };
+
+          options = options with { Mode = RunMode.Environment, TargetPid = envPid };
+          explicitMode = true;
+          ++i;
+          break;
+
         case "--limits":
           if (i + 1 >= args.Length || !int.TryParse(args[i + 1], out var limited))
             return options with { Error = "--limits needs a pid" };
@@ -1203,6 +1213,7 @@ internal sealed record CommandLineOptions {
       procman --list [--json]        one snapshot to stdout, then exit
       procman --find <pattern>       which processes match, by name, command line or open file
       procman --host                 what this machine is: processor, memory, cache, uptime
+      procman --environment PID      the variables it was started with, as the kernel laid them down
       procman --limits PID           every ceiling on a process: its own, its cgroup's, and the
                                      out-of-memory standing that decides who dies first
       procman --run PROGRAM [ARG...] start a program; everything after --run belongs to it
