@@ -31,8 +31,8 @@ shorthand:
 it is not known*. An unticked box must never become a zero on screen. This is restated here because
 it is the single requirement most likely to be broken while filling the tables in.
 
-**Counting, as of the last update:** **684 of 1343 boxes are ticked** — 99 of 198 in the field
-registry (§14–22), 585 of 1145 across the capabilities. A further 136 are marked 🟡, meaning some of
+**Counting, as of the last update:** **799 of 1337 boxes are ticked** — 113 of 198 in the field
+registry (§14–22), 686 of 1139 across the capabilities. A further 116 are marked 🟡, meaning some of
 the work behind them is already done. §100 tracks the phases; §101 defines when this may be called
 finished.
 
@@ -3331,20 +3331,20 @@ that has a tab for it. That drift is what made an earlier version of this matrix
 ## Windows Task Manager
 
 - [x] Processes
-- [ ] 🟡 Performance — the window and its graphs exist; the per-resource pages are still landing
+- [x] Performance — twenty-two resources on the rail, each with its own graphs and figures
 - [ ] App / usage history — nothing keeps a per-application total across sessions
-- [ ] 🟡 Startup — `--startup` reads the autostart entries and says which are enabled; no window, and nothing can turn one off yet
-- [ ] 🟡 Users — `--users` lists who is logged in and what their processes cost; no window
+- [ ] 🟡 Startup — a window view listing every entry and which will run; nothing can turn one off yet
+- [x] Users — a window view of who is logged in and what their processes cost
 - [x] Details
-- [ ] 🟡 Services — `--services` lists every unit and its state; no window, and no start/stop
+- [ ] 🟡 Services — a window view of every unit and its state; starting and stopping are not written
 - [ ] 🟡 Run new task — `--run` starts a program with a directory, environment and priority; no dialog
 - [x] End task
 - [ ] Restart supported applications
 - [x] Priority
 - [x] Affinity
-- [ ] Efficiency / QoS — the scheduling policy is shown; nothing sets a QoS class
+- [ ] Efficiency / QoS — refused rather than unwritten: the nearest Linux relatives are the scheduling class and the I/O class, both already settable, and mapping a QoS class onto them is the false equivalence §5.3 forbids
 - [ ] Dumps
-- [ ] 🟡 Wait chains — each thread says what it is blocked in; nothing follows the chain from one process to the next
+- [ ] 🟡 Wait chains — each thread says what it is blocked in and which syscall it is in; nothing follows the chain from one process to the next
 - [x] Process search / filter
 - [ ] Startup enable / disable
 - [ ] User session control
@@ -3370,18 +3370,18 @@ that has a tab for it. That drift is what made an earlier version of this matrix
 
 - [x] Detailed process tree
 - [x] Resource highlighting
-- [ ] 🟡 System graphs — the performance window is being filled out page by page
+- [x] System graphs — one page per processor, disk, adapter, battery and sensor chip
 - [x] Handles
 - [x] Modules
 - [x] Threads
-- [ ] Stack traces
+- [ ] 🟡 Stack traces — the kernel stack where the machine permits it, with symbols where the image still carries them; a user-space walk needs the driver §4 rules out
 - [ ] 🟡 Services — listed, not controlled
 - [x] Network connections
-- [ ] 🟡 Disk activity — per-process I/O columns are there; there is no view of the disks themselves
-- [ ] 🟡 GPU data — the device's own figures are read; per-process accounting is still landing
+- [x] Disk activity — per-process I/O columns, and a page per disk with its own throughput and queue
+- [x] GPU data — the adapter's own figures, and per process the memory and the time on each engine
 - [x] Memory maps
 - [x] Environment
-- [ ] Security / token information
+- [x] Security / token information — all five capability sets by name, both id quartets, seccomp mode and filter count, no-new-privs and the LSM label
 - [x] File / resource ownership search
 - [x] Advanced process scheduling
 - [ ] Detailed service control
@@ -3393,12 +3393,12 @@ that has a tab for it. That drift is what made an earlier version of this matrix
 ## DBC Task Manager
 
 - [x] Clear simple process page
-- [ ] 🟡 Attractive resource graphs — restyled onto a graticule; the remaining pages are landing
+- [x] Attractive resource graphs — a graticule, a filled area, a selectable time axis and a cursor that reads a sample
 - [x] Resource selector
-- [ ] 🟡 CPU · memory · disks · networks pages
-- [ ] 🟡 Services
-- [ ] 🟡 Startup
-- [ ] 🟡 Users
+- [x] CPU · memory · disks · networks pages
+- [ ] 🟡 Services — listed in a view of its own; not controlled
+- [ ] 🟡 Startup — listed in a view of its own; not enabled or disabled
+- [x] Users
 - [ ] Minimal cognitive overhead for ordinary users
 
 ---
