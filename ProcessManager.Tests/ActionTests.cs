@@ -599,28 +599,50 @@ public sealed class LiveProcessActionTests {
   }
 
   /// <summary>
-  /// A process may always volunteer itself for the out-of-memory killer and needs privilege to
-  /// excuse itself again, which is the opposite way round from most permissions.
+  /// A process may always volunteer itself for the out-of-memory killer, and needs CAP_SYS_RESOURCE
+  /// to go below the floor it inherited.
   /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The floor is the whole difficulty. The kernel refuses a write to <c>oom_score_adj</c> only when
+  /// it falls below <c>oom_score_adj_min</c> — a separate value, inherited from the parent, set
+  /// whenever a privileged process writes the adjustment, and <em>not exposed anywhere in procfs</em>.
+  /// So it can only be found by probing, and it is not the value the process is currently sitting at.
+  /// </para>
+  /// <para>
+  /// On this machine the session's adjustment is 200 while the floor is 100: 199 and 150 are accepted
+  /// and 99 is refused. On a build runner the floor is lower still. Two earlier versions of this test
+  /// asserted a particular number — first that lowering to nought is refused, then that lowering below
+  /// the starting value is — and each encoded one machine's session configuration as though it were
+  /// the kernel's rule. What is portable is the contract, so that is what is asserted: raising is
+  /// always free, and the bottom of the range is refused with a reason that names the capability,
+  /// unless this machine has no floor to speak of.
+  /// </para>
+  /// </remarks>
   [Test]
-  public void LoweringAnOutOfMemoryAdjustmentSaysWhichPrivilegeIsMissing() {
-    // The capability itself, not the user id. A build runner can hold CAP_SYS_RESOURCE without being
-    // root — this test failed on one that did — and the kernel's rule is about the capability. Read
-    // through this program's own capability reader, which is a fair use of it: if the decoding were
-    // wrong the security columns would be wrong in the same direction.
+  public void LoweringPastTheInheritedFloorSaysWhichPrivilegeIsMissing() {
     if (HoldsSysResource())
       Assert.Ignore("this process holds CAP_SYS_RESOURCE, so there is nothing here to refuse");
 
     var actions = Actions();
     var started = actions.Launch(new("/bin/sleep", ["120"]));
+    Assert.That(started.Outcome.Succeeded, Is.True, started.Outcome.Detail);
 
     try {
       Assert.That(actions.SetOomScoreAdjustment(started.Key, 500).Succeeded, Is.True, "raising it is free");
 
-      var back = actions.SetOomScoreAdjustment(started.Key, 0);
-      Assert.That(back.Outcome, Is.EqualTo(ActionOutcome.NotPermitted));
-      Assert.That(back.Detail, Does.Contain("CAP_SYS_RESOURCE"), back.Detail);
-      Assert.That(File.ReadAllText($"/proc/{started.Pid}/oom_score_adj").Trim(), Is.EqualTo("500"), "and nothing changed");
+      // The very bottom of the range. Refused on any machine whose floor is above it, which is every
+      // machine that has one at all.
+      var past = actions.SetOomScoreAdjustment(started.Key, -1000);
+      if (past.Succeeded)
+        Assert.Ignore("this session's floor is the bottom of the range, so nothing here can be refused");
+
+      Assert.That(past.Outcome, Is.EqualTo(ActionOutcome.NotPermitted));
+      Assert.That(past.Detail, Does.Contain("CAP_SYS_RESOURCE"), past.Detail);
+      Assert.That(
+        File.ReadAllText($"/proc/{started.Pid}/oom_score_adj").Trim(),
+        Is.EqualTo("500"),
+        "a refused write changes nothing");
     } finally {
       Stop(started.Pid);
     }
