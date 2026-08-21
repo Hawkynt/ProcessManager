@@ -181,7 +181,10 @@ public sealed class ProcessPropertiesWindow : Form {
     // true because the first window shown owns the message loop; every window that is not that one
     // has to say so.
     this.QuitsOnClose = false;
-    this.Bounds = new(0, 0, 980, 640);
+    // Wide because of the thread tab: §29 carries twenty-one columns and the list scrolls up and
+    // down but not sideways, so a column past the right-hand edge cannot be reached by scrolling at
+    // all — only by dragging the window wider, which nobody knows to do.
+    this.Bounds = new(0, 0, 1280, 640);
     // Without this the window can be grown and never shrunk: GTK computes a floor from the content
     // when none is named, and every docked child asks for the width it currently has.
     this.MinimumSize = new(700, 460);
@@ -276,6 +279,19 @@ public sealed class ProcessPropertiesWindow : Form {
     get => this._performance.SecondsPerSample;
     set => this._performance.SecondsPerSample = value;
   }
+
+  /// <summary>
+  /// The pane, for a caller that needs one of its own tabs or one of its dialogs.
+  /// </summary>
+  /// <remarks>
+  /// The pane's tabs and this window's pages share one tab strip, so <see cref="ShowPage"/> reaches
+  /// both and there is no second method for the pane's half of them.
+  /// </remarks>
+  public DetailPane Pane => this._pane;
+
+  /// <summary>What the window holds, for a capture log with no display to read it off (PRD §9.6).</summary>
+  public string DescribeForCapture()
+    => $"detail window:{this.Text}, {this.Bounds.Width}x{this.Bounds.Height}\n" + this._pane.DescribeForCapture();
 
   /// <summary>
   /// Refreshes from the latest sample.

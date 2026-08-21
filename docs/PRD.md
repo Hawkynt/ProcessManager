@@ -1380,19 +1380,19 @@ The engine enumerates threads on both platforms; the table shows a subset.
 
 - [x] Thread ID
 - [x] State
-- [ ] CPU %
+- [x] CPU %
 - [x] CPU time
 - [x] User CPU time
 - [x] Kernel CPU time
 - [ ] Cycles
 - [ ] Cycles delta
 - [x] Context switches
-- [ ] Context-switch rate
+- [x] Context-switch rate
 - [x] Start time
-- [ ] 🟡 Start address
-- [ ] Resolved start module
-- [ ] Resolved start symbol
-- [ ] Current instruction / address
+- [x] 🟡 Start address
+- [x] 🟡 Resolved start module
+- [x] 🟡 Resolved start symbol
+- [x] 🟡 Current instruction / address
 - [x] Priority
 - [x] Base priority
 - [x] Scheduling policy
@@ -1401,8 +1401,8 @@ The engine enumerates threads on both platforms; the table shows a subset.
 - [x] Affinity
 - [x] Wait reason
 - [ ] Wait duration
-- [ ] Kernel/user indicator
-- [ ] Stack usage
+- [x] 🟡 Kernel/user indicator
+- [x] 🟡 Stack usage
 - [ ] TEB / TLS information
 - [x] Name
 - [ ] Description
@@ -1427,39 +1427,142 @@ in `Priority` that moves with the load — the policy is the `SCHED_*` class und
 name, and the affinity is `Cpus_allowed_list` kept in the kernel's list notation, which is what
 `taskset` both prints and accepts.
 
-Still unticked and why: **cycles**, **CPU %** and the two rate columns need a second sample or a
-`perf` counter rather than a second file; **start address**, **resolved module/symbol** and **current
-instruction** are zeroed in `stat` for anyone without `PTRACE_MODE_ATTACH`; **ideal processor** and
-**TEB / TLS** have no Linux equivalent. **Wait duration** is deliberately left: `schedstat` reports
-cumulative time queued for a processor, which is not how long the current wait has lasted, and
-labelling it as such would be exactly the false equivalence §5.3 forbids.
+**CPU %** and the **context-switch rate** are differences between two readings, so the thread tab is
+re-read on every tick while it is open rather than once per selection — a percentage of an interval
+that ended when the process was selected gets less true the longer somebody looks at it. The first
+reading of a thread shows `…` and not `0`. The percentage is expressed per processor, because a
+thread cannot use more than one, and it is not clamped: `stat` accounts CPU time in ten-millisecond
+ticks, so over a one-second window a saturated thread reads 100 % give or take a tick, and hiding
+that would hide the disturbed samples with it (§3.2).
+
+That repetition is the one expensive thing this view does, and it is bounded the way §5.4 asks: five
+files per thread, for one process, only while somebody has that tab in front of them. Measured on a
+loaded machine at 78 µs a thread — six milliseconds for a 77-thread compiler service, and a tenth of
+a second would need a process with well over a thousand threads. The other tabs stay collected on
+demand, because enumerating a process's descriptors costs 85 µs and its modules a walk of the page
+table, and neither answer moves while it is being read.
+
+Four of these columns are marked 🟡 because Linux answers them only for a thread the reader could
+have attached a debugger to. **Current instruction** and **stack usage** come from
+`/proc/[pid]/task/[tid]/syscall`, which is gated on `PTRACE_MODE_ATTACH` — owning the process is not
+enough under the default `yama/ptrace_scope` — so on an ordinary desktop they read as refusals and
+for the program's own threads they are real. They are emphatically not read from `stat`: its
+`kstkeip` has been zero for every task that is not core-dumping since Linux 4.9, and parsing it would
+put `0x0` in that column for the whole machine. Stack usage is the distance from the stack pointer to
+the top of the mapping the stack pointer is in, which is why it needs `maps` as well as the register.
+
+**Start address** is 🟡 for a different reason: Linux records no entry point for a thread. `clone` is
+handed a stack and a register set, and the start routine is gone by the time the thread exists. The
+one thread whose start is knowable is the first, which began at the executable's own ELF entry point
+— biased by the load address for a position-independent image, exactly as §31 biases a module's. The
+resolved module comes from `maps` and the resolved symbol from the image's `.symtab` or `.dynsym`,
+which most binaries on a distribution no longer carry: an unresolved symbol beside a resolved module
+is the normal outcome, and is why the module column sits beside the symbol column rather than behind
+it. Every other thread reports "this platform has no such thing" rather than the zero that used to
+sit there and render as `0x0` (§72.3).
+
+The **kernel/user indicator** comes from the same `syscall` file, which also says which call a thread
+is in — the two are shown in one cell, because "kernel" and "kernel, in call 202" are the same answer
+at two levels of detail. Where the file is refused, a wait channel is still an answer: a thread parked
+in a named kernel function is in the kernel whatever the permissions say. A thread with neither is
+left blank rather than assumed to be in user code — a runnable thread may be on either side, and a
+coin toss rendered as a reading is worse than an empty cell (§5.3).
+
+Linux addition — what the kernel reports and Windows has no equivalent for:
+
+- [x] **Queued** — cumulative time on a run queue wanting a processor, from `schedstat`. The only
+      scheduling delay readable for a thread whose registers are refused. A kernel booted with
+      `schedstats=disable` keeps the file and writes a literal `0 0 0` into it; all three zeroes
+      together are read as the switch being off rather than as a thread that has never been given a
+      processor, which is not something that can be true of a thread there is a file to read (§72.3)
+
+Still unticked and why:
+
+- **Cycles** and **cycles delta** — no file under `/proc` carries a per-thread cycle count. The only
+  route is `perf_event_open`, which needs a descriptor held open per thread for the life of the view
+  and the same `PTRACE_MODE_ATTACH` `syscall` needs, and returns nothing at all on a machine with no
+  hardware PMU. Two hundred lines of native plumbing to render "not permitted" on every row of an
+  ordinary desktop is not a column, and the process-wide `Cycles` counter has said `n/a` on Linux for
+  the same reason since §8.
+- **Ideal processor** and **TEB / TLS information** — no Linux equivalent. The scheduler has no
+  notion of a thread's preferred processor that it will name, and the thread pointer is readable only
+  through `ptrace(ARCH_GET_FS)`, which means stopping the thread to ask.
+- **Wait duration** — deliberately left. `schedstat` reports cumulative time queued for a processor,
+  which is not how long the current wait has lasted, and labelling it as such would be exactly the
+  false equivalence §5.3 forbids. It is reported above under the name of what it actually is.
+- **Description** — Linux gives a thread one name, `comm`, and it is already the Name column. A
+  Description column would repeat it.
+- **Service association** — a thread may be moved into its own cgroup under v2's threaded mode, so
+  `/proc/[pid]/task/[tid]/cgroup` is a real per-thread reading; it is one more file per thread for a
+  column that is the same value on every row of almost every process, and is not read yet.
+- **AppDomain / runtime context** — needs the runtime's own introspection, not the kernel's (§80).
 
 Actions:
 
-- [ ] Suspend thread
-- [ ] Resume thread
-- [ ] Terminate thread — **labelled dangerous** (§69 class 3)
-- [ ] Set priority
-- [ ] Set affinity
-- [ ] View stack
-- [ ] Copy
-- [ ] Go to start module
-- [ ] Resolve symbols
-- [ ] Save stack
+- ∅ **Suspend thread** / **Resume thread** — not possible on Linux, and not for want of trying.
+  `SIGSTOP` and `SIGCONT` act on a thread group however they are directed, so `tgkill` to one thread
+  stops all of them; the only per-thread stop is `PTRACE_ATTACH`, which makes this program the
+  thread's debugger and kills it if we exit. An item that could only ever do the wrong thing is worse
+  than one that is not there (§25.6 records the same reasoning for unloading a module).
+- ∅ **Terminate thread** — the same fact from the other side: a fatal signal is group-wide, so there
+  is no way to end one thread of a process and leave the others running. Offering it would end the
+  process under a reader who asked for a thread.
+- [x] Set priority
+- [x] Set affinity
+- [x] View stack
+- [x] Copy — the selected row, or the whole list, with the visible columns and their headers
+- [x] Go to start module — only the first thread of a process has one, and it says so for the rest
+      rather than selecting nothing and leaving the reader wondering whether the click registered
+- [x] Resolve symbols
+- [x] Save stack
+
+The list scrolls up and down and not sideways, so a column past the right-hand edge is unreachable
+rather than merely off-screen. That is why the columns are ordered by what a reader came for — the
+wait reason seventh rather than last, where it used to be cut off — and why pairs that are always
+read together share a cell: user and kernel time, effective and base priority. The twenty-one of them
+come to about 1800 pixels, and the properties window opens wide enough to show most of them.
 
 # 30. Stack viewer
 
-- [ ] Native stacks
-- [ ] Symbols when available
-- [ ] Module + offset fallback
-- [ ] Source filename and line when symbols provide it
-- [ ] Kernel frames where permissions permit — **see §4.1: without a driver, ours stop at the
-      user/kernel boundary and say so**
-- [ ] Managed runtime frames
-- [ ] Mixed native/managed stacks
-- [ ] Columns: frame · address · symbol · module · source · source line · displacement · frame type
-- [ ] Actions: refresh · copy frame · copy stack · resolve symbols · open module · save stack
-- [ ] **Symbol loading is asynchronous** — a symbol-server round trip is never on the UI thread
+The window exists, opened from a thread row, one per thread and several at once.
+
+Linux keeps two stacks per thread and hands over neither freely. The kernel stack behind
+`/proc/[pid]/task/[tid]/stack` needs `CAP_SYS_ADMIN` — not the owning user, not the same uid,
+`CAP_SYS_ADMIN` — and the thread's own stack is not exposed at all: walking it means reading another
+process's memory and unwinding it with its debug information, which is the driver §4.1 rules out
+wearing different clothes. So what this window shows is usually a short list and a paragraph about
+what is missing, and **the paragraph is the honest part**. A viewer that showed the same short list
+without it would read as the whole stack.
+
+- ∅ **Native stacks** — meaning the thread's own. Nothing here unwinds one, and nothing here will
+  without the unwinder §4.1 rules out. What is shown instead is the single user-space frame Linux
+  does give up — the instruction the thread will resume at, from `syscall` — marked as one frame and
+  not as a walk.
+- [x] 🟡 Symbols when available — kernel frames arrive already named by `kallsyms`; a user frame is
+      looked up in the image's `.symtab` or `.dynsym`. Most binaries on a distribution carry neither
+      any more, so an unresolved name is the ordinary outcome and not a failure
+- [x] Module + offset fallback — which is why the module column sits beside the symbol column rather
+      than behind it, and costs no file access at all
+- ∅ **Source filename and line** — needs DWARF, which this build does not read. The columns are kept
+  and say `n/i`: a column that is absent is a requirement quietly dropped, and a column that says it
+  has nothing is a fact about this build
+- [x] Kernel frames where permissions permit — **see §4.1: without a driver, ours stop at the
+      user/kernel boundary and say so**. `kernel.kptr_restrict` is set nearly everywhere, and the
+      kernel then writes `[<0>]` for every frame; zero is an address, so the address column carries
+      the reason rather than a stack that appears to live entirely at the null page (§3.4)
+- ∅ **Managed runtime frames** and **mixed native/managed stacks** — both need the runtime's own
+  stack walker, which is §80's, and neither is faked from a native frame that happens to be in a
+  runtime library
+- [x] 🟡 Columns: frame · address · symbol · module · source · source line · displacement · frame
+      type. Source and source line are there and empty, as above. A displacement is unknown rather
+      than zero when there is no symbol to be inside of — zero says the address is a function's first
+      instruction, which is a claim
+- [x] Actions: refresh · copy frame · copy stack · resolve symbols · open module · save stack
+- ∅ **Symbol loading is asynchronous** — there is no symbol server to round-trip to: the tables are
+  read from local files in bounded ranges, a few dozen kilobytes for a stack of forty frames. Moving
+  that off the UI thread would mean calling the probe from a second thread, and the probe reuses one
+  read buffer across every file it opens — trading a millisecond of latency for a data race is not an
+  improvement. It goes back on the list the day a symbol server does.
 
 # 31. Modules / loaded images view
 

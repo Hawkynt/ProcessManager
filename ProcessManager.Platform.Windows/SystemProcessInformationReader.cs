@@ -277,7 +277,10 @@ internal static class SystemProcessInformationReader {
             MapThreadState(thread.ThreadState),
             Counter.Of((ulong)Math.Max(0, thread.KernelTime + thread.UserTime) * 100),
             thread.CreateTime > 0 ? DateTime.FromFileTimeUtc(thread.CreateTime).Ticks : 0,
-            (ulong)thread.StartAddress,
+            // Windows records the start routine of every thread, which Linux does not — see
+            // ThreadRecord.StartAddress. A zero here is a thread whose start address the query would
+            // not give up, so it stays a hole rather than becoming the address 0x0 (PRD §72.3).
+            thread.StartAddress == 0 ? Counter.NotPermitted : Counter.Of((ulong)thread.StartAddress),
             null,
             thread.Priority,
             // Windows names a thread only when the program calls SetThreadDescription, and the
@@ -296,7 +299,22 @@ internal static class SystemProcessInformationReader {
             InvoluntaryContextSwitches: Counter.NotSupported,
             BasePriority: null,
             Policy: SchedulingPolicy.Unknown,
-            Affinity: null
+            Affinity: null,
+            // The rest of §29 needs a handle on the thread rather than the bulk query: the module a
+            // start address is in wants the process's module list, the registers want
+            // GetThreadContext, and the mode wants a stack walk. None of it is written here yet, and
+            // "not implemented here" is a different sentence from "Windows has no such thing" — one
+            // is a fact about us and the other about the operating system (PRD §7).
+            StartModule: null,
+            InstructionPointer: Counter.Unknown(UnknownReason.NotImplementedHere),
+            InstructionModule: null,
+            StackPointer: Counter.Unknown(UnknownReason.NotImplementedHere),
+            StackBytes: Counter.Unknown(UnknownReason.NotImplementedHere),
+            Mode: ThreadMode.Unknown,
+            // Windows dispatches system calls by number too, but the bulk query does not carry the
+            // one a thread is in and there is no supported way to ask.
+            SyscallNumber: Counter.NotSupported,
+            QueuedNs: Counter.NotSupported
           ));
         }
 

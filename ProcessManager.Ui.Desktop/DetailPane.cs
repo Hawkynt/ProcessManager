@@ -3,6 +3,7 @@ using Hawkynt.NativeForms;
 using Hawkynt.ProcessManager.Abstractions;
 using Hawkynt.ProcessManager.Model;
 using Hawkynt.ProcessManager.Query;
+using Hawkynt.ProcessManager.Sampling;
 
 namespace Hawkynt.ProcessManager.Ui.Desktop;
 
@@ -48,6 +49,26 @@ public sealed class DetailPane : IDisposable {
   private bool _dirty = true;
 
   /// <summary>
+  /// The per-thread rates, which need two readings of the same thread (PRD §29).
+  /// </summary>
+  /// <remarks>
+  /// Owned by the pane rather than by the probe, because a probe reports counters and nothing else —
+  /// there is one place in the program where a division happens, and this is a caller of it
+  /// (PRD §2, §3.2).
+  /// </remarks>
+  private readonly ThreadDelta _threadRates = new();
+
+  /// <summary>
+  /// What the thread list is currently showing, for the actions that act on a row.
+  /// </summary>
+  /// <remarks>
+  /// The rows themselves carry text. An action needs the reading behind it — the module a start
+  /// address is in is a path, and the cell shows the file name — so the records are kept beside the
+  /// list rather than parsed back out of it.
+  /// </remarks>
+  private IReadOnlyList<ThreadRecord> _threadRows = [];
+
+  /// <summary>
   /// What may be done to a thread, or null in a read-only front-end.
   /// </summary>
   /// <remarks>
@@ -71,29 +92,60 @@ public sealed class DetailPane : IDisposable {
     this._hint.Dock = DockStyle.Bottom;
 
     AddPage("Overview", this._overview);
+    // Ordered by what a reader came for, not by what the kernel happens to write first, and pairs
+    // that are always read together share a cell. Both are forced by the control: a TreeListView
+    // scrolls up and down and not sideways, so a column past the right-hand edge is not merely
+    // off-screen, it is unreachable. The twenty-one below come to about 1800 pixels, which fits a
+    // maximised window on an ordinary screen; the ones a narrow window cuts off are the ones nobody
+    // opens this tab to find (PRD §29).
     AddList(
       "Threads",
       this._threads,
-      ("TID", 80),
-      ("Name", 150),
-      ("State", 70),
-      ("Started", 140),
-      ("CPU time", 100),
-      ("User", 90),
-      ("Kernel", 90),
-      ("Ctx switches", 100),
+      ("TID", 56),
+      // Linux caps a thread's comm at fifteen characters, so this is as wide as a name can be. At
+      // 120 the capture ran ".NET Tiered Com" into the state beside it.
+      ("Name", 134),
+      ("State", 54),
+      // Which side of the user/kernel boundary the thread is on, and which system call it is in when
+      // the machine will say. Two of §29's items in one cell, because "kernel" and "kernel, in call
+      // 202" are the same answer at two levels of detail.
+      // Wide enough for "kernel · 202" with a gap after it. At 82 the capture showed
+      // "kernel · 2020.0", which is this cell and the next one with nothing between them.
+      ("Mode", 100),
+      ("CPU %", 54),
+      ("Ctx/s", 52),
+      // Seventh rather than last, which is where it used to sit and be cut off: it is a kernel symbol
+      // naming what the thread is blocked in, and it answers "why is this hanging" — §2's first
+      // question — without a stack walk. §29 says it earns its place above the rest; this is that
+      // place.
+      // As wide as "poll_schedule_timeout", which is the longest wait channel a desktop process is
+      // routinely parked in and the one the first two captures cut in half.
+      ("Waiting on", 176),
+      ("CPU time", 72),
+      // The user and kernel halves in one cell. Nobody reads one without the other, and a thread
+      // whose time is all kernel is a different animal from one whose time is all its own.
+      ("User / kernel", 100),
+      ("Ctx switches", 94),
       // The split, next to the total it adds up to: voluntary switches are a thread waiting for
       // something and involuntary ones are a thread being pushed off a contended processor, and the
       // sum on its own cannot tell those apart (PRD §29).
-      ("Vol / invol", 110),
-      ("CPU#", 60),
-      ("Priority", 70),
-      ("Base", 60),
-      ("Policy", 120),
-      ("Affinity", 110),
-      // Last, and widest: it is a kernel symbol or a wait reason, and it is the column that answers
-      // "why is this hanging" (PRD §2, §29).
-      ("Waiting on", 200)
+      ("Vol / invol", 88),
+      // How long this thread has been kept off a processor by other threads, ever. Not a wait
+      // duration and not labelled as one — see §29.
+      ("Queued", 74),
+      ("CPU#", 44),
+      // The effective priority and the one the thread was given. Only the pair says whether a busy
+      // thread is being polite or was simply never asked to be.
+      ("Prio / base", 82),
+      // "SCHED_OTHER" is eleven characters and the kernel's own name for it (PRD §5.3), so the
+      // column is as wide as the vocabulary and not as wide as the header.
+      ("Policy", 112),
+      ("Affinity", 86),
+      ("Stack", 58),
+      ("Instruction", 112),
+      ("Start address", 104),
+      ("Start module", 132),
+      ("Started", 108)
     );
     AddList(
       "Modules",
@@ -235,15 +287,33 @@ public sealed class DetailPane : IDisposable {
       + $"command  {(row.CommandLine.Length > 0 ? row.CommandLine : "—")}";
   }
 
-  /// <summary>Fills whichever tab is showing, if it needs it.</summary>
+  /// <summary>
+  /// Fills whichever tab is showing, if it needs it.
+  /// </summary>
+  /// <remarks>
+  /// The thread tab needs it every time. Its CPU and switch columns are differences between two
+  /// readings, so a list filled once and left alone would show a percentage of an interval that
+  /// ended when the process was selected — which is a number that gets less true the longer somebody
+  /// looks at it. The other tabs stay on demand: enumerating a process's descriptors costs 85 µs and
+  /// its modules a walk of the page table, and neither answer moves while it is being read
+  /// (PRD §5.4, §29).
+  /// </remarks>
   public void Refresh() {
-    if (!this._dirty || this._key.IsNone)
+    if (this._key.IsNone)
+      return;
+
+    var selected = this._tabs.SelectedTab?.Text;
+    if (selected == "Threads") {
+      this._dirty = false;
+      this.FillThreads();
+      return;
+    }
+
+    if (!this._dirty)
       return;
 
     this._dirty = false;
-    var selected = this._tabs.SelectedTab?.Text;
     switch (selected) {
-      case "Threads": this.FillThreads(); break;
       case "Modules": this.FillModules(); break;
       case "Handles": this.FillHandles(); break;
       case "Environment": this.FillEnvironment(); break;
@@ -256,6 +326,46 @@ public sealed class DetailPane : IDisposable {
   public void Invalidate() {
     this._dirty = true;
     this.Refresh();
+  }
+
+  /// <summary>
+  /// Brings one tab to the front and fills it.
+  /// </summary>
+  /// <returns>False when there is no tab by that name.</returns>
+  /// <remarks>
+  /// For the capture, which has to photograph a tab nobody clicked on: the pane opens on the overview
+  /// and every list behind it is a layout no picture has ever shown (PRD §9.6).
+  /// </remarks>
+  public bool ShowTab(string tab) {
+    for (var i = 0; i < this._tabs.TabPages.Count; ++i)
+      if (this._tabs.TabPages[i].Text == tab) {
+        this._tabs.SelectedIndex = i;
+        this.Invalidate();
+        return true;
+      }
+
+    return false;
+  }
+
+  /// <summary>What the visible tab holds, for a capture log with no display to read it off.</summary>
+  public string DescribeForCapture() {
+    var tab = this._tabs.SelectedTab?.Text ?? "none";
+    var list = this._tabs.SelectedTab?.Controls.Count > 0
+      ? this._tabs.SelectedTab.Controls[0] as TreeListView
+      : null;
+
+    return $"detail tab:   {tab}, {list?.Nodes.Count ?? 0} row(s), {list?.Columns.Count ?? 0} columns\n";
+  }
+
+  /// <summary>The thread rows the pane last drew, so the capture can open a stack on one of them.</summary>
+  public IReadOnlyList<ThreadRecord> ThreadRows => this._threadRows;
+
+  /// <summary>Opens the stack viewer on a thread, for the capture and for a test.</summary>
+  public StackWindow OpenStack(int threadId, bool resolveSymbols) {
+    var window = new StackWindow(this._probe, this._key, threadId, this.Thread(threadId)?.Name);
+    window.Show();
+    window.Reload(resolveSymbols);
+    return window;
   }
 
   /// <summary>
@@ -275,7 +385,38 @@ public sealed class DetailPane : IDisposable {
 
     menu.Items.Add(priority);
     menu.Items.Add(ThreadItem("Set thread affinity…", this.ChooseThreadAffinity));
+
+    // The rest need no privilege and no IProcessActions: they read, copy and show. That is why they
+    // are added unconditionally, while the two above are inert in a pane holding no actions.
+    menu.Items.Add(ReadOnlyThreadItem("View stack…", tid => this.ShowStack(tid, resolveSymbols: false)));
+    menu.Items.Add(ReadOnlyThreadItem("View stack with symbols…", tid => this.ShowStack(tid, resolveSymbols: true)));
+    menu.Items.Add(ReadOnlyThreadItem("Save stack…", this.SaveStack));
+    menu.Items.Add(ReadOnlyThreadItem("Go to start module", this.GoToStartModule));
+    menu.Items.Add(ReadOnlyThreadItem("Copy row", tid => Clipboard.SetText(this.DescribeThread(tid))));
+
+    // Not a row action: this one is about the list, and works with nothing selected.
+    var all = new ToolStripMenuItem("Copy all threads");
+    all.Click += (_, _) => Clipboard.SetText(this.DescribeThreads());
+    menu.Items.Add(all);
     return menu;
+  }
+
+  /// <summary>
+  /// A thread action that changes nothing, and so needs no <see cref="IProcessActions"/>.
+  /// </summary>
+  /// <remarks>
+  /// <see cref="ThreadItem"/> bails when the pane holds no actions, which is right for the two items
+  /// that alter a thread and wrong for the five that look at one: a read-only front-end must still be
+  /// able to show a stack (PRD §26).
+  /// </remarks>
+  private ToolStripMenuItem ReadOnlyThreadItem(string text, Action<int> action) {
+    var item = new ToolStripMenuItem(text);
+    item.Click += (_, _) => {
+      if (this.SelectedThread is { } tid)
+        action(tid);
+    };
+
+    return item;
   }
 
   /// <summary>
@@ -378,6 +519,110 @@ public sealed class DetailPane : IDisposable {
         ? tid
         : null;
 
+  /// <summary>The row for a tid, or null when the list has moved on.</summary>
+  private ThreadRecord? Thread(int tid) {
+    for (var i = 0; i < this._threadRows.Count; ++i)
+      if (this._threadRows[i].Tid == tid)
+        return this._threadRows[i];
+
+    return null;
+  }
+
+  /// <summary>
+  /// Opens the stack viewer on one thread (PRD §30).
+  /// </summary>
+  /// <remarks>
+  /// Shown rather than shown modally, because §26 is about being able to have several of these open
+  /// at once — two threads of the same process side by side is most of what a stack viewer is for.
+  /// </remarks>
+  private void ShowStack(int tid, bool resolveSymbols) => this.OpenStack(tid, resolveSymbols);
+
+  /// <summary>Writes one thread's stack to a file (PRD §29, §30).</summary>
+  private void SaveStack(int tid) {
+    var stack = this._probe.GetThreadStack(this._key, tid, resolveSymbols: true);
+    var dialog = new SaveFileDialog {
+      Title = $"Save the stack of thread {tid}",
+      FileName = $"thread-{tid}.txt",
+    };
+
+    if (dialog.ShowDialog() != DialogResult.OK || dialog.FileName is not { Length: > 0 } path)
+      return;
+
+    try {
+      File.WriteAllText(path, StackWindow.Describe(in stack, this.Thread(tid)?.Name));
+    } catch (IOException e) {
+      MessageBox.Show(e.Message, "Process Manager");
+    } catch (UnauthorizedAccessException e) {
+      MessageBox.Show(e.Message, "Process Manager");
+    }
+  }
+
+  /// <summary>
+  /// Shows the modules tab with the image the thread started in selected (PRD §29).
+  /// </summary>
+  /// <remarks>
+  /// Only the first thread of a process has a start address on Linux, so this refuses for the others
+  /// rather than selecting nothing and leaving the reader to wonder whether the click registered.
+  /// </remarks>
+  private void GoToStartModule(int tid) {
+    if (this.Thread(tid)?.StartModule is not { Length: > 0 } module) {
+      MessageBox.Show(
+        "This thread has no start module: Linux records an entry point for the first thread of a"
+        + " process and for no other.",
+        "Process Manager"
+      );
+
+      return;
+    }
+
+    for (var i = 0; i < this._tabs.TabPages.Count; ++i)
+      if (this._tabs.TabPages[i].Text == "Modules") {
+        this._tabs.SelectedIndex = i;
+        break;
+      }
+
+    this._dirty = true;
+    this.Refresh();
+    foreach (TreeNode node in this._modules.Nodes)
+      if (node.Text.StartsWith(module, StringComparison.Ordinal)) {
+        this._modules.SelectedNode = node;
+        return;
+      }
+  }
+
+  /// <summary>One thread as text, using the visible columns and their headers (PRD §29, §95).</summary>
+  private string DescribeThread(int tid) {
+    foreach (TreeNode node in this._threads.Nodes)
+      if (node.Text == tid.ToString(CultureInfo.InvariantCulture))
+        return Headers(this._threads) + "\n" + Row(node);
+
+    return string.Empty;
+  }
+
+  /// <summary>Every thread as text, in the order the list shows them.</summary>
+  private string DescribeThreads() {
+    var text = new System.Text.StringBuilder();
+    text.Append(Headers(this._threads));
+    foreach (TreeNode node in this._threads.Nodes)
+      text.Append('\n').Append(Row(node));
+
+    return text.ToString();
+  }
+
+  private static string Headers(TreeListView list) {
+    var text = new System.Text.StringBuilder();
+    for (var i = 0; i < list.Columns.Count; ++i) {
+      if (i > 0)
+        text.Append('\t');
+
+      text.Append(list.Columns[i].Text);
+    }
+
+    return text.ToString();
+  }
+
+  private static string Row(TreeNode node) => node.Tag is string[] cells ? string.Join('\t', cells) : node.Text;
+
   private ActionResult ChooseThreadAffinity(int tid) {
     var chooser = new AffinityChooser($"thread {tid}", this._key.Pid, Math.Max(1, Environment.ProcessorCount), CpuTopology.Empty);
     chooser.ShowDialog();
@@ -388,25 +633,112 @@ public sealed class DetailPane : IDisposable {
 
   private void FillThreads() {
     var threads = this._probe.GetThreads(this._key);
+    this._threadRows = threads;
+    // A thread cannot use more than one processor, so the per-core convention is the one that reads
+    // correctly here: 100 % means this thread had a core to itself for the whole interval. The
+    // normalized figure would divide by the machine and report a saturated thread as 6 % on a
+    // sixteen-way box, which is true and useless (PRD §3.2).
+    this._threadRates.Update(this._key, threads, Math.Max(1, Environment.ProcessorCount));
+
     Fill(this._threads, threads.Count, i => [
       threads[i].Tid.ToString(CultureInfo.InvariantCulture),
       threads[i].Name ?? "—",
       Humanize.State(threads[i].State),
-      Humanize.Timestamp(threads[i].StartTimeUtcTicks),
+      DescribeMode(threads[i]),
+      Humanize.Percent(this._threadRates.CpuPercentPerCore(i)),
+      Humanize.Rate(this._threadRates.ContextSwitchesPerSecond(i)),
+      // Null covers two cases the kernel writes the same way: a thread that is not blocked at all,
+      // and a wchan the reader may not have. Neither is a symbol, and the state column beside this
+      // one already says which of the two it is.
+      Shorten(threads[i].WaitReason, 22) ?? "—",
       Humanize.Duration(threads[i].CpuTimeNs),
-      Humanize.Duration(threads[i].UserTimeNs),
-      Humanize.Duration(threads[i].KernelTimeNs),
+      Humanize.Duration(threads[i].UserTimeNs) + " / " + Humanize.Duration(threads[i].KernelTimeNs),
       Humanize.Count(threads[i].ContextSwitches),
       Humanize.Pair(threads[i].VoluntaryContextSwitches, threads[i].InvoluntaryContextSwitches),
+      Queued(threads[i].QueuedNs),
       threads[i].LastCpu >= 0 ? threads[i].LastCpu.ToString(CultureInfo.InvariantCulture) : "—",
-      threads[i].Priority.ToString(CultureInfo.InvariantCulture),
-      threads[i].BasePriority?.ToString(CultureInfo.InvariantCulture) ?? "—",
+      threads[i].Priority.ToString(CultureInfo.InvariantCulture)
+        + " / " + (threads[i].BasePriority?.ToString(CultureInfo.InvariantCulture) ?? "—"),
       Humanize.SchedulingPolicy(threads[i].Policy),
       threads[i].Affinity ?? "—",
-      threads[i].WaitReason
-        ?? threads[i].StartSymbol
-        ?? (threads[i].StartAddress == 0 ? "—" : "0x" + threads[i].StartAddress.ToString("x", CultureInfo.InvariantCulture)),
+      Humanize.Bytes(threads[i].StackBytes),
+      // The address itself. Which image it is in, and which function, is what the stack viewer of §30
+      // opens on this row — a cell this wide cannot hold a path and a symbol as well.
+      Humanize.Address(threads[i].InstructionPointer),
+      Humanize.Address(threads[i].StartAddress),
+      Where(threads[i].StartAddress, threads[i].StartModule, threads[i].StartSymbol),
+      Humanize.Timestamp(threads[i].StartTimeUtcTicks),
     ]);
+  }
+
+  /// <summary>
+  /// Cuts a value to the width of its column, and says that it did.
+  /// </summary>
+  /// <remarks>
+  /// The list clips a cell at the column boundary with nothing between it and the next one, so a
+  /// value wider than its column runs straight into its neighbour's — "poll_schedule_timeout.c0:00"
+  /// was a wait channel and a CPU time with no gap. An ellipsis is a shorter answer and an honest
+  /// one: the whole of it is still what "Copy row" puts on the clipboard. GCC's <c>.constprop.0</c>
+  /// and <c>.isra.0</c> clone suffixes are what make kernel symbols this long, and they are left on
+  /// rather than stripped — the kernel named the function, not us (PRD §5.3).
+  /// </remarks>
+  private static string? Shorten(string? value, int limit)
+    => value is null || value.Length <= limit ? value : value[..(limit - 1)] + "…";
+
+  /// <summary>
+  /// A run-queue delay, which is a duration of a different order from a CPU time (PRD §29).
+  /// </summary>
+  /// <remarks>
+  /// The <c>h:mm:ss</c> the other duration columns use is right for a total that has been
+  /// accumulating since boot and useless here: a thread that has been kept waiting for a hundred
+  /// milliseconds in its whole life renders as <c>0:00</c>, which is the number this column exists
+  /// to distinguish from nothing at all.
+  /// </remarks>
+  private static string Queued(Counter nanoseconds) {
+    if (!nanoseconds.TryGetValue(out var value))
+      return Humanize.Placeholder(nanoseconds.Reason);
+
+    if (value >= 1_000_000_000)
+      return Humanize.Duration(nanoseconds);
+
+    return value >= 1_000_000
+      ? (value / 1_000_000d).ToString("0.# ms", CultureInfo.InvariantCulture)
+      : value >= 1_000
+        ? (value / 1_000d).ToString("0 µs", CultureInfo.InvariantCulture)
+        : value.ToString("0 ns", CultureInfo.InvariantCulture);
+  }
+
+  /// <summary>
+  /// Whose code the thread is running, and which call it is in when the machine will say (PRD §29).
+  /// </summary>
+  /// <remarks>
+  /// The reason lives in the system-call number, because the file that would have answered both is
+  /// the same file — a refusal to say which call a thread is in is a refusal to say which side of the
+  /// boundary it is on. Showing "user" for a thread nobody was allowed to ask about would be a guess
+  /// with a confident face on it.
+  /// </remarks>
+  private static string DescribeMode(in ThreadRecord thread) => thread.Mode switch {
+    ThreadMode.User => "user",
+    ThreadMode.Kernel => thread.SyscallNumber.TryGetValue(out var call)
+      ? "kernel · " + call.ToString(CultureInfo.InvariantCulture)
+      : "kernel",
+    _ => Humanize.Placeholder(thread.SyscallNumber.Reason),
+  };
+
+  /// <summary>
+  /// An address rendered as the place it is, rather than as a number nobody can act on.
+  /// </summary>
+  /// <remarks>
+  /// The file name and not the path: the path is two hundred characters of <c>/usr/lib</c> and the
+  /// row has to fit on a screen. The full path is still on the record, which is what "go to start
+  /// module" opens (PRD §29).
+  /// </remarks>
+  private static string Where(Counter address, string? module, string? symbol) {
+    if (module is not { Length: > 0 })
+      return address.HasValue ? Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform) : Humanize.Placeholder(address.Reason);
+
+    var name = System.IO.Path.GetFileName(module);
+    return symbol is { Length: > 0 } ? $"{name}!{symbol}" : name;
   }
 
   private void FillModules() {
@@ -595,7 +927,17 @@ public sealed class DetailPane : IDisposable {
       MessageBox.Show(result.Detail ?? result.Outcome.ToString(), "Process Manager");
   }
 
+  /// <summary>
+  /// Replaces a list's contents, keeping whatever was selected selected.
+  /// </summary>
+  /// <remarks>
+  /// The thread list is refilled every tick, and a refill that cleared the selection would take the
+  /// row out from under whoever was about to right-click it — once a second, forever. The first cell
+  /// is the identity: a thread id, a module path, a descriptor number. A row whose identity is gone
+  /// leaves nothing selected, which is the truth about a thread that ended.
+  /// </remarks>
   private static void Fill(TreeListView list, int count, Func<int, string[]> row) {
+    var wasSelected = list.SelectedNode?.Text;
     list.Nodes.Clear();
     if (count == 0) {
       // An empty list and a list we were not allowed to read look identical, so the empty case says
@@ -613,7 +955,10 @@ public sealed class DetailPane : IDisposable {
 
     for (var i = 0; i < count; ++i) {
       var cells = row(i);
-      list.Nodes.Add(new TreeNode(cells[0]) { Tag = cells });
+      var node = new TreeNode(cells[0]) { Tag = cells };
+      list.Nodes.Add(node);
+      if (wasSelected is not null && string.Equals(node.Text, wasSelected, StringComparison.Ordinal))
+        list.SelectedNode = node;
     }
   }
 

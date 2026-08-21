@@ -1,6 +1,95 @@
 namespace Hawkynt.ProcessManager.Model;
 
 /// <summary>
+/// Whose code a thread is executing: its own, or the kernel's on its behalf (PRD §29).
+/// </summary>
+/// <remarks>
+/// <see cref="Unknown"/> is the ordinary answer rather than the exceptional one. Linux will only say
+/// which side of the boundary a thread is on to a reader that could have attached a debugger to it,
+/// so on a desktop this is <see cref="Kernel"/> for everything blocked in a named wait channel and
+/// <see cref="Unknown"/> for the rest. Guessing "user" from a thread that is merely runnable would
+/// be a coin toss dressed as a reading (PRD §5.3).
+/// </remarks>
+public enum ThreadMode : byte {
+  Unknown = 0,
+  User,
+  Kernel,
+}
+
+/// <summary>
+/// What <c>/proc/[pid]/task/[tid]/syscall</c> says a thread is in the middle of (PRD §29).
+/// </summary>
+/// <remarks>
+/// The only file on Linux that names the user-space instruction pointer and stack pointer of a
+/// thread that is not the caller. It needs <c>PTRACE_MODE_ATTACH</c>, which same-uid ownership does
+/// not grant under the default <c>yama/ptrace_scope</c>, so on most machines every field here is
+/// <see cref="UnknownReason.NotPermitted"/> — and that is a different statement from zero.
+/// </remarks>
+/// <param name="Number">
+/// The system call the thread is executing, or <see cref="UnknownReason.NotSupportedOnPlatform"/>
+/// when it is in the kernel without being in one — the kernel writes <c>-1</c> for that, and -1 is
+/// not a system call number that could be looked up.
+/// </param>
+public readonly record struct ThreadSyscall(
+  ThreadMode Mode,
+  Counter Number,
+  Counter StackPointer,
+  Counter InstructionPointer
+) {
+
+  /// <summary>A file nobody could read, with the reason in every field it would have had.</summary>
+  public static ThreadSyscall Unreadable(UnknownReason reason) => new(
+    ThreadMode.Unknown,
+    Counter.Unknown(reason),
+    Counter.Unknown(reason),
+    Counter.Unknown(reason)
+  );
+
+  /// <summary>
+  /// A thread the kernel reports as <c>running</c>.
+  /// </summary>
+  /// <remarks>
+  /// It is on a processor, so it is executing its own code and there are no registers to hand out —
+  /// the kernel does not stop a running task to take a snapshot of it. That makes the mode an answer
+  /// and the three numbers a hole, which is exactly the shape this record exists for.
+  /// </remarks>
+  public static readonly ThreadSyscall Running = new(
+    ThreadMode.User,
+    Counter.NotSupported,
+    Counter.NotSupported,
+    Counter.NotSupported
+  );
+
+}
+
+/// <summary>
+/// What the three numbers of <c>/proc/[pid]/task/[tid]/schedstat</c> say (PRD §29).
+/// </summary>
+/// <remarks>
+/// Readable without any privilege at all, which makes it the one scheduling file that answers for
+/// another user's threads. It needs <c>CONFIG_SCHEDSTATS</c>: a kernel built without it has no such
+/// file, and the absence is <see cref="UnknownReason.NotSupportedOnPlatform"/> rather than a thread
+/// that has never waited (PRD §72.3).
+/// </remarks>
+/// <param name="QueuedNs">
+/// Time spent on a run queue wanting a processor and not having one, since the thread started. It is
+/// emphatically <em>not</em> "how long the current wait has lasted" — see §29 — and is named for
+/// what it is so that nobody reads it as the other thing.
+/// </param>
+/// <param name="Timeslices">How many times the scheduler has given it a processor.</param>
+public readonly record struct ThreadSchedStat(
+  Counter RunNs,
+  Counter QueuedNs,
+  Counter Timeslices
+) {
+
+  /// <summary>Nothing was read, and every field says why.</summary>
+  public static ThreadSchedStat Unreadable(UnknownReason reason)
+    => new(Counter.Unknown(reason), Counter.Unknown(reason), Counter.Unknown(reason));
+
+}
+
+/// <summary>
 /// One thread of a process. Collected on demand for the thread view only — walking every thread of
 /// every process on every tick is most of what makes a monitor expensive (PRD §3.5).
 /// </summary>
@@ -31,12 +120,44 @@ namespace Hawkynt.ProcessManager.Model;
 /// <see langword="null"/> when unreadable. Kept as the kernel wrote it rather than expanded to a
 /// mask: on a 128-way machine the list is the readable form and the mask is not.
 /// </param>
+/// <param name="StartAddress">
+/// Where the thread began executing. A <see cref="Counter"/> and not an address, because zero is an
+/// address and the platforms disagree about whether they have one. Windows records the start routine
+/// of every thread. Linux records none: <c>clone</c> is handed a stack and a register set, and the
+/// entry point is gone by the time the thread exists — so the only thread whose start is knowable is
+/// the first one, which began at the executable's ELF entry point. Every other thread reports
+/// <see cref="UnknownReason.NotSupportedOnPlatform"/> rather than the zero that used to sit here and
+/// render as <c>0x0</c> (PRD §29, §72.3).
+/// </param>
+/// <param name="StartModule">The image <paramref name="StartAddress"/> falls inside, or null.</param>
+/// <param name="StartSymbol">
+/// The function <paramref name="StartAddress"/> falls inside, from the image's own symbol table. Null
+/// for a stripped image, which is most of them on a distribution that ships debug symbols separately.
+/// </param>
+/// <param name="InstructionPointer">
+/// The user-space instruction the thread will resume at, from <c>syscall</c>. Not from <c>stat</c>:
+/// its <c>kstkeip</c> field has read zero for every task that is not core-dumping since Linux 4.9,
+/// and parsing it would put <c>0x0</c> in this column for the whole machine.
+/// </param>
+/// <param name="InstructionModule">The image <paramref name="InstructionPointer"/> falls inside.</param>
+/// <param name="StackBytes">
+/// How much of its stack the thread is using: the distance from the stack pointer to the top of the
+/// mapping the stack pointer is in. Unknown whenever the stack pointer is, which is whenever the
+/// reader could not have attached a debugger.
+/// </param>
+/// <param name="Mode">Which side of the user/kernel boundary the thread is on.</param>
+/// <param name="SyscallNumber">The system call it is in, if it is in one.</param>
+/// <param name="QueuedNs">
+/// Cumulative time on a run queue wanting a processor. The honest neighbour of the wait duration §29
+/// declines to invent: this is how long the thread has been kept waiting by other threads since it
+/// started, not how long its current wait has lasted.
+/// </param>
 public readonly record struct ThreadRecord(
   int Tid,
   ProcessState State,
   Counter CpuTimeNs,
   long StartTimeUtcTicks,
-  ulong StartAddress,
+  Counter StartAddress,
   string? StartSymbol,
   int Priority,
   string? Name,
@@ -49,8 +170,103 @@ public readonly record struct ThreadRecord(
   Counter InvoluntaryContextSwitches,
   int? BasePriority,
   SchedulingPolicy Policy,
-  string? Affinity
+  string? Affinity,
+  string? StartModule,
+  Counter InstructionPointer,
+  string? InstructionModule,
+  Counter StackPointer,
+  Counter StackBytes,
+  ThreadMode Mode,
+  Counter SyscallNumber,
+  Counter QueuedNs
 );
+
+/// <summary>What a stack frame is a frame of (PRD §30).</summary>
+public enum FrameKind : byte {
+  Unknown = 0,
+
+  /// <summary>Kernel code, from the thread's kernel stack.</summary>
+  Kernel,
+
+  /// <summary>The program's own code, or a library's.</summary>
+  User,
+
+  /// <summary>A managed frame, which nothing on this platform produces yet.</summary>
+  Managed,
+}
+
+/// <summary>
+/// One frame of a thread's stack (PRD §30).
+/// </summary>
+/// <param name="Displacement">
+/// How far into <paramref name="Symbol"/> the frame's address is. Meaningless without a symbol, and
+/// unknown rather than zero when there is none — a displacement of zero says the address is the
+/// first instruction of the function, which is a claim and not a placeholder.
+/// </param>
+/// <param name="SourceFile">
+/// The file the frame's code was compiled from, which needs DWARF this program does not read. Always
+/// null today; the column exists because §30 asks for it and an empty column that says why beats a
+/// column that is not there.
+/// </param>
+/// <param name="SourceLine">The line in it, or 0 when there is no source information.</param>
+public readonly record struct StackFrame(
+  int Index,
+  FrameKind Kind,
+  Counter Address,
+  string? Symbol,
+  Counter Displacement,
+  string? Module,
+  string? SourceFile,
+  int SourceLine
+);
+
+/// <summary>
+/// A thread's stack, as far as the operating system will describe it (PRD §30).
+/// </summary>
+/// <remarks>
+/// <para>
+/// The reasons are the point of this record. Linux keeps two stacks per thread and hands out neither
+/// freely: the kernel stack behind <c>/proc/[pid]/task/[tid]/stack</c> needs <c>CAP_SYS_ADMIN</c>,
+/// and the user-space stack is not exposed at all — walking it means unwinding another process's
+/// memory with its debug information, which §4 rules out along with the driver. So a stack here is
+/// usually a short list and a sentence about what is missing, and the sentence is the honest part.
+/// </para>
+/// <para>
+/// A viewer that showed an empty list instead would be indistinguishable from a thread with no
+/// stack, which no thread has.
+/// </para>
+/// </remarks>
+/// <param name="KernelReason">
+/// <see cref="UnknownReason.None"/> when the kernel stack was read, and why it was not otherwise.
+/// </param>
+/// <param name="UserReason">
+/// Why the user-space frames below the boundary are not here. Never <see cref="UnknownReason.None"/>
+/// on any platform this program supports, because none of them is unwound.
+/// </param>
+public readonly record struct ThreadStack(
+  int ThreadId,
+  IReadOnlyList<StackFrame> Frames,
+  UnknownReason KernelReason,
+  UnknownReason UserReason
+) {
+
+  /// <summary>A stack that could not be taken at all.</summary>
+  public static ThreadStack None(int threadId, UnknownReason reason)
+    => new(threadId, [], reason, UnknownReason.NotSupportedOnPlatform);
+
+  /// <summary>How many frames came from the kernel side of the boundary.</summary>
+  public int KernelFrameCount {
+    get {
+      var count = 0;
+      for (var i = 0; i < this.Frames.Count; ++i)
+        if (this.Frames[i].Kind == FrameKind.Kernel)
+          ++count;
+
+      return count;
+    }
+  }
+
+}
 
 /// <summary>
 /// The per-thread half of <c>/proc/[pid]/task/[tid]/status</c> (PRD §29).

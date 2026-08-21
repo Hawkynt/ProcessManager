@@ -96,8 +96,7 @@ public sealed class DetailView(ISystemProbe probe) {
             Humanize.SchedulingPolicy(thread.Policy),
             thread.Affinity ?? "—",
             // The wait reason last and widest: it is what somebody opened this page to find out.
-            thread.WaitReason
-              ?? (thread.StartAddress == 0 ? "—" : "0x" + thread.StartAddress.ToString("x", CultureInfo.InvariantCulture)),
+            thread.WaitReason ?? Humanize.Address(thread.StartAddress),
           ]);
 
         break;
