@@ -86,28 +86,75 @@ internal sealed class PackageDatabaseReader {
     return answer;
   }
 
+  /// <summary>
+  /// The two questions a package database answers about one file, kept apart (PRD §70).
+  /// </summary>
+  /// <remarks>
+  /// One struct rather than one status because the two answers disagree constantly and each is
+  /// worth reading on its own. A package built on this machine ships files that match their record
+  /// exactly and carries nobody's signature; a package from a mirror may be signed by a key this
+  /// machine trusts and have had one of its files overwritten since. Reporting either case in one
+  /// word loses the half that matters.
+  /// </remarks>
+  /// <param name="ChainReason">
+  /// Why <paramref name="Chain"/> is <see cref="SignatureStatus.NotChecked"/>, when it is. A
+  /// database that has no concept of a signature over an installed file is not a check that failed.
+  /// </param>
+  private readonly record struct Verdict(
+    SignatureStatus Signature,
+    string? Detail,
+    SignatureStatus Chain,
+    string? ChainDetail,
+    UnknownReason ChainReason
+  );
+
   private ImageTrust Read(string path, in FileDigest digest, bool verify) {
     var owner = this.Owner(path, out var slot);
-    if (!verify)
-      return new(digest.Sha256, owner, SignatureStatus.NotChecked, null);
 
+    // Nothing claims the file. That is one answer to both questions and not a failure of either:
+    // there is no package to compare the bytes against and none to have signed them.
     if (owner.Source == PackageSource.None)
-      return new(
-        digest.Sha256,
-        owner,
+      return Trust(digest, owner, WithFile(
+        Chain(
+          SignatureStatus.Unsigned,
+          "nothing claims the file, so there is no package behind it whose signature could be followed"
+        ),
+        verify,
         SignatureStatus.Unsigned,
         "no packaging system on this machine claims this file, so nothing here vouches for its bytes"
-      );
+      ));
 
     if (!owner.WasChecked)
-      return new(digest.Sha256, owner, SignatureStatus.VerificationError, "the package databases could not be read");
+      return Trust(digest, owner, WithFile(
+        Chain(SignatureStatus.VerificationError, "the package databases could not be read"),
+        verify,
+        SignatureStatus.VerificationError,
+        "the package databases could not be read"
+      ));
 
-    var (status, detail) = this._slotSources[slot] == PackageSource.Pacman
-      ? VerifyPacman(this._slots[slot], path, digest)
-      : VerifyDpkg(this._slots[slot], path);
+    var pacman = this._slotSources[slot] == PackageSource.Pacman;
+    var chain = pacman ? PacmanChain(this._slots[slot]) : _dpkgChain;
 
-    return new(digest.Sha256, owner, status, detail);
+    // The chain is a reading of the package's own database entry and needs no hash of anything, so
+    // it is answered whenever the owner is: it costs one more small file per image, against an
+    // index that cost thirty megabytes to build. The file comparison is the dear half — it hashes
+    // the image — and waits until somebody asks for it (PRD §5.4).
+    return Trust(digest, owner, verify
+      ? pacman
+        ? VerifyPacman(this._slots[slot], path, digest, chain)
+        : VerifyDpkg(this._slots[slot], path, chain)
+      : chain);
   }
+
+  private static ImageTrust Trust(in FileDigest digest, PackageIdentity owner, in Verdict verdict) => new(
+    digest.Sha256,
+    owner,
+    verdict.Signature,
+    verdict.Detail,
+    verdict.Chain,
+    verdict.ChainDetail,
+    verdict.ChainReason
+  );
 
   /// <summary>Which package owns a path, confirmed against that package's own list.</summary>
   private PackageIdentity Owner(string path, out int slot) {
@@ -189,52 +236,79 @@ internal sealed class PackageDatabaseReader {
       : null;
 
   /// <summary>
-  /// Compares the file against the digest <c>pacman</c> recorded for it.
+  /// Compares the file against the digest <c>pacman</c> recorded for it, and reads separately what
+  /// stood behind the package when it was installed.
   /// </summary>
   /// <remarks>
-  /// Two readings and one verdict. <c>mtree</c> says what the bytes were when the package was
-  /// installed, and <c>%VALIDATION%</c> says whether a PGP signature was checked before they were
-  /// let on to the machine. A file that matches a package nobody signed is exactly as unsigned as
-  /// one that came from nowhere, and saying "Verified" of it would be a verdict about a signature
-  /// that never existed (PRD §70).
+  /// Two readings and two verdicts, which is the change §70's first requirement asked for.
+  /// <c>mtree</c> says what the bytes were when the package was installed; <c>%VALIDATION%</c> says
+  /// whether a PGP signature was checked before they were let on to the machine. They are the two
+  /// halves <c>pacman</c> itself reports apart — <c>pacman -Qkk</c> counts modified files and
+  /// <c>pacman -Qi</c> prints "Validated By" — and folding them into one word made this program
+  /// report a locally built package whose files were untouched as "Unsigned", which is a finding
+  /// about the packager smuggled into a column about the file.
   /// </remarks>
-  private static (SignatureStatus Status, string? Detail) VerifyPacman(string directory, string path, in FileDigest digest) {
+  private static Verdict VerifyPacman(string directory, string path, in FileDigest digest, in Verdict chain) {
     if (digest.Sha256 is not { Length: > 0 } sha256)
-      return (SignatureStatus.VerificationError, digest.Reason ?? "the image could not be read to hash it");
+      return Unchecked(digest.Reason ?? "the image could not be read to hash it", chain);
 
     if (!TryReadGzip(Path.Combine(directory, "mtree"), out var mtree))
-      return (SignatureStatus.VerificationError, "the package records no file digests to compare against");
+      return Unchecked("the package records no file digests to compare against", chain);
 
     var relative = Encoding.UTF8.GetBytes(path.TrimStart('/'));
     if (!PacmanLocalDatabase.TryFindEntry(mtree, relative, out var entry) || entry.Sha256 is not { } recorded)
-      return (SignatureStatus.VerificationError, "the package's manifest has no digest for this path");
+      return Unchecked("the package's manifest has no digest for this path", chain);
 
-    var description = TryRead(Path.Combine(directory, "desc"), out var desc)
-      ? PacmanLocalDatabase.ReadDescription(desc)
-      : default;
-
-    if (!string.Equals(recorded, sha256, StringComparison.OrdinalIgnoreCase))
-      return (
+    return string.Equals(recorded, sha256, StringComparison.OrdinalIgnoreCase)
+      ? new(
+        SignatureStatus.Verified,
+        "the running image is byte for byte the file its package recorded at this path, which is the comparison pacman -Qkk makes",
+        chain.Chain,
+        chain.ChainDetail,
+        chain.ChainReason
+      )
+      : new(
         SignatureStatus.InvalidSignature,
-        "the running image no longer matches the digest its package recorded for this path"
+        "the running image no longer matches the digest its package recorded for this path",
+        chain.Chain,
+        chain.ChainDetail,
+        chain.ChainReason
+      );
+  }
+
+  /// <summary>
+  /// What stood behind the package itself, out of <c>%VALIDATION%</c>.
+  /// </summary>
+  /// <remarks>
+  /// The only signature record on this machine, and a record of a check rather than a signature:
+  /// <c>pacman</c> verified the archive's PGP signature against the keyring at install time and
+  /// remembered that it did, while the signature went away with the archive. So this can say the
+  /// chain was followed and cannot say by which key — and it can never report a key that has since
+  /// expired or been withdrawn, because nothing here names one to ask about (PRD §70, §9.2).
+  /// </remarks>
+  private static Verdict PacmanChain(string directory) {
+    if (!TryRead(Path.Combine(directory, "desc"), out var desc))
+      return Chain(
+        SignatureStatus.VerificationError,
+        "the package's own database entry could not be read, so nothing here says what stood behind it"
       );
 
-    return description.Validation switch {
-      PacmanLocalDatabase.Validation.Signature => (
+    return PacmanLocalDatabase.ReadDescription(desc).Validation switch {
+      PacmanLocalDatabase.Validation.Signature => Chain(
         SignatureStatus.Verified,
-        "the image matches the digest its package recorded, and that package's PGP signature was verified when it was installed"
+        "the package's PGP signature was verified against this machine's keyring when it was installed, which is what pacman -Qi prints as \"Validated By: Signature\""
       ),
-      PacmanLocalDatabase.Validation.Checksum => (
+      PacmanLocalDatabase.Validation.Checksum => Chain(
         SignatureStatus.Unsigned,
-        "the image matches the digest its package recorded; the package itself was installed on a checksum, with nobody's signature on it"
+        "the package was installed on a checksum of its archive and nobody signed it, so no key stands behind these bytes"
       ),
-      PacmanLocalDatabase.Validation.None => (
+      PacmanLocalDatabase.Validation.None => Chain(
         SignatureStatus.Unsigned,
-        "the image matches the digest its package recorded; the package was installed with signature checking turned off"
+        "the package was installed with signature checking turned off, so no key stands behind these bytes"
       ),
-      _ => (
-        SignatureStatus.Unsigned,
-        "the image matches the digest its package recorded; the database does not say whether that package was signed"
+      _ => Chain(
+        SignatureStatus.VerificationError,
+        "the package's database entry does not record how it was validated when it was installed"
       ),
     };
   }
@@ -243,34 +317,65 @@ internal sealed class PackageDatabaseReader {
   /// Compares the file against the MD5 <c>dpkg</c> recorded for it.
   /// </summary>
   /// <remarks>
-  /// Never "Verified": <c>dpkg</c> keeps no record that anything was signed. Debian signs the
-  /// release files a package was fetched through, and none of that survives into the installed
-  /// database — so the strongest true statement here is that the file is the one that was installed,
-  /// and that is not a signature (PRD §70).
+  /// The chain half has no answer at all here, and that is not the same as answering that nothing
+  /// signed the package. <c>dpkg</c> keeps no record of a signature over an installed file: Debian
+  /// signs the release a package was fetched through and none of that survives installation, so the
+  /// question has no place to be asked rather than a negative answer (PRD §72.3).
   /// </remarks>
-  private static (SignatureStatus Status, string? Detail) VerifyDpkg(string listPath, string path) {
+  private static Verdict VerifyDpkg(string listPath, string path, in Verdict chain) {
     var sums = listPath[..^_LIST.Length] + _MD5SUMS;
     if (!TryRead(sums, out var content))
-      return (SignatureStatus.VerificationError, "the package records no file digests to compare against");
+      return Unchecked("the package records no file digests to compare against", chain);
 
     var recorded = DpkgDatabase.FindMd5(content, Encoding.UTF8.GetBytes(path.TrimStart('/')));
     if (recorded is null)
-      return (SignatureStatus.VerificationError, "the package's digest list has no entry for this path");
+      return Unchecked("the package's digest list has no entry for this path", chain);
 
     var actual = FileDigest.Md5Of(path);
     if (actual is null)
-      return (SignatureStatus.VerificationError, "the image could not be read to hash it");
+      return Unchecked("the image could not be read to hash it", chain);
 
     return string.Equals(recorded, actual, StringComparison.OrdinalIgnoreCase)
-      ? (
-        SignatureStatus.Unsigned,
-        "the image matches the digest dpkg recorded for it; dpkg keeps no record of a signature over the installed file"
+      ? new(
+        SignatureStatus.Verified,
+        "the running image matches the MD5 dpkg recorded for it, which is the comparison dpkg --verify makes",
+        chain.Chain,
+        chain.ChainDetail,
+        chain.ChainReason
       )
-      : (
+      : new(
         SignatureStatus.InvalidSignature,
-        "the running image no longer matches the digest dpkg recorded for this path"
+        "the running image no longer matches the digest dpkg recorded for this path",
+        chain.Chain,
+        chain.ChainDetail,
+        chain.ChainReason
       );
   }
+
+  /// <summary>
+  /// What <c>dpkg</c> can say about a chain, which is nothing at all (PRD §72.3).
+  /// </summary>
+  private static readonly Verdict _dpkgChain = Chain(
+    SignatureStatus.NotChecked,
+    "dpkg keeps no record of a signature over an installed file: Debian signs the release a package was fetched through, and none of that survives into the installed database",
+    UnknownReason.NotSupportedOnPlatform
+  );
+
+  /// <summary>A chain answer on its own, before there is a file verdict to go with it.</summary>
+  private static Verdict Chain(SignatureStatus status, string detail, UnknownReason reason = UnknownReason.None)
+    => new(SignatureStatus.NotChecked, null, status, detail, reason);
+
+  /// <summary>The same chain answer, with the file verdict filled in when somebody asked for one.</summary>
+  private static Verdict WithFile(in Verdict chain, bool verify, SignatureStatus status, string detail)
+    => verify ? chain with { Signature = status, Detail = detail } : chain;
+
+  /// <summary>
+  /// The file could not be compared, which is a failure to check and never a check that passed. The
+  /// chain answer survives it: what stood behind the package is a separate reading and is still
+  /// known.
+  /// </summary>
+  private static Verdict Unchecked(string detail, in Verdict chain)
+    => new(SignatureStatus.VerificationError, detail, chain.Chain, chain.ChainDetail, chain.ChainReason);
 
   /// <summary>
   /// Reads every installed package's file list, once.

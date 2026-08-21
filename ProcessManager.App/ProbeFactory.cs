@@ -74,6 +74,11 @@ internal static class ProbeFactory {
   /// That is the identity plus a hash of every distinct image, out of the same cache the digest
   /// columns use (PRD §70).
   /// </param>
+  /// <param name="wantApplicationName">
+  /// Whether anything on this run asked what a person calls each running program. It reads every
+  /// desktop entry on the machine once — around three hundred small files — to build the index
+  /// behind the column (PRD §5.4, §14).
+  /// </param>
   /// <param name="wantRuntime">
   /// Whether anything on this run asked what is executing inside each process. It reads
   /// <c>maps</c> once per process, which is the only honest source and not a free one (PRD §14).
@@ -103,6 +108,7 @@ internal static class ProbeFactory {
     bool wantSocketCounts = false,
     bool wantPackageIdentity = false,
     bool wantPackageVerification = false,
+    bool wantApplicationName = false,
     bool wantRuntime = false,
     bool wantImageCreationTime = false,
     bool wantSecurityStatus = false
@@ -137,6 +143,7 @@ internal static class ProbeFactory {
             ReadSocketCounts = wantSocketCounts,
             ReadPackageIdentity = wantPackageIdentity,
             ReadPackageVerification = wantPackageVerification,
+            ReadApplicationName = wantApplicationName,
             ReadRuntime = wantRuntime,
             ReadImageCreationTime = wantImageCreationTime,
             ReadSecurityStatus = wantSecurityStatus,
@@ -170,6 +177,10 @@ internal static class ProbeFactory {
             // describe this machine while claiming to describe that one (PRD §9.1).
             ReadPackageIdentity = false,
             ReadPackageVerification = false,
+            // The desktop entries belong to the machine that was recorded and are not in the
+            // capture either, and reading this machine's would name somebody else's processes after
+            // whatever happens to be installed here (PRD §9.1).
+            ReadApplicationName = false,
             ReadRuntime = wantRuntime,
             ReadImageCreationTime = false,
             // The recorded tree carries each process's status verbatim, so these five lines

@@ -60,6 +60,7 @@ internal static class Program {
       options.WantsSocketCounts,
       options.WantsPackageIdentity,
       options.WantsPackageVerification,
+      options.WantsApplicationName,
       options.WantsRuntime,
       options.WantsImageCreationTime,
       options.WantsSecurityStatus

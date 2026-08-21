@@ -675,6 +675,61 @@ public struct ProcessRecord {
   public string? PackageStatusDetail;
 
   /// <summary>
+  /// Whether anybody this machine trusts signed for the image (PRD §70).
+  /// </summary>
+  /// <remarks>
+  /// Trust-chain verification, and its own reading. On Linux it is what the packaging system
+  /// recorded about the package rather than about the file — <c>pacman</c>'s <c>%VALIDATION%</c>,
+  /// the fact <c>pacman -Qi</c> prints as "Validated By". It is routinely not the same answer as
+  /// <see cref="PackageStatus"/>: a package built on this machine ships files that match their
+  /// record exactly and carries nobody's signature, and reporting that in one word lost whichever
+  /// half the reader wanted.
+  /// </remarks>
+  public SignatureStatus TrustChain;
+
+  /// <summary>One sentence naming what stands behind the package, or what does not.</summary>
+  public string? TrustChainDetail;
+
+  /// <summary>
+  /// Why <see cref="TrustChain"/> is <see cref="SignatureStatus.NotChecked"/>: not asked for, or a
+  /// packaging system with no concept of a signature over an installed file.
+  /// </summary>
+  /// <remarks>
+  /// <see cref="SignatureStatus.Unsigned"/> is a finding — somebody looked and nothing had signed
+  /// it — so the absence of an answer needs a reason of its own rather than borrowing that word
+  /// (PRD §72.3).
+  /// </remarks>
+  public UnknownReason TrustChainReason;
+
+  /// <summary>
+  /// What a person calls the program, out of the desktop entry that starts it (PRD §14).
+  /// </summary>
+  /// <remarks>
+  /// The Linux answer to a Windows binary's product name. There is nothing inside an ELF to read it
+  /// out of, so it comes from the <c>.desktop</c> file whose <c>Exec</c> starts this image — the
+  /// same string the machine's own menu shows. Null with
+  /// <see cref="ApplicationNameReason"/> at <see cref="UnknownReason.None"/> means the machine has
+  /// no entry for the program, which is most of a process table and is a finding rather than a hole.
+  /// </remarks>
+  public string? ApplicationName;
+
+  /// <summary>
+  /// Set when more than one application starts this program and nothing distinguishes them.
+  /// </summary>
+  /// <remarks>
+  /// Its own answer, because it is not the absence of one. Eight desktop entries start
+  /// <c>libreoffice</c> on the machine this was written on and each carries a different name;
+  /// picking one would report a spreadsheet as a drawing half the time (PRD §5.3).
+  /// </remarks>
+  public bool ApplicationNameAmbiguous;
+
+  /// <summary>
+  /// Why <see cref="ApplicationName"/> is <see langword="null"/>: not asked for, no image to look
+  /// up, or no permission to see which image it is.
+  /// </summary>
+  public UnknownReason ApplicationNameReason;
+
+  /// <summary>
   /// What is executing inside the process — a runtime, or machine code (PRD §14).
   /// </summary>
   /// <remarks>
