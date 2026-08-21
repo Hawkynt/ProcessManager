@@ -119,6 +119,124 @@ public sealed class ElfImageTests {
     }
   }
 
+  /// <summary>
+  /// The same idea, with everything §31 asks of an image's headers: the two segments that carry the
+  /// stack and relocation hardening, a note segment holding a build identity and a processor feature
+  /// list, and a dynamic section that names two libraries and asks for eager binding.
+  /// </summary>
+  /// <remarks>
+  /// A second builder rather than more parameters on the first: this one needs six program headers
+  /// and six dynamic entries where that one has three of each, so every offset in it moves. The
+  /// offsets are its own and are spaced with room between them, because an image whose sections
+  /// abut is one where a length error reads the next section and still parses.
+  /// </remarks>
+  private static byte[] BuildHardened(bool is64, bool executableStack, bool relro, bool bindNow, bool aarch64) {
+    const int InterpreterOffset = 448;
+    const int DynamicOffset = 512;
+    const int StringTableOffset = 640;
+    const int NotesOffset = 704;
+    const ulong LoadBias = 0x10000;
+
+    // NUL, then three names, each preceded by the NUL that ends the one before it.
+    var strings = "\0" + _Soname + "\0libc.so.6\0libm.so.6\0";
+    var libcOffset = 1 + _Soname.Length + 1;
+    var libmOffset = libcOffset + "libc.so.6".Length + 1;
+
+    var image = new byte[1024];
+    var headerSize = is64 ? 64 : 52;
+    var programHeaderSize = is64 ? 56 : 32;
+
+    image[0] = 0x7F;
+    image[1] = (byte)'E';
+    image[2] = (byte)'L';
+    image[3] = (byte)'F';
+    image[4] = (byte)(is64 ? 2 : 1);
+    image[5] = 1;
+    image[6] = 1;
+
+    // ET_DYN with an interpreter: a position-independent executable, which is what a current
+    // toolchain produces and what the position-independence flag is about.
+    Write16(16, 3);
+    Write16(18, aarch64 ? (ushort)183 : (ushort)62);
+    WriteWord(24, 0x1120);
+    WriteWord(is64 ? 32 : 28, (ulong)headerSize);
+    Write16(is64 ? 54 : 42, (ushort)programHeaderSize);
+    Write16(is64 ? 56 : 44, 6);
+
+    WriteProgramHeader(0, 1, 4, 0, LoadBias, (ulong)image.Length);
+    WriteProgramHeader(1, 2, 6, DynamicOffset, LoadBias + DynamicOffset, 96);
+    WriteProgramHeader(2, 3, 4, InterpreterOffset, LoadBias + InterpreterOffset, (ulong)_Interpreter.Length + 1);
+    // PT_GNU_STACK. Its execute bit is the whole of what it says, and the segment has no contents.
+    WriteProgramHeader(3, 0x6474E551, executableStack ? 7u : 6u, 0, 0, 0);
+    WriteProgramHeader(4, relro ? 0x6474E552u : 0x6474E550u, 4, DynamicOffset, LoadBias + DynamicOffset, 96);
+    WriteProgramHeader(5, 4, 4, NotesOffset, LoadBias + NotesOffset, 56);
+
+    WriteDynamic(0, 14, 1);
+    WriteDynamic(1, 5, LoadBias + StringTableOffset);
+    WriteDynamic(2, 1, (ulong)libcOffset);
+    WriteDynamic(3, 1, (ulong)libmOffset);
+    // DT_FLAGS_1 with DF_1_NOW, which is how a current linker asks for eager binding — and not the
+    // ancient DT_BIND_NOW, which is what a reader looking for only one of the three spellings finds.
+    WriteDynamic(4, 0x6FFFFFFB, bindNow ? 1ul : 0ul);
+    WriteDynamic(5, 0, 0);
+
+    Encoding.ASCII.GetBytes(_Interpreter).CopyTo(image, InterpreterOffset);
+    Encoding.ASCII.GetBytes(strings).CopyTo(image, StringTableOffset);
+    WriteNotes();
+    return image;
+
+    void Write16(int offset, ushort value) => BinaryPrimitives.WriteUInt16LittleEndian(image.AsSpan(offset), value);
+
+    void Write32(int offset, uint value) => BinaryPrimitives.WriteUInt32LittleEndian(image.AsSpan(offset), value);
+
+    void WriteWord(int offset, ulong value) {
+      if (is64)
+        BinaryPrimitives.WriteUInt64LittleEndian(image.AsSpan(offset), value);
+      else
+        BinaryPrimitives.WriteUInt32LittleEndian(image.AsSpan(offset), (uint)value);
+    }
+
+    void WriteProgramHeader(int index, uint segment, uint flags, ulong fileOffset, ulong virtualAddress, ulong size) {
+      var at = headerSize + index * programHeaderSize;
+      Write32(at, segment);
+      // The one field the two classes order differently: straight after the type on a 64-bit image,
+      // and last of all on a 32-bit one.
+      Write32(at + (is64 ? 4 : 24), flags);
+      WriteWord(at + (is64 ? 8 : 4), fileOffset);
+      WriteWord(at + (is64 ? 16 : 8), virtualAddress);
+      WriteWord(at + (is64 ? 32 : 16), size);
+    }
+
+    void WriteDynamic(int index, ulong tag, ulong value) {
+      var at = DynamicOffset + index * (is64 ? 16 : 8);
+      WriteWord(at, tag);
+      WriteWord(at + (is64 ? 8 : 4), value);
+    }
+
+    void WriteNotes() {
+      // NT_GNU_BUILD_ID: four bytes of name, eight of description, type 3.
+      Write32(NotesOffset, 4);
+      Write32(NotesOffset + 4, 8);
+      Write32(NotesOffset + 8, 3);
+      Encoding.ASCII.GetBytes("GNU\0").CopyTo(image, NotesOffset + 12);
+      for (var i = 0; i < 8; ++i)
+        image[NotesOffset + 16 + i] = (byte)(0xA0 + i);
+
+      // NT_GNU_PROPERTY_TYPE_0, holding one feature word. Its data is padded to the size of an
+      // address, which is the one part of this structure that is not the same in both classes.
+      var property = NotesOffset + 24;
+      var alignment = is64 ? 8 : 4;
+      Write32(property, 4);
+      Write32(property + 4, (uint)(8 + alignment));
+      Write32(property + 8, 5);
+      Encoding.ASCII.GetBytes("GNU\0").CopyTo(image, property + 12);
+      Write32(property + 16, aarch64 ? 0xC0000000u : 0xC0000002u);
+      Write32(property + 20, 4);
+      // Both bits: IBT and the shadow stack on x86, BTI and pointer authentication on AArch64.
+      Write32(property + 24, 3);
+    }
+  }
+
   private static ElfImage.ElfRead Over(byte[] image) => (offset, buffer) => {
     if (offset < 0 || offset >= image.Length)
       return 0;

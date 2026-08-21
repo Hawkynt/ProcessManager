@@ -69,6 +69,39 @@ public sealed class DetailPane : IDisposable {
   private IReadOnlyList<ThreadRecord> _threadRows = [];
 
   /// <summary>
+  /// What the module and descriptor lists are showing, for the actions that act on a row.
+  /// </summary>
+  /// <remarks>
+  /// Kept for the same reason the thread rows are: a cell holds text, and an action needs the
+  /// reading behind it. A descriptor's inode is what a search for its other holders is keyed on, and
+  /// the cell shows it humanised; parsing it back out of the table would be reading our own
+  /// formatting (PRD §32).
+  /// </remarks>
+  private IReadOnlyList<HandleRecord> _handleRows = [];
+
+  private IReadOnlyList<ModuleRecord> _moduleRows = [];
+
+  /// <summary>
+  /// The socket join of the descriptor list: inode to endpoint, from the process's own connections.
+  /// </summary>
+  /// <remarks>
+  /// Filled once per fill of the list rather than once per row — the five network tables are read
+  /// whole either way — and kept afterwards so that the properties box of one descriptor can show
+  /// the endpoint without reading them again (PRD §40).
+  /// </remarks>
+  private readonly Dictionary<ulong, string> _endpoints = [];
+
+  /// <summary>
+  /// A snapshot for the actions that need to know about processes other than this one.
+  /// </summary>
+  /// <remarks>
+  /// Reused rather than made per request, because a snapshot owns its arrays and the two actions
+  /// that want one — following a pidfd to its process, and finding the other holders of a resource —
+  /// are both things somebody clicks rather than things that happen on a tick (PRD §5.4).
+  /// </remarks>
+  private SystemSnapshot? _machine;
+
+  /// <summary>
   /// What may be done to a thread, or null in a read-only front-end.
   /// </summary>
   /// <remarks>
@@ -86,6 +119,7 @@ public sealed class DetailPane : IDisposable {
     this._probe = probe;
     this._threads.ContextMenuStrip = this.BuildThreadMenu();
     this._modules.ContextMenuStrip = this.BuildModuleMenu();
+    this._handles.ContextMenuStrip = this.BuildHandleMenu();
 
     this._tabs.Dock = DockStyle.Fill;
     this._overview.Dock = DockStyle.Fill;
@@ -147,37 +181,61 @@ public sealed class DetailPane : IDisposable {
       ("Start module", 132),
       ("Started", 108)
     );
+    // Nineteen columns, which is more than fits: the list scrolls sideways now, so the ones past the
+    // edge are reachable rather than lost. The order is what that changes — everything a reader
+    // opens this tab for is in the first screenful, and the addresses, timestamps and identities
+    // they go looking for on purpose are behind a scroll (PRD §31).
     AddList(
       "Modules",
       this._modules,
-      ("Path", 380),
-      ("Base", 130),
-      ("End", 130),
-      ("Size", 80),
-      ("Resident", 80),
-      ("Perm", 56),
-      ("Type", 100),
-      ("Arch", 80),
-      ("SONAME", 160),
-      ("Offset", 90),
-      ("Device", 62),
-      ("Inode", 90),
-      ("File size", 80),
-      ("Modified", 130),
-      ("Maps", 50),
-      ("Interpreter", 220)
+      ("Path", 340),
+      ("Base", 124),
+      ("Size", 76),
+      ("Resident", 78),
+      ("Perm", 52),
+      ("Type", 96),
+      // Why the image is here: the program, its loader, something it links against, something that
+      // links against that, or nothing anybody named. Derived from the dependency graph, because
+      // Linux publishes no load reason at all (PRD §31).
+      ("Load", 84),
+      // What the file asks the kernel for, in checksec's vocabulary. As wide as
+      // "PIE NX RELRO+NOW CET", which is what a current distribution's binaries say.
+      ("Mitigations", 168),
+      ("Arch", 74),
+      ("SONAME", 150),
+      ("End", 124),
+      ("Offset", 88),
+      ("Device", 60),
+      ("Inode", 84),
+      ("File size", 78),
+      ("Modified", 128),
+      ("Maps", 46),
+      // The build identity, which is what a distribution's debug packages and crash reports are
+      // keyed by. Forty hex characters at this width shows the first eight or so, which is as much
+      // as anybody compares by eye; the whole of it is what "Copy row" puts on the clipboard.
+      ("Build ID", 150),
+      ("Interpreter", 200)
     );
     AddList(
       "Handles",
       this._handles,
-      ("Type", 110),
-      ("FD", 60),
-      ("Access", 60),
-      ("Position", 90),
-      ("Inode", 100),
-      ("Endpoint", 200),
-      ("Flags", 220),
-      ("Name", 520)
+      ("Type", 100),
+      ("FD", 46),
+      ("Access", 58),
+      ("Position", 84),
+      // Which device the descriptor's inode is on and what kind of file system that is, from the
+      // mount its fdinfo names. Empty for a socket or a pipe, which are on file systems the kernel
+      // mounts nowhere (PRD §32).
+      ("Device", 62),
+      ("Filesystem", 76),
+      ("Inode", 92),
+      ("Endpoint", 190),
+      ("Flags", 200),
+      ("Name", 420),
+      // Whatever fdinfo said that belongs to this kind of descriptor and no other: an eventfd's
+      // count, the descriptors an epoll set is watching, an inotify watch. One line here and the
+      // whole of it in the properties box.
+      ("Detail", 300)
     );
 
     // The per-kind tally of §20 sits above the descriptors it was counted from rather than becoming
@@ -431,9 +489,209 @@ public sealed class DetailPane : IDisposable {
   private ContextMenuStrip BuildModuleMenu() {
     var menu = new ContextMenuStrip();
     menu.Items.Add(ModuleItem("Copy path", path => Clipboard.SetText(path)));
+    menu.Items.Add(ModuleItem("Copy row", path => Clipboard.SetText(this.DescribeModule(path))));
+
+    var all = new ToolStripMenuItem("Copy all modules");
+    all.Click += (_, _) => Clipboard.SetText(this.DescribeModules());
+    menu.Items.Add(all);
+
     menu.Items.Add(ModuleItem("Open folder", this.RevealModule));
     menu.Items.Add(ModuleItem("File properties…", path => new FilePropertiesDialog(path, this.ModuleFacts(path), this.Actions).ShowDialog()));
     return menu;
+  }
+
+  /// <summary>One module as text, using the visible columns and their headers (PRD §31, §95).</summary>
+  /// <remarks>
+  /// The whole row rather than the path: the build identity is forty hex characters shown eight at a
+  /// time, and the mitigation list is what somebody is most likely to want to paste into a bug
+  /// report. Copying is the only way to either of them in full.
+  /// </remarks>
+  private string DescribeModule(string path) {
+    foreach (TreeNode node in this._modules.Nodes)
+      if (node.Tag is string[] cells && cells.Length > 0 && cells[0].StartsWith(path, StringComparison.Ordinal))
+        return Headers(this._modules) + "\n" + Row(node);
+
+    return string.Empty;
+  }
+
+  private string DescribeModules() {
+    var text = new System.Text.StringBuilder();
+    text.Append(Headers(this._modules));
+    foreach (TreeNode node in this._modules.Nodes)
+      text.Append('\n').Append(Row(node));
+
+    return text.ToString();
+  }
+
+  /// <summary>
+  /// What can be done with one open descriptor (PRD §32).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Four of §32's five actions. "Go to owning process" is here in the only form that means
+  /// anything: every row belongs to the process the pane is showing, so the useful navigation is to
+  /// the process a descriptor <em>names</em> — the target of a pidfd, or a process at the other end
+  /// of a pipe.
+  /// </para>
+  /// <para>
+  /// Closing a descriptor in another process is absent rather than disabled. Linux offers no
+  /// supported way to do it, and an item that could only ever refuse is a lie dressed as a feature
+  /// (PRD §32, §69).
+  /// </para>
+  /// </remarks>
+  private ContextMenuStrip BuildHandleMenu() {
+    var menu = new ContextMenuStrip();
+    menu.Items.Add(HandleItem("Copy row", (in HandleRecord handle) => Clipboard.SetText(this.DescribeHandle(in handle))));
+
+    var all = new ToolStripMenuItem("Copy all descriptors");
+    all.Click += (_, _) => Clipboard.SetText(this.DescribeHandles());
+    menu.Items.Add(all);
+
+    menu.Items.Add(HandleItem("Open folder", this.RevealDescriptor));
+    menu.Items.Add(HandleItem("Resource properties…", (in HandleRecord handle) => this.ShowHandleProperties(in handle)));
+    menu.Items.Add(HandleItem("Go to the process this names", this.GoToNamedProcess));
+    menu.Items.Add(HandleItem(
+      "Find what else holds this…",
+      (in HandleRecord handle) => this.ShowHandleProperties(in handle, holders: true)
+    ));
+    return menu;
+  }
+
+  private delegate void HandleAction(in HandleRecord handle);
+
+  private ToolStripMenuItem HandleItem(string text, HandleAction action) {
+    var item = new ToolStripMenuItem(text);
+    item.Click += (_, _) => {
+      if (this.SelectedHandle is { } handle)
+        action(in handle);
+    };
+
+    return item;
+  }
+
+  /// <summary>
+  /// The record behind the selected descriptor row, or null when nothing is selected.
+  /// </summary>
+  /// <remarks>
+  /// Matched on the descriptor number in the second cell rather than on the row's position: the list
+  /// is refilled while the menu exists, and a process that closed something between the fill and the
+  /// click would otherwise hand back a different descriptor than the one under the pointer.
+  /// </remarks>
+  private HandleRecord? SelectedHandle {
+    get {
+      if (this._handles.SelectedNode?.Tag is not string[] cells || cells.Length < 2)
+        return null;
+
+      if (!ulong.TryParse(cells[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var fd))
+        return null;
+
+      for (var i = 0; i < this._handleRows.Count; ++i)
+        if (this._handleRows[i].Handle == fd)
+          return this._handleRows[i];
+
+      return null;
+    }
+  }
+
+  /// <summary>Opens the folder a descriptor's name lives in, when it has one (PRD §32).</summary>
+  /// <remarks>
+  /// A socket, a pipe and an anonymous inode are named by the kernel and not by the file system, so
+  /// there is no folder to open and this says which of the two it is rather than opening the file
+  /// manager on a name that is not a path.
+  /// </remarks>
+  private void RevealDescriptor(in HandleRecord handle) {
+    if (handle.Name is not { Length: > 0 } name || !name.StartsWith('/')) {
+      MessageBox.Show(
+        "This descriptor has no path: the kernel names it, not the file system.",
+        "Process Manager"
+      );
+
+      return;
+    }
+
+    this.RevealModule(name);
+  }
+
+  /// <summary>
+  /// Opens a properties window on the process a descriptor names (PRD §32).
+  /// </summary>
+  /// <remarks>
+  /// A pidfd names one directly. Nothing else does — which is why this refuses rather than opening
+  /// the process the descriptor belongs to, since that one is already the window the reader is in.
+  /// </remarks>
+  private void GoToNamedProcess(in HandleRecord handle) {
+    if (!handle.TargetPid.TryGetValue(out var pid)) {
+      MessageBox.Show(
+        "This descriptor names no process. Only a pidfd does, and this is a "
+        + Humanize.ResourceKind(handle.Kind) + ".",
+        "Process Manager"
+      );
+
+      return;
+    }
+
+    this.OpenProcess((int)pid);
+  }
+
+  /// <summary>
+  /// Opens a properties window on another process, by pid.
+  /// </summary>
+  /// <remarks>
+  /// A pid on its own is not an identity — §3.2 pairs it with the process's start time, because the
+  /// number is reused — so the machine is sampled to find the pair. That is also what turns the
+  /// number into a name for the title bar, and what makes "that process has already gone" a
+  /// sentence this can say.
+  /// </remarks>
+  private void OpenProcess(int pid) {
+    foreach (var process in this.Machine().Processes)
+      if (process.Pid == pid) {
+        new ProcessPropertiesWindow(this._probe, process.Key, process.Name, this.Actions).Show();
+        return;
+      }
+
+    MessageBox.Show($"There is no process {pid} any more.", "Process Manager");
+  }
+
+  /// <summary>Everything about one descriptor, in a window of its own (PRD §32).</summary>
+  private void ShowHandleProperties(in HandleRecord handle, bool holders = false) {
+    var dialog = new HandlePropertiesDialog(
+      this._probe,
+      this._key,
+      in handle,
+      handle.Inode.TryGetValue(out var inode) && this._endpoints.TryGetValue(inode, out var endpoint) ? endpoint : null,
+      this.Actions
+    );
+
+    dialog.Show();
+    if (holders)
+      dialog.FindHolders();
+  }
+
+  /// <summary>The machine, sampled once and kept for the actions that need more than this process.</summary>
+  private SystemSnapshot Machine() {
+    this._machine ??= new();
+    this._probe.Sample(this._machine);
+    return this._machine;
+  }
+
+  /// <summary>One descriptor as text, using the visible columns and their headers (PRD §32, §95).</summary>
+  private string DescribeHandle(in HandleRecord handle) {
+    var number = handle.Handle.ToString(CultureInfo.InvariantCulture);
+    foreach (TreeNode node in this._handles.Nodes)
+      if (node.Tag is string[] cells && cells.Length > 1 && cells[1] == number)
+        return Headers(this._handles) + "\n" + Row(node);
+
+    return string.Empty;
+  }
+
+  /// <summary>Every descriptor as text, in the order the list shows them.</summary>
+  private string DescribeHandles() {
+    var text = new System.Text.StringBuilder();
+    text.Append(Headers(this._handles));
+    foreach (TreeNode node in this._handles.Nodes)
+      text.Append('\n').Append(Row(node));
+
+    return text.ToString();
   }
 
   private ToolStripMenuItem ModuleItem(string text, Action<string> action) {
@@ -743,38 +1001,45 @@ public sealed class DetailPane : IDisposable {
 
   private void FillModules() {
     var modules = this._probe.GetModules(this._key);
+    this._moduleRows = modules;
     Fill(this._modules, modules.Count, i => [
       // A deleted image is still mapped and still running; saying so on the path is the only warning
       // that the file on disk is no longer the code in memory (PRD §31).
       modules[i].IsDeleted ? modules[i].Path + "  (deleted)" : modules[i].Path,
       Humanize.Address(modules[i].BaseAddress),
-      Humanize.Address(modules[i].EndAddress),
       Humanize.Bytes(modules[i].Size),
       Humanize.Bytes(modules[i].ResidentBytes),
       // The kernel's own four characters: read, write, execute, and shared-or-private. Three of §31's
       // flags in one column, in the notation anybody who has read a maps file already knows.
       modules[i].Permissions.Length > 0 ? modules[i].Permissions : "—",
       Humanize.ImageType(modules[i].Type),
+      Humanize.LoadReason(modules[i].LoadReason),
+      Humanize.Mitigations(modules[i].Mitigations),
       modules[i].Architecture ?? "—",
       modules[i].Soname ?? "—",
+      Humanize.Address(modules[i].EndAddress),
       Humanize.Address(modules[i].FileOffset),
       modules[i].Device ?? "—",
       Humanize.Count(modules[i].Inode),
       Humanize.Bytes(modules[i].FileSizeBytes),
       Humanize.Timestamp(modules[i].FileModifiedUtcTicks),
       modules[i].MappingCount.ToString(CultureInfo.InvariantCulture),
+      // An image built without --build-id has no such note, which is a fact about the build and not
+      // about our access to it — hence the dash rather than a refusal placeholder.
+      modules[i].BuildId ?? "—",
       modules[i].Interpreter ?? "—",
     ]);
   }
 
   private void FillHandles() {
     var handles = this._probe.GetHandles(this._key);
+    this._handleRows = handles;
 
     // The socket join, done once for the list rather than once per row: the five network tables are
     // read whole either way, and a per-row lookup would read them once per socket the process holds.
-    var endpoints = new Dictionary<ulong, string>();
+    this._endpoints.Clear();
     foreach (var connection in this._probe.GetConnections(this._key))
-      endpoints[connection.Inode] = connection.RemotePort == 0
+      this._endpoints[connection.Inode] = connection.RemotePort == 0
         ? $"{Humanize.LocalEndpoint(connection)} {connection.State}"
         : $"{Humanize.LocalEndpoint(connection)} → {Humanize.RemoteEndpoint(connection)}";
 
@@ -784,20 +1049,43 @@ public sealed class DetailPane : IDisposable {
       handles[i].Handle.ToString(CultureInfo.InvariantCulture),
       handles[i].Access ?? "—",
       Humanize.Count(handles[i].Position),
+      // A descriptor on no mounted file system — a socket, a pipe, an anonymous inode — has no
+      // device to name, and the mount id it carries names a file system the kernel keeps to itself.
+      // The dash is that answer; a refusal shows the reason the mount id carries instead.
+      handles[i].Device ?? Unmounted(handles[i].MountId),
+      handles[i].FileSystem ?? Unmounted(handles[i].MountId),
       Humanize.Count(handles[i].Inode),
-      handles[i].Inode.TryGetValue(out var inode) && endpoints.TryGetValue(inode, out var endpoint)
-        ? endpoint
-        // A socket with no row in the five tables closed between the two reads — and every other kind
-        // of descriptor has no endpoint at all, which is the same dash for a different reason.
-        : "—",
+      this.EndpointOf(handles[i]),
       DescriptorParser.DescribeFlags(handles[i].OpenFlags) ?? Humanize.Placeholder(handles[i].OpenFlags.Reason),
       // A handle the kernel would not name is a normal outcome on Windows, not a failure — see
       // HandleNameResolver. Saying so beats a blank cell nobody can interpret.
       handles[i].TargetPid.TryGetValue(out var target)
         ? $"{handles[i].Name} → pid {target}"
         : handles[i].Name ?? "<not named>",
-    ]);
+      // One line of it. An epoll set watching four hundred descriptors would otherwise be four
+      // hundred lines in a cell one line high, and the properties box is where the rest of it is.
+      OneLine(handles[i].Detail),
+    ], identity: 1);
   }
+
+  /// <summary>The row of the five network tables this descriptor's inode belongs to, if any.</summary>
+  private string EndpointOf(in HandleRecord handle)
+    => handle.Inode.TryGetValue(out var inode) && this._endpoints.TryGetValue(inode, out var endpoint)
+      ? endpoint
+      // A socket with no row in the five tables closed between the two reads — and every other kind
+      // of descriptor has no endpoint at all, which is the same dash for a different reason.
+      : "—";
+
+  /// <summary>
+  /// Why a descriptor has no device: because it is on nothing mountable, or because nobody could
+  /// read its <c>fdinfo</c> to find out.
+  /// </summary>
+  private static string Unmounted(Counter mountId)
+    => mountId.HasValue ? "—" : Humanize.Placeholder(mountId.Reason);
+
+  /// <summary>Several lines of kernel detail as one, for a cell one line high.</summary>
+  private static string OneLine(string? detail)
+    => detail is { Length: > 0 } ? string.Join(" · ", detail.Split('\n')) : "—";
 
   private void FillEnvironment() {
     var variables = this._probe.GetEnvironment(this._key);
@@ -936,8 +1224,16 @@ public sealed class DetailPane : IDisposable {
   /// is the identity: a thread id, a module path, a descriptor number. A row whose identity is gone
   /// leaves nothing selected, which is the truth about a thread that ended.
   /// </remarks>
-  private static void Fill(TreeListView list, int count, Func<int, string[]> row) {
-    var wasSelected = list.SelectedNode?.Text;
+  /// <param name="identity">
+  /// Which cell says that two rows are the same row. The first, except where the first cell is a
+  /// category rather than a name: every descriptor of a process that holds thirty files has "file"
+  /// in its first cell, and restoring the selection by that put it on whichever of the thirty came
+  /// first.
+  /// </param>
+  private static void Fill(TreeListView list, int count, Func<int, string[]> row, int identity = 0) {
+    var wasSelected = list.SelectedNode?.Tag is string[] selected && identity < selected.Length
+      ? selected[identity]
+      : list.SelectedNode?.Text;
     list.Nodes.Clear();
     if (count == 0) {
       // An empty list and a list we were not allowed to read look identical, so the empty case says
@@ -957,7 +1253,8 @@ public sealed class DetailPane : IDisposable {
       var cells = row(i);
       var node = new TreeNode(cells[0]) { Tag = cells };
       list.Nodes.Add(node);
-      if (wasSelected is not null && string.Equals(node.Text, wasSelected, StringComparison.Ordinal))
+      var name = identity < cells.Length ? cells[identity] : cells[0];
+      if (wasSelected is not null && string.Equals(name, wasSelected, StringComparison.Ordinal))
         list.SelectedNode = node;
     }
   }

@@ -279,8 +279,12 @@ internal static class Program {
     var pattern = options.Pattern ?? string.Empty;
     var matches = ResourceSearch.Find(probe, sampler.Current, pattern);
     foreach (var match in matches)
+      // The access mode sits between the kind and the thing itself: for an open file it is what the
+      // holder may do with it, which is the next question after "who has it" every time, and for a
+      // mapping it is the permission characters. A dash where the question does not arise (PRD §33).
       Console.WriteLine(
-        $"{match.Pid,7} {match.UserName ?? "?",-12} {match.ProcessName,-24} {Describe(match.Kind)}  {match.Detail}"
+        $"{match.Pid,7} {match.UserName ?? "?",-12} {match.ProcessName,-24} {Describe(match.Kind)}"
+        + $"  {match.Access ?? "—",-4}  {match.Detail}"
       );
 
     if (matches.Count == 0)
