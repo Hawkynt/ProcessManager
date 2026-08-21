@@ -31,8 +31,8 @@ shorthand:
 it is not known*. An unticked box must never become a zero on screen. This is restated here because
 it is the single requirement most likely to be broken while filling the tables in.
 
-**Counting, as of the last update:** **942 of 1358 boxes are ticked** — 151 of 205 in the field
-registry (§14–22), 791 of 1153 across the capabilities. A further 97 are marked 🟡, meaning some of
+**Counting, as of the last update:** **969 of 1361 boxes are ticked** — 151 of 205 in the field
+registry (§14–22), 818 of 1156 across the capabilities. A further 154 are marked 🟡, meaning some of
 the work behind them is already done. §100 tracks the phases; §101 defines when this may be called
 finished.
 
