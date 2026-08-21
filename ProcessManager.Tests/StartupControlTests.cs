@@ -90,7 +90,23 @@ public sealed class StartupControlTests {
   public void OffAndOnAgainLeavesTheEntryAsItWas() {
     var round = DesktopEntryEdit.Apply(DesktopEntryEdit.Apply(_Entry, enabled: false), enabled: true);
 
-    Assert.That(round.TrimEnd('\n'), Is.EqualTo(_Entry.TrimEnd('\n')));
+    Assert.That(round.TrimEnd('\r', '\n'), Is.EqualTo(_Entry.TrimEnd('\r', '\n')));
+  }
+
+  /// <summary>
+  /// A file that used one line ending still uses it afterwards. Preserving every other line has to
+  /// include the ends of them — this is how the source file arrives on a Windows checkout, and it is
+  /// how somebody's own file may genuinely be.
+  /// </summary>
+  [TestCase("\n")]
+  [TestCase("\r\n")]
+  public void TheFilesOwnLineEndingsSurvive(string newline) {
+    var original = string.Join(newline, ["[Desktop Entry]", "Type=Application", "Exec=/usr/bin/thing", ""]);
+    var written = DesktopEntryEdit.Apply(original, enabled: false);
+
+    Assert.That(written, Does.Contain("Exec=/usr/bin/thing" + newline));
+    if (newline == "\n")
+      Assert.That(written, Does.Not.Contain("\r"));
   }
 
   /// <summary>

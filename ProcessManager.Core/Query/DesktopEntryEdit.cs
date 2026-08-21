@@ -38,6 +38,10 @@ public static class DesktopEntryEdit {
   /// </para>
   /// </remarks>
   public static string Apply(string contents, bool enabled) {
+    // Whatever the file already used. "Every other line is preserved exactly" has to include the
+    // ends of them: rewriting a file's endings while claiming to leave it alone is exactly the sort
+    // of quiet damage this reads a file line by line to avoid.
+    var newline = contents.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
     var lines = contents.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
     var result = new List<string>(lines.Length + 1);
 
@@ -98,8 +102,8 @@ public static class DesktopEntryEdit {
       if (endOfDesktopEntry >= 0)
         result.Insert(endOfDesktopEntry, "Hidden=true");
 
-    var joined = string.Join('\n', result);
-    return joined.EndsWith('\n') ? joined : joined + "\n";
+    var joined = string.Join(newline, result);
+    return joined.EndsWith(newline, StringComparison.Ordinal) ? joined : joined + newline;
   }
 
   /// <summary>
