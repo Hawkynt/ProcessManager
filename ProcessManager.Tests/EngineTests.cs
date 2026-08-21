@@ -165,6 +165,94 @@ public sealed class SnapshotDeltaTests {
     Assert.That(delta.CpuPercent(0).Value, Is.EqualTo(100).Within(1));
   }
 
+  #region who started it (PRD §14)
+
+  /// <summary>
+  /// Builds a table with the parentage the caller names, and resolves the parent names over it.
+  /// </summary>
+  private static SystemSnapshot Family(params (int Pid, int ParentPid, string Name)[] processes) {
+    var snapshot = new SystemSnapshot();
+    var buffer = snapshot.PrepareProcesses(processes.Length);
+    for (var i = 0; i < processes.Length; ++i) {
+      buffer[i] = default;
+      buffer[i].Key = new(processes[i].Pid, 1000);
+      buffer[i].ParentPid = processes[i].ParentPid;
+      buffer[i].Name = processes[i].Name;
+    }
+
+    snapshot.ResolveParentNames();
+    return snapshot;
+  }
+
+  private static string? ParentOf(SystemSnapshot snapshot, int pid) {
+    foreach (var process in snapshot.Processes)
+      if (process.Pid == pid)
+        return process.ParentName;
+
+    Assert.Fail($"no process {pid}");
+    return null;
+  }
+
+  [Test]
+  public void AProcessIsNamedAfterItsParent() {
+    var snapshot = Family((1, 0, "systemd"), (100, 1, "bash"), (200, 100, "vim"));
+
+    Assert.That(ParentOf(snapshot, 100), Is.EqualTo("systemd"));
+    Assert.That(ParentOf(snapshot, 200), Is.EqualTo("bash"));
+  }
+
+  /// <summary>
+  /// A parent that is not in the sample has exited and its child has been reparented. That is a fact
+  /// about the tree, not a gap in what could be read, and inventing a name for it would be worse
+  /// than leaving it empty.
+  /// </summary>
+  [Test]
+  public void AReparentedProcessHasNoParentName() {
+    var snapshot = Family((1, 0, "systemd"), (200, 4242, "orphan"));
+
+    Assert.That(ParentOf(snapshot, 200), Is.Null);
+    Assert.That(ParentOf(snapshot, 1), Is.Null, "pid 1 has no parent to name");
+  }
+
+  /// <summary>
+  /// /proc reports pid 1 as its own parent inside a container. Naming it after itself would read as
+  /// though it had forked itself.
+  /// </summary>
+  [Test]
+  public void AProcessThatIsItsOwnParentIsNotNamedAfterItself() {
+    var snapshot = Family((1, 1, "init"));
+
+    Assert.That(ParentOf(snapshot, 1), Is.Null);
+  }
+
+  /// <summary>
+  /// The parent's own name instance, not a copy: this runs for every process on every sample, and a
+  /// string allocated per row would be several hundred allocations a second against a budget of
+  /// none (PRD §4).
+  /// </summary>
+  [Test]
+  public void TheParentNameIsTheParentsOwnInstance() {
+    var snapshot = Family((1, 0, "systemd"), (100, 1, "bash"));
+
+    string? parentOwnName = null;
+    foreach (var process in snapshot.Processes)
+      if (process.Pid == 1)
+        parentOwnName = process.Name;
+
+    Assert.That(ParentOf(snapshot, 100), Is.SameAs(parentOwnName));
+  }
+
+  /// <summary>Resolving twice over the same table must not change what it says.</summary>
+  [Test]
+  public void ResolvingAgainSaysTheSameThing() {
+    var snapshot = Family((1, 0, "systemd"), (100, 1, "bash"));
+    snapshot.ResolveParentNames();
+
+    Assert.That(ParentOf(snapshot, 100), Is.EqualTo("systemd"));
+  }
+
+  #endregion
+
   private static SystemSnapshot Build(long timestampTicks, params (int Pid, ulong CpuNs, ulong StartTicks)[] processes) {
     var snapshot = new SystemSnapshot { TimestampTicks = timestampTicks };
     snapshot.System.CoreCount = 1;

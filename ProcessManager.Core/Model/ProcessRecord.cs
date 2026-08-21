@@ -83,6 +83,18 @@ public struct ProcessRecord {
   /// <summary>The short name — <c>comm</c> on Linux, the image file name on Windows.</summary>
   public string Name;
 
+  /// <summary>
+  /// The parent's short name, or <see langword="null"/> when no process in this sample holds
+  /// <see cref="ParentPid"/>.
+  /// </summary>
+  /// <remarks>
+  /// Filled by the sampler once the whole table has been read, not by the probe: it is the same
+  /// string instance the parent's own row carries, so it costs a reference rather than a name read
+  /// per process (PRD §4). Null is the ordinary answer for anything whose parent has exited and been
+  /// reparented, and for pid 1.
+  /// </remarks>
+  public string? ParentName;
+
   /// <summary>Resolved owner, or <see langword="null"/> when the name service could not answer.</summary>
   public string? UserName;
 

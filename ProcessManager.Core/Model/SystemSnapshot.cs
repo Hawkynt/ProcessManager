@@ -288,6 +288,39 @@ public sealed class SystemSnapshot {
   /// Makes room for <paramref name="count"/> processes, reusing the existing array whenever it is
   /// big enough. Growth is the only allocation a steady-state sample is allowed (PRD §4).
   /// </summary>
+  private readonly Dictionary<int, string> _namesByPid = [];
+
+  /// <summary>
+  /// Fills in each process's parent name, once the whole table has been read.
+  /// </summary>
+  /// <remarks>
+  /// Here rather than in either probe, because it is a fact about the table rather than about any
+  /// one process: the parent's name cannot be known until every row exists. The dictionary is kept
+  /// and cleared rather than made afresh, and what is stored is the parent's own name instance, so a
+  /// steady-state sample pays no allocation for this at all (PRD §4).
+  /// </remarks>
+  internal void ResolveParentNames() {
+    var count = this.ProcessCount;
+    var processes = this._processes;
+
+    this._namesByPid.Clear();
+    for (var i = 0; i < count; ++i)
+      // The last writer wins on a duplicate pid, which cannot happen in one sample of /proc but can
+      // in a recorded tree somebody edited by hand.
+      this._namesByPid[processes[i].Pid] = processes[i].Name;
+
+    for (var i = 0; i < count; ++i) {
+      var parent = processes[i].ParentPid;
+      // A process that claims itself as its parent is what /proc reports for pid 1 inside a
+      // container; naming it after itself would read as though it had forked itself.
+      processes[i].ParentName = parent > 0
+        && parent != processes[i].Pid
+        && this._namesByPid.TryGetValue(parent, out var name)
+          ? name
+          : null;
+    }
+  }
+
   internal Span<ProcessRecord> PrepareProcesses(int count) {
     if (this._processes.Length < count)
       Array.Resize(ref this._processes, Math.Max(count, this._processes.Length * 2));
