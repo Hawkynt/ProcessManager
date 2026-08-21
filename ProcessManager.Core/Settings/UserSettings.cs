@@ -103,9 +103,14 @@ public sealed record UserSettings {
         ProcessField.PrivateBytes, ProcessField.WorkingSetBytes, ProcessField.IoTotalRate,
         ProcessField.UserName, ProcessField.StartTime, ProcessField.CommandLine,
       ],
+      // Both accounts, because the pair is the story: a row where they differ is a process running
+      // with an authority nobody at the keyboard has. The bounding set is here rather than the
+      // permitted one because it answers the question a reader is usually asking — what could this
+      // ever do — while the effective set answers what it may do this instant.
       ["security"] = [
-        ProcessField.Name, ProcessField.Pid, ProcessField.UserName, ProcessField.Elevated,
-        ProcessField.Seccomp, ProcessField.NoNewPrivileges, ProcessField.Capabilities,
+        ProcessField.Name, ProcessField.Pid, ProcessField.UserName, ProcessField.EffectiveUserName,
+        ProcessField.PrivilegeChanged, ProcessField.Elevated, ProcessField.Seccomp,
+        ProcessField.NoNewPrivileges, ProcessField.Capabilities, ProcessField.BoundingCapabilities,
         ProcessField.SecurityContext, ProcessField.ImagePath,
       ],
       ["io"] = [

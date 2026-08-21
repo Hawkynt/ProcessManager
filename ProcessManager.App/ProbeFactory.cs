@@ -26,11 +26,16 @@ internal static class ProbeFactory {
   /// Whether anything on this run actually asked for the LSM label. It costs a file per process, so
   /// it is read only when a column or a filter names it — which is §5.4 enforced rather than stated.
   /// </param>
+  /// <param name="wantSupplementaryGroups">
+  /// Whether anything on this run asked for the group list. It costs a string per process per
+  /// sample, so it is kept only when a column or a filter names it (PRD §5.4).
+  /// </param>
   public static ISystemProbe? Create(
     string? probeRoot,
     bool useHelper = true,
     bool wantSecurityContext = false,
-    bool wantProportionalSetSize = false
+    bool wantProportionalSetSize = false,
+    bool wantSupplementaryGroups = false
   ) {
     if (OperatingSystem.IsLinux()) {
       // A recorded tree is somebody else's machine; asking a helper about pids in it would be asking
@@ -44,6 +49,7 @@ internal static class ProbeFactory {
             Elevated = Elevated,
             ReadSecurityContext = wantSecurityContext,
             UseProportionalSetSize = wantProportionalSetSize,
+            ReadSupplementaryGroups = wantSupplementaryGroups,
           }
           // A recorded tree was captured by somebody else, so the live user's id would refuse every
           // file in it. Root reads everything, which is what a replay wants (PRD §9.1).
@@ -52,6 +58,7 @@ internal static class ProbeFactory {
             PasswdPath = Path.Combine(probeRoot, "passwd"),
             EffectiveUserId = 0,
             ReadSecurityContext = wantSecurityContext,
+            ReadSupplementaryGroups = wantSupplementaryGroups,
           }
       );
     }

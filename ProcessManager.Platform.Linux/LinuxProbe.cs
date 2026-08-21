@@ -238,6 +238,25 @@ public sealed class LinuxProbe : ISystemProbe {
   }
 
   /// <summary>
+  /// One of the five <c>Cap*</c> lines of <c>status</c>, as the mask it spells.
+  /// </summary>
+  /// <remarks>
+  /// Bare hex with no <c>0x</c> prefix, and separated from its label by a TAB rather than a space —
+  /// trimming only spaces left the tab in front of the digits and <see cref="AsciiScanner.ParseHex"/>
+  /// stopped on the first non-hex byte, reporting every process on the machine as having no
+  /// capabilities at all. A security field that was confidently, silently wrong, which is why the
+  /// trim is here once rather than at five call sites.
+  /// </remarks>
+  private static bool TryMask(ReadOnlySpan<byte> line, ReadOnlySpan<byte> key, out ulong mask) {
+    mask = 0;
+    if (!AsciiScanner.StartsWith(line, key))
+      return false;
+
+    mask = AsciiScanner.ParseHex(line[key.Length..].TrimStart((byte)' ').TrimStart((byte)'\t'));
+    return true;
+  }
+
+  /// <summary>
   /// Pressure stall information (PRD §46).
   /// </summary>
   /// <remarks>
@@ -576,6 +595,13 @@ public sealed class LinuxProbe : ISystemProbe {
     record.ImagePath = cache.ImagePath;
     record.ContainerPath = cache.ContainerPath;
     record.UserName = this._users.Resolve(record.UserId);
+    // Almost always the same string, and taking it from the same cache costs a dictionary lookup
+    // rather than an allocation. The handful of processes where the two differ are exactly the ones
+    // a security column exists for (PRD §21).
+    record.EffectiveUserName = record.EffectiveUserId == record.UserId
+      ? record.UserName
+      : this._users.Resolve(record.EffectiveUserId);
+
     return true;
   }
 
@@ -642,7 +668,17 @@ public sealed class LinuxProbe : ISystemProbe {
     // Minor and major together: the column asks how much this process is faulting, not which kind.
     record.PageFaults = Counter.Of(minorFaults + majorFaults);
     record.IsSuspended = record.State == ProcessState.Stopped;
+    // -1, not 0: zero is root, so a quartet nobody filled would claim every process on the machine
+    // is running as the superuser. The same reasoning as default(Counter) being a confident zero,
+    // and worse here because the wrong answer is the alarming one (PRD §5.3).
     record.UserId = -1;
+    record.EffectiveUserId = -1;
+    record.SavedUserId = -1;
+    record.FilesystemUserId = -1;
+    record.GroupId = -1;
+    record.EffectiveGroupId = -1;
+    record.SavedGroupId = -1;
+    record.FilesystemGroupId = -1;
     record.PrivateBytes = Counter.NotSupported;
     record.PrivateWorkingSetBytes = Counter.NotSupported;
     // default(Counter) is a confident zero, so a field nobody fills claims the process has none of
@@ -709,9 +745,24 @@ public sealed class LinuxProbe : ISystemProbe {
     // unknown rather than claiming the process is unprivileged and unconfined (PRD §72.3).
     record.IsElevated = Counter.NotSupported;
     record.SeccompMode = Counter.NotSupported;
+    record.SeccompFilters = Counter.NotSupported;
     record.NoNewPrivileges = Counter.NotSupported;
     record.EffectiveCapabilities = Counter.NotSupported;
+    record.PermittedCapabilities = Counter.NotSupported;
+    record.InheritableCapabilities = Counter.NotSupported;
+    record.BoundingCapabilities = Counter.NotSupported;
+    record.AmbientCapabilities = Counter.NotSupported;
     record.EffectiveUserId = -1;
+    record.SavedUserId = -1;
+    record.FilesystemUserId = -1;
+    record.GroupId = -1;
+    record.EffectiveGroupId = -1;
+    record.SavedGroupId = -1;
+    record.FilesystemGroupId = -1;
+    record.SupplementaryGroups = null;
+    record.SupplementaryGroupsReason = this._options.ReadSupplementaryGroups
+      ? UnknownReason.NotSupportedOnPlatform
+      : UnknownReason.NotSampledYet;
     // Linux confines processes with capabilities and LSMs, not with an integrity level.
     record.IntegrityLevel = Counter.NotSupported;
 
@@ -721,8 +772,14 @@ public sealed class LinuxProbe : ISystemProbe {
         record.ContextSwitches = Counter.NotPermitted;
         record.IsElevated = Counter.NotPermitted;
         record.SeccompMode = Counter.NotPermitted;
+        record.SeccompFilters = Counter.NotPermitted;
         record.NoNewPrivileges = Counter.NotPermitted;
         record.EffectiveCapabilities = Counter.NotPermitted;
+        record.PermittedCapabilities = Counter.NotPermitted;
+        record.InheritableCapabilities = Counter.NotPermitted;
+        record.BoundingCapabilities = Counter.NotPermitted;
+        record.AmbientCapabilities = Counter.NotPermitted;
+        record.SupplementaryGroupsReason = UnknownReason.NotPermitted;
       }
 
       return;
@@ -746,23 +803,51 @@ public sealed class LinuxProbe : ISystemProbe {
         var uids = new AsciiScanner(line["Uid:"u8.Length..]);
         record.UserId = uids.NextInt32();                  // real, effective, saved, filesystem
         record.EffectiveUserId = uids.NextInt32();
+        record.SavedUserId = uids.NextInt32();
+        record.FilesystemUserId = uids.NextInt32();
         haveEffectiveUid = true;
 
         // Effective uid, not real: a setuid binary started by an ordinary user is running as root
         // now, which is the thing worth colouring a row for (PRD §23).
         record.IsElevated = Counter.Of(record.EffectiveUserId == 0 ? 1ul : 0ul);
+      } else if (AsciiScanner.StartsWith(line, "Gid:"u8)) {
+        var gids = new AsciiScanner(line["Gid:"u8.Length..]);
+        record.GroupId = gids.NextInt32();                 // real, effective, saved, filesystem
+        record.EffectiveGroupId = gids.NextInt32();
+        record.SavedGroupId = gids.NextInt32();
+        record.FilesystemGroupId = gids.NextInt32();
+      } else if (this._options.ReadSupplementaryGroups && AsciiScanner.StartsWith(line, "Groups:"u8)) {
+        // Only when asked for: this is the one line of status that has to become a string, and a
+        // string per process per sample is the allocation budget of §4 spent on a column nobody
+        // opened. The line is trailing-space-padded and is empty for a kernel thread — which is a
+        // real answer, not a missing one, so the empty string is kept.
+        var groups = line["Groups:"u8.Length..].Trim(" \t"u8);
+        record.SupplementaryGroups = groups.IsEmpty
+          ? string.Empty
+          : System.Text.Encoding.ASCII.GetString(groups);
+        record.SupplementaryGroupsReason = UnknownReason.None;
       } else if (TryValue(line, "Seccomp:"u8, out var flag))
         record.SeccompMode = Counter.Of(flag);
+      else if (TryValue(line, "Seccomp_filters:"u8, out flag))
+        // 5.9 and newer. An older kernel writes no such line and the field stays unknown, which is
+        // not the same statement as "no filters are attached".
+        record.SeccompFilters = Counter.Of(flag);
       else if (TryValue(line, "NoNewPrivs:"u8, out flag))
         record.NoNewPrivileges = Counter.Of(flag);
-      else if (AsciiScanner.StartsWith(line, "CapEff:"u8)) {
-        // Bare hex with no 0x prefix, and separated from the label by a TAB rather than a space —
-        // trimming only spaces left the tab in front of it and ParseHex stopped on the first
-        // non-hex byte, reporting every process as having no capabilities at all.
-        var mask = line["CapEff:"u8.Length..].TrimStart((byte)' ').TrimStart((byte)'\t');
-        record.EffectiveCapabilities = Counter.Of(AsciiScanner.ParseHex(mask));
-      }
-      else if (TryValue(line, "RssAnon:"u8, out var value)) {
+      else if (AsciiScanner.StartsWith(line, "Cap"u8)) {
+        // The five labels differ only after their third character, so one test takes the whole group
+        // out of the way of the fifty other lines in status rather than each of them paying for five.
+        if (TryMask(line, "CapEff:"u8, out var mask))
+          record.EffectiveCapabilities = Counter.Of(mask);
+        else if (TryMask(line, "CapPrm:"u8, out mask))
+          record.PermittedCapabilities = Counter.Of(mask);
+        else if (TryMask(line, "CapInh:"u8, out mask))
+          record.InheritableCapabilities = Counter.Of(mask);
+        else if (TryMask(line, "CapBnd:"u8, out mask))
+          record.BoundingCapabilities = Counter.Of(mask);
+        else if (TryMask(line, "CapAmb:"u8, out mask))
+          record.AmbientCapabilities = Counter.Of(mask);
+      } else if (TryValue(line, "RssAnon:"u8, out var value)) {
         rssAnon = value * 1024;
         haveRssAnon = true;
       } else if (TryValue(line, "RssFile:"u8, out value)) {

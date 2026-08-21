@@ -101,10 +101,28 @@ internal static class SystemProcessInformationReader {
       // Windows has no seccomp, no no_new_privs and no capability mask; it has integrity levels and
       // privileges instead, which are different things and get their own fields when they are built.
       record.SeccompMode = Counter.NotSupported;
+      record.SeccompFilters = Counter.NotSupported;
       record.NoNewPrivileges = Counter.NotSupported;
       record.EffectiveCapabilities = Counter.NotSupported;
+      record.PermittedCapabilities = Counter.NotSupported;
+      record.InheritableCapabilities = Counter.NotSupported;
+      record.BoundingCapabilities = Counter.NotSupported;
+      record.AmbientCapabilities = Counter.NotSupported;
       record.EffectiveUserId = -1;
       record.SecurityContextReason = UnknownReason.NotSupportedOnPlatform;
+
+      // -1 rather than the zero a fresh struct carries, because zero is a real account on the
+      // platform these fields come from: a record nobody filled would otherwise report every
+      // process as running with the superuser's identity (PRD §5.3). Windows has a token with
+      // groups and privileges in it, which is a different shape and gets its own fields (§36).
+      record.SavedUserId = -1;
+      record.FilesystemUserId = -1;
+      record.GroupId = -1;
+      record.EffectiveGroupId = -1;
+      record.SavedGroupId = -1;
+      record.FilesystemGroupId = -1;
+      record.SupplementaryGroups = null;
+      record.SupplementaryGroupsReason = UnknownReason.NotSupportedOnPlatform;
 
       // The bulk query carries this per thread, not per process; a process does not have one.
       record.LastCpu = -1;

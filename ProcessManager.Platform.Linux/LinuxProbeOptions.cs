@@ -15,6 +15,17 @@ public sealed record LinuxProbeOptions {
   /// </remarks>
   public bool ReadSecurityContext { get; init; }
 
+  /// <summary>
+  /// Keep the <c>Groups:</c> line of <c>status</c> as text (PRD §36).
+  /// </summary>
+  /// <remarks>
+  /// Off by default, and for a different reason than the LSM label: the line costs no extra read at
+  /// all — it is in a file the sampler already has open — but turning it into a string is one
+  /// allocation per process per sample, and the sample loop's budget is zero (PRD §4). So the switch
+  /// buys the string, not the read, and is set the same way: by somebody naming the column.
+  /// </remarks>
+  public bool ReadSupplementaryGroups { get; init; }
+
   /// <summary>Where <c>/proc</c> is. A fixture directory in tests.</summary>
   public string ProcRoot { get; init; } = "/proc";
 

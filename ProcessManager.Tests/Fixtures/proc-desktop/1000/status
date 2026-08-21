@@ -6,9 +6,15 @@ Ngid:	0
 Pid:	1
 Uid:	1000	1000	1000	1000
 Gid:	1000	1000	1000	1000
+Groups:	998 1000 
+CapInh:	0000000000000000
+CapPrm:	0000000000000000
 CapEff:	0000000000000000
+CapBnd:	000001ffffffffff
+CapAmb:	0000000000000000
 NoNewPrivs:	1
 Seccomp:	2
+Seccomp_filters:	3
 VmPeak:	  100000 kB
 VmSize:	  100000 kB
 VmHWM:	  6048 kB

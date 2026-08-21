@@ -403,33 +403,34 @@ internal static class SelfTest {
     // syscalls and a span parser, and this is the check that the two agree. The capability mask was
     // wrong for every process on the machine because of a tab the span parser did not trim, and a
     // second reading of the same file is what catches that shape of bug.
-    var euid = -1;
-    var capabilities = "?";
+    var uids = Array.Empty<int>();
+    var gids = Array.Empty<int>();
+    var masks = new Dictionary<string, ulong>(StringComparer.Ordinal);
     try {
       foreach (var line in File.ReadAllLines("/proc/self/status")) {
-        if (line.StartsWith("Uid:", StringComparison.Ordinal)) {
-          var fields = line[4..].Split('\t', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-          if (fields.Length > 1 && int.TryParse(fields[1], out var parsed))
-            euid = parsed;
-        } else if (line.StartsWith("CapEff:", StringComparison.Ordinal)) {
-          // Compared as a number, not as text: status writes it zero-padded to sixteen digits, and
-          // trimming the padding off an all-zero mask leaves nothing at all.
-          capabilities = ulong.TryParse(
-            line[7..].Trim(),
-            System.Globalization.NumberStyles.HexNumber,
-            System.Globalization.CultureInfo.InvariantCulture,
-            out var parsedMask
-          )
-            ? "0x" + parsedMask.ToString("x", System.Globalization.CultureInfo.InvariantCulture)
-            : "?";
+        if (line.StartsWith("Uid:", StringComparison.Ordinal))
+          uids = Quartet(line[4..]);
+        else if (line.StartsWith("Gid:", StringComparison.Ordinal))
+          gids = Quartet(line[4..]);
+        else if (line.Length > 7 && line.StartsWith("Cap", StringComparison.Ordinal)) {
+          var colon = line.IndexOf(':');
+          if (colon > 0 && ulong.TryParse(
+                line[(colon + 1)..].Trim(),
+                System.Globalization.NumberStyles.HexNumber,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out var parsedMask
+              ))
+            masks[line[..colon]] = parsedMask;
         }
       }
     } catch (IOException) {
       return;
     }
 
-    if (euid < 0)
+    if (uids.Length < 4)
       return;
+
+    var euid = uids[1];
 
     Check(
       failures,
@@ -449,15 +450,98 @@ internal static class SelfTest {
       $"status says {euid}"
     );
 
-    var mask = FieldAccessor.Text(ProcessField.Capabilities, in self, null, 0);
     Check(
       failures,
       notes,
-      "capabilities",
-      mask,
-      capabilities == "?" || string.Equals(mask, capabilities, StringComparison.OrdinalIgnoreCase),
-      $"status says {capabilities}"
+      "saved uid",
+      self.SavedUserId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+      self.SavedUserId == uids[2],
+      $"status says {uids[2]}"
     );
+
+    Check(
+      failures,
+      notes,
+      "filesystem uid",
+      self.FilesystemUserId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+      self.FilesystemUserId == uids[3],
+      $"status says {uids[3]}"
+    );
+
+    if (gids.Length >= 4)
+      Check(
+        failures,
+        notes,
+        "effective gid",
+        self.EffectiveGroupId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        self.EffectiveGroupId == gids[1],
+        $"status says {gids[1]}"
+      );
+
+    // Each of the five against its own line, because the five labels differ only in their last
+    // three characters and one of them being filled from another's line is exactly the mistake that
+    // would go unnoticed — every mask on the machine would still look plausible.
+    foreach (var (label, counter) in (ReadOnlySpan<(string, Counter)>)[
+      ("CapEff", self.EffectiveCapabilities),
+      ("CapPrm", self.PermittedCapabilities),
+      ("CapInh", self.InheritableCapabilities),
+      ("CapBnd", self.BoundingCapabilities),
+      ("CapAmb", self.AmbientCapabilities),
+    ]) {
+      if (!masks.TryGetValue(label, out var expected))
+        continue;
+
+      Check(
+        failures,
+        notes,
+        label.ToLowerInvariant(),
+        LinuxCapabilities.Hex(counter.GetValueOrDefault()),
+        counter.HasValue && counter.Value == expected,
+        $"status says {LinuxCapabilities.Hex(expected)}"
+      );
+    }
+
+    // And that nothing was dropped on the way to the column: the names add back up to the mask they
+    // came from. This cannot catch a wrong name — the tests hold the table against the kernel's own
+    // header for that — but it does catch a bit falling out of the decoder, which is the failure
+    // that reports less privilege than a process holds.
+    if (self.EffectiveCapabilities.TryGetValue(out var effective))
+      Check(
+        failures,
+        notes,
+        "capability names",
+        FieldAccessor.Text(ProcessField.Capabilities, in self, null, 0),
+        Recompose(effective) == effective,
+        "the names must re-encode to the mask they came from"
+      );
+  }
+
+  /// <summary>The four ids of a <c>Uid:</c> or <c>Gid:</c> line, or empty if it is not four.</summary>
+  private static int[] Quartet(string rest) {
+    var fields = rest.Split(
+      ['\t', ' '],
+      StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries
+    );
+    if (fields.Length < 4)
+      return [];
+
+    var ids = new int[4];
+    for (var i = 0; i < 4; ++i)
+      if (!int.TryParse(fields[i], System.Globalization.CultureInfo.InvariantCulture, out ids[i]))
+        return [];
+
+    return ids;
+  }
+
+  /// <summary>The mask the decoded names add back up to.</summary>
+  private static ulong Recompose(ulong mask) {
+    var rebuilt = 0ul;
+    foreach (var name in LinuxCapabilities.Decode(mask))
+      for (var bit = 0; bit < 64; ++bit)
+        if (name == (LinuxCapabilities.Name(bit) ?? bit.ToString(System.Globalization.CultureInfo.InvariantCulture)))
+          rebuilt |= 1ul << bit;
+
+    return rebuilt;
   }
 
 }

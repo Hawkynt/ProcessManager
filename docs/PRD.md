@@ -843,11 +843,33 @@ on-demand precisely because it is expensive.
 - [x] `selinux.context` — `/proc/pid/attr/current`, opt-in
 - [x] `apparmor.profile` — same file, same field: the LSM label is one value whichever module wrote it
 - [x] `seccomp` — off, strict or filter
-- [x] `caps.linux` — the effective mask (`CapEff`); the permitted and inheritable sets are not shown yet
+- [x] `seccomp.filters` — how many filter programs are attached, where the kernel says (5.9 and
+      newer). Several of them is a process something has sandboxed more than once, which the mode
+      alone cannot express; an older kernel leaves it unknown rather than reporting none
+- [x] `caps.linux` — all five sets, by capability name rather than as sixteen hex digits: `caps`
+      (effective), `caps.permitted`, `caps.inheritable`, `caps.bounding` and `caps.ambient`, with
+      `caps.hex` carrying the raw effective mask in the form `capsh --decode` accepts. The bit→name
+      table is held against the kernel's own `uapi/linux/capability.h`, vendored beside the tests
+- [x] `setuid` — whether the process is running as somebody other than whoever started it: real and
+      effective ids that disagree, for the group as well as for the user
+- [x] `uid` / `uid.effective` / `uid.saved` / `uid.fs` and the four `gid` equivalents — the whole
+      quartet, because a process whose real and effective ids are an ordinary user while the saved
+      one is root has given up nothing
+- [x] `user.effective` — the account whose authority the process is using, which for anything
+      set-user-ID is not the account in the `user` column
+- [x] 🟡 `groups` — the supplementary groups as the kernel numbers them; opt-in, because the line is
+      free to read and costs one string per process per sample to keep (§5.4). Not resolved to
+      names: that would need a second name service beside the passwd one
 - [ ] macOS: code-sign identity, entitlements, hardened runtime, sandbox
 
 - [ ] **Online reputation checking is opt-in, and the program states exactly what is transmitted
       before the first time it happens** — at the point of use, not buried in a settings page
+
+Everything still unticked here — protected-process status, signatures and certificates, hashes,
+reputation, the Windows mitigation policies, AppContainer, and the macOS line — is Windows or macOS.
+None of it is work that can be written honestly from a Linux machine: a signature verifier or a
+mitigation-policy reader that nobody can run against the OS it describes is a plausible
+implementation, which is worse than an empty one (§9.2).
 
 # 22. Process table — energy fields
 
@@ -1342,13 +1364,13 @@ Windows:
 
 Linux — most of this is already in `/proc/pid/status`, which the sampler already reads:
 
-- [ ] 🟡 UID / eUID / sUID / fsUID and GID equivalents — the real and effective uids are read; the
-      saved and filesystem ids and the group ids are not
-- [ ] Supplementary groups
-- [x] Capabilities
+- [x] UID / eUID / sUID / fsUID and GID equivalents — all eight, plus the effective account by name
+      as well as by number, and a field that says outright when the two disagree
+- [x] 🟡 Supplementary groups — the numbers, opt-in; not resolved to group names
+- [x] Capabilities — all five sets, by name (§21)
 - [x] SELinux context
 - [x] AppArmor profile
-- [x] seccomp state
+- [x] seccomp state — the mode and the filter count
 - [ ] Namespaces
 - [x] no-new-privileges
 
@@ -2977,7 +2999,9 @@ start time · command line · signature
 **Security:** name · PID · user · path · signer · signature · integrity/security context · elevated ·
 protection · hash · reputation
 
-- [ ] Blocked on §21
+- [ ] 🟡 Available except signer, signature, protection, hash and reputation — the identity and
+      confinement half of the set is there (§21), and everything still missing belongs to §70's code
+      signing, which has no Linux counterpart to build against
 
 **I/O:** name · PID · read rate · write rate · read bytes · write bytes · other rate · I/O priority
 
