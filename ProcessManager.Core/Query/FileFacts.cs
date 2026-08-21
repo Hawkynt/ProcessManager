@@ -152,6 +152,46 @@ public readonly record struct FileDigest(string? Sha256, string? Sha1, string? R
 
   private static FileDigest Failed(string reason, UnknownReason why) => new(null, null, reason, why);
 
+  /// <summary>
+  /// The MD5 of a file, for comparing against a package manager that recorded one (PRD §70).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Its own read rather than a third digest in <see cref="Of"/>: MD5 is slower than SHA-256 is on
+  /// any processor with the SHA extensions, so folding it into the pass everybody uses would slow
+  /// the hash columns down on every machine to serve the one packaging system that still records
+  /// it. This is called only when a <c>dpkg</c> database has a digest to compare against.
+  /// </para>
+  /// <para>
+  /// Nothing else may use it. MD5 says whether a file has been replaced by accident; it says nothing
+  /// about whether one was replaced on purpose, and no verdict in this program rests on it alone.
+  /// </para>
+  /// </remarks>
+  public static string? Md5Of(string? path) {
+    if (string.IsNullOrWhiteSpace(path))
+      return null;
+
+    try {
+      using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+      using var md5 = IncrementalHash.CreateHash(HashAlgorithmName.MD5);
+
+      var buffer = new byte[128 * 1024];
+      while (true) {
+        var read = stream.Read(buffer);
+        if (read <= 0)
+          break;
+
+        md5.AppendData(buffer, 0, read);
+      }
+
+      return Convert.ToHexStringLower(md5.GetHashAndReset());
+    } catch (UnauthorizedAccessException) {
+      return null;
+    } catch (IOException) {
+      return null;
+    }
+  }
+
   /// <summary>The hash in groups of eight, which is how a person compares two of them by eye.</summary>
   public string Display {
     get {
