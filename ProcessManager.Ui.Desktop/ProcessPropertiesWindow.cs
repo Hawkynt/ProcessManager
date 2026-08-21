@@ -143,6 +143,7 @@ public sealed class ProcessPropertiesWindow : Form {
 
   private TabPage? _gpuPage;
   private ImageInfo? _image;
+  private FileFacts? _imageFacts;
   private bool _imageRead;
   private bool _availabilitySettled;
   private string? _imagePath;
@@ -403,6 +404,11 @@ public sealed class ProcessPropertiesWindow : Form {
       this._imageRead = true;
       this._imagePath = process.ImagePath;
       this._image = this._probe.DescribeImage(this.Key);
+      // The directory entry with it, and once. This was a stat of the image on every sample for as
+      // long as the window stayed open, under a comment claiming it was read once — which is the
+      // more expensive half of the two, and the half nothing would ever have noticed.
+      if (this._imagePath is { Length: > 0 } path)
+        this._imageFacts = FileFacts.Describe(path);
     }
 
     if (this._image is { } image) {
@@ -411,8 +417,7 @@ public sealed class ProcessPropertiesWindow : Form {
       extras.Add(new("Working directory", image.WorkingDirectory ?? "—"));
     }
 
-    if (this._imagePath is { Length: > 0 } path) {
-      var facts = FileFacts.Describe(path);
+    if (this._imageFacts is { } facts) {
       extras.Add(new("Image size", FileFactsFormatting.Size(in facts)));
       extras.Add(new("Image modified", FileFactsFormatting.Modified(in facts)));
       extras.Add(new("Image permissions", facts.Permissions ?? "n/a"));

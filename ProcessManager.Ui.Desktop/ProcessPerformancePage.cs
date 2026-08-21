@@ -56,6 +56,9 @@ internal sealed class ProcessPerformancePage {
   private readonly HistoryPlot _handlePlot = new() { Caption = "Descriptors", Unit = PerformanceUnit.Count };
   private readonly HistoryPlot _threadPlot = new() { Caption = "Threads", Unit = PerformanceUnit.Count };
 
+  // A hundred per cent floor: one core held is the reading everybody is looking for, and an axis
+  // that scaled to a process using two per cent would draw that as a full graph.
+  private Scale _cpuScale = Scale.OfCount(100);
   private Scale _memoryScale = Scale.OfBytes(16 * 1024 * 1024);
   private Scale _ioScale = Scale.OfBytes(64 * 1024);
   private Scale _handleScale = Scale.OfCount(16);
@@ -193,7 +196,12 @@ internal sealed class ProcessPerformancePage {
 
     // A CPU percentage can exceed a hundred when the window is counting per core, and a plot whose
     // ceiling is fixed at a hundred draws four cores held and one core held as the same full graph.
-    this._cpuPlot.Maximum = Math.Max(100, Ceiling(this._cpu));
+    //
+    // Decayed like the others, not a running maximum over the ring. A maximum would let one spike to
+    // four hundred per cent hold the axis there for the whole hour behind it, and everything after it
+    // would be drawn flat along the bottom.
+    this._cpuScale = this._cpuScale.Observe(Latest(this._cpu));
+    this._cpuPlot.Maximum = this._cpuScale.Top;
     this._memoryScale = this._memoryScale.Observe(Peak(this._private, this._workingSet));
     this._ioScale = this._ioScale.Observe(Peak(this._read, this._write));
     this._handleScale = this._handleScale.Observe(Latest(this._handles));
@@ -323,15 +331,6 @@ internal sealed class ProcessPerformancePage {
 
   private static double Peak(HistoryRing<Rate> first, HistoryRing<Rate> second)
     => Math.Max(Latest(first), Latest(second));
-
-  private static double Ceiling(HistoryRing<Rate> ring) {
-    var top = 0d;
-    for (var i = 0; i < ring.Count; ++i)
-      if (ring[i].HasValue)
-        top = Math.Max(top, ring[i].Value);
-
-    return top;
-  }
 
   /// <summary>
   /// A scale that follows the readings up quickly and comes back down slowly.
