@@ -11,7 +11,7 @@ public enum TerminalAction : byte {
   MoveUp, MoveDown, PageUp, PageDown, MoveFirst, MoveLast,
   Collapse, Expand, Details, Quit,
 
-  ToggleTree, Pause, RefreshNow, CpuMode, UserFilter, Search, Filter, CaseSensitive,
+  ToggleTree, Pause, RefreshNow, RefreshInterval, CpuMode, UserFilter, Search, Filter, CaseSensitive,
   Graphs, LowerPane, PaneGrow, PaneShrink, Help, GroupBy,
 
   SortNext, SortPrevious, SortReverse, SortAlso, SortByCpu, SortByMemory, SortByPid,
@@ -64,6 +64,8 @@ public sealed class KeyBindings {
     new(TerminalAction.ToggleTree, "tree", "View", "tree or flat", ["f5", "t"]),
     new(TerminalAction.Pause, "pause", "View", "stop and start sampling", ["p"]),
     new(TerminalAction.RefreshNow, "refresh", "View", "sample now", ["r"]),
+    // `d` for delay, which is what every other terminal monitor binds this to.
+    new(TerminalAction.RefreshInterval, "interval", "View", "how often it samples", ["d"]),
     new(TerminalAction.CpuMode, "cpu-mode", "View", "CPU% against the machine or against one core", ["C"]),
     new(TerminalAction.UserFilter, "user-filter", "View", "only my processes", ["u"]),
     new(TerminalAction.Search, "search", "View", "find a row and keep the rest", ["/", "f3"]),

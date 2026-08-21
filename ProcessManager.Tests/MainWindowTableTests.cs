@@ -118,6 +118,85 @@ public sealed class MainWindowTableTests {
     Assert.That(window.DescribeSettings().PinnedDesktopColumns, Is.EqualTo(2));
   }
 
+  #region the sample tick (PRD §12)
+
+  [Test]
+  public void TheWindowOffersTheSameRatesTheTerminalDoes() {
+    var window = Window();
+    window.ApplySettings(new(), _ => true);
+
+    foreach (var seconds in UserSettings.OfferedIntervalSeconds) {
+      var described = window.ShowRefresh((int)Math.Round(seconds * 1000));
+      Assert.That(described, Does.Contain("refresh:      every " + UserSettings.NameOfInterval(seconds)));
+    }
+  }
+
+  /// <summary>
+  /// Pausing holds the list where it was. Nothing rebuilds while the tick is off, so the selection,
+  /// the expansion and the scroll position are all exactly where the reader left them (PRD §12).
+  /// </summary>
+  [Test]
+  public void PausingHoldsTheListWhereItWas() {
+    var window = Window();
+    window.ApplySettings(new(), _ => true);
+    window.Start();
+    window.SelectFirstRow();
+    var before = window.DescribeForCapture();
+
+    window.ShowRefresh(0, paused: true);
+
+    Assert.That(window.Paused, Is.True);
+    Assert.That(window.DescribeForCapture(), Does.Contain("refresh:      paused"));
+    Assert.That(
+      Rows(window.DescribeForCapture()),
+      Is.EqualTo(Rows(before)),
+      "a paused list is the list that was there, not a rebuilt one"
+    );
+  }
+
+  private static string Rows(string described) {
+    foreach (var line in described.Split('\n'))
+      if (line.StartsWith("process rows:", StringComparison.Ordinal))
+        return line;
+
+    return string.Empty;
+  }
+
+  /// <summary>
+  /// A by-hand refresh is a preference and is written down; a pause is a toggle somebody flips for a
+  /// few seconds, and a window that opened paused because it was paused when it was last closed is a
+  /// window showing a table of nothing at all.
+  /// </summary>
+  [Test]
+  public void RefreshingByHandSurvivesARestartAndAPauseDoesNot() {
+    var window = Window();
+    window.ApplySettings(new() { IntervalSeconds = 5 }, _ => true);
+
+    window.ShowRefresh(0, manual: true);
+    var described = window.DescribeSettings();
+    Assert.That(described.ManualRefresh, Is.True);
+    Assert.That(described.IntervalSeconds, Is.EqualTo(5), "the rate underneath is remembered");
+
+    window.ShowRefresh(0, paused: true);
+    Assert.That(window.DescribeSettings().ManualRefresh, Is.False, "a pause is not written down");
+  }
+
+  [Test]
+  public void AWindowAskedToRefreshByHandStillOpensOnSomething() {
+    var window = Window();
+    window.ApplySettings(new() { ManualRefresh = true }, _ => true);
+    window.Start();
+
+    Assert.That(window.ManualRefresh, Is.True);
+    Assert.That(window.DescribeForCapture(), Does.Contain("refresh:      by hand"));
+    // The stub machine has no processes, so what proves a sample was taken is the status line: a
+    // window that had waited for the first keystroke would have no sample to time.
+    Assert.That(window.DescribeForCapture(), Does.Contain("processes"));
+    Assert.That(window.DescribeForCapture(), Does.Contain("·  refreshed by hand"));
+  }
+
+  #endregion
+
   [Test]
   public void TheGroupingSurvivesARestart() {
     var window = Window();

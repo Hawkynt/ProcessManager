@@ -26,6 +26,43 @@ public sealed record UserSettings {
   /// <summary>Seconds between samples (PRD §12).</summary>
   public double IntervalSeconds { get; init; } = 1;
 
+  /// <summary>
+  /// Whether the sample tick is off and a refresh is asked for by hand (PRD §12).
+  /// </summary>
+  /// <remarks>
+  /// Kept beside the interval rather than folded into it as a nought, because they are two different
+  /// statements and a program that forgot the difference would put somebody who chose "by hand" back
+  /// on a quarter-second tick the next time they opened it. The interval underneath is remembered,
+  /// so leaving manual refresh goes back to the rate they were on.
+  /// <para>
+  /// A pause is <em>not</em> this. Pausing is a toggle somebody flips for a few seconds to read a
+  /// row that will not hold still, and a monitor that opened paused because it was paused when it
+  /// was last closed is a monitor showing a table of nothing at all.
+  /// </para>
+  /// </remarks>
+  public bool ManualRefresh { get; init; }
+
+  /// <summary>
+  /// The intervals both front-ends offer (PRD §12).
+  /// </summary>
+  /// <remarks>
+  /// One list, so the window's menu and the terminal's picker cannot come to hold different ideas of
+  /// what is on offer — the same reason the fields are one catalogue. Anything else is still
+  /// settable: <c>--interval</c> and the file take any number, and this is what is worth a line in
+  /// a menu.
+  /// </remarks>
+  public static IReadOnlyList<double> OfferedIntervalSeconds { get; } = [0.25, 0.5, 1, 2, 5, 10];
+
+  /// <summary>What an interval is called on screen — <c>250 ms</c>, <c>1 s</c>, <c>2.5 s</c>.</summary>
+  /// <remarks>
+  /// Beside the list it labels, so the window's menu and the terminal's picker read the same. Under
+  /// a second the figure is milliseconds, because "0.25 s" is a number somebody has to convert
+  /// before it means anything.
+  /// </remarks>
+  public static string NameOfInterval(double seconds) => seconds < 1
+    ? (seconds * 1000).ToString("0.###", CultureInfo.InvariantCulture) + " ms"
+    : seconds.ToString("0.###", CultureInfo.InvariantCulture) + " s";
+
   public ProcessField SortField { get; init; } = ProcessField.CpuPercent;
 
   public bool SortDescending { get; init; } = true;
@@ -285,9 +322,20 @@ public sealed record UserSettings {
 
       switch (key.ToLowerInvariant()) {
         case "interval":
-          if (double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var seconds)
+          // "manual" leaves the interval where it was: it says the tick is off, not how fast it
+          // would run, and going back to a rate somebody never chose is the wrong answer (PRD §12).
+          if (value.Equals("manual", StringComparison.OrdinalIgnoreCase))
+            settings = settings with { ManualRefresh = true };
+          else if (double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var seconds)
               && seconds is > 0 and <= 3600)
             settings = settings with { IntervalSeconds = seconds };
+
+          break;
+
+        case "interval.seconds":
+          if (double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var underneath)
+              && underneath is > 0 and <= 3600)
+            settings = settings with { IntervalSeconds = underneath };
 
           break;
 
@@ -445,7 +493,14 @@ public sealed record UserSettings {
     text.AppendLine("# ProcessManager settings. Edited by hand quite deliberately: every value here");
     text.AppendLine("# is a field key or a plain number, and `procman --help-fields` lists them all.");
     text.AppendLine();
-    text.Append("interval=").AppendLine(this.IntervalSeconds.ToString("0.###", CultureInfo.InvariantCulture));
+    // The rate underneath is written on its own line when the tick is off, so that turning the tick
+    // back on returns to the rate somebody chose rather than to whatever the default happens to be.
+    if (this.ManualRefresh) {
+      text.AppendLine("interval=manual");
+      text.Append("interval.seconds=").AppendLine(this.IntervalSeconds.ToString("0.###", CultureInfo.InvariantCulture));
+    } else
+      text.Append("interval=").AppendLine(this.IntervalSeconds.ToString("0.###", CultureInfo.InvariantCulture));
+
     text.Append("sort=").AppendLine(FieldRegistry.Get(this.SortField).Key);
     text.Append("sort.descending=").AppendLine(this.SortDescending ? "true" : "false");
     text.Append("tree=").AppendLine(this.TreeMode ? "true" : "false");

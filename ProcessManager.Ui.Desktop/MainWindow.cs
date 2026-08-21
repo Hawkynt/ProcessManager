@@ -121,6 +121,9 @@ public sealed class MainWindow : Form {
     this._view.TreeMode = settings.TreeMode;
     this._sampler.CpuPercentMode = settings.CpuMode;
     this.Interval = (int)Math.Round(settings.IntervalSeconds * 1000);
+    // Not the pause: pausing is a toggle somebody flips for a few seconds, and a monitor that opened
+    // paused because it was paused when it was closed shows a table of nothing (PRD §12).
+    this.ManualRefresh = settings.ManualRefresh;
 
     if (settings.DesktopColumns.Length > 0)
       this._columns.Apply(settings.DesktopColumns);
@@ -157,6 +160,7 @@ public sealed class MainWindow : Form {
   public UserSettings DescribeSettings() {
     var updated = this._settings with {
       IntervalSeconds = this.Interval / 1000d,
+      ManualRefresh = this.ManualRefresh,
       SortField = this._view.SortColumn,
       SortDescending = this._view.SortDescending,
       TreeMode = this._view.TreeMode,
@@ -201,6 +205,10 @@ public sealed class MainWindow : Form {
       $"filter:       {(this._filterBox.Text.Length == 0 ? "(none)" : this._filterBox.Text)}"
       + $", case {(this._view.CaseSensitive ? "matters" : "ignored")}"
       + $"{(this._filterNote.Text.Length > 0 ? " — " + this._filterNote.Text : string.Empty)}"
+    );
+
+    builder.AppendLine(
+      $"refresh:      {(this.Paused ? "paused" : this.ManualRefresh ? "by hand" : "every " + Settings.UserSettings.NameOfInterval(this.Interval / 1000d))}"
     );
 
     builder.AppendLine($"ticked rows:  {this.TickedKeys().Count}");
@@ -292,12 +300,68 @@ public sealed class MainWindow : Form {
   /// </remarks>
   public void RefreshOnce() => this.Refresh();
 
+  /// <summary>
+  /// Whether the sample tick is stopped, and why (PRD §12).
+  /// </summary>
+  /// <remarks>
+  /// Two states rather than one, because they are two different requests. A pause is flipped for a
+  /// few seconds to read a row that will not hold still and is not remembered; asking for a refresh
+  /// by hand is a preference and is written to the file. Both stop the timer, and neither touches
+  /// the list — nothing rebuilds while the tick is off, so what is selected, what is expanded and
+  /// where the list is scrolled are all exactly where they were.
+  /// </remarks>
+  public bool Paused { get; private set; }
+
+  public bool ManualRefresh { get; private set; }
+
+  /// <summary>
+  /// The two words the status bar carries while the tick is off, or null while it runs.
+  /// </summary>
+  /// <remarks>
+  /// Two words and not a sentence, because this is appended to a status line that already carries
+  /// four figures: the how-to belongs in the message the picker leaves behind, which is on screen at
+  /// the moment somebody chose it and has the whole bar to itself.
+  /// </remarks>
+  private string? WhyItIsNotUpdating => this.Paused ? "paused" : this.ManualRefresh ? "refreshed by hand" : null;
+
+  /// <summary>
+  /// Sets how often the machine is sampled, or stops it being sampled at all (PRD §12).
+  /// </summary>
+  /// <remarks>
+  /// The timer is stopped rather than left running against a flag: a tick that woke up every second
+  /// to decide not to sample is a wakeup a laptop pays for, and this program is one people leave
+  /// open (PRD §71.2).
+  /// </remarks>
+  private void SetRefresh(int milliseconds, bool paused, bool manual) {
+    this.Paused = paused;
+    this.ManualRefresh = manual;
+    if (milliseconds > 0)
+      this.Interval = milliseconds;
+
+    this._timer.Stop();
+    if (!paused && !manual)
+      this._timer.Start();
+
+    // Written now rather than on the next tick. The saver is flushed from the sample loop, and a
+    // window whose sample loop has just been stopped would otherwise never write down that it was.
+    this._autoSaver?.Flush();
+
+    this._status.Text = paused
+      ? "paused — the list is held where it was; Refresh, or F5, takes one sample"
+      : manual
+        ? "refreshed by hand — Refresh, or F5, takes a sample"
+        : $"sampling every {Settings.UserSettings.NameOfInterval(this.Interval / 1000d)}";
+  }
+
   public void Start() {
     this._binder.CurrentUserId = CurrentUserId();
     // Read once, before the first paint: the machine will not rearrange its cores while we watch.
     this._cores.Topology = this._probe.DescribeTopology();
+    // One sample even when the tick is off. A window asked to refresh by hand still has to open on
+    // something rather than on an empty table waiting for a keystroke nobody knows to press.
     this.Refresh();
-    this._timer.Start();
+    if (!this.ManualRefresh)
+      this._timer.Start();
   }
 
   /// <summary>
@@ -1898,6 +1962,7 @@ public sealed class MainWindow : Form {
 
     var view = new ToolStripMenuItem("View");
     view.DropDownItems.Add(this.BuildGroupingMenu());
+    view.DropDownItems.Add(this.BuildRefreshMenu());
 
     view.DropDownItems.Add(Item("Show all users", () => {
       this._view.UserIdFilter = null;
@@ -2101,7 +2166,11 @@ public sealed class MainWindow : Form {
       $"{this._view.MatchCount} of {snapshot.ProcessCount} processes{this.TickedSuffix}  ·  "
       + $"CPU {Humanize.Percent(delta.SystemCpuPercent)}% ({mode})  ·  "
       + $"memory {Humanize.Bytes(snapshot.System.TotalMemoryBytes)} total, {Humanize.Bytes(snapshot.System.AvailableMemoryBytes)} free  ·  "
-      + $"sample {this._sampler.LastSampleDuration.TotalMilliseconds.ToString("0.0", CultureInfo.InvariantCulture)} ms";
+      + $"sample {this._sampler.LastSampleDuration.TotalMilliseconds.ToString("0.0", CultureInfo.InvariantCulture)} ms"
+      // Said on every line rather than once when it was switched on: a table that is not following
+      // the machine looks exactly like one that is, and the moment somebody most needs to be told is
+      // the moment they have forgotten they asked for it (PRD §12, §72.3).
+      + (this.WhyItIsNotUpdating is { } why ? "  ·  " + why : string.Empty);
   }
 
   private void UpdateDetails() {
@@ -2435,6 +2504,19 @@ public sealed class MainWindow : Form {
     this.ApplyFilter();
     this.SelectFirstRow();
     this._tree.TopIndex = 0;
+    return this.DescribeForCapture();
+  }
+
+  /// <summary>
+  /// Sets the sample tick and says what the window looks like afterwards (PRD §12, §9.6).
+  /// </summary>
+  /// <remarks>
+  /// The same shape as <see cref="ShowGrouping"/>: the menu item a person clicks is a click, and a
+  /// capture has nobody to click it. Pass a nought for the interval to leave the rate where it is,
+  /// which is what stopping the tick does.
+  /// </remarks>
+  public string ShowRefresh(int milliseconds, bool paused = false, bool manual = false) {
+    this.SetRefresh(milliseconds, paused, manual);
     return this.DescribeForCapture();
   }
 
@@ -3131,6 +3213,36 @@ public sealed class MainWindow : Form {
       menu.DropDownItems.Add(Item(label, () => this.GroupBy(chosen)));
     }
 
+    return menu;
+  }
+
+  /// <summary>
+  /// How often the machine is sampled, and whether it is sampled at all (PRD §12).
+  /// </summary>
+  /// <remarks>
+  /// The list comes from <see cref="Settings.UserSettings.OfferedIntervalSeconds"/>, so this menu and
+  /// the terminal's picker cannot come to offer different rates. Anything else is still settable —
+  /// <c>--interval</c> and the file take any number — and this is what is worth a line in a menu.
+  /// <para>
+  /// Pause and "by hand" are both here and are not the same entry. Both stop the tick; only the
+  /// second is remembered, because a monitor that opened paused because it was paused when it was
+  /// last closed is a monitor showing a table of nothing at all.
+  /// </para>
+  /// </remarks>
+  private ToolStripMenuItem BuildRefreshMenu() {
+    var menu = new ToolStripMenuItem("Refresh");
+    foreach (var seconds in Settings.UserSettings.OfferedIntervalSeconds) {
+      var milliseconds = (int)Math.Round(seconds * 1000);
+      menu.DropDownItems.Add(Item(
+        "Every " + Settings.UserSettings.NameOfInterval(seconds),
+        () => this.SetRefresh(milliseconds, paused: false, manual: false)
+      ));
+    }
+
+    menu.DropDownItems.Add(new ToolStripSeparator());
+    menu.DropDownItems.Add(Item("Paused", () => this.SetRefresh(0, paused: true, manual: false)));
+    menu.DropDownItems.Add(Item("By hand only", () => this.SetRefresh(0, paused: false, manual: true)));
+    menu.DropDownItems.Add(Shortcut("Refresh now", Keys.F5, this.RefreshCurrentView));
     return menu;
   }
 

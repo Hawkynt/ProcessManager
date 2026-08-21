@@ -142,6 +142,13 @@ internal sealed record CommandLineOptions {
   /// </remarks>
   public int PinnedTerminalColumns { get; init; } = 1;
 
+  /// <summary>Whether the interactive front-ends open with the tick off (PRD §12).</summary>
+  /// <remarks>
+  /// From the settings file's <c>interval=manual</c>. A <c>--interval</c> on the command line is a
+  /// rate and therefore an answer to a different question, so it says nothing about this either way.
+  /// </remarks>
+  public bool ManualRefresh { get; init; }
+
   /// <summary>
   /// The window's saved column layout, which is a request for those fields exactly as naming them on
   /// the command line would be.
@@ -536,6 +543,7 @@ internal sealed record CommandLineOptions {
       AsciiOnly = !settings.BlockCharacters,
       TerminalColumns = settings.TerminalColumns.Length > 0 ? settings.TerminalColumns : null,
       PinnedTerminalColumns = settings.PinnedTerminalColumns,
+      ManualRefresh = settings.ManualRefresh,
       DesktopColumns = settings.DesktopColumns.Length > 0 ? settings.DesktopColumns : null,
     };
 

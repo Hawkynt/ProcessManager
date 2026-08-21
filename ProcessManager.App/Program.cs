@@ -115,6 +115,7 @@ internal static class Program {
         Grouping = options.Grouping,
         Columns = options.TerminalColumns,
         PinnedColumns = options.PinnedTerminalColumns,
+        ManualRefresh = options.ManualRefresh,
         // Only when this run said so: otherwise the terminal decides from the locale, which is the
         // one thing a capture may not do and a person watching wants.
         Graphs = options.AsciiOnly ? GraphStyle.Ascii : options.GraphStyle == GraphStyle.Blocks ? null : options.GraphStyle,

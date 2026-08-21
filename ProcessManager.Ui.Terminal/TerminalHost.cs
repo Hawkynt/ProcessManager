@@ -34,6 +34,9 @@ public sealed record TerminalStartup {
   /// <summary>How many leading columns are pinned (PRD §11, §57.2).</summary>
   public int PinnedColumns { get; init; } = 1;
 
+  /// <summary>Whether the tick opens switched off, with refreshes asked for by hand (PRD §12).</summary>
+  public bool ManualRefresh { get; init; }
+
   public GraphStyle? Graphs { get; init; }
 
 }
@@ -71,6 +74,10 @@ public sealed class TerminalHost : IDisposable {
       ClipboardOutput = this._output,
     };
 
+    // The picker moves it from here on, which is why the loop below reads it round rather than
+    // keeping the value it was called with (PRD §12).
+    ui.IntervalMilliseconds = (int)Math.Round(interval.TotalMilliseconds);
+
     if (startup is not null) {
       ui.View.SortColumn = startup.SortColumn;
       ui.View.SortDescending = startup.SortDescending;
@@ -84,6 +91,8 @@ public sealed class TerminalHost : IDisposable {
       // After the columns, because a pinned run is a count into the list the line above just
       // replaced — and Apply resets it, which is what a fresh set of columns should do.
       ui.Columns.SetFrozen(startup.PinnedColumns);
+      if (startup.ManualRefresh)
+        ui.SetManualRefresh();
     }
 
     foreach (var problem in ui.Keys.Errors)
@@ -94,8 +103,17 @@ public sealed class TerminalHost : IDisposable {
       ui.Update();
       ui.Flush(this._output);
 
-      var nextSample = DateTime.UtcNow + interval;
+      var pace = ui.IntervalMilliseconds;
+      var nextSample = DateTime.UtcNow + TimeSpan.FromMilliseconds(pace);
       while (!ui.ShouldQuit) {
+        if (pace != ui.IntervalMilliseconds) {
+          // A rate chosen mid-wait applies to the wait that is running, not to the one after it.
+          // Asking for a quarter of a second in the middle of a ten-second wait and then watching
+          // nothing happen for ten seconds is how a picker gets a reputation for not working.
+          nextSample += TimeSpan.FromMilliseconds(ui.IntervalMilliseconds - pace);
+          pace = ui.IntervalMilliseconds;
+        }
+
         // A resize is noticed here rather than through SIGWINCH: the signal would arrive on another
         // thread in the middle of a frame, and the whole point of the diff is that nobody else
         // writes between compose and flush.
@@ -122,10 +140,13 @@ public sealed class TerminalHost : IDisposable {
           continue;
         }
 
-        if (!ui.Paused && DateTime.UtcNow >= nextSample) {
+        // Read round rather than held: the picker moves the rate mid-session, and a loop that kept
+        // the value it started with would go on sampling at the old one until the program was
+        // restarted (PRD §12).
+        if (ui.Sampling && DateTime.UtcNow >= nextSample) {
           ui.Update();
           ui.Flush(this._output);
-          nextSample = DateTime.UtcNow + interval;
+          nextSample = DateTime.UtcNow + TimeSpan.FromMilliseconds(pace);
           continue;
         }
 
