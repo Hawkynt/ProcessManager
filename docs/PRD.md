@@ -31,8 +31,8 @@ shorthand:
 it is not known*. An unticked box must never become a zero on screen. This is restated here because
 it is the single requirement most likely to be broken while filling the tables in.
 
-**Counting, as of the last update:** **876 of 1356 boxes are ticked** — 122 of 205 in the field
-registry (§14–22), 754 of 1151 across the capabilities. A further 102 are marked 🟡, meaning some of
+**Counting, as of the last update:** **899 of 1356 boxes are ticked** — 122 of 205 in the field
+registry (§14–22), 777 of 1151 across the capabilities. A further 104 are marked 🟡, meaning some of
 the work behind them is already done. §100 tracks the phases; §101 defines when this may be called
 finished.
 
@@ -4114,8 +4114,12 @@ that has a tab for it. That drift is what made an earlier version of this matrix
 - [x] Handles
 - [x] DLLs / mapped files
 - [x] Search for resource owners
-- [ ] Signature verification — an ELF carries no Authenticode; the honest equivalent is asking the package manager whether the file still matches what it shipped, which is not written yet
-- [ ] 🟡 Image metadata — architecture, word size, position independence, interpreter, size and mtime are read; there is no version or vendor string to read on Linux
+- [x] Signature verification — an ELF carries no Authenticode, so the honest equivalent is what the
+      package manager knows: whether the image still matches the digest recorded for it, and
+      whether anything signed for the package. Both are read, and both agree with pacman
+- [ ] 🟡 Image metadata — architecture, word size, position independence, interpreter, build id,
+      mitigations, size and mtime. A version comes from the package rather than the binary,
+      because an ELF carries no version resource to read
 - [x] CPU / memory / I/O histories
 - [x] Per-process inspection
 
@@ -4128,7 +4132,8 @@ that has a tab for it. That drift is what made an earlier version of this matrix
 - [x] Modules
 - [x] Threads
 - [ ] 🟡 Stack traces — the kernel stack where the machine permits it, with symbols where the image still carries them; a user-space walk needs the driver §4 rules out
-- [ ] 🟡 Services — listed, not controlled
+- [ ] 🟡 Services — listed in a view, and started, stopped or enabled from the command line; no
+      menu item in either front-end
 - [x] Network connections
 - [x] Disk activity — per-process I/O columns, and a page per disk with its own throughput and queue
 - [x] GPU data — the adapter's own figures, and per process the memory and the time on each engine
@@ -4139,7 +4144,9 @@ that has a tab for it. That drift is what made an earlier version of this matrix
 - [x] Advanced process scheduling
 - [ ] Detailed service control
 - [ ] 🟡 Binary inspection — the ELF header and the mapped images; nothing disassembles
-- [ ] Runtime inspection
+- [ ] 🟡 Runtime inspection — each process and each loaded image says whether it is native, .NET,
+      a JVM or Python, read from the module list rather than guessed from a name; nothing
+      inspects a running runtime's own structures
 - [ ] Process notes / rules
 - [x] Configurable columns
 
