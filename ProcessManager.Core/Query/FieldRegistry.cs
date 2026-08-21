@@ -312,6 +312,22 @@ public static class FieldRegistry {
       "Open handles on Windows, open file descriptors on Unix.",
       FieldKind.Instant, FieldUnit.Count, _ALL, FieldCost.High, 66, 5, true, true,
       Aliases: "fds fd"),
+    // PRD §20. One pass over the descriptor table, and the same classification the handle view of
+    // §32 uses. Expensive without exception — a link to resolve per descriptor on top of the
+    // directory listing that was already the most costly read in the sampler — so all three are
+    // High and none is default-visible (PRD §5.4).
+    new(ProcessField.SocketCount, "socket.count", "Open sockets", "Sock",
+      "How many of the process's descriptors are sockets. A server leaking connections shows it here long before the machine runs out of them.",
+      FieldKind.Instant, FieldUnit.Count, _LINUX, FieldCost.High, 106, 6, true, true,
+      Aliases: "sockets"),
+    new(ProcessField.FileCount, "file.count", "Open files", "Files",
+      "How many descriptors are open on a name in the file system, directories included. Not the same as the handle count, most of which is usually anything but a file.",
+      FieldKind.Instant, FieldUnit.Count, _LINUX, FieldCost.High, 96, 6, true, true,
+      Aliases: "files"),
+    new(ProcessField.PipeCount, "pipe.count", "Open pipes", "Pipes",
+      "How many descriptors are pipes. Both ends of one pipe are a descriptor each, so a shell pipeline holds two of them per process.",
+      FieldKind.Instant, FieldUnit.Count, _LINUX, FieldCost.High, 96, 6, true, true,
+      Aliases: "pipes"),
     new(ProcessField.Nice, "nice", "Nice", "NI",
       "The politeness a process was started with. Backwards on purpose: -20 gets the most processor and 19 the least.",
       FieldKind.Instant, FieldUnit.None, _LINUX, FieldCost.Free, 66, 4, true, true),

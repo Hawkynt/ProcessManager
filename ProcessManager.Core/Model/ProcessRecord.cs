@@ -286,6 +286,25 @@ public struct ProcessRecord {
   /// <summary>Open handles (Windows) or file descriptors (Unix).</summary>
   public Counter HandleCount;
 
+  /// <summary>
+  /// The same descriptors split by what they point at: sockets, names in the file system, pipes
+  /// (PRD §20).
+  /// </summary>
+  /// <remarks>
+  /// A count each rather than one number, because they answer different questions: a server leaking
+  /// connections and an indexer holding a thousand files both show a large handle count and nothing
+  /// else in common. Each carries its own reason, because the scan can fail for a process whose
+  /// descriptor directory this user may not open — which is most of a machine's process table.
+  /// <para>
+  /// Filled only when asked for: the split needs the target of every descriptor resolved, which is
+  /// a link to read on top of the directory listing that was already the most expensive thing in
+  /// the sampler (PRD §5.4).
+  /// </para>
+  /// </remarks>
+  public Counter SocketCount;
+  public Counter FileCount;
+  public Counter PipeCount;
+
   public Counter ContextSwitches;
 
   /// <summary>Full command line, or <see langword="null"/> when it could not be read.</summary>

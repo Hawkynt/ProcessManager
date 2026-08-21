@@ -93,6 +93,11 @@ internal static class SystemProcessInformationReader {
       record.WriteBytes = Counter.Of((ulong)Math.Max(0, entry.WriteTransferCount));
       record.OtherBytes = Counter.Of((ulong)Math.Max(0, entry.OtherTransferCount));
       record.HandleCount = Counter.Of(entry.HandleCount);
+      // Windows has all three object types and a handle table to count them in; walking it is not
+      // written, so this is a fact about us rather than about the machine (PRD §7, §20).
+      record.SocketCount = Counter.Unknown(UnknownReason.NotImplementedHere);
+      record.FileCount = Counter.Unknown(UnknownReason.NotImplementedHere);
+      record.PipeCount = Counter.Unknown(UnknownReason.NotImplementedHere);
       // Per-process context switches are per *thread* in this structure; summing every thread of
       // every process on every sample is not worth a column nobody sorts by. The threads carry it.
       record.ContextSwitches = Counter.NotSupported;

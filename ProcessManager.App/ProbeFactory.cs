@@ -49,6 +49,11 @@ internal static class ProbeFactory {
   /// Whether anything on this run asked how often each process's cgroup has been held back. It
   /// costs a file per cgroup per sample, so it is read only when a column or a filter names it.
   /// </param>
+  /// <param name="wantDescriptorKinds">
+  /// Whether anything on this run asked how many sockets, files or pipes each process holds. It
+  /// costs the descriptor scan plus a link resolved per descriptor, which is the most expensive
+  /// read there is, so it is done only when a column or a filter names one of the three (PRD §20).
+  /// </param>
   public static ISystemProbe? Create(
     string? probeRoot,
     bool useHelper = true,
@@ -58,7 +63,8 @@ internal static class ProbeFactory {
     bool wantGpuUsage = false,
     bool wantHandleCount = false,
     bool wantCpuAffinity = false,
-    bool wantCpuThrottling = false
+    bool wantCpuThrottling = false,
+    bool wantDescriptorKinds = false
   ) {
     if (OperatingSystem.IsLinux()) {
       // A recorded tree is somebody else's machine; asking a helper about pids in it would be asking
@@ -76,6 +82,7 @@ internal static class ProbeFactory {
             ReadGpuUsage = wantGpuUsage,
             CountFileDescriptors = wantHandleCount,
             ReadCpuAffinity = wantCpuAffinity,
+            CountDescriptorKinds = wantDescriptorKinds,
             ReadCpuThrottling = wantCpuThrottling,
           }
           // A recorded tree was captured by somebody else, so the live user's id would refuse every
@@ -93,6 +100,7 @@ internal static class ProbeFactory {
             ReadGpuUsage = false,
             CountFileDescriptors = wantHandleCount,
             ReadCpuAffinity = wantCpuAffinity,
+            CountDescriptorKinds = wantDescriptorKinds,
             // The recorded tree carries the process's cgroup path, but the group it names lives on
             // the machine that was recorded and its counters are not in the capture.
             ReadCpuThrottling = false,

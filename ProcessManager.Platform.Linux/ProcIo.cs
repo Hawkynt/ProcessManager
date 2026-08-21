@@ -42,7 +42,16 @@ internal abstract class ProcIo {
   /// Collects the numerically named entries — the process ids under <c>/proc</c>, and the open
   /// descriptors under <c>/proc/[pid]/fdinfo</c>, which are files rather than directories.
   /// </summary>
-  public abstract bool ListNumericEntries(scoped ReadOnlySpan<byte> nulTerminatedPath, Span<byte> scratch, List<int> pids);
+  /// <param name="minimum">
+  /// The smallest name to keep: 1 for process ids, and 0 for descriptors, where 0 is standard input
+  /// and every process on the machine has one.
+  /// </param>
+  public abstract bool ListNumericEntries(
+    scoped ReadOnlySpan<byte> nulTerminatedPath,
+    Span<byte> scratch,
+    List<int> pids,
+    int minimum = 1
+  );
 
   /// <summary>Resolves a symlink, or null.</summary>
   public abstract string? ReadLink(string path);
@@ -69,8 +78,12 @@ internal sealed class SyscallProcIo : ProcIo {
   public override int CountDirectoryEntries(scoped ReadOnlySpan<byte> nulTerminatedPath, Span<byte> scratch, out int errno)
     => Native.CountDirectoryEntries(nulTerminatedPath, scratch, out errno);
 
-  public override bool ListNumericEntries(scoped ReadOnlySpan<byte> nulTerminatedPath, Span<byte> scratch, List<int> pids)
-    => Native.ListNumericEntries(nulTerminatedPath, scratch, pids);
+  public override bool ListNumericEntries(
+    scoped ReadOnlySpan<byte> nulTerminatedPath,
+    Span<byte> scratch,
+    List<int> pids,
+    int minimum = 1
+  ) => Native.ListNumericEntries(nulTerminatedPath, scratch, pids, minimum);
 
   public override string? ReadLink(string path) => Native.ReadLink(path);
 
@@ -156,11 +169,16 @@ internal sealed class ManagedProcIo : ProcIo {
   /// path found none of them and the graphics figures were empty on every leg but Linux while the
   /// parser behind them was perfectly sound.
   /// </remarks>
-  public override bool ListNumericEntries(scoped ReadOnlySpan<byte> nulTerminatedPath, Span<byte> scratch, List<int> pids) {
+  public override bool ListNumericEntries(
+    scoped ReadOnlySpan<byte> nulTerminatedPath,
+    Span<byte> scratch,
+    List<int> pids,
+    int minimum = 1
+  ) {
     var path = Decode(nulTerminatedPath);
     try {
       foreach (var entry in Directory.EnumerateFileSystemEntries(path))
-        if (int.TryParse(Path.GetFileName(entry), out var pid) && pid > 0)
+        if (int.TryParse(Path.GetFileName(entry), out var pid) && pid >= minimum)
           pids.Add(pid);
 
       return true;

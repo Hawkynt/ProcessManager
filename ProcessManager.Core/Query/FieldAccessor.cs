@@ -154,6 +154,9 @@ public static class FieldAccessor {
 
       case ProcessField.ThreadCount: return process.ThreadCount.ToString(CultureInfo.InvariantCulture);
       case ProcessField.HandleCount: return Humanize.Count(process.HandleCount);
+      case ProcessField.SocketCount: return Humanize.Count(process.SocketCount);
+      case ProcessField.FileCount: return Humanize.Count(process.FileCount);
+      case ProcessField.PipeCount: return Humanize.Count(process.PipeCount);
       case ProcessField.Priority: return process.Priority.ToString(CultureInfo.InvariantCulture);
       case ProcessField.Nice: return process.Nice.ToString(CultureInfo.InvariantCulture);
       case ProcessField.Terminal: return Humanize.Terminal(process.TerminalDevice);
@@ -253,6 +256,9 @@ public static class FieldAccessor {
       case ProcessField.PeakNonPagedPool: return Number(process.PeakNonPagedPoolBytes);
       case ProcessField.Swap: return Number(process.SwapBytes);
       case ProcessField.HandleCount: return Number(process.HandleCount);
+      case ProcessField.SocketCount: return Number(process.SocketCount);
+      case ProcessField.FileCount: return Number(process.FileCount);
+      case ProcessField.PipeCount: return Number(process.PipeCount);
 
       case ProcessField.GpuDedicatedMemory: return Number(process.GpuDedicatedBytes);
       case ProcessField.GpuSharedMemory: return Number(process.GpuSharedBytes);

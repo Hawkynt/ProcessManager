@@ -126,6 +126,18 @@ public sealed record LinuxProbeOptions {
   public bool CountFileDescriptors { get; init; }
 
   /// <summary>
+  /// Split each process's descriptors by what they point at — sockets, files, pipes (PRD §20).
+  /// </summary>
+  /// <remarks>
+  /// Off, and the most expensive thing in this file. It is the descriptor scan of
+  /// <see cref="CountFileDescriptors"/> plus a link to resolve for every descriptor found, which is
+  /// a syscall and a string each. §20 says the per-type tallies must not move into the sample loop,
+  /// and this is how they do not: nothing turns it on but somebody naming one of the three columns
+  /// (PRD §5.4).
+  /// </remarks>
+  public bool CountDescriptorKinds { get; init; }
+
+  /// <summary>
   /// Account for what each process is doing to the graphics adapters (PRD §19).
   /// </summary>
   /// <remarks>

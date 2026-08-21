@@ -849,26 +849,40 @@ every eighth sample, staggered by pid, with its known graphics descriptors read 
 # 20. Process table — object and resource fields
 
 - [x] `handles` — handle count (W) / fd count (L)
-- [ ] `handles.peak`
+- [ ] `handles.peak` — **no Linux source.** The kernel publishes the current descriptor count and no
+      high-water mark of it; `RLIMIT_NOFILE` is the ceiling it was allowed, which is a different
+      number. Same reasoning as `threads.peak` in §15
 - [x] `fd.count`
-- [ ] 🟡 `socket.count` — counted, and shown in the handles view of §32 rather than as a column here.
-      A column would have to be filled every sample, and the fd scan behind it is the 85 µs per
-      process that had to leave the sample loop in the first place
-- [ ] 🟡 `file.count` — as above
-- [ ] 🟡 `pipe.count` — as above
-- [ ] `event.count` — Windows handle-type tally
-- [ ] `semaphore.count`
-- [ ] `mutex.count`
-- [ ] `section.count`
-- [ ] `regkey.count`
-- [ ] `user.objects` — `GetGuiResources(GR_USEROBJECTS)`
-- [ ] `gdi.objects` — `GetGuiResources(GR_GDIOBJECTS)`
-- [ ] `mach.ports` — macOS
-- [ ] `ipc.count`
+- [x] `socket.count` — Linux, opt-in. One pass over the descriptor table, classified by the same
+      Core function the handles view of §32 uses, so the column and the view cannot disagree about
+      what a socket is. §5.4 is what resolved the objection below: naming the column is the request,
+      and nothing else turns the scan on
+- [x] `file.count` — as above. Descriptors on a name in the file system, directories included:
+      separating those two needs the open flags out of `fdinfo`, which is a second file per
+      descriptor. A device, a `memfd` and an anonymous inode are each their own kind and none of
+      them is a file
+- [x] `pipe.count` — as above. Both ends of one pipe are a descriptor each
+- [ ] `event.count` — Windows handle-type tally. **Windows only.** Linux's nearest equivalent is an
+      `eventfd`, which is a descriptor and is already counted as one
+- [ ] `semaphore.count` — **Windows only**; a POSIX semaphore is a mapped file and a System V one
+      belongs to no process at all, so neither is countable per process
+- [ ] `mutex.count` — **Windows only**; a futex has no kernel object to count
+- [ ] `section.count` — **Windows only**; the Linux equivalent is a mapping and lives in §34
+- [ ] `regkey.count` — **Windows only**; there is no registry
+- [ ] `user.objects` — `GetGuiResources(GR_USEROBJECTS)`. **Windows only**
+- [ ] `gdi.objects` — `GetGuiResources(GR_GDIOBJECTS)`. **Windows only**
+- [ ] `mach.ports` — **macOS only**
+- [ ] `ipc.count` — **not answerable per process on Linux.** System V queues, semaphores and shared
+      memory belong to the kernel rather than to a process: `ipcs` lists them by creator, and a
+      segment stays after everything that attached it has exited. Attached shared memory is visible
+      in `maps` and belongs in §34, not in a count of things a process holds
 
-The per-type tallies are one pass over a handle table that already exists — but they must **not**
-move into the sample loop before that cost is measured against §71. Handle enumeration is currently
-on-demand precisely because it is expensive.
+The remaining per-type tallies are one pass over a handle table that already exists — but they must
+**not** move into the sample loop before that cost is measured against §71. The three that are
+ticked are how that is done rather than an exception to it: the pass costs a `readlink` per
+descriptor on top of the listing that was already the most expensive read in the sampler, so it
+happens only for a run that named one of the three columns, and the whole table is never scanned for
+a column nobody opened (§5.4).
 
 # 21. Process table — security fields
 

@@ -191,7 +191,21 @@ internal sealed record CommandLineOptions {
   /// every process, every sample. Same rule as the three above — and until this existed there was no
   /// rule at all, so the column could be asked for and came back empty however it was asked for.
   /// </remarks>
-  public bool WantsHandleCount => this.Wants(ProcessField.HandleCount);
+  public bool WantsHandleCount => this.Wants(ProcessField.HandleCount) || this.WantsDescriptorKinds;
+
+  /// <summary>
+  /// Whether the per-kind descriptor tally is worth the link it resolves per descriptor (PRD §5.4,
+  /// §20).
+  /// </summary>
+  /// <remarks>
+  /// The descriptor scan plus a <c>readlink</c> for every descriptor it finds — the most expensive
+  /// read the sampler can be asked for, and the reason §20 kept the tallies out of the sample loop
+  /// until there was a switch that only somebody naming a column could flip.
+  /// </remarks>
+  public bool WantsDescriptorKinds
+    => this.Wants(ProcessField.SocketCount)
+    || this.Wants(ProcessField.FileCount)
+    || this.Wants(ProcessField.PipeCount);
 
   /// <summary>
   /// Whether a field was asked for, by column or by filter.

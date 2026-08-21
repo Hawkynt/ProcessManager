@@ -107,6 +107,9 @@ public enum ProcessField : byte {
 
   ThreadCount,
   HandleCount,
+  SocketCount,
+  FileCount,
+  PipeCount,
   Priority,
   SessionId,
   StartTime,

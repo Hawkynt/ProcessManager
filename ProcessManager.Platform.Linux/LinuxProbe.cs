@@ -33,6 +33,8 @@ public sealed class LinuxProbe : ISystemProbe {
   private readonly Dictionary<ProcessKey, ProcessCache> _cache = [];
   private readonly List<ProcessKey> _stale = [];
   private readonly List<int> _pids = [];
+  // Reused for the descriptor numbers of one process at a time, when the per-kind tally is on.
+  private readonly List<int> _fdNumbers = [];
   // One cgroup's throttling counter, for the length of one sample. Several hundred processes share
   // a few dozen groups, so this is the difference between a file per process and a file per group.
   private readonly Dictionary<string, Counter> _throttling = [];
@@ -845,6 +847,9 @@ public sealed class LinuxProbe : ISystemProbe {
     record.ReadBytes = Counter.NotSupported;
     record.WriteBytes = Counter.NotSupported;
     record.HandleCount = Counter.NotSupported;
+    record.SocketCount = Counter.NotSupported;
+    record.FileCount = Counter.NotSupported;
+    record.PipeCount = Counter.NotSupported;
     record.ContextSwitches = Counter.NotSupported;
     record.MemoryLimitBytes = Counter.NotSupported;
     // Nobody has looked in the cgroup yet, and a nought here would say the group has never been
@@ -1255,17 +1260,69 @@ public sealed class LinuxProbe : ISystemProbe {
   }
 
   private void ReadFileDescriptorCount(ProcessCache cache, ref ProcessRecord record) {
-    if (!this._options.CountFileDescriptors) {
+    // Set before anything is read: a record nobody filled would claim the process holds no sockets,
+    // no files and no pipes, which of a browser is three wrong answers at once (PRD §72.3).
+    record.SocketCount = Counter.NotSampledYet;
+    record.FileCount = Counter.NotSampledYet;
+    record.PipeCount = Counter.NotSampledYet;
+
+    if (!this._options.CountFileDescriptors && !this._options.CountDescriptorKinds) {
       record.HandleCount = Counter.NotSampledYet;
       return;
     }
 
     if (!this.MayRead(record)) {
       record.HandleCount = Counter.NotPermitted;
+      record.SocketCount = Counter.NotPermitted;
+      record.FileCount = Counter.NotPermitted;
+      record.PipeCount = Counter.NotPermitted;
       return;
     }
 
-    record.HandleCount = this.CountDescriptors(cache.FdPath, this._directoryScratch);
+    if (!this._options.CountDescriptorKinds) {
+      record.HandleCount = this.CountDescriptors(cache.FdPath, this._directoryScratch);
+      return;
+    }
+
+    // One listing for both answers: the split walks the same directory the count does, so asking
+    // for either while the other is also wanted must not walk it twice.
+    this.ReadDescriptorKinds(cache, ref record);
+  }
+
+  /// <summary>
+  /// Splits one process's descriptors by what they point at (PRD §20).
+  /// </summary>
+  /// <remarks>
+  /// The listing gives the numbers and the link target gives the kind, which is a <c>readlink</c>
+  /// per descriptor — the reason this is opt-in and the reason §20 kept the per-type tallies out of
+  /// the sample loop until there was a switch for them. The classification is Core's, the same one
+  /// the handle view uses, so the column and the view cannot disagree (PRD §5.1).
+  /// </remarks>
+  private void ReadDescriptorKinds(ProcessCache cache, ref ProcessRecord record) {
+    this._fdNumbers.Clear();
+    // From zero, not from one: descriptor 0 is standard input and every process has one. The
+    // listing this shares with the pid scan stops at 1 by default, which is right for /proc and
+    // undercounts every process on the machine by one here.
+    if (!this._io.ListNumericEntries(cache.FdPath, this._directoryScratch, this._fdNumbers, minimum: 0)) {
+      // The directory of anybody else's process is 0500, so this is the ordinary answer without the
+      // elevated helper rather than a failure to report (PRD §8.3).
+      record.HandleCount = Counter.NotPermitted;
+      record.SocketCount = Counter.NotPermitted;
+      record.FileCount = Counter.NotPermitted;
+      record.PipeCount = Counter.NotPermitted;
+      return;
+    }
+
+    var tally = default(DescriptorTally);
+    foreach (var fd in this._fdNumbers)
+      // The flags are deliberately not read: they would be a second file per descriptor and the one
+      // distinction they buy — a directory from a file — is not one this tally draws.
+      tally.Add(this._reader.TryReadLink($"{this._procRoot}/{cache.Pid}/fd/{fd}"), Counter.NotSampledYet);
+
+    record.HandleCount = Counter.Of((ulong)this._fdNumbers.Count);
+    record.SocketCount = tally.Sockets;
+    record.FileCount = tally.Files;
+    record.PipeCount = tally.Pipes;
   }
 
   private Counter CountDescriptors(scoped ReadOnlySpan<byte> fdPath, Span<byte> scratch) {
