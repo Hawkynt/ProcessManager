@@ -35,6 +35,7 @@ public static class FieldAccessor {
 
       case ProcessField.CpuPercent: return Humanize.Percent(Rated(delta, index, field));
       case ProcessField.CpuPercentPerCore: return Humanize.Percent(Rated(delta, index, field));
+      case ProcessField.MemoryPercent: return Humanize.Percent(Rated(delta, index, field));
       case ProcessField.CpuTime: return Humanize.Duration(process.CpuTimeNs);
       case ProcessField.UserTime: return Humanize.Duration(process.UserTimeNs);
       case ProcessField.KernelTime: return Humanize.Duration(process.KernelTimeNs);
@@ -99,6 +100,11 @@ public static class FieldAccessor {
       case ProcessField.ThreadCount: return process.ThreadCount.ToString(CultureInfo.InvariantCulture);
       case ProcessField.HandleCount: return Humanize.Count(process.HandleCount);
       case ProcessField.Priority: return process.Priority.ToString(CultureInfo.InvariantCulture);
+      case ProcessField.Nice: return process.Nice.ToString(CultureInfo.InvariantCulture);
+      case ProcessField.Terminal: return Humanize.Terminal(process.TerminalDevice);
+      case ProcessField.ExecutableName: return ExecutableName(in process);
+      case ProcessField.ContainerId: return Humanize.ContainerId(process.ContainerPath) ?? "—";
+      case ProcessField.UniqueSet: return Humanize.Bytes(process.UniqueBytes);
       case ProcessField.SessionId:
         return process.SessionId >= 0 ? process.SessionId.ToString(CultureInfo.InvariantCulture) : "—";
       case ProcessField.StartTime:
@@ -137,6 +143,8 @@ public static class FieldAccessor {
       case ProcessField.LastCpu: return process.LastCpu >= 0 ? process.LastCpu : null;
       case ProcessField.ThreadCount: return process.ThreadCount;
       case ProcessField.Priority: return process.Priority;
+      case ProcessField.Nice: return process.Nice;
+      case ProcessField.UniqueSet: return Number(process.UniqueBytes);
       case ProcessField.SessionId: return process.SessionId;
       case ProcessField.StartTime: return process.StartTimeUtcTicks;
 
@@ -168,6 +176,7 @@ public static class FieldAccessor {
 
       case ProcessField.CpuPercent:
       case ProcessField.CpuPercentPerCore:
+      case ProcessField.MemoryPercent:
       case ProcessField.CyclesDelta:
       case ProcessField.ContextSwitchesDelta:
       case ProcessField.PageFaultsDelta:
@@ -195,6 +204,9 @@ public static class FieldAccessor {
     ProcessField.ImagePath => process.ImagePath,
     ProcessField.CommandLine => process.CommandLine,
     ProcessField.Container => process.ContainerPath,
+    ProcessField.ContainerId => Humanize.ContainerId(process.ContainerPath),
+    ProcessField.ExecutableName => process.ImagePath is { Length: > 0 } ? ExecutableName(in process) : null,
+    ProcessField.Terminal => process.TerminalDevice == 0 ? null : Humanize.Terminal(process.TerminalDevice),
     ProcessField.State => Humanize.State(process.State),
     // The security states are matched by the word they show, so "elevated:yes" reads the way it
     // would be said aloud. The numeric form still works, because Number covers them too.
@@ -279,12 +291,31 @@ public static class FieldAccessor {
   private static string? Word(Counter counter)
     => counter.HasValue ? (counter.Value != 0 ? "yes" : "no") : null;
 
+  /// <summary>
+  /// The file that is running, which is not always what the process calls itself.
+  /// </summary>
+  /// <remarks>
+  /// A process can rename itself and many do — a browser's helpers, anything using an interpreter,
+  /// anything that rewrote its own argv. The name is what it claims; this is what it is.
+  /// </remarks>
+  private static string ExecutableName(in ProcessRecord process) {
+    if (process.ImagePath is not { Length: > 0 } path)
+      return "—";
+
+    var slash = path.LastIndexOf('/');
+    if (slash < 0)
+      slash = path.LastIndexOf('\\');
+
+    return slash >= 0 && slash < path.Length - 1 ? path[(slash + 1)..] : path;
+  }
+
   private static Rate Rated(SnapshotDelta? delta, int index, ProcessField field) {
     if (delta is null)
       return Rate.NotSampledYet;
 
     return field switch {
       ProcessField.CpuPercent => delta.CpuPercent(index),
+      ProcessField.MemoryPercent => delta.MemoryPercent(index),
       ProcessField.CpuPercentPerCore => delta.CpuPercentPerCore(index),
       ProcessField.CyclesDelta => delta.CyclesPerSecond(index),
       ProcessField.ContextSwitchesDelta => delta.ContextSwitchesPerSecond(index),

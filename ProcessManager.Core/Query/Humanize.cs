@@ -22,6 +22,71 @@ public static class Humanize {
     _ => string.Empty,
   };
 
+  /// <summary>
+  /// A controlling terminal, from the device number <c>stat</c> packs it into.
+  /// </summary>
+  /// <remarks>
+  /// Zero means no controlling terminal, which is the answer for every daemon and every service and
+  /// so for most of a machine's process table — a dash rather than "0", because 0 is not a device.
+  /// <para>
+  /// The packing is the awkward part: minor is split across the low eight bits and bits 20–31, with
+  /// major in between, which is how Linux has encoded <c>dev_t</c> since it ran out of minor numbers.
+  /// Major 136 is the pseudo-terminal range, where the minor is the number after <c>pts/</c>.
+  /// </para>
+  /// </remarks>
+  public static string Terminal(int device) {
+    if (device == 0)
+      return "—";
+
+    var raw = (uint)device;
+    var major = (int)((raw >> 8) & 0xFFF);
+    var minor = (int)((raw & 0xFF) | ((raw >> 12) & 0xFFF00));
+
+    return major switch {
+      136 => $"pts/{minor.ToString(CultureInfo.InvariantCulture)}",
+      4 when minor < 64 => $"tty{minor.ToString(CultureInfo.InvariantCulture)}",
+      4 => $"ttyS{(minor - 64).ToString(CultureInfo.InvariantCulture)}",
+      _ => $"{major.ToString(CultureInfo.InvariantCulture)}:{minor.ToString(CultureInfo.InvariantCulture)}",
+    };
+  }
+
+  /// <summary>
+  /// The container a cgroup path belongs to, or null for a process that is simply on the machine.
+  /// </summary>
+  /// <remarks>
+  /// Every runtime writes its own shape and they all bury a long hexadecimal id somewhere:
+  /// <c>/docker/&lt;64 hex&gt;</c>, <c>/kubepods/.../docker-&lt;64 hex&gt;.scope</c>,
+  /// <c>/system.slice/docker-&lt;64 hex&gt;.scope</c>, and podman's <c>libpod-&lt;64 hex&gt;</c>.
+  /// Rather than matching each layout — there is always another — this looks for the id itself and
+  /// shortens it to the twelve characters every one of those tools prints.
+  /// <para>
+  /// A systemd slice is not a container and must not be reported as one, which is why a run of hex
+  /// has to be long enough to be an id rather than merely present.
+  /// </para>
+  /// </remarks>
+  public static string? ContainerId(string? cgroupPath) {
+    if (cgroupPath is not { Length: > 0 } path)
+      return null;
+
+    var start = -1;
+    for (var i = 0; i <= path.Length; ++i) {
+      var isHex = i < path.Length && Uri.IsHexDigit(path[i]);
+      if (isHex) {
+        if (start < 0)
+          start = i;
+
+        continue;
+      }
+
+      if (start >= 0 && i - start >= 32)
+        return path[start..(start + 12)];
+
+      start = -1;
+    }
+
+    return null;
+  }
+
   /// <summary>A one-line explanation of a placeholder, for tooltips and the detail pane.</summary>
   public static string Explain(UnknownReason reason) => reason switch {
     UnknownReason.NotPermitted => "Not readable as this user; start the elevated helper to see it.",

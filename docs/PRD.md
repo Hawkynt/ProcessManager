@@ -562,7 +562,7 @@ The canonical field registry. The ID is stable: a saved layout, a `--columns` ar
 term all use it, and it never changes even when the display name differs per platform.
 
 - [x] `name` — friendly process/executable name
-- [ ] 🟡 `exe.name` — actual executable filename; derived from `image.path`, differs from `name` when
+- [x] `exe.name` — the file that is running, from `image.path`. Differs from `name` when
       a process renames itself, not yet its own field
 - [ ] `app.name` — human-readable product/application identity
 - [x] `pid` — process identifier
@@ -593,10 +593,16 @@ term all use it, and it never changes even when the display name differs per pla
 - [ ] `package` — MSIX / Flatpak / Snap / `.app`
 - [ ] `app.id` — platform application ID
 - [ ] `bundle.id` — macOS bundle identifier
-- [ ] 🟡 `container.id` — the cgroup path is read; the container ID is not parsed out of it
+- [x] `container.id` — every runtime writes its own cgroup shape and they all bury a long
+      hexadecimal id somewhere, so the id is looked for rather than the layout: there is always
+      another layout. A run of hex has to be long enough to *be* an id, or a systemd slice and a
+      terminal's UUID scope would both report as containers on an ordinary desktop
 - [ ] `namespace` — `/proc/pid/ns/*` readlink
 - [ ] 🟡 `job.cgroup` — Linux cgroup path done; Windows job object not
-- [ ] 🟡 `terminal` — controlling TTY; already parsed from `stat` field 7, not surfaced
+- [x] `terminal` — controlling TTY, decoded from `stat` field 7. The packing is the awkward part:
+      minor is split across the low eight bits and bits 20–31 with major in between, so the obvious
+      shift is right for small numbers and wrong for large ones. Zero is *no terminal* — the answer
+      for every daemon, and so for most of a machine — rather than device 0:0
 - [ ] `exe.size`
 - [ ] `exe.modified`
 - [ ] `exe.created`
@@ -620,7 +626,9 @@ term all use it, and it never changes even when the display name differs per pla
 - [x] `threads` — current thread count
 - [ ] `threads.peak`
 - [x] `priority.base`
-- [ ] 🟡 `priority.dynamic` — Linux only
+- [x] 🟡 `priority.dynamic` — Linux only; `stat` field 18, the kernel's own number rather than the
+      nice value
+- [x] `nice` — the politeness a process was started with, backwards on purpose
 - [ ] `priority.class` — idle/below normal/normal/… (`GetPriorityClass`)
 - [x] `nice`
 - [ ] `cpu.affinity` — `sched_getaffinity` / `GetProcessAffinityMask`
@@ -639,7 +647,10 @@ Required of the CPU percentage:
 
 # 16. Process table — memory fields
 
-- [ ] `mem.percent` — share of usable physical memory (derivable now)
+- [x] `mem.percent` — share of the machine's memory. Computed in the delta rather than where the
+      columns are rendered, because that is the only place the machine's total is in scope beside
+      the process; a percentage of an unknown total is not a percentage. Answered on the first
+      sample, unlike every rate beside it
 - [x] `ws` — working set / RSS
 - [x] `ws.peak`
 - [x] `ws.private` — `WorkingSetPrivateSize` (W), `RssAnon` (L). **No longer "or PSS"**: the
@@ -666,7 +677,10 @@ more numbers. All free: the lines are already in the `status` this program reads
 - [x] `pss` — Linux, opt-in; `smaps_rollup` costs 0.8–4 ms per process
 - [x] `swap.pss` — swapped-out memory divided the same way, from the same file, so asking for either
       buys both
-- [ ] 🟡 `uss` — reported by `smaps_rollup`, not surfaced
+- [x] `uss` — private clean plus private dirty, free once `smaps_rollup` is open. PSS says what a
+      process costs the machine; USS says what killing it would recover, and the two differ by
+      exactly the shared pages somebody else is also using. The key used to be an alias for the
+      anonymous resident set, which is *close to* the unique set and is not it
 
 **PSS is the only per-process memory figure that adds up.** Working set counts every shared page in
 full for every process mapping it, so summing it over a machine reports several times the memory that

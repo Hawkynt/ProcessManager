@@ -145,6 +145,17 @@ public struct ProcessRecord {
   /// <summary>Swapped-out memory, counted proportionally the way <see cref="ProportionalBytes"/> is.</summary>
   public Counter ProportionalSwapBytes;
 
+  /// <summary>
+  /// Unique set size: the memory only this process maps, and so the only memory that would come
+  /// back if it exited.
+  /// </summary>
+  /// <remarks>
+  /// The other half of the proportional set's story and from the same file, so it costs nothing
+  /// extra once that has been read. PSS says what a process costs the machine; USS says what killing
+  /// it would recover, and the two differ by exactly the shared pages somebody else is also using.
+  /// </remarks>
+  public Counter UniqueBytes;
+
   /// <summary>Kernel memory charged to this process from the paged pool, and its peak.</summary>
   public Counter PagedPoolBytes;
   public Counter PeakPagedPoolBytes;
@@ -190,6 +201,18 @@ public struct ProcessRecord {
 
   /// <summary>cgroup / container path on Linux; <see langword="null"/> elsewhere or when not in one.</summary>
   public string? ContainerPath;
+
+  /// <summary>
+  /// The controlling terminal's device number, or 0 for a process with none.
+  /// </summary>
+  /// <remarks>
+  /// Packed the way <c>stat</c> packs it: minor in the low eight bits and bits 20–31, major in
+  /// between. Zero is not a device — it is the answer for every daemon and every service, which is
+  /// most of a machine's process table.
+  /// </remarks>
+  public int TerminalDevice;
+
+
 
   /// <summary>Memory ceiling this process is subject to (cgroup limit), when there is one.</summary>
   public Counter MemoryLimitBytes;
