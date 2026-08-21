@@ -873,6 +873,15 @@ process from an unmeasurable one. That is a model presented as a measurement, wh
 exists to prevent. Honest per-process traffic needs the packet accounting or eBPF named above; until
 one of them is built, the columns do not exist rather than existing and being wrong.
 
+The refusal was gone over again rather than inherited, and it stands. One further source gets
+proposed every time and is worth writing down so it is not proposed again: `/proc/[pid]/net/dev`
+does carry byte counters, and they are real and complete. They are the counters of the **network
+namespace** the process is in, not of the process — on an ordinary machine every process shares one
+namespace, so the column would show the whole machine's traffic on every row. Where it is not the
+whole machine it is a container, and the traffic of a container is a fact about the container: it
+belongs to §38 beside the other cgroup and namespace figures, under a header that says namespace,
+and it is not one of these nine fields under any header at all.
+
 # 19. Process table — GPU fields
 
 Linux, so far. Windows reads its own performance counters and that is §100's work; a field claiming
@@ -927,8 +936,17 @@ every eighth sample, staggered by pid, with its known graphics descriptors read 
 - [x] `handles` — handle count (W) / fd count (L)
 - [ ] `handles.peak` — **no Linux source.** The kernel publishes the current descriptor count and no
       high-water mark of it; `RLIMIT_NOFILE` is the ceiling it was allowed, which is a different
-      number. Same reasoning as `threads.peak` in §15
+      number, and `FDSize` is the table it was given, which is a third. On the machine this was
+      written on one shell held **four** descriptors, with a table of **256** and a limit of
+      **524288** — three numbers, none of them the other two, and none of them the peak. Same
+      reasoning as `threads.peak` in §15. `fd.table` below is the nearest honest thing and is
+      labelled as the different quantity it is rather than filed under this name
 - [x] `fd.count`
+- [x] `fd.table` — how many descriptor slots the kernel has allocated, from `FDSize`. A capacity: the
+      table is grown when a descriptor will not fit and is never shrunk while the process lives, so
+      it is an upper bound on how many were once held at once — which is the question somebody
+      opening a peak column is usually asking, without pretending to be the answer. Free to read,
+      and opt-in with the §21 lines because it is recognised in the same pass
 - [x] `socket.count` — Linux, opt-in. One pass over the descriptor table, classified by the same
       Core function the handles view of §32 uses, so the column and the view cannot disagree about
       what a socket is. §5.4 is what resolved the objection below: naming the column is the request,
@@ -952,6 +970,14 @@ every eighth sample, staggered by pid, with its known graphics descriptors read 
       memory belong to the kernel rather than to a process: `ipcs` lists them by creator, and a
       segment stays after everything that attached it has exited. Attached shared memory is visible
       in `maps` and belongs in §34, not in a count of things a process holds
+
+Everything still unticked here names the platform it belongs to, and between them they cover the
+whole of the remainder: seven are **Windows-only** object types with no Linux counterpart to count
+(`event.count`, `semaphore.count`, `mutex.count`, `section.count`, `regkey.count`, `user.objects`,
+`gdi.objects`), one is **macOS-only** (`mach.ports`), one is a high-water mark **no Linux interface
+publishes** (`handles.peak`), and one is **not a per-process quantity on any of them** — a System V
+object outlives every process that touched it, so `ipc.count` is a question about the kernel rather
+than about a row in this table. Nothing is left here that Linux could answer and does not.
 
 The remaining per-type tallies are one pass over a handle table that already exists — but they must
 **not** move into the sample loop before that cost is measured against §71. The three that are
@@ -989,8 +1015,10 @@ a column nobody opened (§5.4).
 - [ ] `aslr` — **Windows only** as a per-process mitigation policy. Linux's is the machine-wide
       `kernel.randomize_va_space` plus whether the image is a PIE, which is §53's business
 - [ ] `cfg` — **Windows only**
-- [ ] `cet` — **Windows only** as a policy field. The CPU's own shadow-stack support is a machine
-      capability and is already in §46
+- [ ] `cet` — **Windows only** as a policy field, and the policy is the part Linux has no answer to:
+      there is no per-process record of what was *asked* for. What Linux does publish is what is
+      switched **on**, which is `shadow.stack` below — a reading rather than a policy, and a better
+      question. The CPU's own support for it is a machine capability and is already in §46
 - [ ] `acg` — **Windows only**
 - [ ] `cig` — **Windows only**
 - [ ] `sandbox` — **Windows (AppContainer) and macOS (Seatbelt).** Linux has no single sandbox flag:
@@ -1002,6 +1030,47 @@ a column nobody opened (§5.4).
       `caps.linux` below and are a different thing wearing the same word
 - [x] `selinux.context` — `/proc/pid/attr/current`, opt-in
 - [x] `apparmor.profile` — same file, same field: the LSM label is one value whichever module wrote it
+- [x] `lsm.mode` — the part of that label which is not the label: AppArmor writes how hard it is
+      applying the profile in brackets after it, and `(complain)` against `(enforce)` is the whole
+      difference between a rule that is written down and a rule that happens. Out of the string the
+      label column already read, so it costs nothing beyond it and is bought by the same switch.
+      An SELinux context states no such thing — four fields, none of them an enforcement setting,
+      and the machine-wide `enforcing` flag is not a property of any one process — so it renders
+      `n/a` there rather than claiming a mode nobody set (§5.3). Held against the documented label
+      forms rather than against a live module: neither AppArmor nor SELinux was loaded on the
+      machine this was written on, which is stated here because it is the weakest verification in
+      this section
+- [x] `spec.ssb` — whether speculative store bypass is mitigated for this process, and whether the
+      process chose that or had it chosen for it: the seven words `fs/proc/array.c` writes for the
+      value `prctl(PR_GET_SPECULATION_CTRL)` would return. This is what Linux has in place of the
+      Windows mitigation policies above, and it is a better thing to have — a state rather than a
+      request — but it is emphatically not the same field, so it is not one of them. Verified
+      against the kernel by driving `PR_SET_SPECULATION_CTRL` on a child and reading its `status`
+      back: `PR_SPEC_DISABLE` produced "thread mitigated", `PR_SPEC_FORCE_DISABLE` produced "thread
+      force mitigated". Ordered by exposure so that sorting brings the unmitigated rows to the top,
+      and a word this build cannot name is reported as unrecognised rather than rounded towards safe
+- [x] `spec.ib` — the same for indirect branch speculation, and a separate field because it is a
+      separate control: a process may have asked for one and not the other, which processes on this
+      machine do. Eight words rather than seven, and not the same eight — the kernel writes
+      "unsupported" here where the line above writes "unknown". Arrived in 5.11, four kernel
+      versions after the seccomp filter count and seven after the line above, so a machine can
+      honestly have one and not the other
+- [x] `shadow.stack` — the hardware protections the kernel has switched on for the process, from
+      `x86_Thread_features` (6.6 and newer). The honest Linux answer to what `cet` asks: a binary
+      built `-fcf-protection=full` still runs without a shadow stack unless the loader turned one
+      on, and this is the field that tells those two apart. Verified by building exactly such a
+      binary and running it under the loader tunable that enables the feature — the column read
+      `shstk` where pid 1 beside it read `none`. Empty is a real answer and the ordinary one; the
+      line being absent, on a kernel before 6.6 or on any machine that is not x86, is not that
+      answer and does not read like it
+- [x] `umask` — which permissions are withheld from every file the process creates. Free, in the
+      status already open, and a finding no other column on the row would show: a daemon running
+      with a mask of nothing makes world-writable files. Parsed base eight, because reading `0022`
+      as twenty-two names a mask nobody holds, and verified against the shell builtin
+- [x] `tracer` — which process is attached to this one as a debugger, by pid rather than as a yes or
+      no, because "something is reading this process's memory" is only half the question. Nought is
+      a real answer and the usual one. Verified across a real `PTRACE_ATTACH`: nought, then the
+      tracer's pid, then nought again on detach
 - [x] `seccomp` — off, strict or filter
 - [x] `seccomp.filters` — how many filter programs are attached, where the kernel says (5.9 and
       newer). Several of them is a process something has sandboxed more than once, which the mode
@@ -1026,6 +1095,16 @@ a column nobody opened (§5.4).
 - [ ] **Online reputation checking is opt-in, and the program states exactly what is transmitted
       before the first time it happens** — at the point of use, not buried in a settings page
 
+The five lines added above are **opt-in**, and for a cost that is neither a read nor an allocation,
+which is why it had to be measured rather than argued about. Every one of them is in the `status`
+the sampler already has open, so they buy no syscall — but recognising five more labels in a loop
+that runs about fifty times for each of six hundred processes every second cost seven to eight
+milliseconds of CPU per thousand processes when every run paid it, against a whole-sample budget of
+twenty-five (§71.2). Interleaved against `main`, alternating which leg ran first, the branch was
+slower in eleven pairs out of eleven. Moving the work out of the loop recovered most of it and the
+switch buys the rest, so a run that names none of these columns measures level with `main` — which
+is what §5.4 asks for and, on this evidence, is not a rule that only applies to expensive reads.
+
 Everything still unticked here is **Windows-only or macOS-only**, and each line above now says
 which. Protected-process status, the certificate and signature fields, the mitigation policies
 (`dep`, `aslr`, `cfg`, `cet`, `acg`, `cig`), AppContainer with its capability list, and the macOS
@@ -1045,15 +1124,51 @@ as such. Windows models energy impact from weighted CPU/disk/network; Linux has 
 and nothing per-process. A model presented as a measurement is exactly the dishonesty §72.3 exists to
 prevent.
 
-- [ ] `power.usage`
-- [ ] `power.trend`
-- [ ] `energy.impact`
-- [ ] `energy.cpu`
-- [ ] `energy.gpu`
-- [ ] `qos.background`
-- [ ] `eco.state`
-- [ ] `thermal`
-- [ ] `battery.impact`
+**All nine are refused on Linux, not deferred.** This was gone looking for rather than assumed, and
+what the looking found was that the two interfaces which could attribute energy to a process both
+refuse to, by construction rather than by omission:
+
+- `/sys/class/powercap/intel-rapl*/energy_uj` is the package counter, and it is **root-only**: mode
+  0400 since 5.10, changed by `powercap: restrict energy meter to root access` in response to
+  CVE-2020-8694, because the counter leaks what other processes are computing. Verified on the
+  machine this was written on — `-r-------- root root`. So even the machine figure is `—` for an
+  ordinary user, and must say "not permitted" rather than nought (§72.3).
+- The perf RAPL PMU cannot be opened per task **at all**. `arch/x86/events/rapl.c` sets
+  `task_ctx_nr = perf_invalid_context`, and `perf_event_alloc` refuses any event on such a PMU that
+  names a task or a cgroup with `EINVAL`. The commit that introduced it says so in as many words:
+  "the RAPL PMU is uncore by nature and is implemented such that it only works in system-wide mode".
+  There is no per-process energy to read, not one that is hard to reach.
+- NVML publishes no per-process power either. Its per-process query answers pid, process name and
+  used GPU memory, and nothing else — checked against `nvidia-smi --help-query-compute-apps` on a
+  card that has processes on it. §19 already refused `gpu.power` on these grounds and this is the
+  same refusal seen from the other side.
+
+That leaves splitting a machine-level reading by each process's share of something else, which is a
+model, and §72.3 is the rule that a model may not be shown where a measurement is claimed. Nine
+columns of it would be worse than nine empty ones, because a number on screen is read as a reading.
+
+- [ ] `power.usage` — **no per-process source on any platform.** Windows models it; Linux has RAPL
+      for the package, which the two paragraphs above show cannot be attributed to a process
+- [ ] `power.trend` — the derivative of a figure that does not exist
+- [ ] `energy.impact` — **Windows and macOS**, and a weighted model on both. It is the one field here
+      that is honest *as* a model, because both platforms define it as one and label it so; on Linux
+      there is no vendor definition to be faithful to, and inventing weights would make this
+      program's arithmetic look like the operating system's measurement
+- [ ] `energy.cpu` — would need RAPL charged to a task. See above: the PMU refuses the scope
+- [ ] `energy.gpu` — **not published per process by any driver.** §19 refused this already
+- [ ] `qos.background` — **Windows (EcoQoS) and macOS (QoS classes).** Linux has no energy quality of
+      service per process. What it has is the scheduler class and the cgroup's `cpu.idle`, which are
+      scheduling decisions rather than energy ones and are already `sched.class` in §15; the
+      processor's energy-performance preference is per core, not per process
+- [ ] `eco.state` — **Windows only**, and the same thing as the line above wearing the UI's name
+- [ ] `thermal` — **not a per-process quantity anywhere.** A processor has a temperature and a
+      process does not; the machine's sensors are read and are on the performance page (§46)
+- [ ] `battery.impact` — **macOS only**, and modelled there too
+
+Machine-level RAPL is a different matter and a legitimate one: it is a real measurement of a real
+thing, it is simply not a property of a process. It belongs beside the other machine readings on the
+performance page (§45, §46) rather than in this table, and when it is added it must render "not
+permitted" for an unprivileged reader rather than a nought, for the reason in the first bullet.
 
 ---
 
