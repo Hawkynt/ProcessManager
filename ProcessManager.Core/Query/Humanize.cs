@@ -271,6 +271,54 @@ public static class Humanize {
       : connection.RemotePort == 0 ? "—" : Endpoint(connection.RemoteAddress, connection.RemotePort);
 
   /// <summary>
+  /// The same two ends, with the port named and the address resolved where that is possible.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// "443" and "https" are the same fact and only one of them can be read at a glance, so a port is
+  /// named whenever the machine's own <c>/etc/services</c> names it — the default, and what
+  /// <c>ss</c> and <c>netstat</c> both do.
+  /// </para>
+  /// <para>
+  /// An address is a different matter: resolving it asks somebody else a question, so it happens
+  /// only when a name is already known, and <see cref="HostnameCache"/> knows nothing until it is
+  /// switched on. Either way the number and the address remain available in the record itself —
+  /// what is shown is a nicety, and what is exported stays exact (PRD §76).
+  /// </para>
+  /// </remarks>
+  public static string LocalEndpoint(in ConnectionRecord connection, ServiceNames? services, HostnameCache? hosts)
+    => connection.Protocol == ConnectionProtocol.Unix
+      ? LocalEndpoint(in connection)
+      : Endpoint(
+          hosts?.Lookup(connection.LocalAddress) ?? connection.LocalAddress,
+          Port(connection.LocalPort, in connection, services)
+        );
+
+  /// <inheritdoc cref="LocalEndpoint(in ConnectionRecord, ServiceNames?, HostnameCache?)"/>
+  public static string RemoteEndpoint(in ConnectionRecord connection, ServiceNames? services, HostnameCache? hosts)
+    => connection.Protocol == ConnectionProtocol.Unix || connection.RemotePort == 0
+      ? RemoteEndpoint(in connection)
+      : Endpoint(
+          hosts?.Lookup(connection.RemoteAddress) ?? connection.RemoteAddress,
+          Port(connection.RemotePort, in connection, services)
+        );
+
+  /// <summary>
+  /// A port as its name, where the machine declares one for that protocol.
+  /// </summary>
+  /// <remarks>
+  /// Port zero is not a port. A socket bound to it has asked the kernel to choose, and on a listening
+  /// socket that has not happened yet — naming it would be naming nothing.
+  /// </remarks>
+  private static string Port(int port, in ConnectionRecord connection, ServiceNames? services) {
+    if (port == 0 || services is null)
+      return port.ToString(CultureInfo.InvariantCulture);
+
+    var datagram = connection.Protocol is ConnectionProtocol.Udp or ConnectionProtocol.Udp6;
+    return services.Describe(port, datagram);
+  }
+
+  /// <summary>
   /// An address and a port.
   /// </summary>
   /// <remarks>
@@ -278,6 +326,11 @@ public static class Humanize {
   /// be port 22 on <c>fe80::1</c> or no port at all on <c>fe80::1:22</c>. Everything that writes
   /// these — the URL syntax, ss, netstat — brackets the address for that reason.
   /// </remarks>
+  private static string Endpoint(string address, string port)
+    => address.Contains(':', StringComparison.Ordinal)
+      ? $"[{address}]:{port}"
+      : $"{address}:{port}";
+
   private static string Endpoint(string address, int port)
     => address.Contains(':', StringComparison.Ordinal)
       ? $"[{address}]:{port}"

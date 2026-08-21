@@ -1483,11 +1483,11 @@ Endpoints are enumerated on both platforms and attributed to processes.
 - [x] State
 - [x] Local address
 - [x] Local port
-- [ ] Local hostname
+- [ ] 🟡 Local hostname — resolved and shown by `--connections --resolve`; the window's network tab still shows addresses
 - [x] Remote address
 - [x] Remote port
-- [ ] Remote hostname
-- [ ] Service name
+- [ ] 🟡 Remote hostname — as above
+- [x] Service name — from the machine's own `/etc/services`, in `--connections`; `-n` turns it off, as it does for `ss`
 - [ ] 🟡 Interface — Linux, from the address the socket is bound to. `/proc/net/if_inet6` names it
       outright for IPv6; an IPv4 address is on the interface whose on-link subnet contains it, longest
       prefix first. A socket on the wildcard address is on all of them and shows `*`; an address no
@@ -1541,13 +1541,13 @@ Actions:
 - [ ] Go to process
 - [ ] Process properties
 - [ ] Copy endpoint
-- [ ] Resolve hostname
-- [ ] Disable hostname resolution
+- [ ] 🟡 Resolve hostname — `--connections --resolve`; no per-row command in the window yet
+- [x] Disable hostname resolution — off unless asked for, which is the stronger version of disableable
 - [ ] Close connection where natively supported
 - [ ] Terminate owner
 - [ ] Search remote endpoint
 
-- [ ] **Hostname resolution is asynchronous and globally disableable** — a blocking DNS lookup in a
+- [x] **Hostname resolution is asynchronous and globally disableable** — a blocking DNS lookup in a
       table that refreshes every second is a hang waiting to happen, and on some networks it is also
       a disclosure
 
