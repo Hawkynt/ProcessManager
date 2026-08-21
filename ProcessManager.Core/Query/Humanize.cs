@@ -473,8 +473,8 @@ public static class Humanize {
       : $"{address}:{port}";
 
   /// <summary>
-  /// The host out of an endpoint this class drew, without its port, or null where there is no host in
-  /// it (PRD §40).
+  /// The host out of an endpoint this class drew, without its port, or null where the endpoint names
+  /// no host at all (PRD §40).
   /// </summary>
   /// <remarks>
   /// <para>
@@ -492,6 +492,11 @@ public static class Humanize {
   /// The placeholders come back as null rather than as themselves. <c>—</c> is a listening socket
   /// with no peer, <c>n/a</c> is a Unix socket, which has no address of the kind a search means, and
   /// neither is a term anybody wants a browser opened for.
+  /// </para>
+  /// <para>
+  /// A Unix socket's <em>local</em> end is a filesystem path with no port on it, and comes back
+  /// whole. That is the right answer to "which part of this is not the port" and is not a host; the
+  /// remote column is the one this is used on, and for a Unix socket that column is a placeholder.
   /// </para>
   /// </remarks>
   public static string? EndpointHost(string? endpoint) {

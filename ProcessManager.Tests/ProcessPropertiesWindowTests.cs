@@ -676,6 +676,25 @@ public sealed class ProcessPropertiesWindowTests {
   }
 
   /// <summary>
+  /// The page is read once and kept, so it must not be read before there is anything to read it by.
+  /// Opened inside the first tick it had no cgroup yet and would have latched "its cgroup could not
+  /// be read" for the rest of the window's life.
+  /// </summary>
+  [Test]
+  public void OpeningItBeforeTheFirstSampleDoesNotLatchTheWrongAnswer() {
+    var (snapshot, delta, row, key) = Machine(cgroup: "/system.slice/indexer.service");
+    var probe = new StubProbe { Services = [Unit()] };
+    var window = new ProcessPropertiesWindow(probe, key, row.Name);
+
+    // Quicker than the tick, which is a thing a person can be.
+    window.ShowPage("Services");
+    window.UpdateFromSample(snapshot, delta, row, Counter.NotSampledYet);
+
+    Assert.That(window.ServicesText, Does.Contain("indexer.service"));
+    Assert.That(window.ServicesText, Does.Not.Contain("could not be read"));
+  }
+
+  /// <summary>
   /// The row §27 named as the one thing on the General page that could be answered and was not. It
   /// costs nothing — the cgroup is already in the sample, and a systemd unit is a cgroup.
   /// </summary>

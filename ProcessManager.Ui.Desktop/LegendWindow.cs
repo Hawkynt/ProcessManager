@@ -26,7 +26,20 @@ namespace Hawkynt.ProcessManager.Ui.Desktop;
 public sealed class LegendWindow : Form {
 
   private const int _Margin = 14;
-  private const int _RowHeight = 26;
+
+  /// <summary>
+  /// How far apart the swatch rows sit.
+  /// </summary>
+  /// <remarks>
+  /// Twenty-four rather than twenty-six, and that is a screen-size decision rather than a taste one.
+  /// This window may not be shrunk below what it holds — the whole point of computing its height —
+  /// so the height it computes has to fit the smallest display anybody runs a desktop on. Twelve
+  /// swatches and a three-paragraph note at twenty-six came to 776 pixels, which does not fit a
+  /// 1366×768 laptop once a title bar is on it, and the buttons would have been off the bottom of
+  /// the screen with no way to drag them back.
+  /// </remarks>
+  private const int _RowHeight = 24;
+
   private const int _SwatchWidth = 28;
   private const int _TextLeft = 52;
 
@@ -90,19 +103,16 @@ public sealed class LegendWindow : Form {
   /// </para>
   /// </remarks>
   private static readonly string[] _Note = [
-    "The mark goes on the cell, not the row: the row already says what kind of",
-    "process this is, and one wash for both would mean one of the two facts",
-    "quietly winning. The number stays legible under either mark, so the table",
-    "reads with no colour at all.",
+    "The mark goes on the cell, not the row: the row already says what kind of process this is, and one",
+    "wash for both would mean one of those facts quietly winning. The number stays legible under either",
+    "mark, so the table reads with no colour at all.",
     "",
-    "Packaged and managed-runtime rows are painted only once the package or",
-    "runtime field is switched on. Both cost a read, and nothing is claimed",
-    "about a process nobody asked about.",
+    "Packaged and managed-runtime rows appear only once the package or runtime field is switched on.",
+    "Both cost a read, and nothing is claimed about a process nobody asked about.",
     "",
-    "Not distinguished: packed, unsigned, invalid-signature and suspicious",
-    "processes. A Linux binary carries no signature to check — what signs one",
-    "is its package, which is a different question — and a colour that is",
-    "sometimes right is worse than none.",
+    "Not distinguished: packed, unsigned, invalid-signature and suspicious processes. A Linux binary",
+    "carries no signature to check — what signs one is its package — and a colour that is sometimes",
+    "right is worse than none.",
   ];
 
   private readonly Button _thresholds = new() { Text = "Thresholds…" };

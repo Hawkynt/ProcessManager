@@ -734,6 +734,13 @@ public sealed class ProcessPropertiesWindow : Form {
     if (this._servicesRead)
       return;
 
+    // Before the first sample there is no cgroup to look a unit up by, and the answer would latch —
+    // somebody quick enough to click this tab inside the first tick would have been told for the rest
+    // of the window's life that the cgroup could not be read. Nothing is settled until there is
+    // something to settle it from; the tick calls this again.
+    if (this._row is null)
+      return;
+
     this._servicesRead = true;
     var services = this._probe.GetServices();
     if (services.Count == 0) {
