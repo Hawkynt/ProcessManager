@@ -32,7 +32,7 @@ it is not known*. An unticked box must never become a zero on screen. This is re
 it is the single requirement most likely to be broken while filling the tables in.
 
 **Counting, as of the last update:** **673 of 1343 boxes are ticked** — 99 of 198 in the field
-registry (§14–22), 574 of 1145 across the capabilities. A further 138 are marked 🟡, meaning some of
+registry (§14–22), 574 of 1145 across the capabilities. A further 136 are marked 🟡, meaning some of
 the work behind them is already done. §100 tracks the phases; §101 defines when this may be called
 finished.
 
