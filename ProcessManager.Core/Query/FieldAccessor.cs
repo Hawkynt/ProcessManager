@@ -147,16 +147,30 @@ public static class FieldAccessor {
         return process.Package.ApplicationId
           ?? (process.Package.WasChecked ? "—" : Humanize.Placeholder(process.Package.Reason));
       case ProcessField.PackageStatus:
-        return process.PackageStatus.Text();
+        // "Not checked" is not a verdict about the package, it is the absence of one — verification
+        // is opt-in and nobody asked. Spelling it out in the column reads as a finding, and it also
+        // put the column at odds with the export, which writes nothing for it: a field that shows a
+        // value and exports an empty cell is exactly what §103's invariant exists to catch, and it
+        // caught this.
+        return process.PackageStatus == SignatureStatus.NotChecked
+          ? Humanize.Placeholder(UnknownReason.NotSampledYet)
+          : process.PackageStatus.Text();
       case ProcessField.Runtime:
         return process.Runtime == ProcessRuntime.Unknown
           ? Humanize.Placeholder(process.RuntimeReason)
           : process.Runtime.Text();
       case ProcessField.ImageCreated:
-        return process.ImageCreatedUtcTicks.TryGetValue(out var created)
+        // Nought ticks is the absence of a time, not the first of January in the year one. The
+        // exporter already reads it that way and wrote an empty cell while the column was showing
+        // "0001-01-01", which is how the two came to disagree — and a filesystem without a birth
+        // time is the ordinary case rather than a rare one, so this is what most rows would show.
+        return process.ImageCreatedUtcTicks.TryGetValue(out var created) && created > 0
           ? new DateTime((long)created, DateTimeKind.Utc).ToLocalTime()
             .ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture)
-          : Humanize.Placeholder(process.ImageCreatedUtcTicks.Reason);
+          : Humanize.Placeholder(
+              process.ImageCreatedUtcTicks.HasValue
+                ? UnknownReason.NotSupportedOnPlatform
+                : process.ImageCreatedUtcTicks.Reason);
 
       case ProcessField.PrivilegeChanged: return YesNo(PrivilegeChanged(in process));
       case ProcessField.EffectiveUserName:
