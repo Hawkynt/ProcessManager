@@ -1418,7 +1418,7 @@ public sealed class TerminalUi {
       state.Append(CultureInfo.InvariantCulture, $"filter: {filter}  ");
 
     state.Append(CultureInfo.InvariantCulture, $"{this._view.RowCount} of {this._view.TotalCount}");
-    this._screen.WriteRight(0, 0, this._screen.Width - 1, state.ToString(), Attributes.Header);
+    this.WriteSentenceRight(0, state.ToString(), Attributes.Header);
   }
 
   private int DrawMeters() {
@@ -1820,7 +1820,7 @@ public sealed class TerminalUi {
       case InputMode.Filter:
         this._screen.Write(0, y, $"Filter: {this._input}_", Attributes.Header);
         if (this._message.Length > 0)
-          this._screen.WriteRight(0, y, this._screen.Width - 1, this._message, Attributes.Header);
+          this.WriteSentenceRight(y, this._message, Attributes.Header);
 
         return;
       case InputMode.ExportPath:
@@ -1850,8 +1850,7 @@ public sealed class TerminalUi {
     }
 
     if (right.Length > 0)
-      this._screen.WriteRight(0, y, this._screen.Width - 1, right,
-        this._message.Length > 0 ? this._messageAttribute : Attributes.Header);
+      this.WriteSentenceRight(y, right, this._message.Length > 0 ? this._messageAttribute : Attributes.Header);
   }
 
   /// <summary>
@@ -1916,6 +1915,25 @@ public sealed class TerminalUi {
       TerminalAction.Details => "details",
       _ => "quit",
     };
+  }
+
+  /// <summary>
+  /// Writes a sentence at the right-hand end of a line, keeping its beginning.
+  /// </summary>
+  /// <remarks>
+  /// The difference from <see cref="TerminalScreen.WriteRight"/> is the end that gets cut, and it is
+  /// not a detail. A value trimmed to its column keeps its tail, because the significant digits of a
+  /// number and the file name of a path are both at the end. A sentence is the other way round:
+  /// "wrote 5 rows to /var/folders/…/T/procman-export-1a2b.csv as Csv" trimmed from the front is a
+  /// fragment of a path with nothing to say it was written, which is exactly what a macOS runner's
+  /// temporary directory turned every export message into.
+  /// </remarks>
+  private void WriteSentenceRight(int y, string text, byte attribute) {
+    var width = this._screen.Width - 1;
+    if (width <= 0)
+      return;
+
+    this._screen.WriteRight(0, y, width, Clip(text, width), attribute);
   }
 
   private static string Clip(string text, int width)

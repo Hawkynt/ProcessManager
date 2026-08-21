@@ -97,11 +97,26 @@ public sealed class TerminalTableTests {
     }
   }
 
+  /// <remarks>
+  /// The path is deliberately a long one, nested rather than merely named, because the length is
+  /// what this caught: a macOS runner's temporary directory is a fifty-character
+  /// <c>/var/folders/…</c> path, the status message built from it was longer than the terminal, and
+  /// it was being trimmed from the front — so the export said nothing about having happened. A short
+  /// path in <c>/tmp</c> hid that on two platforms out of three.
+  /// </remarks>
   [Test]
   public void TheTableCanBeWrittenToAFileInTheFormatTheNameAsksFor() {
     var (ui, probe) = Machine();
     using (probe) {
-      var path = Path.Combine(Path.GetTempPath(), $"procman-export-{Guid.NewGuid():N}.csv");
+      var directory = Path.Combine(
+        Path.GetTempPath(),
+        $"procman-tests-{Guid.NewGuid():N}",
+        "a-directory-with-a-long-name",
+        "and-another-one-under-it"
+      );
+
+      Directory.CreateDirectory(directory);
+      var path = Path.Combine(directory, $"procman-export-{Guid.NewGuid():N}.csv");
       try {
         ui.HandleKey(Key('X'));
         // The prompt opens with the last path in it, so a second export is one keystroke; this one
@@ -118,9 +133,14 @@ public sealed class TerminalTableTests {
         var lines = File.ReadAllLines(path);
         Assert.That(lines[0], Does.Contain(","), "the extension picked CSV");
         Assert.That(lines, Has.Length.EqualTo(ui.View.RowCount + 1));
-        Assert.That(Frame(ui), Does.Contain("wrote"));
+
+        // The beginning of the sentence, which is the half that says what happened. A message too
+        // long for the line loses its tail; a value too long for its column loses its head, and the
+        // status line is not a column.
+        Assert.That(Frame(ui), Does.Contain($"wrote {ui.View.RowCount} rows to"));
       } finally {
         File.Delete(path);
+        Directory.Delete(directory);
       }
     }
   }
