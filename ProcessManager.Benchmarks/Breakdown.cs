@@ -15,6 +15,10 @@ internal static class Breakdown {
     Measure("no fd count", new LinuxProbeOptions { CountFileDescriptors = false });
     Measure("no fd, no cgroup", new LinuxProbeOptions { CountFileDescriptors = false, ReadCgroups = false });
     Measure("with PSS", new LinuxProbeOptions { UseProportionalSetSize = true });
+    // The number that decides whether §19's fields could ever be default-visible. They cannot: the
+    // kernel's own client accounting is a file per open descriptor, which is the same scan that had
+    // to leave the sample loop, and NVIDIA's is a library call per card measured in milliseconds.
+    Measure("with GPU", new LinuxProbeOptions { ReadGpuUsage = true });
   }
 
   private static void Measure(string label, LinuxProbeOptions options) {

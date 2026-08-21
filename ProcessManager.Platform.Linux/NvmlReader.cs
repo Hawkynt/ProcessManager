@@ -33,6 +33,12 @@ internal static partial class NvmlReader {
 
   private const uint _Success = 0;
 
+  /// <summary>NVML_ERROR_NOT_FOUND: nothing matched, which for a sample window means nothing ran.</summary>
+  private const uint _NotFound = 6;
+
+  /// <summary>NVML_ERROR_INSUFFICIENT_SIZE: the count that came back is the count needed.</summary>
+  private const uint _InsufficientSize = 7;
+
   /// <summary>NVML_TEMPERATURE_GPU: the die, as opposed to a board sensor.</summary>
   private const uint _TemperatureGpu = 0;
 
@@ -90,6 +96,377 @@ internal static partial class NvmlReader {
 
   [LibraryImport(_Library, EntryPoint = "nvmlDeviceGetFanSpeed")]
   private static partial uint GetFanSpeed(nint device, out uint percent);
+
+  #region per-process (PRD §19)
+
+  /// <summary>
+  /// One process's use of one card, merged from the three calls that each know part of it.
+  /// </summary>
+  /// <remarks>
+  /// The <c>Has</c> flags are not decoration. NVML answers the memory question and the utilisation
+  /// question through different calls that fail independently — a card will list its processes and
+  /// their VRAM while refusing to sample their utilisation at all — so a sample that carries a
+  /// utilisation of nought because nobody asked is exactly the confident zero §72.3 forbids.
+  /// </remarks>
+  internal struct NvmlProcessSample {
+
+    public ulong DedicatedBytes;
+    public bool HasMemory;
+
+    /// <summary>NVML's <c>sm</c>: graphics and compute together, the driver not splitting them.</summary>
+    public uint BusyPercent;
+    public uint EncodePercent;
+    public uint DecodePercent;
+    public bool HasUtilization;
+
+    /// <summary>When the driver took the reading, in its own microseconds. Newest wins.</summary>
+    public ulong TimeStamp;
+
+    /// <summary>True when the pid appeared in the compute list, false when only in the graphics one.</summary>
+    public bool IsCompute;
+
+  }
+
+  /// <summary>nvmlProcessInfo_v2_t, which is what both <c>_v2</c> and <c>_v3</c> take.</summary>
+  [StructLayout(LayoutKind.Sequential)]
+  internal struct ProcessInfo {
+    public uint Pid;
+    public ulong UsedGpuMemory;
+    public uint GpuInstanceId;
+    public uint ComputeInstanceId;
+  }
+
+  /// <summary>
+  /// nvmlProcessInfo_v1_t: the shape the unsuffixed entry point still takes.
+  /// </summary>
+  /// <remarks>
+  /// Two fields rather than four, and passing the wider struct to it would have NVML stride through
+  /// the array at the wrong pitch — every entry after the first would be read out of the middle of
+  /// its neighbour. That is why the fallback needs its own buffer rather than only its own name.
+  /// </remarks>
+  [StructLayout(LayoutKind.Sequential)]
+  internal struct ProcessInfoV1 {
+    public uint Pid;
+    public ulong UsedGpuMemory;
+  }
+
+  [StructLayout(LayoutKind.Sequential)]
+  internal struct ProcessUtilization {
+    public uint Pid;
+    public ulong TimeStamp;
+    public uint SmUtil;
+    public uint MemUtil;
+    public uint EncUtil;
+    public uint DecUtil;
+  }
+
+  [LibraryImport(_Library, EntryPoint = "nvmlDeviceGetComputeRunningProcesses_v3")]
+  private static partial uint GetComputeProcessesV3(nint device, ref uint count, ref ProcessInfo first);
+
+  [LibraryImport(_Library, EntryPoint = "nvmlDeviceGetComputeRunningProcesses_v2")]
+  private static partial uint GetComputeProcessesV2(nint device, ref uint count, ref ProcessInfo first);
+
+  [LibraryImport(_Library, EntryPoint = "nvmlDeviceGetComputeRunningProcesses")]
+  private static partial uint GetComputeProcessesV1(nint device, ref uint count, ref ProcessInfoV1 first);
+
+  [LibraryImport(_Library, EntryPoint = "nvmlDeviceGetGraphicsRunningProcesses_v3")]
+  private static partial uint GetGraphicsProcessesV3(nint device, ref uint count, ref ProcessInfo first);
+
+  [LibraryImport(_Library, EntryPoint = "nvmlDeviceGetGraphicsRunningProcesses_v2")]
+  private static partial uint GetGraphicsProcessesV2(nint device, ref uint count, ref ProcessInfo first);
+
+  [LibraryImport(_Library, EntryPoint = "nvmlDeviceGetGraphicsRunningProcesses")]
+  private static partial uint GetGraphicsProcessesV1(nint device, ref uint count, ref ProcessInfoV1 first);
+
+  [LibraryImport(_Library, EntryPoint = "nvmlDeviceGetProcessUtilization")]
+  private static partial uint GetProcessUtilization(nint device, ref ProcessUtilization first, ref uint count, ulong since);
+
+  /// <summary>
+  /// Which spelling of the process list this driver has, decided once per entry point.
+  /// </summary>
+  /// <remarks>
+  /// The suffix is the whole problem. <c>_v3</c> is what a current driver exports; a driver from
+  /// before 2022 has only <c>_v2</c>, and one older still only the unsuffixed name with a narrower
+  /// struct behind it. Binding the newest and giving up on <see cref="EntryPointNotFoundException"/>
+  /// would report a machine with a working card as having no per-process accounting, so each is
+  /// tried in turn and the answer is remembered — the probe, not the exception, is what costs
+  /// anything.
+  /// </remarks>
+  private enum ListVersion : byte { Unknown = 0, V3, V2, V1, None }
+
+  private static ListVersion _computeVersion;
+  private static ListVersion _graphicsVersion;
+
+  /// <summary>Null until the first attempt; false once the call has been found missing or refused.</summary>
+  private static bool? _utilizationAvailable;
+
+  /// <summary>
+  /// The handle for a card, by the kernel's PCI address, or 0 when NVML does not know it.
+  /// </summary>
+  /// <remarks>
+  /// By address rather than by index, for the reason the file's own remarks give: NVML's enumeration
+  /// order is its own. Handles do not change while the library is loaded, so a caller may keep one.
+  /// </remarks>
+  public static nint DeviceAt(string pciAddress) {
+    ArgumentNullException.ThrowIfNull(pciAddress);
+    if (!Available)
+      return 0;
+
+    try {
+      Span<byte> busId = stackalloc byte[64];
+      var written = Encoding.ASCII.GetBytes(pciAddress, busId);
+      busId[written] = 0;
+      return GetHandleByPciBusId(ref MemoryMarshal.GetReference(busId), out var device) == _Success ? device : 0;
+    } catch (DllNotFoundException) {
+      _available = false;
+      return 0;
+    }
+  }
+
+  /// <summary>
+  /// The processes with memory on one card, merged into <paramref name="processes"/> by pid.
+  /// </summary>
+  /// <remarks>
+  /// Both lists, and their union rather than either alone. A pid appears in the compute list when it
+  /// has a CUDA context and in the graphics list when it has a rendering one, and plenty have both —
+  /// but a process that only ever draws is in the graphics list only, which is why reading compute
+  /// alone shows an empty table on a desktop that is plainly using its card. Where a pid is in both
+  /// the memory is the same allocation counted twice, so the larger is taken rather than the sum.
+  /// </remarks>
+  /// <param name="buffer">
+  /// Reused across samples by the caller. Grown by the caller, not here, so that this allocates
+  /// nothing in the steady state (PRD §4).
+  /// </param>
+  /// <returns>False when the card cannot be asked at all, so the caller can say why rather than zero.</returns>
+  public static bool TryReadProcessMemory(
+    nint device,
+    Dictionary<int, NvmlProcessSample> processes,
+    ProcessInfo[] buffer,
+    ProcessInfoV1[] narrowBuffer
+  ) {
+    ArgumentNullException.ThrowIfNull(processes);
+    ArgumentNullException.ThrowIfNull(buffer);
+    ArgumentNullException.ThrowIfNull(narrowBuffer);
+    if (device == 0 || buffer.Length == 0 || narrowBuffer.Length == 0)
+      return false;
+
+    var compute = ReadList(device, ref _computeVersion, compute: true, processes, buffer, narrowBuffer);
+    var graphics = ReadList(device, ref _graphicsVersion, compute: false, processes, buffer, narrowBuffer);
+    return compute || graphics;
+  }
+
+  private static bool ReadList(
+    nint device,
+    ref ListVersion version,
+    bool compute,
+    Dictionary<int, NvmlProcessSample> processes,
+    ProcessInfo[] buffer,
+    ProcessInfoV1[] narrowBuffer
+  ) {
+    while (true) {
+      switch (version) {
+        case ListVersion.None:
+          return false;
+
+        case ListVersion.V1: {
+          var count = (uint)narrowBuffer.Length;
+          var result = compute
+            ? GetComputeProcessesV1(device, ref count, ref narrowBuffer[0])
+            : GetGraphicsProcessesV1(device, ref count, ref narrowBuffer[0]);
+          if (result != _Success)
+            return result == _NotFound;
+
+          for (var i = 0; i < count && i < narrowBuffer.Length; ++i)
+            Merge(processes, (int)narrowBuffer[i].Pid, narrowBuffer[i].UsedGpuMemory, compute);
+
+          return true;
+        }
+
+        case ListVersion.V2:
+        case ListVersion.V3: {
+          var count = (uint)buffer.Length;
+          var result = version == ListVersion.V3
+            ? compute
+              ? GetComputeProcessesV3(device, ref count, ref buffer[0])
+              : GetGraphicsProcessesV3(device, ref count, ref buffer[0])
+            : compute
+              ? GetComputeProcessesV2(device, ref count, ref buffer[0])
+              : GetGraphicsProcessesV2(device, ref count, ref buffer[0]);
+          if (result != _Success)
+            return result == _NotFound;
+
+          for (var i = 0; i < count && i < buffer.Length; ++i)
+            Merge(processes, (int)buffer[i].Pid, buffer[i].UsedGpuMemory, compute);
+
+          return true;
+        }
+
+        default:
+          version = Probe(device, compute, buffer, narrowBuffer);
+          if (version == ListVersion.None)
+            return false;
+
+          continue;
+      }
+    }
+  }
+
+  /// <summary>
+  /// Which of the three names this driver answers to, found by calling each once.
+  /// </summary>
+  /// <remarks>
+  /// A missing entry point throws on the call rather than on the declaration — the source-generated
+  /// import binds lazily — so the probe is three calls and not a symbol table walk. The buffer is
+  /// long enough that a real answer is a real answer, and the result is discarded either way: this
+  /// runs once, and the caller reads properly the moment it knows which name to use.
+  /// </remarks>
+  private static ListVersion Probe(nint device, bool compute, ProcessInfo[] buffer, ProcessInfoV1[] narrowBuffer) {
+    try {
+      var count = (uint)buffer.Length;
+      var result = compute
+        ? GetComputeProcessesV3(device, ref count, ref buffer[0])
+        : GetGraphicsProcessesV3(device, ref count, ref buffer[0]);
+      if (result is _Success or _NotFound or _InsufficientSize)
+        return ListVersion.V3;
+    } catch (EntryPointNotFoundException) {
+      // A driver from before the v3 lists. Fall through.
+    } catch (DllNotFoundException) {
+      _available = false;
+      return ListVersion.None;
+    }
+
+    try {
+      var count = (uint)buffer.Length;
+      var result = compute
+        ? GetComputeProcessesV2(device, ref count, ref buffer[0])
+        : GetGraphicsProcessesV2(device, ref count, ref buffer[0]);
+      if (result is _Success or _NotFound or _InsufficientSize)
+        return ListVersion.V2;
+    } catch (EntryPointNotFoundException) {
+      // Older still.
+    }
+
+    try {
+      var count = (uint)narrowBuffer.Length;
+      var result = compute
+        ? GetComputeProcessesV1(device, ref count, ref narrowBuffer[0])
+        : GetGraphicsProcessesV1(device, ref count, ref narrowBuffer[0]);
+      if (result is _Success or _NotFound or _InsufficientSize)
+        return ListVersion.V1;
+    } catch (EntryPointNotFoundException) {
+      // No spelling of it at all, which is a library too old to be worth asking again.
+    }
+
+    return ListVersion.None;
+  }
+
+  private static void Merge(Dictionary<int, NvmlProcessSample> processes, int pid, ulong bytes, bool compute) {
+    if (pid <= 0)
+      return;
+
+    processes.TryGetValue(pid, out var sample);
+    // The same allocation seen twice, not two allocations: a process with both a compute and a
+    // graphics context is listed by both calls with one figure behind them.
+    if (!sample.HasMemory || bytes > sample.DedicatedBytes)
+      sample.DedicatedBytes = bytes;
+
+    sample.HasMemory = true;
+    sample.IsCompute |= compute;
+    processes[pid] = sample;
+  }
+
+  /// <summary>
+  /// How far back to ask for utilisation samples, in microseconds.
+  /// </summary>
+  /// <remarks>
+  /// The parameter is a timestamp, not a duration, and getting it wrong produces numbers that look
+  /// entirely plausible: pass 0 and NVML returns every sample it still holds — several seconds of
+  /// them, hundreds of entries, oldest first — and reading the first is reporting what a process was
+  /// doing some time ago. Pass the previous call's timestamp and roughly one call in three comes back
+  /// <c>NOT_FOUND</c>, because the driver's own sampler runs on its own clock and has published
+  /// nothing new; the column then flickers between a figure and a blank while the process is plainly
+  /// busy.
+  /// <para>
+  /// A fixed window solves both and needs no state to carry between samples. Two seconds was
+  /// measured on an RTX A5000 against a continuous load: every call inside it returned exactly one
+  /// sample per busy process, and none returned none.
+  /// </para>
+  /// </remarks>
+  private const ulong _UtilizationWindowMicroseconds = 2_000_000;
+
+  /// <summary>
+  /// What each process did to the card recently: shaders, encoder, decoder (PRD §19).
+  /// </summary>
+  /// <remarks>
+  /// Percentages sampled by the driver, not a counter to difference. Where a pid has more than one
+  /// sample in the window the newest is taken rather than the mean — the column says what is
+  /// happening, and averaging two seconds of it would smooth away the moment a process started.
+  /// </remarks>
+  /// <param name="buffer">Reused by the caller; grown by the caller.</param>
+  /// <returns>
+  /// False when this driver will not sample per-process utilisation at all. An empty window is
+  /// <see langword="true"/> with nothing merged, which is a different statement.
+  /// </returns>
+  public static bool TryReadProcessUtilization(
+    nint device,
+    Dictionary<int, NvmlProcessSample> processes,
+    ProcessUtilization[] buffer
+  ) {
+    ArgumentNullException.ThrowIfNull(processes);
+    ArgumentNullException.ThrowIfNull(buffer);
+    if (device == 0 || buffer.Length == 0 || _utilizationAvailable is false)
+      return false;
+
+    var since = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() * 1000;
+    since = since > _UtilizationWindowMicroseconds ? since - _UtilizationWindowMicroseconds : 0;
+
+    uint result;
+    var count = (uint)buffer.Length;
+    try {
+      result = GetProcessUtilization(device, ref buffer[0], ref count, since);
+    } catch (EntryPointNotFoundException) {
+      _utilizationAvailable = false;
+      return false;
+    } catch (DllNotFoundException) {
+      _available = false;
+      return false;
+    }
+
+    _utilizationAvailable = true;
+    // Nothing ran on the card in the window, which is an answer and not a failure. Insufficient size
+    // means more processes than the buffer holds; the caller grows it and the next sample is whole.
+    if (result != _Success)
+      return result is _NotFound or _InsufficientSize;
+
+    for (var i = 0; i < count && i < buffer.Length; ++i) {
+      ref readonly var reading = ref buffer[i];
+      var pid = (int)reading.Pid;
+      if (pid <= 0)
+        continue;
+
+      processes.TryGetValue(pid, out var sample);
+      if (sample.HasUtilization && reading.TimeStamp < sample.TimeStamp)
+        continue;
+
+      sample.TimeStamp = reading.TimeStamp;
+      sample.BusyPercent = reading.SmUtil;
+      sample.EncodePercent = reading.EncUtil;
+      sample.DecodePercent = reading.DecUtil;
+      sample.HasUtilization = true;
+      processes[pid] = sample;
+    }
+
+    return true;
+  }
+
+  /// <summary>Buffers the caller owns, sized here so the shapes stay private to this file.</summary>
+  public static ProcessInfo[] NewProcessBuffer(int length) => new ProcessInfo[length];
+
+  public static ProcessInfoV1[] NewNarrowProcessBuffer(int length) => new ProcessInfoV1[length];
+
+  public static ProcessUtilization[] NewUtilizationBuffer(int length) => new ProcessUtilization[length];
+
+  #endregion
 
   /// <summary>
   /// Whether NVML is here at all, asked once.

@@ -101,6 +101,18 @@ public sealed record LinuxProbeOptions {
   /// </remarks>
   public bool CountFileDescriptors { get; init; }
 
+  /// <summary>
+  /// Account for what each process is doing to the graphics adapters (PRD §19).
+  /// </summary>
+  /// <remarks>
+  /// Off, and for the same reason the descriptor count is. The kernel's own per-client accounting
+  /// lives in <c>/proc/[pid]/fdinfo</c>, one file per open descriptor, which is the same scan that
+  /// cost 85 µs per process and had to leave the sample loop; NVIDIA's is one library call per card
+  /// per sample, measured at 5-25 ms on an RTX A5000, against a whole-sample budget of 25 ms.
+  /// Neither is affordable for a column nobody asked to see (PRD §5.4).
+  /// </remarks>
+  public bool ReadGpuUsage { get; init; }
+
   /// <summary>Read the cgroup path of each process, for the container column.</summary>
   public bool ReadCgroups { get; init; } = true;
 
