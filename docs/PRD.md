@@ -31,7 +31,7 @@ shorthand:
 it is not known*. An unticked box must never become a zero on screen. This is restated here because
 it is the single requirement most likely to be broken while filling the tables in.
 
-**Counting, as of the last update:** **623 of 1343 boxes are ticked** — 84 of 198 in the field
+**Counting, as of the last update:** **638 of 1343 boxes are ticked** — 99 of 198 in the field
 registry (§14–22), 539 of 1145 across the capabilities. A further 135 are marked 🟡, meaning some of
 the work behind them is already done. §100 tracks the phases; §101 defines when this may be called
 finished.
@@ -775,29 +775,52 @@ process table depend on them.
 
 # 19. Process table — GPU fields
 
-- [ ] `gpu.percent`
-- [ ] `gpu.engine`
-- [ ] `gpu.engine.percent`
-- [ ] `gpu.adapter`
-- [ ] `gpu.mem.dedicated`
-- [ ] `gpu.mem.shared`
-- [ ] `gpu.mem.total`
-- [ ] `gpu.mem.dedicated.delta`
-- [ ] `gpu.encode`
-- [ ] `gpu.decode`
-- [ ] `gpu.compute`
-- [ ] `gpu.copy`
-- [ ] `gpu.graphics`
-- [ ] `gpu.power`
+Linux, so far. Windows reads its own performance counters and that is §100's work; a field claiming
+to work there would be worse than one that says it does not.
+
+- [x] `gpu.percent` — the busiest of the process's engines, never their sum. A card's engines run at
+      once and each share is of the whole interval, so adding them reports a transcode at 200 %
+- [x] `gpu.engine` — which engine that was: 3D, compute, copy, encode or decode
+- [x] `gpu.engine.percent`
+- [x] `gpu.adapter` — which `cardN`. A laptop has two, and a GPU figure that does not say which one
+      is unreadable on exactly the machines where it matters
+- [x] `gpu.mem.dedicated`
+- [x] `gpu.mem.shared`
+- [x] `gpu.mem.total`
+- [x] `gpu.mem.dedicated.delta`
+- [x] `gpu.encode`
+- [x] `gpu.decode`
+- [x] `gpu.compute` — where the driver counts it apart from graphics. i915 does not, and NVML gives
+      one figure covering both; each says so rather than reporting a nought
+- [x] `gpu.copy`
+- [x] `gpu.graphics`
+- [ ] `gpu.power` — neither NVML nor the DRM interface attributes power to a process, and a card's
+      draw split by utilisation share is a model rather than a reading. §22 is where a labelled
+      estimate would belong
 
 Sources: Windows GPU performance counters (what Task Manager reads); Linux DRM
-`/sys/class/drm/*/device` plus per-vendor `fdinfo` (`drm-engine-*`), covering amdgpu and i915 and
-leaving proprietary NVIDIA to a vendor plugin.
+`/sys/class/drm/*/device` plus per-vendor `fdinfo` (`drm-engine-*`, `drm-memory-*`), covering amdgpu
+and i915; NVIDIA through NVML, which is the only place its per-process figures exist at all — a
+process rendering on this machine's RTX A5000 has no `drm-` line in any of its descriptors.
 
-- [ ] **Unsupported driver stacks render capability state, never a zero** (§72.3 restated — this is
-      why the fields exist in the registry before they have values)
-- [ ] OS-provided data is separated from vendor-specific sensor extensions; vendor plugins cannot
-      stall a sample or crash the sampler
+The two shapes are kept apart because they are different measurements. DRM publishes a monotonic
+counter per engine, which the delta divides by the interval exactly as it does CPU time. NVML
+publishes a percentage it sampled over its own window and no counter of any kind, so integrating one
+into the other would produce a "GPU time" that drifts and that nobody could reconcile against
+`nvidia-smi`.
+
+Off unless asked for, by `--gpu` or by naming one of the fields (§5.4): reading every process's
+descriptors costs 590 µs per process unthrottled, so each process is listed in full once and then
+every eighth sample, staggered by pid, with its known graphics descriptors read directly in between.
+
+- [x] **Unsupported driver stacks render capability state, never a zero** (§72.3 restated — this is
+      why the fields exist in the registry before they have values). A machine whose cards answer
+      neither NVML nor the kernel's own client accounting renders `n/i` for every process rather
+      than a nought, and the difference between "we looked and it uses none" and "nobody could
+      look" is asserted in the tests
+- [x] OS-provided data is separated from vendor-specific sensor extensions; vendor plugins cannot
+      stall a sample or crash the sampler — NVML is loaded optionally, every call into it is guarded,
+      a missing entry point is remembered rather than retried, and the DRM half runs whatever it does
 
 # 20. Process table — object and resource fields
 
