@@ -12,6 +12,14 @@ namespace Hawkynt.ProcessManager.Model;
 /// sentence, where it can be read rather than inferred.
 /// </para>
 /// <para>
+/// The same eight words answer each of §70's questions separately, and the question is the slot
+/// rather than the word. "Verified" in <see cref="ImageTrust.Signature"/> says the bytes are the
+/// ones that were recorded; "Verified" in <see cref="ImageTrust.TrustChain"/> says somebody this
+/// machine trusts signed for them. They are routinely not the same answer — a locally built package
+/// is the first and not the second — and the whole point of §70's first requirement is that one
+/// word must never be allowed to stand for both.
+/// </para>
+/// <para>
 /// <see cref="NotChecked"/> is nought, because a record nobody filled has checked nothing. Anything
 /// else as the default would make an unfilled field an assertion (PRD §72.3).
 /// </para>
@@ -86,8 +94,8 @@ public static class SignatureStatusText {
 /// <param name="Signature">
 /// Local signature verification, question two: whether the bytes are the ones a signature covers.
 /// On Linux there is no signature inside an ELF to check, so this is the packaging system's
-/// answer — the file against the digest its package recorded, and whether that package was itself
-/// validated by signature when it was installed.
+/// answer — the running file against the digest its package recorded, which is the comparison
+/// <c>pacman -Qkk</c> and <c>dpkg --verify</c> make, and nothing more than that.
 /// </param>
 /// <param name="Detail">
 /// One sentence naming what was actually checked, so the word in <paramref name="Signature"/> is
@@ -98,6 +106,23 @@ public static class SignatureStatusText {
 /// something this machine trusts. Deliberately its own slot and never inferred from
 /// <paramref name="Signature"/> — a good signature by an unknown key is a different answer from a
 /// good signature by a known one.
+/// <para>
+/// On Linux this is what the packaging system recorded about the package itself: <c>pacman</c>
+/// writes <c>%VALIDATION%</c>, which is the same fact <c>pacman -Qi</c> prints as "Validated By".
+/// Folding it into <paramref name="Signature"/> is how this program used to report a locally built
+/// package whose files were untouched as "Unsigned" — one word carrying two findings, which is
+/// exactly what §70's first requirement forbids.
+/// </para>
+/// </param>
+/// <param name="ChainDetail">
+/// One sentence naming what stands behind the package, for the same reason
+/// <paramref name="Detail"/> exists.
+/// </param>
+/// <param name="ChainReason">
+/// Why there is no chain verdict, when there is none. A packaging system that keeps no record of a
+/// signature over an installed file has not failed to check — it has no such concept, and
+/// <see cref="UnknownReason.NotSupportedOnPlatform"/> is a different statement from
+/// <see cref="SignatureStatus.Unsigned"/> (PRD §72.3).
 /// </param>
 /// <param name="Reputation">
 /// Online reputation, question four. Always <see cref="SignatureStatus.NotChecked"/> until somebody
@@ -115,6 +140,8 @@ public sealed record ImageTrust(
   SignatureStatus Signature,
   string? Detail,
   SignatureStatus TrustChain = SignatureStatus.NotChecked,
+  string? ChainDetail = null,
+  UnknownReason ChainReason = UnknownReason.NotSampledYet,
   SignatureStatus Reputation = SignatureStatus.NotChecked,
   bool Submitted = false
 ) {

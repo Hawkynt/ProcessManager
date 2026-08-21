@@ -195,6 +195,29 @@ public sealed record LinuxProbeOptions {
   public bool ReadPackageVerification { get; init; }
 
   /// <summary>
+  /// Look up what a person calls each running program, in the machine's desktop entries (PRD §14).
+  /// </summary>
+  /// <remarks>
+  /// Off, and expensive once rather than per process: it reads every <c>.desktop</c> file in the
+  /// XDG data directories — around three hundred small files on an ordinary desktop — to build the
+  /// index that turns an executable's name into an application's. After that it is a dictionary
+  /// lookup per image, worked out once per process because a running program does not become a
+  /// different application (PRD §5.4).
+  /// </remarks>
+  public bool ReadApplicationName { get; init; }
+
+  /// <summary>
+  /// Which <c>applications</c> directories to read desktop entries from. A fixture directory in
+  /// tests.
+  /// </summary>
+  /// <remarks>
+  /// Empty means the machine's own, worked out the way the base directory specification says. Set
+  /// explicitly so that a test can hand over a directory it built rather than describing whichever
+  /// programs happen to be installed on the machine running it (PRD §9.1).
+  /// </remarks>
+  public string[] DesktopEntryDirectories { get; init; } = [];
+
+  /// <summary>
   /// Work out which runtime is executing inside each process, from its module list (PRD §14).
   /// </summary>
   /// <remarks>

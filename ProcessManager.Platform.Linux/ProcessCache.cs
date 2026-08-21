@@ -72,6 +72,12 @@ internal sealed class ProcessCache {
   public Model.PackageIdentity Package { get; set; } = Model.PackageIdentity.NotChecked;
   public Model.SignatureStatus PackageStatus { get; set; }
   public string? PackageStatusDetail { get; set; }
+  public Model.SignatureStatus TrustChain { get; set; }
+  public string? TrustChainDetail { get; set; }
+  public Model.UnknownReason TrustChainReason { get; set; } = Model.UnknownReason.NotSampledYet;
+  public string? ApplicationName { get; set; }
+  public bool ApplicationNameAmbiguous { get; set; }
+  public Model.UnknownReason ApplicationNameReason { get; set; } = Model.UnknownReason.NotSampledYet;
   public Model.ProcessRuntime Runtime { get; set; }
   public Model.UnknownReason RuntimeReason { get; set; } = Model.UnknownReason.NotSampledYet;
   public Model.Counter ImageCreatedUtcTicks { get; set; } = Model.Counter.NotSampledYet;

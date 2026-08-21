@@ -174,6 +174,7 @@ public static class FieldAccessor {
       case ProcessField.ApplicationId:
         return process.Package.ApplicationId
           ?? (process.Package.WasChecked ? "—" : Humanize.Placeholder(process.Package.Reason));
+      case ProcessField.ApplicationName: return ApplicationName(in process) ?? Humanize.Placeholder(process.ApplicationNameReason);
       case ProcessField.PackageStatus:
         // "Not checked" is not a verdict about the package, it is the absence of one — verification
         // is opt-in and nobody asked. Spelling it out in the column reads as a finding, and it also
@@ -183,6 +184,20 @@ public static class FieldAccessor {
         return process.PackageStatus == SignatureStatus.NotChecked
           ? Humanize.Placeholder(UnknownReason.NotSampledYet)
           : process.PackageStatus.Text();
+      case ProcessField.TrustChain:
+        // Its own reason rather than the one above it. "Unsigned" here is a finding — somebody read
+        // the package's entry and nothing had signed it — so an absent answer must not borrow the
+        // word: a packaging system that records no signature at all is n/a, and a column nobody
+        // switched on is "…" (PRD §72.3).
+        return process.TrustChain == SignatureStatus.NotChecked
+          ? Humanize.Placeholder(process.TrustChainReason)
+          : process.TrustChain.Text();
+      case ProcessField.Reputation:
+        // Always this, and the field exists to say it out loud. There is no provider to ask, none
+        // ships, and nothing about the executable leaves the machine — so the honest mark is the one
+        // that means "this program has not built it" rather than "your machine cannot do it"
+        // (PRD §3, §70, §97).
+        return Humanize.Placeholder(UnknownReason.NotImplementedHere);
       case ProcessField.Runtime:
         return process.Runtime == ProcessRuntime.Unknown
           ? Humanize.Placeholder(process.RuntimeReason)
@@ -287,6 +302,11 @@ public static class FieldAccessor {
       // it were an answer.
       case ProcessField.PackageStatus:
         return process.PackageStatus == SignatureStatus.NotChecked ? null : (byte)process.PackageStatus;
+      case ProcessField.TrustChain:
+        return process.TrustChain == SignatureStatus.NotChecked ? null : (byte)process.TrustChain;
+      // No number at all, and deliberately: an unasked question must not sort or filter as though it
+      // had an answer, however consistent that answer would be.
+      case ProcessField.Reputation: return null;
       case ProcessField.Runtime:
         return process.Runtime == ProcessRuntime.Unknown ? null : (byte)process.Runtime;
 
@@ -455,11 +475,19 @@ public static class FieldAccessor {
     // version somebody read off a bug report.
     ProcessField.Package => process.Package.Text,
     ProcessField.ApplicationId => process.Package.ApplicationId,
+    // The findings as well as the names, the way the package column exports "not packaged": a cell
+    // that reads "none" on screen and empty in a file is the seam §103's invariant exists to catch.
+    ProcessField.ApplicationName => ApplicationName(in process),
     // The vocabulary of §70 and no synonym of it, so "package.status:Unsigned" is the same word the
     // column shows. Not checked has no text, so it matches neither that nor its negation.
     ProcessField.PackageStatus => process.PackageStatus == SignatureStatus.NotChecked
       ? null
       : process.PackageStatus.Text(),
+    // The same vocabulary answering a different question, so "trust.chain:Unsigned" finds the
+    // packages nobody signed while "package.status:Unsigned" finds the files nothing claims.
+    ProcessField.TrustChain => process.TrustChain == SignatureStatus.NotChecked
+      ? null
+      : process.TrustChain.Text(),
     ProcessField.Runtime => process.Runtime == ProcessRuntime.Unknown ? null : process.Runtime.Text(),
     // The kernel's own spelling, which is what "sched.class:SCHED_FIFO" is written as and what chrt
     // prints. Unknown has no text, so it matches neither that nor its negation.
@@ -539,6 +567,8 @@ public static class FieldAccessor {
         return string.Compare(a.Package.Text, b.Package.Text, StringComparison.OrdinalIgnoreCase);
       case ProcessField.ApplicationId:
         return string.Compare(a.Package.ApplicationId, b.Package.ApplicationId, StringComparison.OrdinalIgnoreCase);
+      case ProcessField.ApplicationName:
+        return string.Compare(ApplicationName(in a), ApplicationName(in b), StringComparison.OrdinalIgnoreCase);
     }
 
     var left = Number(field, in a, delta, indexA);
@@ -649,6 +679,27 @@ public static class FieldAccessor {
       slash = path.LastIndexOf('\\');
 
     return slash >= 0 && slash < path.Length - 1 ? path[(slash + 1)..] : path;
+  }
+
+  /// <summary>
+  /// The application a process is, as text, or <see langword="null"/> when there is no answer to
+  /// give (PRD §14).
+  /// </summary>
+  /// <remarks>
+  /// Three of the four cases are answers and only the fourth is a hole. "none" is the machine
+  /// having no desktop entry for this program, which is true of most of a process table; "several"
+  /// is more than one application starting it and nothing saying which. Both are findings and both
+  /// are written the same way in the column, in a filter and in an exported file, so that no reader
+  /// and no spreadsheet sees a different one (PRD §72.3).
+  /// </remarks>
+  private static string? ApplicationName(in ProcessRecord process) {
+    if (process.ApplicationName is { Length: > 0 } name)
+      return name;
+
+    if (process.ApplicationNameAmbiguous)
+      return "several";
+
+    return process.ApplicationNameReason == UnknownReason.None ? "none" : null;
   }
 
   #region graphics (PRD §19)

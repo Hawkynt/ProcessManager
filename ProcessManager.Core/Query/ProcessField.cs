@@ -119,7 +119,10 @@ public enum ProcessField : byte {
   ImageSha1,
   Package,
   ApplicationId,
+  ApplicationName,
   PackageStatus,
+  TrustChain,
+  Reputation,
   Runtime,
   ImageCreated,
 

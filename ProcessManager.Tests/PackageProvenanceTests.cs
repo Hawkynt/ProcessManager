@@ -481,6 +481,75 @@ public sealed class PackageProvenanceTests {
   #region the vocabulary
 
   /// <summary>
+  /// §70's first requirement, at the only place a reader meets it: five columns, five answers, and
+  /// no way to read one off another.
+  /// </summary>
+  /// <remarks>
+  /// The row below is the ordinary case on an Arch machine with anything built locally on it — the
+  /// file is exactly what its package recorded and nobody signed the package — and it is the case
+  /// this program used to report as the single word "Unsigned", losing the half about the file.
+  /// Every one of the five reads differently here, which is the whole assertion.
+  /// </remarks>
+  [Test]
+  public void TheFiveQuestionsReadAsFiveAnswers() {
+    var record = default(ProcessRecord);
+    record.ImageSha256 = "b42407086de28a30a5f8dd23825999cb1da0a8582332adccf7bca8ed9f9577ad";
+    record.PackageStatus = SignatureStatus.Verified;
+    record.TrustChain = SignatureStatus.Unsigned;
+
+    Assert.Multiple(() => {
+      // One: what the bytes are, which is not a verdict about anything.
+      Assert.That(FieldAccessor.Text(ProcessField.ImageSha256, in record, null, 0), Is.EqualTo(record.ImageSha256));
+      // Two: the file against what was recorded for it.
+      Assert.That(FieldAccessor.Text(ProcessField.PackageStatus, in record, null, 0), Is.EqualTo("Verified"));
+      // Three: who stands behind it, which here is nobody — and says so without touching two.
+      Assert.That(FieldAccessor.Text(ProcessField.TrustChain, in record, null, 0), Is.EqualTo("Unsigned"));
+      // Four: nothing was asked of anybody, because there is nobody to ask.
+      Assert.That(
+        FieldAccessor.Text(ProcessField.Reputation, in record, null, 0),
+        Is.EqualTo(Humanize.Placeholder(UnknownReason.NotImplementedHere))
+      );
+      // Five: nothing was ever sent. The reader's every answer says so, on every path it has.
+      Assert.That(ImageTrust.NotChecked.Submitted, Is.False);
+    });
+  }
+
+  /// <summary>
+  /// A chain nobody looked at must not read as one that was looked at and found wanting.
+  /// "Unsigned" is a finding; the absence of an answer is not (PRD §72.3).
+  /// </summary>
+  [Test]
+  public void AChainNobodyAskedAboutIsNotAnUnsignedOne() {
+    var record = default(ProcessRecord);
+    record.TrustChainReason = UnknownReason.NotSampledYet;
+
+    Assert.Multiple(() => {
+      Assert.That(record.TrustChain, Is.EqualTo(SignatureStatus.NotChecked));
+      Assert.That(
+        FieldAccessor.Text(ProcessField.TrustChain, in record, null, 0),
+        Is.EqualTo(Humanize.Placeholder(UnknownReason.NotSampledYet))
+      );
+      Assert.That(FieldAccessor.RawText(ProcessField.TrustChain, in record), Is.Null, "and matches no filter");
+      Assert.That(FieldAccessor.Number(ProcessField.TrustChain, in record, null, 0), Is.Null);
+    });
+  }
+
+  /// <summary>
+  /// A packaging system that keeps no record of a signature has not failed to check one, and the
+  /// mark it shows is the one that means "no such concept here" rather than "not yet".
+  /// </summary>
+  [Test]
+  public void APackagingSystemWithNoSignatureRecordShowsThatItHasNone() {
+    var record = default(ProcessRecord);
+    record.TrustChainReason = UnknownReason.NotSupportedOnPlatform;
+
+    Assert.That(
+      FieldAccessor.Text(ProcessField.TrustChain, in record, null, 0),
+      Is.EqualTo(Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform))
+    );
+  }
+
+  /// <summary>
   /// PRD §70 fixes the words. A synonym anywhere would make two front-ends disagree about what the
   /// same verdict is called, which is the thing the list exists to stop.
   /// </summary>
@@ -582,7 +651,7 @@ public sealed class PackageVerificationTests {
   #region the four answers a comparison can give
 
   [Test]
-  public void AnImageThatMatchesASignedPackageIsVerified() {
+  public void AnImageThatMatchesASignedPackageIsVerifiedAndSoIsItsChain() {
     using var machine = new PretendMachine();
     machine.Install("thing", "1.0-1", "pgp", machine.WriteFile("usr/bin/thing", "the shipped bytes"));
 
@@ -591,31 +660,73 @@ public sealed class PackageVerificationTests {
     Assert.Multiple(() => {
       Assert.That(trust.Signature, Is.EqualTo(SignatureStatus.Verified));
       Assert.That(trust.Package.Name, Is.EqualTo("thing"));
-      Assert.That(trust.Detail, Does.Contain("PGP"));
-      // The trust chain and the reputation are separate questions and neither was asked (PRD §70).
-      Assert.That(trust.TrustChain, Is.EqualTo(SignatureStatus.NotChecked));
+      Assert.That(trust.Detail, Does.Contain("pacman -Qkk"));
+      // Two readings that happen to agree, and each says which one it is.
+      Assert.That(trust.TrustChain, Is.EqualTo(SignatureStatus.Verified));
+      Assert.That(trust.ChainDetail, Does.Contain("PGP"));
+      // The last two of §70's five questions, neither of which anything here asks.
       Assert.That(trust.Reputation, Is.EqualTo(SignatureStatus.NotChecked));
       Assert.That(trust.Submitted, Is.False);
     });
   }
 
+  /// <summary>
+  /// The case that used to be reported as one word. A package built on this machine ships files
+  /// that match their record exactly and carries nobody's signature; <c>pacman -Qkk</c> counts no
+  /// modified files for it and <c>pacman -Qi</c> prints "Validated By: None". Those are two
+  /// findings, and folding them into "Unsigned" threw away the one about the file (PRD §70).
+  /// </summary>
   [Test]
-  public void AnImageThatMatchesAnUnsignedPackageIsUnsignedAndNotVerified() {
+  public void AnImageThatMatchesAPackageNobodySignedIsVerifiedWithAnUnsignedChain() {
     using var machine = new PretendMachine();
     machine.Install("thing", "1.0-1", "sha256", machine.WriteFile("usr/bin/thing", "the shipped bytes"));
 
     var trust = machine.Check("usr/bin/thing");
 
     Assert.Multiple(() => {
-      // The bytes are the ones the package recorded and nobody signed the package: a match is not a
-      // signature, and calling it "Verified" would be a verdict about one that never existed.
-      Assert.That(trust.Signature, Is.EqualTo(SignatureStatus.Unsigned));
-      Assert.That(trust.Detail, Does.Contain("checksum"));
+      Assert.That(trust.Signature, Is.EqualTo(SignatureStatus.Verified), "the bytes are the ones recorded");
+      Assert.That(trust.TrustChain, Is.EqualTo(SignatureStatus.Unsigned), "and nobody signed for them");
+      Assert.That(trust.ChainDetail, Does.Contain("checksum"));
     });
   }
 
   [Test]
-  public void AnImageThatNoLongerMatchesItsPackageSaysSo() {
+  public void APackageInstalledWithCheckingOffHasAnUnsignedChain() {
+    using var machine = new PretendMachine();
+    machine.Install("thing", "1.0-1", "none", machine.WriteFile("usr/bin/thing", "the shipped bytes"));
+
+    var trust = machine.Check("usr/bin/thing");
+
+    Assert.Multiple(() => {
+      Assert.That(trust.Signature, Is.EqualTo(SignatureStatus.Verified));
+      Assert.That(trust.TrustChain, Is.EqualTo(SignatureStatus.Unsigned));
+      Assert.That(trust.ChainDetail, Does.Contain("turned off"));
+    });
+  }
+
+  /// <summary>
+  /// A database entry that does not say how the package was validated has not answered the chain
+  /// question, and answering it as "nobody signed this" would be a finding invented out of a gap.
+  /// </summary>
+  [Test]
+  public void APackageWhoseEntryDoesNotSayHowItWasValidatedIsAChainError() {
+    using var machine = new PretendMachine();
+    machine.Install("thing", "1.0-1", validation: null, machine.WriteFile("usr/bin/thing", "the shipped bytes"));
+
+    var trust = machine.Check("usr/bin/thing");
+
+    Assert.Multiple(() => {
+      Assert.That(trust.Signature, Is.EqualTo(SignatureStatus.Verified));
+      Assert.That(trust.TrustChain, Is.EqualTo(SignatureStatus.VerificationError));
+    });
+  }
+
+  /// <summary>
+  /// The other direction, and the reason the two slots are not one: a signature this machine trusts
+  /// stands behind the package while the file on disk is no longer the one it shipped.
+  /// </summary>
+  [Test]
+  public void AnImageThatNoLongerMatchesItsPackageSaysSoWithoutTouchingTheChain() {
     using var machine = new PretendMachine();
     var file = machine.WriteFile("usr/bin/thing", "the shipped bytes");
     machine.Install("thing", "1.0-1", "pgp", file);
@@ -625,7 +736,44 @@ public sealed class PackageVerificationTests {
 
     Assert.Multiple(() => {
       Assert.That(trust.Signature, Is.EqualTo(SignatureStatus.InvalidSignature));
+      Assert.That(trust.TrustChain, Is.EqualTo(SignatureStatus.Verified), "the package is still the signed one");
       Assert.That(trust.Package.Name, Is.EqualTo("thing"), "it is still that package's path");
+    });
+  }
+
+  /// <summary>
+  /// PRD §3 promises nothing about an executable is transmitted without being asked, and §70 keeps
+  /// submission as its own question so that hashing can never be read as uploading. No path through
+  /// this reader sets it, and this is what says so.
+  /// </summary>
+  [Test]
+  public void NoAnswerThisReaderCanProduceEverClaimsAFileWasSubmitted() {
+    using var machine = new PretendMachine();
+    machine.Install("thing", "1.0-1", "pgp", machine.WriteFile("usr/bin/thing", "the shipped bytes"));
+
+    Assert.Multiple(() => {
+      Assert.That(machine.Check("usr/bin/thing").Submitted, Is.False);
+      Assert.That(machine.Check("usr/bin/thing", verify: false).Submitted, Is.False);
+      Assert.That(machine.Check("usr/bin/thing").Reputation, Is.EqualTo(SignatureStatus.NotChecked));
+      Assert.That(ImageTrust.NotChecked.Reputation, Is.EqualTo(SignatureStatus.NotChecked));
+    });
+  }
+
+  /// <summary>
+  /// The chain is read out of the package's own entry and needs no hash of anything, so a run that
+  /// asked only who owns a file has already paid for it (PRD §5.4).
+  /// </summary>
+  [Test]
+  public void TheChainIsAnsweredWithoutHashingTheImage() {
+    using var machine = new PretendMachine();
+    machine.Install("thing", "1.0-1", "pgp", machine.WriteFile("usr/bin/thing", "the shipped bytes"));
+
+    var trust = machine.Check("usr/bin/thing", verify: false);
+
+    Assert.Multiple(() => {
+      Assert.That(trust.Signature, Is.EqualTo(SignatureStatus.NotChecked), "nobody asked for the file check");
+      Assert.That(trust.Sha256, Is.Null, "and so nothing was hashed");
+      Assert.That(trust.TrustChain, Is.EqualTo(SignatureStatus.Verified));
     });
   }
 
@@ -643,11 +791,12 @@ public sealed class PackageVerificationTests {
   }
 
   /// <summary>
-  /// The Debian half, over a real file and a real MD5 of it — never "Verified", because dpkg keeps
-  /// no record that anything was signed.
+  /// The Debian half, over a real file and a real MD5 of it. The chain has no answer here at all —
+  /// <c>dpkg</c> records nothing about a signature over an installed file — and no answer is not
+  /// the answer "nothing signed it" (PRD §72.3).
   /// </summary>
   [Test]
-  public void ADebianImageThatMatchesItsRecordedDigestIsUnsigned() {
+  public void ADebianImageThatMatchesItsRecordedDigestIsVerifiedWithNoChainToAsk() {
     using var machine = new PretendMachine();
     machine.InstallDebian("thing", "1.0", machine.WriteFile("usr/bin/thing", "the shipped bytes"));
 
@@ -655,8 +804,11 @@ public sealed class PackageVerificationTests {
 
     Assert.Multiple(() => {
       Assert.That(trust.Package.Source, Is.EqualTo(PackageSource.Dpkg));
-      Assert.That(trust.Signature, Is.EqualTo(SignatureStatus.Unsigned));
-      Assert.That(trust.Detail, Does.Contain("dpkg"));
+      Assert.That(trust.Signature, Is.EqualTo(SignatureStatus.Verified));
+      Assert.That(trust.Detail, Does.Contain("dpkg --verify"));
+      Assert.That(trust.TrustChain, Is.EqualTo(SignatureStatus.NotChecked));
+      Assert.That(trust.ChainReason, Is.EqualTo(UnknownReason.NotSupportedOnPlatform));
+      Assert.That(trust.ChainDetail, Does.Contain("dpkg keeps no record"));
     });
   }
 
@@ -695,14 +847,19 @@ public sealed class PackageVerificationTests {
     }
 
     /// <summary>Records the file the way <c>libalpm</c> records one.</summary>
-    public void Install(string name, string version, string validation, string file, bool recordDigest = true) {
+    /// <param name="validation">
+    /// What <c>%VALIDATION%</c> says, or <see langword="null"/> to leave the line out altogether —
+    /// which is a database entry that does not say, and a different case from one that says none.
+    /// </param>
+    public void Install(string name, string version, string? validation, string file, bool recordDigest = true) {
       var directory = Path.Combine(this.DatabaseRoot, "pacman", "local", $"{name}-{version}");
       Directory.CreateDirectory(directory);
       var relative = Relative(file);
 
       File.WriteAllText(
         Path.Combine(directory, "desc"),
-        $"%NAME%\n{name}\n\n%VERSION%\n{version}\n\n%VALIDATION%\n{validation}\n"
+        $"%NAME%\n{name}\n\n%VERSION%\n{version}\n"
+        + (validation is null ? string.Empty : $"\n%VALIDATION%\n{validation}\n")
       );
 
       File.WriteAllText(Path.Combine(directory, "files"), $"%FILES%\n{relative}\n");
@@ -732,15 +889,20 @@ public sealed class PackageVerificationTests {
     }
 
     /// <summary>Asks the reader about one of the installed files, hashing it the way the probe does.</summary>
-    public ImageTrust Check(string relativePath) {
+    /// <param name="verify">
+    /// False to ask only who owns the file, the way a run that named the package column and not the
+    /// check does. Nothing is hashed then, and the digest handed over is the empty one the probe
+    /// passes in that case.
+    /// </param>
+    public ImageTrust Check(string relativePath, bool verify = true) {
       var path = Path.Combine(this._root, relativePath.Replace('/', Path.DirectorySeparatorChar));
       var info = new FileInfo(path);
       return new PackageDatabaseReader(this.DatabaseRoot).Describe(
         path,
         info.Length,
         info.LastWriteTimeUtc.Ticks,
-        FileDigest.Of(path),
-        verify: true
+        verify ? FileDigest.Of(path) : default,
+        verify
       );
     }
 

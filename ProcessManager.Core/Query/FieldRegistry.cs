@@ -393,10 +393,29 @@ public static class FieldRegistry {
       "The platform application id — a Flatpak's org.gimp.GIMP, a snap's name. Native Linux programs have none, and this says so rather than repeating the package name into a column that means something else.",
       FieldKind.Text, FieldUnit.None, _LINUX, FieldCost.High, 200, 24, false, false,
       Aliases: "appid"),
+    // PRD §14's `app.name`. A Windows binary carries its product name in a version resource and an
+    // ELF has no such section, so the same fact lives elsewhere on Linux: in the desktop entry that
+    // starts the program, which is where every menu and taskbar on the machine already reads it
+    // from. High because answering it means reading the machine's three hundred desktop files, once.
+    new(ProcessField.ApplicationName, "app.name", "Application", "App",
+      "What a person calls the program: the name out of the desktop entry that starts it, which is the string the machine's own menu shows. \"none\" means there is no entry for it, which most of a process table is and which is a finding rather than a gap. \"several\" means more than one application starts the same program and nothing says which is running — eight entries start libreoffice, and naming one of them would be wrong most of the time.",
+      FieldKind.Text, FieldUnit.None, _LINUX, FieldCost.High, 190, 20, false, false,
+      Aliases: "application app"),
     new(ProcessField.PackageStatus, "package.status", "Package check", "PkgChk",
       "Whether the running image still matches the digest its package recorded, and whether that package was itself signed. An ELF carries no signature to verify, so this is the honest local equivalent: what pacman -Qkk and dpkg --verify ask. It is not a hash, not a trust chain and not a reputation — those are separate questions and nothing here answers them.",
       FieldKind.State, FieldUnit.None, _LINUX, FieldCost.High, 200, 25, false, false,
       Aliases: "pkgcheck"),
+    // PRD §70's five questions, in five slots that cannot be read off one another. The hash is
+    // above; this is the third, and the fourth and fifth are below it. What each column may say is
+    // one vocabulary — Verified, Unsigned, Expired and the rest — and which question it answers is
+    // the column it is in, never the word.
+    new(ProcessField.TrustChain, "trust.chain", "Trust chain", "Chain",
+      "Whether anybody this machine trusts signed for the image. Its own question and routinely its own answer: a package built here ships files that match their record exactly and carries nobody's signature, which is Verified in the package check and Unsigned in this one. On Linux it is what the packaging system recorded about the package — pacman's %VALIDATION%, the line pacman -Qi prints as \"Validated By\" — and never anything read out of the ELF, which carries no signature to read.",
+      FieldKind.State, FieldUnit.None, _LINUX, FieldCost.High, 190, 25, false, false,
+      Aliases: "chain validated.by"),
+    new(ProcessField.Reputation, "reputation", "Reputation", "Rep",
+      "What an online service says about this image, which is nothing: no provider is configured, none ships, and nothing about the executable is sent anywhere. It has a column of its own so that a digest computed on this machine can never be read as a file submitted from it — §3 promises no silent transmission, and a blank where the question should be is how that promise gets quietly broken.",
+      FieldKind.State, FieldUnit.None, _ALL, FieldCost.Free, 110, 8, false, false),
     new(ProcessField.Runtime, "runtime", "Runtime", "Runtime",
       "What is executing inside the process: a managed runtime, or machine code. Read from the modules the process has mapped rather than from its name, because a process called java may be a shell script and a renamed one may be anything at all.",
       FieldKind.State, FieldUnit.None, _LINUX, FieldCost.High, 110, 8, false, false),

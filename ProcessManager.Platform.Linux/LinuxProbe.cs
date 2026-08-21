@@ -1603,6 +1603,12 @@ public sealed partial class LinuxProbe : ISystemProbe {
     record.Package = PackageIdentity.NotChecked;
     record.PackageStatus = SignatureStatus.NotChecked;
     record.PackageStatusDetail = null;
+    record.TrustChain = SignatureStatus.NotChecked;
+    record.TrustChainDetail = null;
+    record.TrustChainReason = UnknownReason.NotSampledYet;
+    record.ApplicationName = null;
+    record.ApplicationNameAmbiguous = false;
+    record.ApplicationNameReason = UnknownReason.NotSampledYet;
     record.Runtime = ProcessRuntime.Unknown;
     record.RuntimeReason = UnknownReason.NotSampledYet;
     record.ImageCreatedUtcTicks = Counter.NotSampledYet;
@@ -1610,6 +1616,7 @@ public sealed partial class LinuxProbe : ISystemProbe {
     var options = this._options;
     if (!options.ReadPackageIdentity
         && !options.ReadPackageVerification
+        && !options.ReadApplicationName
         && !options.ReadRuntime
         && !options.ReadImageCreationTime)
       return;
@@ -1622,6 +1629,12 @@ public sealed partial class LinuxProbe : ISystemProbe {
     record.Package = cache.Package;
     record.PackageStatus = cache.PackageStatus;
     record.PackageStatusDetail = cache.PackageStatusDetail;
+    record.TrustChain = cache.TrustChain;
+    record.TrustChainDetail = cache.TrustChainDetail;
+    record.TrustChainReason = cache.TrustChainReason;
+    record.ApplicationName = cache.ApplicationName;
+    record.ApplicationNameAmbiguous = cache.ApplicationNameAmbiguous;
+    record.ApplicationNameReason = cache.ApplicationNameReason;
     record.Runtime = cache.Runtime;
     record.RuntimeReason = cache.RuntimeReason;
     record.ImageCreatedUtcTicks = cache.ImageCreatedUtcTicks;
@@ -1640,6 +1653,9 @@ public sealed partial class LinuxProbe : ISystemProbe {
     if (this._options.ReadImageCreationTime)
       cache.ImageCreatedUtcTicks = ImageCreated(path, mayRead);
 
+    if (this._options.ReadApplicationName)
+      this.ReadApplicationName(cache, path, mayRead);
+
     if (!this._options.ReadPackageIdentity && !this._options.ReadPackageVerification)
       return;
 
@@ -1647,9 +1663,12 @@ public sealed partial class LinuxProbe : ISystemProbe {
     // a failure; somebody else's process has an image whose link this user may not follow, which is
     // a failure and one the elevated helper could fix. The two must not share a cell (PRD §72.3).
     if (path is not { Length: > 0 }) {
-      cache.Package = PackageIdentity.Unknown(
-        mayRead ? UnknownReason.NotSupportedOnPlatform : UnknownReason.NotPermitted
-      );
+      var why = mayRead ? UnknownReason.NotSupportedOnPlatform : UnknownReason.NotPermitted;
+      cache.Package = PackageIdentity.Unknown(why);
+      // The same nothing, for the same reason: with no file there is no package, and with no
+      // package there is no signature to follow. Carried rather than left at "nobody asked", which
+      // would say the column had not been switched on when it had.
+      cache.TrustChainReason = why;
 
       return;
     }
@@ -1671,6 +1690,14 @@ public sealed partial class LinuxProbe : ISystemProbe {
       cache.PackageStatus = SignatureStatus.NotChecked;
       cache.PackageStatusDetail =
         "this image is deployed by its own packaging system, which keeps no per-file digest that this program reads";
+      // Nor is the chain a question this program can answer for those: a Flatpak's commit is signed
+      // in the ostree repository it was pulled from and a snap's assertions live in snapd's own
+      // database, and neither is read here. Not checked, and not "unsigned" — which would be a
+      // finding about the publisher made out of an absence (PRD §72.3).
+      cache.TrustChain = SignatureStatus.NotChecked;
+      cache.TrustChainDetail =
+        "this image is deployed by its own packaging system, whose signatures live somewhere this program does not read";
+      cache.TrustChainReason = UnknownReason.NotImplementedHere;
 
       return;
     }
@@ -1680,6 +1707,14 @@ public sealed partial class LinuxProbe : ISystemProbe {
     var digest = verify ? this.DigestOf(path, size, modified) : default;
     var trust = this.Packages.Describe(path, size, modified, digest, verify);
     cache.Package = trust.Package;
+
+    // The chain is a fact about the package and not about the file, so it survives everything below
+    // it: an image that has been deleted out from under its process still came from a package whose
+    // database entry says what stood behind it, and a run that asked only who owns the file has
+    // already paid for that entry. Filled first and unconditionally, so no branch can drop it.
+    cache.TrustChain = trust.TrustChain;
+    cache.TrustChainDetail = trust.ChainDetail;
+    cache.TrustChainReason = trust.ChainReason;
 
     if (!this._options.ReadPackageVerification)
       return;
@@ -1695,6 +1730,52 @@ public sealed partial class LinuxProbe : ISystemProbe {
     cache.PackageStatus = trust.Signature;
     cache.PackageStatusDetail = trust.Detail;
   }
+
+  /// <summary>
+  /// What a person calls the program this process is running (PRD §14).
+  /// </summary>
+  /// <remarks>
+  /// The lookup is by the executable's own name rather than by its full path, because that is what
+  /// a desktop entry names: <c>Exec=htop</c>, resolved through <c>PATH</c> by whatever launched it.
+  /// Comparing paths would miss every entry on the machine, and resolving <c>PATH</c> here would be
+  /// resolving somebody else's — the launcher's, not this process's.
+  /// <para>
+  /// The " (deleted)" the kernel appends is stripped first: the program that is running is still the
+  /// application it was when its file was replaced underneath it.
+  /// </para>
+  /// </remarks>
+  private void ReadApplicationName(ProcessCache cache, string? imagePath, bool mayRead) {
+    if (imagePath is not { Length: > 0 }) {
+      // A kernel thread runs no file and is no application, which is a fact about it; another
+      // user's process has an image this user may not see, which is a hole somebody with more
+      // privilege could fill. Not the same cell (PRD §72.3).
+      cache.ApplicationNameReason = mayRead ? UnknownReason.NotSupportedOnPlatform : UnknownReason.NotPermitted;
+      return;
+    }
+
+    var path = imagePath.EndsWith(_DELETED, StringComparison.Ordinal)
+      ? imagePath[..^_DELETED.Length]
+      : imagePath;
+
+    var slash = path.LastIndexOf('/');
+    var program = slash >= 0 && slash < path.Length - 1 ? path[(slash + 1)..] : path;
+
+    cache.ApplicationName = this.DesktopEntries.Applications.NameOf(program, out var several);
+    cache.ApplicationNameAmbiguous = several;
+    // Looked, and either found the name or found that the machine has no entry for the program.
+    // Both are answers, and neither is the placeholder that means nobody looked.
+    cache.ApplicationNameReason = UnknownReason.None;
+  }
+
+  /// <summary>The machine's desktop entries, read the first time a column asks for one (PRD §5.4).</summary>
+  private DesktopEntryReader DesktopEntries
+    => this._desktopEntries ??= new(
+      this._options.DesktopEntryDirectories is { Length: > 0 } directories
+        ? directories
+        : DesktopEntryReader.DefaultDirectories()
+    );
+
+  private DesktopEntryReader? _desktopEntries;
 
   /// <summary>What the kernel appends to the link of an image that is no longer on the file system.</summary>
   private const string _DELETED = " (deleted)";

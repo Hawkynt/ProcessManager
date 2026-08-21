@@ -309,6 +309,9 @@ internal sealed record CommandLineOptions {
   public bool WantsPackageIdentity
     => this.Wants(ProcessField.Package)
     || this.Wants(ProcessField.ApplicationId)
+    // The chain is read out of the package's own database entry and needs no hash of the image, so
+    // it costs the index and nothing beyond it — which puts it here rather than with the check.
+    || this.Wants(ProcessField.TrustChain)
     // Grouping by package is somebody naming the column as much as a --columns argument is: the
     // headings are the field, and a run that did not collect it would head every row "package not
     // looked up" (PRD §83).
@@ -334,6 +337,15 @@ internal sealed record CommandLineOptions {
   /// once per sample, because a process does not change what is running inside it.
   /// </remarks>
   public bool WantsRuntime => this.Wants(ProcessField.Runtime);
+
+  /// <summary>
+  /// Whether anything this run asked for needs the machine's desktop entries read (PRD §5.4, §14).
+  /// </summary>
+  /// <remarks>
+  /// Around three hundred small files, once. Nothing else on the machine wants them, so nothing but
+  /// the column naming it turns them on.
+  /// </remarks>
+  public bool WantsApplicationName => this.Wants(ProcessField.ApplicationName);
 
   /// <summary>
   /// Whether anything this run asked for needs the image's birth time (PRD §5.4, §14).
