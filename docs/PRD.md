@@ -104,7 +104,8 @@ thread continuously consuming logical CPU 7."
 ## 3.1 Primary — MUST
 
 - [ ] 🟡 Replace everyday Task Manager workflows — process management yes; services, startup, users no
-- [ ] 🟡 Replace Process Explorer tree and lower-pane workflows — tree yes, lower pane no
+- [x] Replace Process Explorer tree and lower-pane workflows — the pane is docked under the tree with
+      overview, threads, modules, handles, environment and network, and pins to one process in a window
 - [ ] Replace the majority of System Informer process-inspection workflows
 - [x] Provide the same canonical information in GUI and TUI
 - [ ] 🟡 Operate natively on Windows, Linux and macOS — Windows and Linux done; macOS is a stub (§6.3)
@@ -115,7 +116,9 @@ thread continuously consuming logical CPU 7."
 - [x] Avoid requiring Internet access for ordinary operation
 - [x] Provide opt-in reputation services rather than silently transmitting executable information
       — trivially satisfied today: there is no network code at all
-- [ ] 🟡 Remain usable with thousands of processes, threads, mappings, connections or handles
+- [x] Remain usable with thousands of processes, threads, mappings, connections or handles — ten
+      thousand processes flat and nested, a chain twenty thousand deep, and a million descriptors
+      searched in 186 ms; the quadratic that used to be in the tree builder is gone (§99)
       — measured to 1000 processes (§71); 10 000 is untested
 - [ ] 🟡 Permit customisation of columns, layouts, refresh intervals, highlighting, shortcuts and
       defaults — columns and interval yes; nothing persists between runs
@@ -1818,8 +1821,10 @@ Four levels, and nothing may jump a level:
 - [x] Each disk (§48) — one section per device
 - [x] Each network adapter (§49) — one section per interface
 - [x] Each GPU (§50)
-- [ ] Battery
-- [ ] Optional sensors and devices
+- [x] Battery — charge, draw, time remaining, health against design capacity, chemistry and
+      cycle count; both the µAh and the µWh families of battery are read
+- [x] Optional sensors and devices — every hwmon chip, grouped by chip, with temperatures and
+      fans first and the electrical channels in the collapsed block
 
 - [ ] The page opens on whatever is under the greatest meaningful load rather than always on the
       processor, with a setting to turn that off
@@ -3327,8 +3332,8 @@ Windows parsing on Linux.
 - [x] Terminate
 - [x] Suspend / resume
 - [x] Priority
-- [ ] Affinity
-- [ ] 🟡 Basic Performance page
+- [x] Affinity — from the window; there is no command-line switch for it
+- [x] Basic Performance page
 - [ ] Network view
 - [ ] Services read and control
 - [ ] 🟡 Startup
@@ -3383,15 +3388,16 @@ v1 does not ship unless every one of these is true:
 - [x] PID reuse cannot corrupt process identity
 - [x] GUI and TUI report matching canonical counters within the sampling tolerance
 - [ ] 🟡 CPU and memory metrics have documented semantics
-- [ ] 🟡 The user can kill a process from GUI, TUI **and** CLI
+- [x] The user can kill a process from GUI, TUI **and** CLI
 - [x] The user can suspend and resume where supported
 - [x] The user can inspect process path and command line
 - [x] The user can inspect the process tree
-- [ ] 🟡 The user can inspect active network endpoints
+- [x] The user can inspect active network endpoints — the pane's network tab, and `--connections`
 - [ ] 🟡 The user can inspect services — starting and stopping them is not written
 - [ ] The user can manage common startup items
 - [ ] 🟡 The user can inspect logged-in sessions — from the CLI; neither front-end has the view
-- [ ] 🟡 The user can view CPU, memory, disk and network performance
+- [x] The user can view CPU, memory, disk and network performance — thirteen resource pages, each
+      with its own graphs
 - [ ] 🟡 The user can create and restore column presets — restoring works from the file and from
       `--columns @name`; creating one means editing the file, not a dialog
 - [x] The user can search and filter by any registered field, visible or not

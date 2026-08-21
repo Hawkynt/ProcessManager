@@ -55,6 +55,14 @@ internal static class ProbeFactory {
       if (useHelper && probeRoot is null)
         Elevated = new(FindHelper());
 
+      // The batteries and sensor chips, for anything that asks. Only for the live machine: a
+      // recorded tree is somebody else's, and this machine's battery has nothing to do with it.
+      if (probeRoot is null) {
+        var sensors = new Platform.Linux.SysfsSensorReader();
+        Query.SensorSources.Batteries = sensors.ReadBatteries;
+        Query.SensorSources.Sensors = sensors.ReadSensors;
+      }
+
       return new Platform.Linux.LinuxProbe(
         probeRoot is null
           ? new() {
