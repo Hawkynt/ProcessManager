@@ -46,6 +46,17 @@ public sealed class ProcessTreeBinder {
   /// <summary>Handle counts filled on demand for the visible rows (PRD §3.5).</summary>
   public Dictionary<ProcessKey, Counter> HandleCounts { get; } = [];
 
+  /// <summary>
+  /// What is known about one process's descriptor count.
+  /// </summary>
+  /// <remarks>
+  /// Never the raw dictionary lookup. A miss leaves <c>default(Counter)</c> behind, whose reason is
+  /// <see cref="UnknownReason.None"/> — "the value is present" — so every process that had not been
+  /// counted yet reported holding no descriptors at all (PRD §5.3, §72.3).
+  /// </remarks>
+  public Counter HandleCountOf(ProcessKey key)
+    => this.HandleCounts.TryGetValue(key, out var counted) ? counted : Counter.NotSampledYet;
+
   /// <summary>The row for one process, or null once it has gone.</summary>
   public ProcessRow? RowFor(ProcessKey key) => this._rows.TryGetValue(key, out var row) ? row : null;
 
@@ -108,7 +119,7 @@ public sealed class ProcessTreeBinder {
       // None — "the value is present" — and a present value of nought is a claim that the process
       // holds no descriptors at all. Every process that had not been counted yet said "handles 0"
       // (PRD §5.3, §72.3).
-      var handles = this.HandleCounts.TryGetValue(key, out var counted) ? counted : Counter.NotSampledYet;
+      var handles = this.HandleCountOf(key);
       row.Update(in process, delta, index, handles, this.CurrentUserId);
       row.Generation = this._generation;
 

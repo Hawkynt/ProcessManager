@@ -222,6 +222,9 @@ public sealed class HistoryPlot : OwnerDrawnControl {
       PerformanceUnit.BytesPerSecond => Humanize.BytesPerSecond(value),
       PerformanceUnit.Celsius => string.Format(System.Globalization.CultureInfo.InvariantCulture, "{0:0.0} °C", value.Value),
       PerformanceUnit.Watts => string.Format(System.Globalization.CultureInfo.InvariantCulture, "{0:0.0} W", value.Value),
+      // A count is a whole number of things and reads as one. Falling through to the percentage
+      // branch below would have printed a thread count as "42 %".
+      PerformanceUnit.Count => Humanize.Count(Counter.Of((ulong)Math.Max(0, value.Value))),
       _ => Humanize.Percent(value) + " %",
     };
   }

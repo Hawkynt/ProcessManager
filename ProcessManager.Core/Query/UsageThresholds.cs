@@ -43,6 +43,27 @@ public readonly record struct UsageThresholds(
 ) {
 
   /// <summary>
+  /// When a process is using enough of the graphics device to be worth marking (PRD §23).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Named rather than positional, unlike the six above, so that a caller which already writes out
+  /// the whole tuple keeps compiling. That also means <c>default(UsageThresholds)</c> leaves both at
+  /// nought — which switches the band off, which is the right answer for a threshold table nobody
+  /// filled in.
+  /// </para>
+  /// <para>
+  /// A third of the device and three quarters of it, and deliberately not the CPU's numbers. A GPU
+  /// percentage is already a share of the whole adapter, where a CPU percentage here is a share of
+  /// one core out of many — so "100" means "every engine saturated" rather than "one core held", and
+  /// a band set at a hundred could only ever fire on a benchmark.
+  /// </para>
+  /// </remarks>
+  public double WarmGpuPercent { get; init; } = 33;
+
+  public double HotGpuPercent { get; init; } = 75;
+
+  /// <summary>
   /// The defaults.
   /// </summary>
   /// <remarks>
@@ -60,6 +81,9 @@ public readonly record struct UsageThresholds(
 
   public UsageHeat Throughput(Rate bytesPerSecond)
     => Classify(bytesPerSecond, this.WarmBytesPerSecond, this.HotBytesPerSecond);
+
+  /// <summary>How hot a share of the graphics device is (PRD §23).</summary>
+  public UsageHeat Gpu(Rate percent) => Classify(percent, this.WarmGpuPercent, this.HotGpuPercent);
 
   /// <summary>
   /// Which band a reading falls in.
@@ -106,6 +130,16 @@ public readonly record struct UsageThresholds(
       ProcessField.IoTotalRate => this.Throughput(delta.IoTotalBytesPerSecond(index)),
       ProcessField.ReadBytesPerSecond => this.Throughput(delta.ReadBytesPerSecond(index)),
       ProcessField.WriteBytesPerSecond => this.Throughput(delta.WriteBytesPerSecond(index)),
+      // Each engine against its own reading, and the summary against the busiest of them, for the
+      // same reason the resident share does not mark the commit charge: a mark has to point at the
+      // number underneath it. The memory columns are left alone — they are bytes, and a share of an
+      // adapter whose total the program does not always know is not a threshold anybody can set.
+      ProcessField.GpuPercent or ProcessField.GpuEnginePercent => this.Gpu(delta.GpuEnginePercent(index)),
+      ProcessField.GpuGraphicsPercent => this.Gpu(delta.GpuGraphicsPercent(index)),
+      ProcessField.GpuComputePercent => this.Gpu(delta.GpuComputePercent(index)),
+      ProcessField.GpuCopyPercent => this.Gpu(delta.GpuCopyPercent(index)),
+      ProcessField.GpuEncodePercent => this.Gpu(delta.GpuEncodePercent(index)),
+      ProcessField.GpuDecodePercent => this.Gpu(delta.GpuDecodePercent(index)),
       _ => UsageHeat.None,
     };
   }

@@ -956,7 +956,8 @@ public sealed class MainWindow : Form {
     view.DropDownItems.Add(new ToolStripSeparator());
     view.DropDownItems.Add(Item("Select columns…", this.ChooseColumns));
     view.DropDownItems.Add(Item("Performance…", this.ShowPerformance));
-    view.DropDownItems.Add(Item("Colour legend…", () => new LegendWindow().ShowDialog()));
+    view.DropDownItems.Add(Item("Colour legend…", this.ShowLegend));
+    view.DropDownItems.Add(Item("Highlighting thresholds…", this.EditThresholds));
     view.DropDownItems.Add(Item("Find handles or files…", this.FindResource));
     view.DropDownItems.Add(Item("Find window…", this.PickWindow));
 
@@ -1006,8 +1007,12 @@ public sealed class MainWindow : Form {
       performance.SecondsPerSample = this.Interval / 1000d;
       performance.UpdateFromSample();
     }
-    foreach (var window in this._properties)
-      window.UpdateFromSample(snapshot, this._binder.RowFor(window.Key));
+    foreach (var window in this._properties) {
+      // The interval, for the same reason the performance page is told it: a graph labelled sixty
+      // seconds on a machine sampled every four is wrong by a factor of four and looks fine.
+      window.SecondsPerSample = this.Interval / 1000d;
+      window.UpdateFromSample(snapshot, delta, this._binder.RowFor(window.Key), this._binder.HandleCountOf(window.Key));
+    }
 
     this._cpuPlot.Invalidate();
     this._memoryPlot.Invalidate();
@@ -1062,6 +1067,41 @@ public sealed class MainWindow : Form {
       this._details.UpdateOverview(in process, row);
 
     this._details.Refresh();
+  }
+
+  /// <summary>
+  /// What every colour in the list means, and a way to change the two that are settable (PRD §23).
+  /// </summary>
+  /// <remarks>
+  /// The legend is told the bands rather than reading them from a static, so the sentences beside
+  /// the warm and hot swatches are the numbers this window is judging by this second. A change made
+  /// from inside it comes back through the event and is applied here, because the rows have to be
+  /// re-classified before anything looks different.
+  /// </remarks>
+  private void ShowLegend() {
+    var legend = new LegendWindow(ProcessRow.Thresholds);
+    legend.ThresholdsChanged += (_, thresholds) => this.ApplyThresholds(thresholds);
+    legend.ShowDialog();
+  }
+
+  private void EditThresholds() {
+    var dialog = new HighlightThresholdsDialog(ProcessRow.Thresholds);
+    dialog.ShowDialog();
+    if (dialog.Accepted)
+      this.ApplyThresholds(dialog.Thresholds);
+  }
+
+  /// <summary>
+  /// Takes a new set of bands and re-judges every row against them.
+  /// </summary>
+  /// <remarks>
+  /// The refresh is the point. The heat of a cell is worked out once per sample and cached beside
+  /// its text, so a threshold changed without one leaves the table marked by the old numbers until
+  /// something else happens to redraw it — which looks exactly like a dialog that did nothing.
+  /// </remarks>
+  private void ApplyThresholds(UsageThresholds thresholds) {
+    ProcessRow.Thresholds = thresholds;
+    this.Refresh();
   }
 
   private void ChooseColumns() {
@@ -1240,7 +1280,14 @@ public sealed class MainWindow : Form {
         return;
       }
 
-    var window = new ProcessPropertiesWindow(this._probe, row.Key, row.Name, this._actions);
+    var window = new ProcessPropertiesWindow(
+      this._probe,
+      row.Key,
+      row.Name,
+      this._actions,
+      this._settings.HideUnavailableTabs ? UnavailableTabs.Hidden : UnavailableTabs.Disabled
+    ) { SecondsPerSample = this.Interval / 1000d };
+
     window.FormClosed += (_, _) => this._properties.Remove(window);
     this._properties.Add(window);
     window.Show();

@@ -986,7 +986,11 @@ prevent.
 
 # 23. Process highlighting
 
-- [x] Highlight colours are configurable
+- [x] Highlight colours are configurable — the settings file names every one of them, and the
+      thresholds behind the two washes are settable from the window as well, under
+      View ▸ Highlighting thresholds and from the legend itself
+- [x] Every colour the table paints is explained by a dialog — the row categories and both cell
+      marks, with the numbers the marks are currently being judged by (§7.1)
 - [x] 🟡 Highlighting is never the only signal — the number is in the cell it washes, so the table
       reads without colour at all; an explicit high-contrast mode is not detected yet (§45.9)
 
@@ -1033,12 +1037,17 @@ setting alone — a threshold of nought is the most annoying possible response t
 A reading that does not exist is never marked, in either direction. `default(Rate)` is a confident
 zero, so an unread counter compares as cold; a counter that came back *not permitted* is not a
 measurement at all (§5.3).
-- [ ] High GPU
+- [x] High GPU — `heat.gpu.warm` and `heat.gpu.hot`, a third of the adapter and three quarters of it.
+      Deliberately not the CPU's numbers: a GPU percentage is already a share of the whole device
+      where a CPU percentage here is a share of one core out of many, so a band set at a hundred
+      could only ever fire on a benchmark. Each engine column is marked from its own reading and the
+      summary column from the busiest engine; the graphics-memory columns are bytes and are left
+      alone, because a percentage threshold has nothing to say about them.
 - [ ] Process with an active UI window — needs §39
 - [ ] Process with a changed executable — needs image mtime + hash watch
 - [ ] Process containing the selected search match — needs §56
 
-The seven that are ticked are the ones the program can *prove*. The rest stay off rather than
+The ones that are ticked are the ones the program can *prove*. The rest stay off rather than
 guessing: a colour claiming "unsigned" without having checked a signature is worse than no colour.
 
 ---
@@ -1246,24 +1255,33 @@ column nobody looked at (§5.4).
 
 - [x] Double-click or Properties opens a **persistent** inspector — one per process, and several at
       once, which is what makes comparing two of them possible
-- [ ] Tabs whose capability is unavailable are hidden **or** disabled by user preference — the
+- [x] Tabs whose capability is unavailable are hidden **or** disabled by user preference — the
       preference matters, because hidden and disabled answer different questions ("can this machine
-      do it" versus "get out of my way")
+      do it" versus "get out of my way"). `tabs.unavailable=disabled` leaves the tab in place saying
+      which of the two reasons applies; `hidden` takes it off the strip. Disabled is the default,
+      because a missing tab is indistinguishable from a feature nobody wrote
 
 Tabs:
 
-- [ ] 🟡 General (§27) — the overview tab carries identity, ownership, timing and the command line;
-      the version, signature and hash fields need §21
-- [ ] Performance (§28)
-- [ ] CPU
-- [ ] Memory
-- [ ] I/O
+- [ ] 🟡 General (§27) — a page of its own now: identity, ownership, timing, how long it has been
+      running, what the ELF header and the directory entry say about the image, and the command
+      line, with Copy, Open folder and File properties under it. Version, publisher, signer and
+      hashes need §21, and the page says outright that no signature was checked rather than leaving
+      a blank that reads like a clean bill of health
+- [x] Performance (§28) — six graphs over the four time windows, hover readings and a keyboard
+      cursor. There is no per-process network graph because there are no per-process byte counters
+      to draw one from (§18)
+- [x] CPU
+- [x] Memory
+- [x] I/O
 - [x] Threads (§29)
 - [x] Modules (§31)
 - [x] Handles / resources (§32)
 - [ ] Memory map (§34)
 - [x] Network (§40)
-- [ ] GPU (§19)
+- [x] GPU (§19) — and the tab that proves the preference above: a machine whose driver publishes no
+      per-process accounting has nothing to put on it, which is not the same as this build not
+      having one
 - [ ] Security (§36)
 - [x] Environment (§37)
 - [ ] Jobs / cgroups / containers (§38)
@@ -1273,8 +1291,15 @@ Tabs:
 - [ ] Strings (§35)
 - [ ] Timeline (§63)
 
-The window exists now, hosting the same pane the main window docks at its foot — pinned to one
-process rather than following the selection, which is what makes two of them comparable.
+The window hosts the same pane the main window docks at its foot — pinned to one process rather than
+following the selection, which is what makes two of them comparable — and adds the pages the pane
+has no room for: what the process *is*, an hour of what it has been *doing*, and the three resource
+sheets that would each be twenty columns in the table.
+
+Those pages go onto the pane's own tab strip, so the window has one row of tabs and not two. They
+land after the pane's because the toolkit's page collection has `Add` and `Remove` and no `Insert`;
+the window opens on General instead, and a test asserts every page is present so that an upstream
+change fails a build rather than shipping a properties window with no properties on it.
 
 When the process ends the window stays open, says so in its title and stops asking about the pid:
 a window that followed the number would quietly start describing whoever the kernel gave it to next
