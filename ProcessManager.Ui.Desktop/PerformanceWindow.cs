@@ -1505,7 +1505,10 @@ public sealed class PerformanceWindow : Form {
   private static Color ColourFor(string title) => AccentFor(title switch {
     "Processor" => "cpu",
     "Memory" => "memory",
+    // A core and a NUMA node are both the processor divided up, and both keep its colour: a
+    // different hue would say they are a different kind of thing from the machine they are part of.
     _ when title.StartsWith("Core ", StringComparison.Ordinal) => "cpu",
+    _ when title.StartsWith("Node ", StringComparison.Ordinal) => "cpu",
     _ when title.StartsWith("Disk", StringComparison.Ordinal) => "io",
     _ when title.StartsWith("GPU", StringComparison.Ordinal) => "gpu",
     _ => "network",

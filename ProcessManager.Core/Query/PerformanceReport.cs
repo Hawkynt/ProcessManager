@@ -240,7 +240,9 @@ public readonly record struct PerformanceSection(
   private static string DefaultAccent(string title) => title switch {
     "Processor" => "cpu",
     "Memory" => "memory",
+    // The processor divided up either way keeps the processor's colour (PRD §45.5).
     _ when title.StartsWith("Core ", StringComparison.Ordinal) => "cpu",
+    _ when title.StartsWith("Node ", StringComparison.Ordinal) => "cpu",
     _ when title.StartsWith("Disk", StringComparison.Ordinal) => "io",
     _ => "network",
   };

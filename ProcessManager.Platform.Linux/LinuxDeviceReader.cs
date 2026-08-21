@@ -97,7 +97,23 @@ internal static class LinuxDeviceReader {
     }
   }
 
-  public static NetworkInterfaceInfo DescribeInterface(string sysRoot, string name, string? procRoot = null) {
+  /// <param name="live">
+  /// Whether these files are this machine's, rather than a recorded tree's.
+  /// </param>
+  /// <remarks>
+  /// The addresses and the wireless association are asked of the kernel directly — <c>getifaddrs</c>
+  /// and an <c>ioctl</c> — and there is no way to ask either about anybody else's interfaces. So
+  /// they may only be read when the files beside them belong to this machine too: a
+  /// <c>--probe-root</c> replay that put this laptop's address and Wi-Fi network beside a fixture's
+  /// counters would be describing two machines in one table, which is the rule §9.4 states for
+  /// <c>CPUID</c> and which holds for exactly the same reason here.
+  /// </remarks>
+  public static NetworkInterfaceInfo DescribeInterface(
+    string sysRoot,
+    string name,
+    string? procRoot = null,
+    bool live = false
+  ) {
     var root = Path.Combine(sysRoot, "class", "net", name);
 
     // Only meaningful on a link that is up, and absent entirely on anything virtual. -1 is the
@@ -129,12 +145,12 @@ internal static class LinuxDeviceReader {
         : null,
       Kind(root, isLoopback, wireless),
       Driver(root),
-      LinuxAddressReader.Read(name),
+      live ? LinuxAddressReader.Read(name) : null,
       procRoot is null ? null : Gateway(procRoot, name),
       procRoot is null ? null : Resolvers(procRoot),
-      wireless ? LinuxWirelessReader.Ssid(name) : null,
+      live && wireless ? LinuxWirelessReader.Ssid(name) : null,
       wireless && procRoot is not null ? Signal(procRoot, name) : null,
-      wireless ? LinuxWirelessReader.FrequencyMegahertz(name) : null
+      live && wireless ? LinuxWirelessReader.FrequencyMegahertz(name) : null
     );
   }
 

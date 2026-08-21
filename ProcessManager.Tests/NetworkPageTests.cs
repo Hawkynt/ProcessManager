@@ -163,6 +163,49 @@ public sealed class NetworkPageTests {
 
   #endregion
 
+  #region a recorded machine is not this one
+
+  /// <summary>
+  /// A replayed tree must not be given this machine's addresses (PRD §9.4).
+  /// </summary>
+  /// <remarks>
+  /// <c>getifaddrs</c> and the wireless ioctls answer about the interfaces of the machine running
+  /// them and about no others, exactly like <c>CPUID</c> — so a <c>--probe-root</c> replay that
+  /// showed this laptop's address and Wi-Fi network beside a fixture's counters would be describing
+  /// two machines in one table.
+  /// </remarks>
+  [Test]
+  public void AReplayedInterfaceCarriesNoneOfThisMachinesOwnFacts() {
+    var root = Path.Combine(Path.GetTempPath(), $"procman net {Guid.NewGuid():N}");
+    var net = Path.Combine(root, "sys", "class", "net", "eth0");
+    Directory.CreateDirectory(net);
+    File.WriteAllText(Path.Combine(net, "address"), "00:11:22:33:44:55\n");
+    File.WriteAllText(Path.Combine(net, "operstate"), "up\n");
+    File.WriteAllText(Path.Combine(net, "mtu"), "1500\n");
+    File.WriteAllText(Path.Combine(net, "ifindex"), "7\n");
+    File.WriteAllText(Path.Combine(net, "type"), "1\n");
+
+    try {
+      var recorded = Platform.Linux.LinuxDeviceReader.DescribeInterface(
+        Path.Combine(root, "sys"),
+        "eth0",
+        Path.Combine(root, "proc"),
+        live: false
+      );
+
+      // What the recorded tree says is read; what only the running kernel can answer is not.
+      Assert.That(recorded.MacAddress, Is.EqualTo("00:11:22:33:44:55"));
+      Assert.That(recorded.Index, Is.EqualTo(7));
+      Assert.That(recorded.Addresses, Is.Null);
+      Assert.That(recorded.Ssid, Is.Null);
+      Assert.That(recorded.FrequencyMegahertz, Is.Null);
+    } finally {
+      Directory.Delete(root, recursive: true);
+    }
+  }
+
+  #endregion
+
   #region the rows themselves
 
   private static SystemSnapshot Machine(ulong received, ulong sent) {

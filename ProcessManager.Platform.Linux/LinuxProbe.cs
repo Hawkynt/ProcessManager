@@ -111,13 +111,18 @@ public sealed class LinuxProbe : ISystemProbe {
 
   /// <summary>Read once; nothing in it changes while the program runs, except the live clock speed.</summary>
   public HostInfo DescribeHost()
-    => this._host ??= LinuxHostReader.Read(
-      this._options.ProcRoot,
-      this._options.SysRoot,
-      // CPUID answers about the processor running it and about no other, so it is only the truth
-      // when the files beside it are this machine's as well.
-      live: this._options.ProcRoot == "/proc" && this._options.SysRoot == "/sys"
-    );
+    => this._host ??= LinuxHostReader.Read(this._options.ProcRoot, this._options.SysRoot, this.IsThisMachine);
+
+  /// <summary>
+  /// Whether the files being read are this machine's rather than a recorded tree's.
+  /// </summary>
+  /// <remarks>
+  /// Everything that asks the kernel a question directly rather than reading a file under the roots
+  /// — <c>CPUID</c>, <c>getifaddrs</c>, the wireless ioctls — may only be consulted when this is
+  /// true. There is no way to ask any of them about another machine, and mixing their answers into
+  /// a fixture's counters describes two machines in one table (PRD §9.4).
+  /// </remarks>
+  private bool IsThisMachine => this._options.ProcRoot == "/proc" && this._options.SysRoot == "/sys";
 
   public void Sample(SystemSnapshot snapshot) {
     ArgumentNullException.ThrowIfNull(snapshot);
@@ -793,7 +798,12 @@ public sealed class LinuxProbe : ISystemProbe {
     if (this._interfaceInfo.TryGetValue(name, out var known))
       return known;
 
-    var info = LinuxDeviceReader.DescribeInterface(this._options.SysRoot, name, this._options.ProcRoot);
+    var info = LinuxDeviceReader.DescribeInterface(
+      this._options.SysRoot,
+      name,
+      this._options.ProcRoot,
+      this.IsThisMachine
+    );
     this._interfaceInfo[name] = info;
     return info;
   }
