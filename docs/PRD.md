@@ -31,8 +31,8 @@ shorthand:
 it is not known*. An unticked box must never become a zero on screen. This is restated here because
 it is the single requirement most likely to be broken while filling the tables in.
 
-**Counting, as of the last update:** **980 of 1355 boxes are ticked** — 158 of 199 in the field
-registry (§14–22), 822 of 1156 across the capabilities. A further 155 are marked 🟡, meaning some of
+**Counting, as of the last update:** **983 of 1341 boxes are ticked** — 158 of 190 in the field
+registry (§14–22), 825 of 1151 across the capabilities. A further 154 are marked 🟡, meaning some of
 the work behind them is already done. §100 tracks the phases; §101 defines when this may be called
 finished.
 
@@ -1054,15 +1054,15 @@ The four counts are read. The nine traffic fields are **not**, and the reason is
 rather than being worked around, because the obvious workaround produces a number that is wrong in a
 way nothing on screen would betray.
 
-- [ ] `net.percent`
-- [ ] `net.send.rate`
-- [ ] `net.recv.rate`
-- [ ] `net.rate`
-- [ ] `net.sent.bytes`
-- [ ] `net.recv.bytes`
-- [ ] `net.errors`
-- [ ] `net.packets.sent`
-- [ ] `net.packets.recv`
+- ∅ `net.percent`
+- ∅ `net.send.rate`
+- ∅ `net.recv.rate`
+- ∅ `net.rate`
+- ∅ `net.sent.bytes`
+- ∅ `net.recv.bytes`
+- ∅ `net.errors`
+- ∅ `net.packets.sent`
+- ∅ `net.packets.recv`
 - [x] `tcp.count` — how many TCP sockets the process holds a descriptor on, listeners included
 - [x] `udp.count` — the same for datagram sockets, which have no connection to count and so are
       counted themselves
@@ -1645,9 +1645,11 @@ Categories:
       application that brought its own filesystem with it, which is what Windows means by the word
 - [x] Managed runtime — from `runtime` (§14), which reads the module list rather than the name.
       `native` is a finding and is not coloured; `unknown` is nobody having looked and is not either
-- [ ] Unsigned executable — **refused, not deferred.** §21 keeps `signature.status` a Windows and
-      macOS field because a Linux binary carries no signature to check. The two columns that come
-      nearest each answer something else: `package.status` is whether the bytes still match what the
+- ∅ Unsigned executable — **refused, not deferred, and the refusal does not rest on there being no
+      signature.** Since §21 was written, Windows images really are verified: the digest is
+      recomputed and the signer's signature checked over it. The argument that survives is the one
+      below, which never depended on the platform. On Linux the two columns that come nearest each
+      answer something else: `package.status` is whether the bytes still match what the
       package recorded, and `trust.chain` is whether anybody this machine trusts signed for that
       package. `Unsigned` in the trust chain is the ordinary reading for a package built on the
       machine it runs on, so a colour taken from it would paint every developer's own build as
@@ -1656,13 +1658,16 @@ Categories:
       §70's whole design is that the word is meaningless without the column it is in — the same
       vocabulary answers five questions, and which one was asked is the heading. **A row colour has
       no heading.** That is the argument, and it does not depend on which of the five is read
-- [ ] Invalid signature — as above: there is no signature to be invalid
+- ∅ Invalid signature — as above. On Windows a signature can now genuinely be invalid, and it is
+      still not a row colour, for the same reason: the word is meaningless without its heading
 - [ ] Suspicious reputation — needs opt-in reputation, and §97 promises nothing about an executable
       leaves this machine unasked. There is no provider to ask
 - [x] High CPU
 - [x] High memory
 - [x] High disk
-- [ ] High network — no per-process byte counters exist to threshold (§18)
+- ∅ High network — no per-process byte counters exist to threshold, and §18 refuses them rather
+      than deferring them: every workaround produces a number wrong in a way nothing on screen
+      would betray
 
 **The mark goes on the cell, not the row.** A row's colour already answers a different question —
 what kind of process it is (§7.1) — and that is a one-of-many answer, while how much CPU something
@@ -1692,7 +1697,7 @@ measurement at all (§5.3).
       could only ever fire on a benchmark. Each engine column is marked from its own reading and the
       summary column from the busiest engine; the graphics-memory columns are bytes and are left
       alone, because a percentage threshold has nothing to say about them.
-- [ ] Process with an active UI window — **refused on Linux.** §39's own finding is that a Wayland
+- ∅ Process with an active UI window — **refused on Linux.** §39's own finding is that a Wayland
       client cannot enumerate other clients' surfaces by design, so the colour would appear on
       XWayland rows and on nothing else. A mark that is present for a third of the windows on a
       modern desktop and absent for the rest describes which toolkit a program was built with
@@ -1710,7 +1715,7 @@ measurement at all (§5.3).
       It is the one row colour deliberately louder than the rest, and it outranks System: after an
       upgrade the rows that need restarting are almost all root daemons, and painting them the same
       blue as every other daemon is exactly how they are missed
-- [ ] Process containing the selected search match — the match is already marked, on the run of
+- ∅ Process containing the selected search match — the match is already marked, on the run of
       characters it matched, which is §11's wash and points at the word rather than at the row. A
       second mark on the row would say the same thing less precisely. The one case the cell mark does
       not cover is a match in a column that is not showing, and that is a reason to show the column
