@@ -582,14 +582,34 @@ public sealed class LiveProcessActionTests {
     }
   }
 
+  /// <summary>Whether this process may lower an out-of-memory adjustment.</summary>
+  /// <remarks>
+  /// Bit 24 is <c>CAP_SYS_RESOURCE</c>, checked against the effective set in this process's own
+  /// status — the same line and the same bit the security columns read.
+  /// </remarks>
+  private static bool HoldsSysResource() {
+    const int SysResource = 24;
+    foreach (var line in File.ReadAllLines("/proc/self/status"))
+      if (line.StartsWith("CapEff:", StringComparison.Ordinal)
+        && ulong.TryParse(line["CapEff:".Length..].Trim(), System.Globalization.NumberStyles.HexNumber,
+            System.Globalization.CultureInfo.InvariantCulture, out var mask))
+        return (mask & (1ul << SysResource)) != 0;
+
+    return false;
+  }
+
   /// <summary>
   /// A process may always volunteer itself for the out-of-memory killer and needs privilege to
   /// excuse itself again, which is the opposite way round from most permissions.
   /// </summary>
   [Test]
   public void LoweringAnOutOfMemoryAdjustmentSaysWhichPrivilegeIsMissing() {
-    if (Environment.IsPrivilegedProcess)
-      Assert.Ignore("run as root, which holds CAP_SYS_RESOURCE and has nothing to refuse");
+    // The capability itself, not the user id. A build runner can hold CAP_SYS_RESOURCE without being
+    // root — this test failed on one that did — and the kernel's rule is about the capability. Read
+    // through this program's own capability reader, which is a fair use of it: if the decoding were
+    // wrong the security columns would be wrong in the same direction.
+    if (HoldsSysResource())
+      Assert.Ignore("this process holds CAP_SYS_RESOURCE, so there is nothing here to refuse");
 
     var actions = Actions();
     var started = actions.Launch(new("/bin/sleep", ["120"]));
