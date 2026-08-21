@@ -2,6 +2,7 @@ using Hawkynt.ProcessManager.Model;
 using Hawkynt.ProcessManager.Query;
 using Hawkynt.ProcessManager.Sampling;
 using Hawkynt.ProcessManager.Settings;
+using Hawkynt.ProcessManager.Ui.Terminal;
 
 namespace Hawkynt.ProcessManager.App;
 
@@ -90,6 +91,16 @@ internal sealed record CommandLineOptions {
 
   /// <summary>Which fields --list writes, in order. Null means the default set.</summary>
   public ProcessField[]? Fields { get; init; }
+
+  /// <summary>
+  /// The columns the terminal opens with, which are not quite the columns a file gets.
+  /// </summary>
+  /// <remarks>
+  /// A drawn history is a column in a terminal and nothing at all in a CSV, so <c>--columns</c> keeps
+  /// the graphs here and drops them from <see cref="Fields"/>. Null leaves the terminal to pick the
+  /// set that fits its width (PRD §57.1).
+  /// </remarks>
+  public ProcessField[]? TerminalColumns { get; init; }
 
   /// <summary>
   /// Whether anything this run asked for needs the LSM label, which costs a file per process.
@@ -301,6 +312,31 @@ internal sealed record CommandLineOptions {
   /// </summary>
   public int CaptureSamples { get; init; } = 2;
 
+  /// <summary>
+  /// How large the captured frame is, in cells (PRD §57.1).
+  /// </summary>
+  /// <remarks>
+  /// The responsive layout is decided by the width, so a golden frame at one size proves nothing
+  /// about the other two: 80×24 drops columns a 160×50 frame keeps, and only a capture at each size
+  /// shows whether what is left still lines up.
+  /// </remarks>
+  public int CaptureWidth { get; init; } = 120;
+
+  public int CaptureHeight { get; init; } = 40;
+
+  /// <summary>
+  /// Keys to press before the frame is captured, so a capture can photograph a page that is two
+  /// keystrokes in (PRD §9.6). <c>\t</c>, <c>\n</c>, <c>\e</c> and <c>\s</c> name the four that
+  /// cannot be written literally.
+  /// </summary>
+  public string? CaptureKeys { get; init; }
+
+  /// <summary>How the terminal draws its history columns (PRD §57.4).</summary>
+  public GraphStyle GraphStyle { get; init; } = GraphStyle.Blocks;
+
+  /// <summary>Whether the terminal asks for mouse reports (PRD §57.5).</summary>
+  public bool UseMouse { get; init; } = true;
+
   /// <summary>Bring the window up, photograph it and exit — the CI desktop smoke leg.</summary>
   public string? ShootPath { get; init; }
 
@@ -343,6 +379,7 @@ internal sealed record CommandLineOptions {
       TreeMode = settings.TreeMode,
       CpuMode = settings.CpuMode,
       AsciiOnly = !settings.BlockCharacters,
+      TerminalColumns = settings.TerminalColumns.Length > 0 ? settings.TerminalColumns : null,
     };
 
     return Parse(args, seeded, settings);
@@ -401,14 +438,14 @@ internal sealed record CommandLineOptions {
             if (writable.Count == 0)
               return options with { Error = $"the column set '{setName}' is nothing but drawn histories" };
 
-            options = options with { Fields = [.. writable] };
+            options = options with { Fields = [.. writable], TerminalColumns = named };
             break;
           }
 
           if (!Exporter.TryParseFields(list, out var fields, out var reason))
             return options with { Error = $"--columns: {reason}" };
 
-          options = options with { Fields = fields };
+          options = options with { Fields = fields, TerminalColumns = fields };
           break;
         }
 
@@ -551,6 +588,30 @@ internal sealed record CommandLineOptions {
           explicitMode = true;
           break;
         }
+        case "--capture-size": {
+          if (!TryValue(args, ref i, inlineValue, out var size) || !TryParseSize(size, out var width, out var height))
+            return options with { Error = "--capture-size needs WIDTHxHEIGHT, such as 120x40" };
+
+          options = options with { CaptureWidth = width, CaptureHeight = height };
+          break;
+        }
+        case "--capture-keys": {
+          if (!TryValue(args, ref i, inlineValue, out var keys))
+            return options with { Error = "--capture-keys needs the keys to press" };
+
+          options = options with { CaptureKeys = keys };
+          break;
+        }
+        case "--graph-style": {
+          if (!TryValue(args, ref i, inlineValue, out var style) || !Enum.TryParse<GraphStyle>(style, true, out var graph))
+            return options with { Error = "--graph-style needs one of blocks, braille, ascii or numbers" };
+
+          options = options with { GraphStyle = graph };
+          break;
+        }
+        case "--no-mouse":
+          options = options with { UseMouse = false };
+          break;
         case "--capture-samples": {
           if (!TryValue(args, ref i, inlineValue, out var text) || !int.TryParse(text, out var samples) || samples < 2)
             return options with { Error = "--capture-samples needs a number of at least 2" };
@@ -698,6 +759,15 @@ internal sealed record CommandLineOptions {
     return true;
   }
 
+  /// <summary>Reads a <c>WIDTHxHEIGHT</c> argument, in either of the two letters people write it with.</summary>
+  private static bool TryParseSize(string text, out int width, out int height) {
+    width = height = 0;
+    var parts = text.Split(['x', 'X', '*'], 2);
+    return parts.Length == 2
+      && int.TryParse(parts[0], out width) && width >= 40
+      && int.TryParse(parts[1], out height) && height >= 10;
+  }
+
   public const string HelpText = """
     procman — a process manager for Windows and Linux
 
@@ -734,6 +804,10 @@ internal sealed record CommandLineOptions {
       --json             the same as --format=json
       --probe-root <d>   read a recorded /proc tree instead of the live one
       --ascii            draw the terminal's history columns with ASCII rather than block characters
+      --graph-style <s>  blocks (default), braille, ascii or numbers for the history columns
+      --capture-size WxH the size of a captured terminal frame (default 120x40)
+      --capture-keys <k> press these keys before capturing: \t tab, \n enter, \e escape, \s space
+      --no-mouse         do not ask the terminal for mouse reports
       --resolve          with --connections: turn addresses into hostnames (asks a resolver)
       -n, --numeric      with --connections: leave ports as numbers rather than naming them
       --gpu              account for what each process is doing to the graphics adapters (costly)

@@ -1,0 +1,266 @@
+using Hawkynt.ProcessManager.Query;
+
+namespace Hawkynt.ProcessManager.Ui.Terminal;
+
+/// <summary>Where one column ended up on screen, so drawing and clicking cannot disagree.</summary>
+public readonly record struct ColumnPlacement(ProcessField Field, int Index, int X, int Width, bool Frozen);
+
+/// <summary>
+/// The terminal's columns: which ones, in what order, how wide, which are pinned, and how far the
+/// rest have been scrolled sideways (PRD §11, §57.2).
+/// </summary>
+/// <remarks>
+/// <para>
+/// One object answers both questions a table asks — what to draw at column <c>x</c>, and which column
+/// a click at <c>x</c> landed on. They were a formatting loop and a hit test in two places once, and
+/// the two disagreed by one character for every pinned column.
+/// </para>
+/// <para>
+/// Widths start from <see cref="FieldRegistry"/> and are only ever moved from there by a person. A
+/// column that measures itself against its widest value jitters every second as processes come and
+/// go, so auto-sizing is a key, not a policy.
+/// </para>
+/// </remarks>
+public sealed class ColumnLayout {
+
+  private struct Column {
+    public ProcessField Field;
+    public int Width;
+    public bool Visible;
+  }
+
+  private readonly List<Column> _columns = [];
+  private ProcessField[] _defaults;
+
+  public ColumnLayout(ReadOnlySpan<ProcessField> fields) {
+    this._defaults = fields.ToArray();
+    this.Reset();
+  }
+
+  /// <summary>How many leading columns stay put while the rest scroll (PRD §11, §57.2).</summary>
+  public int Frozen { get; private set; } = 1;
+
+  /// <summary>The first non-frozen column to draw — the horizontal scroll position.</summary>
+  public int Scroll { get; private set; }
+
+  /// <summary>The column the keyboard is on, for copy, resize and reorder.</summary>
+  public int Current { get; private set; }
+
+  /// <summary>True once anything here has been moved by hand, so a resize stops re-deciding it.</summary>
+  public bool Customised { get; private set; }
+
+  public int Count => this._columns.Count;
+
+  public ProcessField FieldAt(int index) => this._columns[index].Field;
+
+  public int WidthAt(int index) => this._columns[index].Width;
+
+  public bool IsVisible(int index) => this._columns[index].Visible;
+
+  public ProcessField CurrentField => this._columns[this.Current].Field;
+
+  /// <summary>The columns a sort can cycle through — the drawn histories are not among them.</summary>
+  public ProcessField[] Sortable {
+    get {
+      var result = new List<ProcessField>();
+      // Not "field": inside a property accessor C# 14 reads that as the backing field.
+      foreach (var column in this._columns)
+        if (column.Visible && FieldRegistry.Get(column.Field).IsSortable)
+          result.Add(column.Field);
+
+      return [.. result];
+    }
+  }
+
+  /// <summary>Replaces the set of columns — a named column set, or a narrower terminal's list.</summary>
+  public void Apply(ReadOnlySpan<ProcessField> fields, bool asDefault = false) {
+    if (asDefault)
+      this._defaults = fields.ToArray();
+
+    this._columns.Clear();
+    foreach (var field in fields)
+      this._columns.Add(new() { Field = field, Width = FieldRegistry.Get(field).TerminalWidth, Visible = true });
+
+    this.Frozen = 1;
+    this.Scroll = 0;
+    this.Current = 0;
+    this.Customised = !asDefault;
+  }
+
+  /// <summary>Back to the registry's widths, the opening order and nothing hidden (PRD §11).</summary>
+  public void Reset() {
+    this.Apply(this._defaults, asDefault: true);
+    this.Customised = false;
+  }
+
+  public void SetVisible(int index, bool visible) {
+    var column = this._columns[index];
+    column.Visible = visible;
+    this._columns[index] = column;
+    this.Customised = true;
+    this.ClampCurrent();
+  }
+
+  public void ToggleVisible(int index) => this.SetVisible(index, !this._columns[index].Visible);
+
+  /// <summary>Moves the keyboard's column cursor, skipping whatever is hidden.</summary>
+  public void MoveCurrent(int delta) {
+    var step = Math.Sign(delta);
+    if (step == 0)
+      return;
+
+    for (var remaining = Math.Abs(delta); remaining > 0; --remaining) {
+      var next = this.Current;
+      do {
+        next += step;
+        if ((uint)next >= (uint)this._columns.Count)
+          return;
+      } while (!this._columns[next].Visible);
+
+      this.Current = next;
+    }
+  }
+
+  /// <summary>Moves the current column past its neighbour, taking the cursor with it.</summary>
+  public bool Reorder(int delta) {
+    var target = this.Current + Math.Sign(delta);
+    if ((uint)target >= (uint)this._columns.Count)
+      return false;
+
+    (this._columns[this.Current], this._columns[target]) = (this._columns[target], this._columns[this.Current]);
+    this.Current = target;
+    this.Customised = true;
+    return true;
+  }
+
+  /// <summary>Widens or narrows the current column. Four characters is the narrowest useful one.</summary>
+  public void ResizeCurrent(int delta) => this.SetWidth(this.Current, this._columns[this.Current].Width + delta);
+
+  public void SetWidth(int index, int width) {
+    var column = this._columns[index];
+    column.Width = Math.Clamp(width, 3, 120);
+    this._columns[index] = column;
+    this.Customised = true;
+  }
+
+  /// <summary>
+  /// Sets a column to the widest value the caller measured, header included.
+  /// </summary>
+  /// <remarks>
+  /// The measurement comes from the rows on screen rather than from every process: the point of
+  /// auto-sizing is that what is in front of you fits, and reading a thousand command lines to widen
+  /// a column nobody is looking at costs a frame.
+  /// </remarks>
+  public void AutoSize(int index, int measured) {
+    var descriptor = FieldRegistry.Get(this._columns[index].Field);
+    // A drawn history has no text to measure, so it keeps whatever it was given.
+    this.SetWidth(index, descriptor.IsGraph ? this._columns[index].Width : Math.Max(measured, descriptor.ShortHeader.Length + 1));
+  }
+
+  /// <summary>Pins every column up to and including the cursor, or unpins them all.</summary>
+  public void ToggleFreeze() {
+    var wanted = this.Current + 1;
+    this.Frozen = this.Frozen == wanted ? 0 : wanted;
+    this.Scroll = Math.Max(this.Scroll, this.Frozen);
+    this.Customised = true;
+  }
+
+  public void ScrollBy(int delta) => this.Scroll = Math.Clamp(this.Scroll + delta, this.Frozen, Math.Max(this.Frozen, this._columns.Count - 1));
+
+  /// <summary>
+  /// Lays the visible columns out across <paramref name="screenWidth"/>.
+  /// </summary>
+  /// <returns>How many placements were written.</returns>
+  public int Place(int screenWidth, Span<ColumnPlacement> destination) {
+    var written = 0;
+    var x = 0;
+    for (var i = 0; i < this._columns.Count && written < destination.Length; ++i) {
+      var frozen = i < this.Frozen;
+      if (!frozen && i < this.Scroll)
+        continue;
+      if (!this._columns[i].Visible)
+        continue;
+      if (x >= screenWidth)
+        break;
+
+      // The last column on the line is clipped rather than dropped: a name column that runs off the
+      // edge still names something, where an empty right margin names nothing.
+      var width = Math.Min(this._columns[i].Width, screenWidth - x);
+      destination[written++] = new(this._columns[i].Field, i, x, width, frozen);
+      x += this._columns[i].Width + 1;
+    }
+
+    return written;
+  }
+
+  /// <summary>Scrolls sideways until the cursor's column is on screen, the way a selection does.</summary>
+  public void EnsureCurrentVisible(int screenWidth) {
+    this.ClampCurrent();
+    if (this.Current < this.Frozen)
+      return;
+
+    if (this.Current < this.Scroll) {
+      this.Scroll = this.Current;
+      return;
+    }
+
+    // Walk the scroll forward until the cursor fits. Widths differ per column, so this is a loop
+    // rather than arithmetic — and it runs at most once per keystroke over a dozen columns.
+    for (var guard = this._columns.Count; guard > 0; --guard) {
+      if (this.EndOf(this.Current, screenWidth) <= screenWidth || this.Scroll >= this.Current)
+        return;
+
+      ++this.Scroll;
+    }
+  }
+
+  private int EndOf(int index, int screenWidth) {
+    Span<ColumnPlacement> placements = stackalloc ColumnPlacement[Math.Min(64, this._columns.Count)];
+    var count = this.Place(screenWidth, placements);
+    for (var i = 0; i < count; ++i)
+      if (placements[i].Index == index)
+        return placements[i].X + placements[i].Width;
+
+    return int.MaxValue;
+  }
+
+  private void ClampCurrent() {
+    if (this._columns.Count == 0)
+      return;
+
+    this.Current = Math.Clamp(this.Current, 0, this._columns.Count - 1);
+    if (this._columns[this.Current].Visible)
+      return;
+
+    for (var i = this.Current; i < this._columns.Count; ++i)
+      if (this._columns[i].Visible) {
+        this.Current = i;
+        return;
+      }
+
+    for (var i = this.Current; i >= 0; --i)
+      if (this._columns[i].Visible) {
+        this.Current = i;
+        return;
+      }
+  }
+
+  /// <summary>Finds the column under a click, or -1 for the margin past the last one.</summary>
+  public int HitTest(int screenWidth, int x) {
+    Span<ColumnPlacement> placements = stackalloc ColumnPlacement[Math.Min(64, Math.Max(1, this._columns.Count))];
+    var count = this.Place(screenWidth, placements);
+    for (var i = 0; i < count; ++i)
+      // The separator after a column belongs to it, so clicking between two headers picks the left
+      // one rather than nothing at all.
+      if (x >= placements[i].X && x <= placements[i].X + placements[i].Width)
+        return placements[i].Index;
+
+    return -1;
+  }
+
+  public void SetCurrent(int index) {
+    this.Current = index;
+    this.ClampCurrent();
+  }
+
+}

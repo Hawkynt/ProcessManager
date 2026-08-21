@@ -39,6 +39,16 @@ public sealed class DetailView(ISystemProbe probe) {
     this.Scroll = 0;
   }
 
+  /// <summary>Opens a named page directly, for the keys that jump straight to one (PRD §57.3).</summary>
+  public void GoTo(DetailTab tab) {
+    if (this.Tab == tab)
+      return;
+
+    this.Tab = tab;
+    this._stale = true;
+    this.Scroll = 0;
+  }
+
   public void NextTab() {
     this.Tab = _tabs[(Array.IndexOf(_tabs, this.Tab) + 1) % _tabs.Length];
     this._stale = true;
