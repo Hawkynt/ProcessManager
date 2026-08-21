@@ -732,13 +732,26 @@ term all use it, and it never changes even when the display name differs per pla
       number, because `10.0.19041.1 (WinBuild.160101.0800)` is a real value of this field
 - [x] `file.version` — as above. Routinely neither the product version nor the four numbers
       `VS_FIXEDFILEINFO` carries, which is why it is its own column and stays a string
-- [ ] 🟡 `package` — the distribution's own database, Flatpak, snap and AppImage; MSIX and `.app`
-      are Windows and macOS. **Linux is done; the Windows half is unwritten** — MSIX identity comes
-      from `GetPackageFullName` on the process, which is one call and nobody has made it. **macOS is
-      a stub (§6.3)**
-- [ ] 🟡 `app.id` — read for Flatpak and snap; neither could be verified live on the machine this
-      was written on, which has neither installed. **Windows is unwritten** and would be the package
-      family name from the same call as the line above; **macOS is a stub**
+- [x] `package` — the distribution's own database, Flatpak, snap and AppImage on Linux; MSIX on
+      Windows, from `GetPackageFullName` on the handle the owner lookup already holds. Its own
+      source rather than "the machine's package manager", because it is not one: nearly every
+      program on a Windows machine comes from no package at all, and lumping an MSIX in with a
+      distribution's database would claim a symmetry that is not there (§5.3).
+      `APPMODEL_ERROR_NO_PACKAGE` is the answer for most of a Windows process table and is a
+      *finding* — this program came from no package — so it reads "not packaged", the same word the
+      Linux half uses; anything else that goes wrong does not borrow it (§72.3).
+
+      **No switch in front of the Windows half, unlike the Linux one.** There the column costs
+      thirty megabytes of file lists to build an index and §5.4 applies; here the package manager is
+      asked about one process, answers immediately, and the answer is fixed for that process's life
+      and cached with the rest of its identity. A switch would buy nothing and would leave the column
+      empty for anybody who forgot it. **macOS is a stub (§6.3)**, so `.app` bundles are not read
+- [x] 🟡 `app.id` — read for Flatpak and snap; neither could be verified live on the machine this
+      was written on, which has neither installed, and that is what the amber is for. **Windows is
+      the package family name**, from the same handle as the line above and asked for separately
+      rather than cut out of the full name: a family is the name and the publisher hash, and the
+      full name has the version and the architecture in between them, so taking one out of the other
+      would be reassembling a format rather than reading it. **macOS is a stub**
 - [ ] `bundle.id` — macOS bundle identifier. **macOS only**, and the macOS probe is a stub (§6.3).
       Windows and Linux have no such notion — the nearest are the two lines above, and both are
       already their own field
@@ -750,10 +763,15 @@ term all use it, and it never changes even when the display name differs per pla
       namespace, which is how a container's members are actually told apart, rather than by a cgroup
       path anybody can write anything into
 - [ ] 🟡 `job.cgroup` — Linux cgroup path done; Windows job object not. **The Windows half is
-      unwritten**: `IsProcessInJob` says whether there is one and `QueryInformationJobObject` says
-      what it limits, and neither is called. Not the same fact wearing one name, which is why the
-      line carries both — a cgroup is a path in a hierarchy and a job is an unnamed kernel object a
-      process cannot leave (§5.3)
+      unwritten**, and only half of it is even reachable: `IsProcessInJob` says whether a process is
+      in one and is a single call on the handle the identity read already holds, but
+      `QueryInformationJobObject` needs a handle to the *job*, and Windows offers no way to get one
+      from a process — a job is anonymous unless somebody named it, and a bystander cannot open what
+      has no name. So the Windows column could say "in a job" and could never say what that job
+      limits, which is the half worth reading; a yes with no answer behind it was not judged worth a
+      column, and that is a decision rather than an oversight. Not the same fact wearing one name,
+      which is why the line carries both — a cgroup is a path in a hierarchy and a job is an unnamed
+      kernel object a process cannot leave (§5.3)
 - [x] `terminal` — controlling TTY, decoded from `stat` field 7. The packing is the awkward part:
       minor is split across the low eight bits and bits 20–31 with major in between, so the obvious
       shift is right for small numbers and wrong for large ones. Zero is *no terminal* — the answer
@@ -761,10 +779,15 @@ term all use it, and it never changes even when the display name differs per pla
 - [x] `exe.size` — of the resolved target, not of the `/proc` link. Asking the link its length gives
       nought, which is how this first reported every program as being no bytes long
 - [x] `exe.modified`
-- [ ] 🟡 `exe.created` — `statx` where the filesystem carries a birth time, and honestly unknown
-      where it does not, which is most of them. **Linux is done; the Windows half is unwritten** —
-      NTFS records a creation time for every file and always has, so this is the one line here where
-      Windows would answer more reliably than Linux does and nobody has asked it. **macOS is a stub**
+- [x] `exe.created` — `statx` where the filesystem carries a birth time, and honestly unknown where
+      it does not, which is most of them. **Windows now answers too**, and it is the one line here
+      where it answers more reliably than Linux: NTFS has recorded a creation time for every file
+      since it was written. Which is exactly why the two keep their reasons apart rather than
+      sharing an empty cell — a filesystem with no birth time to give and a file this user may not
+      stat are different findings (§72.3) — and why a filesystem that has none is tested for by the
+      instant it hands back rather than by nought: `FILETIME` zero is 1601, and a column of 1601
+      would be the same lie a column of 1970 is on Linux. Opt-in on both, being a `stat` per process
+      on a path nothing else reads. **macOS is a stub**
 - [x] `subsystem` — GUI/console/native; PE only, `n/a` for ELF. **Windows only**, out of the optional
       header of the same file the five strings above come from, so naming any of the six buys the one
       read that answers all of them. What the loader is expected to give the program rather than what
@@ -799,25 +822,46 @@ term all use it, and it never changes even when the display name differs per pla
 - [x] `ctx.switches.delta`
 - [x] `ctx.switches.rate`
 - [x] `threads` — current thread count
-- [ ] `threads.peak` — **no Linux source.** The kernel keeps the current thread count in `status`
-      and no high-water mark of it anywhere. The only figure this program could offer is the largest
-      it happened to see while it was running, which is a fact about the observer rather than about
-      the process (§9.2)
+- [ ] `threads.peak` — **no source on either platform.** Linux keeps the current thread count in
+      `status` and no high-water mark of it anywhere; Windows carries `NumberOfThreads` in the same
+      bulk query every other column here comes out of and no peak beside it. So this is not the
+      usual "one platform can and we have not written it": neither kernel records the number. The
+      only figure this program could offer is the largest it happened to see while it was running,
+      which is a fact about the observer rather than about the process (§9.2)
 - [x] `priority.base`
 - [x] 🟡 `priority.dynamic` — Linux only; `stat` field 18, the kernel's own number rather than the
       nice value
 - [x] `nice` — the politeness a process was started with, backwards on purpose
-- [ ] `priority.class` — idle/below normal/normal/… (`GetPriorityClass`). **Windows only.** Linux
-      has no such band: nice orders tasks inside `SCHED_OTHER` and the class is `sched.class`, and
-      folding either into a Windows priority class would be the false equivalence §5.3 forbids
+- [x] `priority.class` — idle/below normal/normal/above normal/high/real time. **Windows only.**
+      Linux has no such band: nice orders tasks inside `SCHED_OTHER` and the class is `sched.class`,
+      and folding either into a Windows priority class would be the false equivalence §5.3 forbids.
+
+      **Read out of `priority` rather than through `GetPriorityClass`, and not to save the call.**
+      A handle per process per sample is the `OpenProcess` in the sampling loop §5.2 forbids; a
+      handle once per process, cached the way the identity is, would be wrong the instant somebody
+      changed the class — and this program has a menu item that changes it (§25.2). The base
+      priority arrives with every sample and the kernel derives it from the class by a table that is
+      one-to-one — 4, 6, 8, 10, 13, 24 — so inverting that table is both free and current. It is
+      also what makes the column sort: the six numbers are ordered the way the bands are, while
+      `PROCESS_PRIORITY_CLASS_*` numbers "below normal" above "high" and would sort into nonsense.
+      A base priority the table does not contain is left unknown rather than rounded into the
+      nearest band it is not (§72.3)
 - [x] `nice`
 - [x] 🟡 `cpu.affinity` — Linux only, and opt-in. `Cpus_allowed_list` from the `status` the sampler
       already has open, in the kernel's own notation (`0-15`, `2,3`), which is what `taskset -pc`
       prints; the list rather than the mask, because on a 128-way machine the mask is unreadable.
       Not `sched_getaffinity`: that is a syscall per process for a line already in front of us.
       Windows' `GetProcessAffinityMask` is not written
-- [ ] `cpu.set` — Windows CPU sets. **Windows only**; the Linux near-relative is the cgroup `cpuset`,
-      which is already reflected in `cpu.affinity` — the kernel narrows `Cpus_allowed` to it
+- [x] `cpu.set` — Windows CPU sets, from `GetProcessDefaultCpuSets`, and opt-in. **Windows only**;
+      the Linux near-relative is the cgroup `cpuset`, which is already reflected in `cpu.affinity` —
+      the kernel narrows `Cpus_allowed` to it. Its own column beside the affinity mask rather than
+      folded into it, because the two are different promises: a mask is a wall a process cannot run
+      outside, a set is a preference the scheduler honours when it can, and that is the whole reason
+      Windows grew a second mechanism (§5.3). No set assigned is a real answer and the ordinary one —
+      the process gets the system's default set, which is every processor — so it reads "default"
+      rather than leaving a cell that looks like a hole (§72.3). Asked for with a buffer that is
+      already large enough rather than with a length probe, because a probe that reports nought and a
+      process that has nothing assigned would otherwise be the same reply
 - [ ] `numa.node` — **not answerable honestly here.** `Mems_allowed_list` says which nodes a process
       may allocate from, which is a different question from which node it is running on, and this
       machine has one node — an implementation could not be told from a broken one (§9.2)
@@ -827,9 +871,17 @@ term all use it, and it never changes even when the display name differs per pla
       syscall per process for a number already in the line being parsed. Verified against `chrt -p`.
       A class the kernel adds later is left unknown rather than folded into the ordinary one, and a
       `stat` that stops short says nothing rather than claiming `SCHED_OTHER`
-- [ ] `qos` — OS energy/performance state. **Windows and macOS only.** Linux has no per-process
+- [x] `qos` — OS energy/performance state, from `GetProcessInformation(ProcessPowerThrottling)`.
+      **Windows and macOS only**, and macOS is a stub (§6.3). Linux has no per-process
       quality-of-service class; `uclamp` is a utilisation hint on a task, not a state the OS assigns,
-      and reporting one as the other would invent a concept the kernel does not have
+      and reporting one as the other would invent a concept the kernel does not have.
+
+      **The columns are §22's `qos.background` and `eco.state`, and there is no third one here.**
+      This line and those are one reading — what Windows has been asked to do about a process's
+      energy — and §22 is where an energy reading belongs; a `qos` column of its own in §15 would
+      have been a third spelling of one counter, which is exactly the drift the one field catalogue
+      exists to stop (§5.1). Ticked here because the question this box asks is answered, not because
+      it is answered twice
 - [x] `throttled` — cgroup `cpu.stat` `nr_throttled`, opt-in. The group's counter and not the
       process's, which the column says: everything in one cgroup shows the same figure. Read once per
       cgroup per sample rather than once per process. A group whose CPU controller is off has no such
@@ -839,7 +891,16 @@ Required of the CPU percentage:
 
 - [x] Normalised 0–100 view
 - [x] Logical-CPU cumulative view
-- [ ] Configurable decimal precision
+- [x] Configurable decimal precision — `percent.decimals` in the settings file, `--decimals` on the
+      command line, and a picker in the settings window; nought to three, one by default, and out of
+      range leaves the setting alone rather than zeroing it. It governs **every** percentage and not
+      only the processor's, deliberately: a window writing CPU to two decimals and memory to one
+      would be stating a precision about the first that it does not have about the second. One digit
+      is dropped once a value reaches a hundred so the column keeps its width where it is widest,
+      which is what the program has always done at the default — "100" beside "99.9" — and the rule
+      now follows the setting instead of staying fixed at the tenth it was written as. The threshold
+      under which `cpu.delta` writes a plain nought follows it too, or two decimals would round away
+      changes the column had room to show
 
 # 16. Process table — memory fields
 
@@ -867,7 +928,15 @@ more numbers. All free: the lines are already in the `status` this program reads
 - [x] `private.bytes` — private committed virtual memory; `PrivatePageCount` (W), `VmData` (L).
       Both mean commit charge — this was `RssAnon` on Linux until it was corrected, which made the
       same column mean two different things on two platforms
-- [ ] `private.bytes.peak`
+- [x] `private.bytes.peak` — **Windows only**, and free: `PeakPagefileUsage` sits beside the commit
+      charge in the structure the sampler already reads, and is the peak of the *same* charge
+      `private.bytes` reports. That is what makes the pair worth having — a process sitting at fifty
+      megabytes with a peak of four gigabytes has been somewhere the current row cannot show. Linux
+      keeps no high-water mark of `VmData` anywhere: `VmPeak` is the peak of the address space and
+      `VmHWM` the peak of the resident set, both are already their own columns, and reporting either
+      under this heading would be a different number wearing this one's name (§5.3). Guarded by the
+      same rule the other Windows counters are: a peak that reads nought for every process on the
+      machine is a stub rather than a measurement, and says so (§72.3)
 - [x] `virtual.size`
 - [x] `virtual.size.peak`
 - [x] `commit.size` — same counter as `private.bytes`
@@ -891,19 +960,63 @@ separate switch would only be a way to get an empty column by forgetting it (§5
 Another user's `smaps_rollup` is 0400, so their proportional set reports *not permitted* rather than
 a zero — and a process nobody asked about reports *not sampled*. Neither is nought (§5.3).
 - [x] `swap`
-- [ ] `mem.compressed`
+- [ ] `mem.compressed` — **no per-process source on either platform.** Windows compresses pages into
+      a store owned by the memory manager and publishes its size for the *machine*, which is the
+      memory page's `system.CompressedBytes` and is already read there; nothing attributes a share of
+      it to the process whose pages were compressed. Linux is the same shape one layer down — zram
+      and zswap account per swap device, not per task. macOS is the one platform that does keep a
+      per-task compressed figure, and its probe is a stub (§6.3). So this is not a column somebody
+      has not written: on the two platforms that work there is nothing to read
 - [x] `page.faults`
 - [x] `page.faults.delta`
 - [x] `page.faults.hard` — Linux `majflt`
 - [x] `page.faults.hard.rate`
-- [ ] `page.priority` — Windows
+- [x] `page.priority` — **Windows**, opt-in, from `GetProcessInformation(ProcessMemoryPriority)` —
+      the documented call rather than `NtQueryInformationProcess(ProcessPagePriority)`, whose
+      structure Microsoft has never published and which §8.3 forbids reading. Which of a process's
+      pages the memory manager takes back first when the machine runs short: a backup or an indexer
+      that has set itself low is the case the column exists for, and no other column on the row says
+      it. Nought is `MEMORY_PRIORITY_LOWEST` and a real reading, so a run that did not ask must say
+      so rather than showing a machine full of processes whose pages go first (§72.3). Opt-in
+      because it needs a handle per process per *sample* — the value is settable while a process
+      runs, so it cannot be cached for its lifetime the way the identity is. Linux has no
+      per-process equivalent: reclaim there is driven by the LRU lists and by the cgroup's knobs,
+      and neither belongs to a process
 - [x] `pool.paged` — Windows; `n/a` on Linux
 - [x] `pool.nonpaged` — Windows; `n/a` on Linux
-- [ ] `heap.count`
+- [ ] `heap.count` — **not a kernel fact on either platform.** A Linux process has no heaps the
+      kernel knows of: glibc's arenas are an allocator's bookkeeping inside the process's own memory,
+      and counting them would mean reading another process's allocator state. Windows does keep a
+      list, and `Heap32ListFirst` walks it — behind a Toolhelp snapshot per process, which is the
+      one thing §5.2 says the sampler may not do per row. So the honest Windows form of this is a
+      figure for the process being looked at rather than a column, and it belongs to §34's memory map
+      rather than here
 - [x] `stack.commit` — how much stack the kernel has committed to the process
-- [ ] `mapped.file.bytes`
+- [x] 🟡 `mapped.file.bytes` — **Linux**, opt-in, summed from `maps` over every mapping that names a
+      file. The *mapped* size and not the resident one, which is why it is not `ws.file` under
+      another name: a process that has mapped a four-gigabyte database and touched a megabyte of it
+      is four gigabytes here and a megabyte there, and neither figure is the other's approximation.
+      What counts is the presence of a name rather than the existence of a path — a library replaced
+      under a running process reads as `… (deleted)` and a `memfd` never had a name in the file
+      system at all, and both are backing pages all the same. The kernel's own pseudo-mappings are
+      excluded by their bracket rather than by a list of their names, because the kernel keeps adding
+      them: `[vvar_vclock]` is one this machine has that a list written a year ago would not have.
+      Checked against the same sum taken with `awk` over `/proc/[pid]/maps`, exactly, on two live
+      processes.
+
+      Opt-in, and it is the one reading here that cannot be worked out once and kept: a process maps
+      and unmaps files for as long as it runs, so it is a read of `maps` per process per *sample*
+      (§5.4). **The Windows half is unwritten** — it is reachable by walking the address space with
+      `VirtualQueryEx` and adding up the `MEM_MAPPED` and `MEM_IMAGE` regions, which is a call loop
+      per process that nobody has written, so the cell there says so rather than claiming Windows has
+      no such notion
 - [x] `anon.bytes` — `RssAnon`
-- [ ] `shared.mem`
+- ∅ `shared.mem` — the same question as `ws.shared` and `ws.shareable`, which are two columns above
+      and are read from the same two lines of the same file. A third counter for it would be a number
+      that can disagree with the two it is made of, which is exactly the reason `ws.shareable` is
+      computed from the halves rather than read separately. Nothing here is missing: what a process
+      has resident in shared segments is `ws.shared`, and what somebody else could also be holding is
+      `ws.shareable`
 
 - [x] Terminology adapts per platform while the ID stays canonical — the Linux build labels
       `private.bytes` "Commit" and the Windows build "Private bytes", and a saved layout moves

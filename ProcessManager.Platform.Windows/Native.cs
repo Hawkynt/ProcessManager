@@ -203,11 +203,71 @@ internal static partial class Native {
   internal static partial bool QueryFullProcessImageNameW(nint process, uint flags, ref char name, ref uint size);
 
   /// <summary>
-  /// <c>GetProcessInformation</c>, used here only for <c>ProcessProtectionLevelInfo</c>.
+  /// <c>GetProcessInformation</c>: the protection level, the memory priority and the power
+  /// throttling state (PRD §15, §16, §21).
   /// </summary>
+  /// <remarks>
+  /// The documented Win32 call for all three, and deliberately so. The page priority is also
+  /// reachable through <c>NtQueryInformationProcess(ProcessPagePriority)</c>, which is a structure
+  /// Microsoft has never published; this program does not read structures nobody can check
+  /// (PRD §8.3), and the documented call answers the same question with the same access right.
+  /// </remarks>
   [LibraryImport("kernel32.dll", SetLastError = true)]
   [return: MarshalAs(UnmanagedType.Bool)]
   internal static partial bool GetProcessInformation(nint process, int informationClass, nint information, uint size);
+
+  /// <summary>
+  /// Which CPU sets the process has been assigned to (PRD §15).
+  /// </summary>
+  /// <remarks>
+  /// Windows 10 1607 and newer. An empty set is the ordinary answer and means the process uses the
+  /// system's default set, which is every processor — not that it may use none. Called twice, the
+  /// first time with no buffer, because the count is what says how large one has to be.
+  /// </remarks>
+  [LibraryImport("kernel32.dll", SetLastError = true)]
+  [return: MarshalAs(UnmanagedType.Bool)]
+  internal static partial bool GetProcessDefaultCpuSets(
+    nint process,
+    ref uint cpuSetIds,
+    uint cpuSetIdCount,
+    out uint requiredIdCount
+  );
+
+  /// <summary>
+  /// The MSIX package a process was started from, and that package's family (PRD §14).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Windows 8 and newer, and the only way to ask: a packaged application's identity is held by the
+  /// package manager rather than written anywhere in the image. Both return a Win32 error code
+  /// rather than a boolean — <c>ERROR_SUCCESS</c>, <c>ERROR_INSUFFICIENT_BUFFER</c> when the length
+  /// was too small, and <c>APPMODEL_ERROR_NO_PACKAGE</c> for a process that came from no package at
+  /// all, which is nearly everything on a machine and is a finding rather than a failure
+  /// (PRD §72.3).
+  /// </para>
+  /// <para>
+  /// The full name and the family name are two calls and not one substring of the other: the family
+  /// name is the name and the publisher hash, while the full name has the version and the
+  /// architecture in between them, so cutting one out of the other would be reassembling a format
+  /// rather than reading it.
+  /// </para>
+  /// </remarks>
+  [LibraryImport("kernel32.dll", EntryPoint = "GetPackageFullName", StringMarshalling = StringMarshalling.Utf16)]
+  internal static partial int GetPackageFullName(nint process, ref uint length, ref char fullName);
+
+  /// <inheritdoc cref="GetPackageFullName"/>
+  [LibraryImport("kernel32.dll", EntryPoint = "GetPackageFamilyName", StringMarshalling = StringMarshalling.Utf16)]
+  internal static partial int GetPackageFamilyName(nint process, ref uint length, ref char familyName);
+
+  /// <summary><c>APPMODEL_ERROR_NO_PACKAGE</c>: the process came from no package.</summary>
+  public const int APPMODEL_ERROR_NO_PACKAGE = 15700;
+
+  /// <summary>
+  /// <c>ProcessMemoryPriority</c>, the first member of <c>PROCESS_INFORMATION_CLASS</c> — the same
+  /// enumeration <see cref="ProcessProtectionLevelInfo"/> is the eighth member of, and numbered the
+  /// same way and for the same reason: Microsoft's reference page prints names without values.
+  /// </summary>
+  public const int ProcessMemoryPriority = 0;
 
   /// <summary>
   /// How many window-manager or graphics objects a process holds (PRD §20).

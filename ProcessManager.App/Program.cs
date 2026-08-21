@@ -56,6 +56,10 @@ internal static class Program {
       return _ExitError;
     }
 
+    // Before anything renders. Every percentage in both front-ends, the performance page and the
+    // export goes through Humanize, so this is the one place it has to be applied (PRD §15, §67).
+    Humanize.PercentDecimals = options.PercentDecimals;
+
     if (options.SaveSettings && !SaveSettings(options, settings, settingsPath))
       Console.Error.WriteLine("procman: the settings could not be written; carrying on with them unsaved.");
 
@@ -96,12 +100,14 @@ internal static class Program {
       options.WantsImageCreationTime,
       options.WantsSecurityStatus,
       options.WantsIoPriority,
+      options.WantsMappedFileBytes,
       options.WantsWindowsMitigations,
       options.WantsObjectCounts,
       options.WantsGuiObjectCounts,
       options.WantsImageVersions,
       options.WantsImageSignatures,
-      options.WantsPowerThrottling
+      options.WantsPowerThrottling,
+      options.WantsProcessDetails
     );
     if (probe is null) {
       Console.Error.WriteLine($"procman: there is no probe for this platform yet ({Environment.OSVersion.Platform}).");
@@ -277,6 +283,7 @@ internal static class Program {
       SortDescending = options.SortDescending,
       Grouping = options.Grouping,
       CpuMode = options.CpuMode,
+      PercentDecimals = options.PercentDecimals,
       DesktopColumns = options.Fields is { Length: > 0 } fields ? fields : settings.DesktopColumns,
     };
 
@@ -612,6 +619,7 @@ internal static class Program {
       SortDescending = options.SortDescending,
       Grouping = options.Grouping,
       CpuMode = options.CpuMode,
+      PercentDecimals = options.PercentDecimals,
       BlockCharacters = !options.AsciiOnly,
       TerminalMouse = options.UseMouse,
     };

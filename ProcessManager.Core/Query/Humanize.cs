@@ -168,9 +168,56 @@ public static class Humanize {
     return (value < 0 ? "−" : "+") + magnitude + "/s";
   }
 
-  /// <summary>A percentage with one decimal, or the placeholder.</summary>
+  /// <summary>
+  /// How many decimals a percentage is written with (PRD §15, §67).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A setting rather than a constant because the right answer depends on what is being watched: one
+  /// decimal is right for a table of processes, and nought is right for anybody who wants the column
+  /// to stop flickering, and two is right for somebody chasing a process that uses a twentieth of a
+  /// core. Held here rather than passed to every call because both front-ends, the performance page
+  /// and the exporter all render through this class, and a parameter would be a parameter to forget
+  /// at one of them — which is how a program comes to print two conventions.
+  /// </para>
+  /// <para>
+  /// It governs <em>every</em> percentage and not only the processor's, deliberately: a window that
+  /// wrote CPU to two decimals and memory to one would be stating a precision about one of them that
+  /// it does not have about the other.
+  /// </para>
+  /// <para>
+  /// Nought to three. Beyond three the digits are noise — the counters underneath are sampled a
+  /// second apart — and a negative is a typo rather than a preference.
+  /// </para>
+  /// </remarks>
+  public static int PercentDecimals {
+    get;
+    set => field = Math.Clamp(value, 0, MaximumPercentDecimals);
+  } = DefaultPercentDecimals;
+
+  public const int DefaultPercentDecimals = 1;
+  public const int MaximumPercentDecimals = 3;
+
+  /// <summary>
+  /// The format a percentage of this magnitude is written in.
+  /// </summary>
+  /// <remarks>
+  /// One digit fewer once the value reaches a hundred, so the column keeps its width where it is
+  /// widest — which is what this has always done at the default, where the rule reads as "100" and
+  /// "99.9". A per-core figure is the one that routinely passes a hundred, and it is also the one
+  /// whose third significant digit nobody is reading.
+  /// </remarks>
+  private static string PercentFormat(double value) {
+    var decimals = PercentDecimals;
+    if (Math.Abs(value) >= 100 && decimals > 0)
+      --decimals;
+
+    return decimals switch { 0 => "0", 1 => "0.0", 2 => "0.00", _ => "0.000" };
+  }
+
+  /// <summary>A percentage at the configured precision, or the placeholder.</summary>
   public static string Percent(Rate rate) => rate.HasValue
-    ? rate.Value.ToString(rate.Value >= 100 ? "0" : "0.0", CultureInfo.InvariantCulture)
+    ? rate.Value.ToString(PercentFormat(rate.Value), CultureInfo.InvariantCulture)
     : Placeholder(rate.Reason);
 
   /// <summary>
@@ -179,19 +226,23 @@ public static class Humanize {
   /// <remarks>
   /// Signed like <see cref="SignedBytesPerSecond"/> and for the same reason: the reading that
   /// matters is as often the fall as the rise, and a magnitude with no sign turns a process that
-  /// has just stopped working into one that has just started. Anything under a tenth of a point is
-  /// written as a plain nought, so a table of idle processes is not a column of <c>+0.0</c>.
+  /// has just stopped working into one that has just started. Anything that would round to nothing at
+  /// the configured precision is written as a plain nought, so a table of idle processes is not a
+  /// column of <c>+0.0</c>.
   /// </remarks>
   public static string SignedPercent(Rate rate) {
     if (!rate.HasValue)
       return Placeholder(rate.Reason);
 
     var value = rate.Value;
-    if (Math.Abs(value) < 0.05)
+    var magnitude = Math.Abs(value);
+    // Half of the last digit the format will print — so the threshold follows the precision rather
+    // than staying at the tenth it was fixed at, which at two decimals would have written "0" over
+    // a change the column had room to show.
+    if (magnitude < 0.5 * Math.Pow(10, -PercentDecimals))
       return "0";
 
-    return (value < 0 ? "−" : "+")
-      + Math.Abs(value).ToString(Math.Abs(value) >= 100 ? "0" : "0.0", CultureInfo.InvariantCulture);
+    return (value < 0 ? "−" : "+") + magnitude.ToString(PercentFormat(magnitude), CultureInfo.InvariantCulture);
   }
 
   public static string Count(Counter counter) => counter.HasValue

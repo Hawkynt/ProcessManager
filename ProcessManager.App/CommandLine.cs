@@ -497,6 +497,32 @@ internal sealed record CommandLineOptions {
     || this.Wants(ProcessField.RegistryKeyCount);
 
   /// <summary>
+  /// Whether anything this run asked for needs the page priority or the CPU sets (PRD §5.4, §15,
+  /// §16).
+  /// </summary>
+  /// <remarks>
+  /// One switch for two readings, because what makes them expensive is the same thing: an
+  /// <c>OpenProcess</c> per process per sample, which neither can avoid — both are settable while a
+  /// process runs, so an answer cached for its lifetime would go stale under anybody who changed
+  /// one. The energy state of §22 is the same shape and has its own switch beside this one; the
+  /// probe opens the process once when either has been asked for.
+  /// </remarks>
+  public bool WantsProcessDetails
+    => this.WantsEverythingWindowsCanAnswer
+    || this.Wants(ProcessField.PagePriority)
+    || this.Wants(ProcessField.CpuSets);
+
+  /// <summary>
+  /// Whether anything this run asked for needs how much of each address space is file-backed
+  /// (PRD §5.4, §16).
+  /// </summary>
+  /// <remarks>
+  /// A read of <c>maps</c> per process per sample. Unlike the runtime, which reads the same file, it
+  /// cannot be worked out once and kept: a process maps and unmaps files for as long as it runs.
+  /// </remarks>
+  public bool WantsMappedFileBytes => this.Wants(ProcessField.MappedFileBytes);
+
+  /// <summary>
   /// Whether anything this run asked for needs the desktop object quotas (PRD §5.4, §20, §39).
   /// </summary>
   /// <remarks>
@@ -665,6 +691,9 @@ internal sealed record CommandLineOptions {
   /// <summary>Which CPU convention percentages are expressed in (PRD §3.2).</summary>
   public CpuPercentMode CpuMode { get; init; } = CpuPercentMode.Normalized;
 
+  /// <summary>How many decimals a percentage is written with (PRD §15).</summary>
+  public int PercentDecimals { get; init; } = Humanize.DefaultPercentDecimals;
+
   /// <summary>
   /// Parses the command line over the saved settings, so a flag beats a setting and a setting beats
   /// the built-in default — the layering every program of this shape has (PRD §67).
@@ -677,6 +706,7 @@ internal sealed record CommandLineOptions {
       SortDescending = settings.SortDescending,
       Grouping = settings.Grouping,
       CpuMode = settings.CpuMode,
+      PercentDecimals = settings.PercentDecimals,
       AsciiOnly = !settings.BlockCharacters,
       // A stated style beats the blocks flag, which only ever said "these two or those two". Left as
       // it was when the file states nothing, so the terminal still reads its own locale.
@@ -959,6 +989,17 @@ internal sealed record CommandLineOptions {
             return options with { Error = "--interval needs a positive number of seconds" };
 
           options = options with { Interval = TimeSpan.FromSeconds(seconds) };
+          break;
+        }
+        case "--decimals": {
+          if (!TryValue(args, ref i, inlineValue, out var text)
+              || !int.TryParse(text, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var decimals)
+              || decimals is < 0 or > Humanize.MaximumPercentDecimals)
+            return options with {
+              Error = $"--decimals needs a number between 0 and {Humanize.MaximumPercentDecimals}",
+            };
+
+          options = options with { PercentDecimals = decimals };
           break;
         }
         case "--user":
@@ -1265,6 +1306,7 @@ internal sealed record CommandLineOptions {
                          container, cgroup, package
       --user             only this user's processes
       --interval <s>     seconds between samples (default 1)
+      --decimals <n>     decimals in every percentage: 0 to 3 (default 1)
       --json             the same as --format=json
       --probe-root <d>   read a recorded /proc tree instead of the live one
       --ascii            draw the terminal's history columns with ASCII rather than block characters

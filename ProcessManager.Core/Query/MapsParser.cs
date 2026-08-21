@@ -120,6 +120,46 @@ public static class MapsParser {
     return ParsePermissions(bytes);
   }
 
+  /// <summary>
+  /// How many bytes of the address space a <c>maps</c> file says are backed by a file (PRD §16).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The mapped size and not the resident one — <c>RssFile</c> in <c>status</c> is the resident
+  /// half, and the two are different questions: a process that has mapped a large database and
+  /// touched little of it is large here and small there.
+  /// </para>
+  /// <para>
+  /// A mapping counts when the line names something. What it names is not always a file that still
+  /// exists — an upgraded library reads as <c>… (deleted)</c> and a <c>memfd</c> as
+  /// <c>/memfd:name (deleted)</c> — and both are file-backed all the same, which is why the test is
+  /// the presence of a name rather than the existence of a path.
+  /// </para>
+  /// <para>
+  /// The kernel's own pseudo-mappings — <c>[heap]</c>, <c>[stack]</c>, <c>[vdso]</c>, <c>[vvar]</c>
+  /// and whatever it adds next — are excluded by the bracket rather than by a list of their names,
+  /// because a list would be a list this build happened to know. Anonymous mappings name nothing at
+  /// all and are excluded by that.
+  /// </para>
+  /// </remarks>
+  public static ulong MappedFileBytes(ReadOnlySpan<byte> content) {
+    var total = 0ul;
+    var scanner = new AsciiScanner(content);
+    while (!scanner.IsEmpty) {
+      var line = scanner.NextLine();
+      if (!TryParseRegion(line, out var region, out var path))
+        continue;
+
+      var name = line[path];
+      if (name.IsEmpty || name[0] == (byte)'[')
+        continue;
+
+      total += region.End - region.Start;
+    }
+
+    return total;
+  }
+
   /// <summary>Renders flags back to the <c>rwxp</c> form the kernel writes.</summary>
   public static string Format(MapPermissions permissions) {
     if (permissions == MapPermissions.None)

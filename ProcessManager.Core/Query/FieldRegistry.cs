@@ -90,9 +90,23 @@ public static class FieldRegistry {
       "Which processors the process is allowed to run on, in the kernel's own list notation: 0-15 on a sixteen-way machine is all of them, and 15 is one pinned to the last.",
       FieldKind.Text, FieldUnit.None, _LINUX, FieldCost.High, 126, 12, false, false,
       Aliases: "affinity"),
+    // PRD §15. Its own column beside the affinity mask rather than folded into it, because the two
+    // are different promises: an affinity mask is a wall a process cannot run outside, a CPU set is a
+    // preference the scheduler honours when it can. Windows-only — the Linux near-relative is the
+    // cgroup cpuset, and the kernel narrows Cpus_allowed to it, so it is already in the affinity
+    // column and is not a second answer (PRD §5.3). High, because it is a call per process per
+    // sample on a handle nothing else in the sampler holds.
+    new(ProcessField.CpuSets, "cpu.set", "CPU sets", "CPUSet",
+      "Which CPU sets the process has been assigned to. Not the affinity mask beside it: a mask is a restriction the process cannot run outside, and a set is a preference the scheduler honours when it can. \"default\" is a real answer and the ordinary one — a process with no set assigned gets the system's, which is every processor.",
+      FieldKind.Text, FieldUnit.None, _WINDOWS, FieldCost.High, 126, 12, false, false,
+      Aliases: "cpuset cpu.sets"),
     new(ProcessField.CpuThrottled, "throttled", "Throttled", "Thrtl",
       "How many times the process's cgroup has been stopped for using its whole CPU quota — the number that turns \"it is slow\" into \"it is being throttled\". A property of the group rather than of the process, so everything in the same cgroup shows the same figure.",
       FieldKind.Cumulative, FieldUnit.Count, _LINUX, FieldCost.High, 92, 6, true, true),
+    // PRD §15's `qos` is not here: it is the same reading as §22's `qos.background` and `eco.state`,
+    // which are one call and two questions further down this array. A second column over the same
+    // counter would be a third spelling of one answer, which is the drift the one catalogue exists
+    // to stop (§5.1).
     new(ProcessField.CpuHistory, "cpu.history", "CPU history", "CPU hist",
       "The last sixty seconds of processor use.",
       FieldKind.Graph, FieldUnit.Percent, _ALL, FieldCost.Derived, 90, 12, false, false,
@@ -105,6 +119,15 @@ public static class FieldRegistry {
     new(ProcessField.PrivateBytesDelta, "private.delta", "Private delta", "Priv/s",
       "How fast committed private memory is moving. A process whose private bytes only climb is the one leaking.",
       FieldKind.Rate, FieldUnit.BytesPerSecond, _ALL, FieldCost.Derived, 100, 9, true, true),
+    // PRD §16. The high-water mark of the column above it, and the peak of the same charge — Windows
+    // keeps it as PeakPagefileUsage, next to the commit charge in the structure the sampler already
+    // reads, so it costs nothing. Linux has no peak of VmData anywhere: VmPeak is the peak of the
+    // address space and VmHWM the peak of the resident set, and reporting either under this heading
+    // would be a different number wearing this one's name (PRD §5.3).
+    new(ProcessField.PeakPrivateBytes, "private.peak", "Peak private", "PkPriv",
+      "The largest private commit this process has ever held. A process sitting at fifty megabytes with a peak of four gigabytes has been somewhere the current row cannot show, which is the only reason a peak is worth a column.",
+      FieldKind.Instant, FieldUnit.Bytes, _WINDOWS, FieldCost.Free, 104, 8, true, true,
+      Aliases: "private.bytes.peak commit.peak"),
     new(ProcessField.PrivateWorkingSet, "private.ws", "Private WS", "PrivWS",
       "The resident part of the committed private memory.",
       FieldKind.Instant, FieldUnit.Bytes, _ALL, FieldCost.Free, 88, 7, true, true),
@@ -134,6 +157,15 @@ public static class FieldRegistry {
     new(ProcessField.ShareableWorkingSet, "ws.shareable", "Shareable WS", "ShrWS",
       "The resident memory another process could be mapping too — the working set less its private part. A large shareable set is a process holding libraries and file data the rest of the machine is holding as well, and it costs far less than the same figure in private pages.",
       FieldKind.Instant, FieldUnit.Bytes, _ALL, FieldCost.Free, 106, 7, true, true),
+    // PRD §16. The mapped size of everything file-backed, which is not the resident figure two
+    // columns up: a process that has mapped a four-gigabyte database and touched a megabyte of it
+    // reports four gigabytes here and a megabyte in the file-backed working set, and neither is the
+    // other's approximation. High, and honestly so — it is a read of maps per process per sample, and
+    // the kernel formats that file a page at a time (PRD §5.4).
+    new(ProcessField.MappedFileBytes, "mapped.file", "Mapped files", "MapFile",
+      "How much of the address space is backed by a file rather than by anonymous memory. The mapped size and not the resident one: a process that maps a large database and touches little of it is large here and small in the file-backed working set, and the gap between the two is the point.",
+      FieldKind.Instant, FieldUnit.Bytes, _LINUX, FieldCost.High, 112, 8, true, true,
+      Aliases: "mapped mapped.file.bytes"),
     new(ProcessField.StackBytes, "stack.commit", "Main stack", "Stack",
       "How much stack the kernel accounts to the process. The main thread's and only the main thread's: every other thread's stack is an ordinary anonymous mapping and the kernel keeps no figure for it, so a thread pool with two hundred stacks reports the same few kilobytes here as a single-threaded program.",
       FieldKind.Instant, FieldUnit.Bytes, _LINUX, FieldCost.Free, 92, 7, true, true,
@@ -171,6 +203,16 @@ public static class FieldRegistry {
     new(ProcessField.PageFaultsDelta, "faults.delta", "Page fault delta", "Flt/s",
       "Page faults this interval. A process faulting steadily is one the machine is paging for.",
       FieldKind.Rate, FieldUnit.CountPerSecond, _ALL, FieldCost.Derived, 116, 8, true, true),
+    // PRD §16. Which pages the memory manager takes back first when the machine is short. A backup or
+    // an indexer sets itself low so that its pages go before anybody else's, and no other column on
+    // the row says that. Nought is the lowest priority there is and a real reading, which is why the
+    // absence of one has to be a reason instead (PRD §72.3). Linux has no per-process equivalent:
+    // reclaim there is driven by the LRU lists and by the cgroup's knobs, and neither belongs to a
+    // process.
+    new(ProcessField.PagePriority, "page.priority", "Page priority", "PgPri",
+      "Which of this process's pages the memory manager takes back first when the machine runs short — \"lowest\" is trimmed before everything else and \"normal\" is trimmed last. A backup or an indexer that has set itself low is the case this column exists for; \"normal\" is the ordinary answer.",
+      FieldKind.State, FieldUnit.None, _WINDOWS, FieldCost.High, 128, 10, false, true,
+      Aliases: "pagepriority"),
     new(ProcessField.Swap, "swap", "Swap", "Swap",
       "How much of this process the machine has pushed out to swap.",
       FieldKind.Instant, FieldUnit.Bytes, _ALL, FieldCost.Free, 78, 7, true, true),
@@ -486,12 +528,12 @@ public static class FieldRegistry {
     // hashes the image on top of it, so neither happens unless a column or a filter names it
     // (PRD §5.4).
     new(ProcessField.Package, "package", "Package", "Package",
-      "Which package the running image belongs to: the distribution's own, or the Flatpak, snap or AppImage it came in. \"not packaged\" is a finding rather than a hole — most of what a developer runs is not in any package.",
-      FieldKind.Text, FieldUnit.None, _LINUX, FieldCost.High, 220, 24, false, false,
+      "Which package the running image belongs to: the distribution's own, or the Flatpak, snap or AppImage it came in, or on Windows the MSIX package it was installed as. \"not packaged\" is a finding rather than a hole — most of what a developer runs is not in any package, and on Windows most of what anybody runs is not.",
+      FieldKind.Text, FieldUnit.None, _WINDOWS | _LINUX, FieldCost.High, 220, 24, false, false,
       Aliases: "pkg"),
     new(ProcessField.ApplicationId, "app.id", "Application ID", "AppID",
-      "The platform application id — a Flatpak's org.gimp.GIMP, a snap's name. Native Linux programs have none, and this says so rather than repeating the package name into a column that means something else.",
-      FieldKind.Text, FieldUnit.None, _LINUX, FieldCost.High, 200, 24, false, false,
+      "The platform application id — a Flatpak's org.gimp.GIMP, a snap's name, an MSIX package's family name. Native Linux programs and ordinary Windows ones have none, and this says so rather than repeating the package name into a column that means something else.",
+      FieldKind.Text, FieldUnit.None, _WINDOWS | _LINUX, FieldCost.High, 200, 24, false, false,
       Aliases: "appid"),
     // PRD §14's `app.name`. A Windows binary carries its product name in a version resource and an
     // ELF has no such section, so the same fact lives elsewhere on Linux: in the desktop entry that
@@ -547,8 +589,8 @@ public static class FieldRegistry {
       "What is executing inside the process: a managed runtime, or machine code. Read from the modules the process has mapped rather than from its name, because a process called java may be a shell script and a renamed one may be anything at all.",
       FieldKind.State, FieldUnit.None, _LINUX, FieldCost.High, 110, 8, false, false),
     new(ProcessField.ImageCreated, "exe.created", "Image created", "Created",
-      "When the image file was created, where the file system remembers one. Many do not — an ext4 built without crtime has no birth time at all — and there this is unknown rather than the epoch.",
-      FieldKind.Instant, FieldUnit.Timestamp, _LINUX, FieldCost.High, 150, 19, false, true,
+      "When the image file was created, where the file system remembers one. On Windows that is always — NTFS has recorded a creation time for every file since it was written — while on Linux many file systems carry no birth time at all, and there this is unknown rather than the epoch.",
+      FieldKind.Instant, FieldUnit.Timestamp, _WINDOWS | _LINUX, FieldCost.High, 150, 19, false, true,
       Aliases: "created birth"),
 
     // PRD §14. The five strings a PE keeps in its own version resource, plus the subsystem out of
@@ -695,6 +737,15 @@ public static class FieldRegistry {
       "Scheduler priority in the platform's own scale.",
       FieldKind.Instant, FieldUnit.Count, _ALL, FieldCost.Free, 74, 4, true, true,
       Aliases: "prio"),
+    // PRD §15. The band beside the number, because on Windows the band is what everything else on
+    // the machine speaks in: SetPriorityClass takes it, Task Manager shows it, and the base priority
+    // in the column above is what the kernel derived from it. Free, being that derivation inverted
+    // rather than a call. Linux has no such band — nice orders tasks inside SCHED_OTHER and the class
+    // is sched.class — so folding either into the other would be the false equivalence §5.3 forbids.
+    new(ProcessField.PriorityClass, "priority.class", "Priority class", "PriCls",
+      "Which priority band Windows runs the process in: idle, below normal, normal, above normal, high or real time. The band rather than the number, because it is what every other tool on the machine speaks in and what the base priority beside it is derived from.",
+      FieldKind.State, FieldUnit.None, _WINDOWS, FieldCost.Free, 132, 12, false, true,
+      Aliases: "priorityclass class"),
     new(ProcessField.SessionId, "session", "Session", "Ses",
       "The login or terminal session the process belongs to.",
       FieldKind.Identifier, FieldUnit.None, _ALL, FieldCost.Free, 74, 5, true, false),

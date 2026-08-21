@@ -69,13 +69,25 @@ public static class FieldAccessor {
           : Humanize.SchedulingPolicy(process.SchedulingPolicy);
       case ProcessField.CpuAffinity:
         return process.CpuAffinity ?? Humanize.Placeholder(process.CpuAffinityReason);
+      case ProcessField.CpuSets:
+        // The empty string is a real answer and the ordinary one: no set assigned means the system's
+        // own, which is every processor. A cell that read like a hole would say the opposite.
+        return process.CpuSets is { } sets
+          ? (sets.Length > 0 ? sets : "default")
+          : Humanize.Placeholder(process.CpuSetsReason);
       case ProcessField.CpuThrottled: return Humanize.Count(process.ThrottledPeriods);
+      case ProcessField.PriorityClass:
+        return PriorityClassName(process.PriorityClass) ?? Humanize.Placeholder(process.PriorityClass.Reason);
+      case ProcessField.PagePriority:
+        return PagePriorityName(process.PagePriority) ?? Humanize.Placeholder(process.PagePriority.Reason);
 
       case ProcessField.CyclesDelta: return Humanize.Rate(Rated(delta, index, field));
       case ProcessField.ContextSwitchesDelta: return Humanize.Rate(Rated(delta, index, field));
       case ProcessField.PageFaultsDelta: return Humanize.Rate(Rated(delta, index, field));
 
       case ProcessField.PrivateBytes: return Humanize.Bytes(process.PrivateBytes);
+      case ProcessField.PeakPrivateBytes: return Humanize.Bytes(process.PeakPrivateBytes);
+      case ProcessField.MappedFileBytes: return Humanize.Bytes(process.MappedFileBytes);
       case ProcessField.PrivateBytesDelta: return Humanize.SignedBytesPerSecond(Rated(delta, index, field));
       case ProcessField.PrivateWorkingSet: return Humanize.Bytes(process.PrivateWorkingSetBytes);
       case ProcessField.WorkingSetBytes: return Humanize.Bytes(process.WorkingSetBytes);
@@ -393,6 +405,12 @@ public static class FieldAccessor {
         return process.SchedulingPolicy == SchedulingPolicy.Unknown ? null : (byte)process.SchedulingPolicy;
       case ProcessField.CpuThrottled: return Number(process.ThrottledPeriods);
       case ProcessField.Priority: return process.Priority;
+      // The band as the base priority the kernel derived it from, which orders idle below normal and
+      // real time above everything — the only order a priority class has.
+      case ProcessField.PriorityClass: return Number(process.PriorityClass);
+      // 0 to 5, ordered the way the memory manager orders them: sorting ascending brings the
+      // processes whose pages go first to the top, which is the only reason anybody sorts it.
+      case ProcessField.PagePriority: return Number(process.PagePriority);
       case ProcessField.Nice: return process.Nice;
       case ProcessField.UniqueSet: return Number(process.UniqueBytes);
       case ProcessField.SessionId: return process.SessionId;
@@ -495,6 +513,8 @@ public static class FieldAccessor {
       // A filter reads better through the words, which RawText carries.
       case ProcessField.IoPriority: return Number(process.IoPriorityValue);
       case ProcessField.PrivateBytes: return Number(process.PrivateBytes);
+      case ProcessField.PeakPrivateBytes: return Number(process.PeakPrivateBytes);
+      case ProcessField.MappedFileBytes: return Number(process.MappedFileBytes);
       case ProcessField.PrivateWorkingSet: return Number(process.PrivateWorkingSetBytes);
       case ProcessField.WorkingSetBytes: return Number(process.WorkingSetBytes);
       case ProcessField.PeakWorkingSet: return Number(process.PeakWorkingSetBytes);
@@ -696,6 +716,14 @@ public static class FieldAccessor {
       ? null
       : Humanize.SchedulingPolicy(process.SchedulingPolicy),
     ProcessField.CpuAffinity => process.CpuAffinity,
+    // The list as it is, and "default" for the empty one, so the column and an exported cell say the
+    // same thing — a state that renders a word and exports a blank is the seam §103's invariant
+    // exists to catch.
+    ProcessField.CpuSets => process.CpuSets is { } sets ? (sets.Length > 0 ? sets : "default") : null,
+    // The words the columns show, so "priority.class:high" and "page.priority:normal" read the way
+    // they would be said aloud. The numeric forms still work, because Number covers both.
+    ProcessField.PriorityClass => PriorityClassName(process.PriorityClass),
+    ProcessField.PagePriority => PagePriorityName(process.PagePriority),
     // The words ionice prints, so "io.priority:idle" is the filter somebody would actually type.
     // Textual at all because the exporter asks only for raw text on a field of state kind, and a
     // state that renders a word and exports an empty cell is what §103's invariant catches.
@@ -762,6 +790,10 @@ public static class FieldAccessor {
       // not: an affinity list is a set, and the only order it has is its spelling.
       case ProcessField.CpuAffinity:
         return string.Compare(a.CpuAffinity, b.CpuAffinity, StringComparison.Ordinal);
+      // Ordinal for the same reason: a set of processors is a set, and the only order it has is its
+      // spelling.
+      case ProcessField.CpuSets:
+        return string.Compare(a.CpuSets, b.CpuSets, StringComparison.Ordinal);
       case ProcessField.CommandLine:
         return string.Compare(a.CommandLine, b.CommandLine, StringComparison.OrdinalIgnoreCase);
       case ProcessField.ImagePath:
@@ -1107,6 +1139,60 @@ public static class FieldAccessor {
     0xAA64 => "ARM64",
     _ => "0x" + machine.ToString("x4", CultureInfo.InvariantCulture),
   };
+
+  #region the Windows scheduling and reclaim bands (PRD §15, §16)
+
+  /// <summary>
+  /// The priority class, named by the base priority Windows derives from it (PRD §15).
+  /// </summary>
+  /// <remarks>
+  /// The six numbers are the base priorities <c>SetPriorityClass</c>'s own reference page gives for
+  /// the six classes, and the mapping is one-to-one in both directions — which is what makes reading
+  /// the class out of the base priority sound rather than a guess. A base priority outside the six is
+  /// not flattened into the nearest band: it shows as its number, the same rule the integrity level
+  /// follows, because a Windows that grows a seventh class will not have put it next to an existing
+  /// one.
+  /// </remarks>
+  private static string? PriorityClassName(Counter priority) {
+    if (!priority.TryGetValue(out var value))
+      return null;
+
+    return value switch {
+      4 => "idle",
+      6 => "below normal",
+      8 => "normal",
+      10 => "above normal",
+      13 => "high",
+      24 => "real time",
+      _ => value.ToString(CultureInfo.InvariantCulture),
+    };
+  }
+
+  /// <summary>
+  /// The memory-manager page priority by name (PRD §16).
+  /// </summary>
+  /// <remarks>
+  /// The names and the numbers are the <c>MEMORY_PRIORITY_*</c> constants of <c>memoryapi.h</c>,
+  /// lowest first — and nought is <c>MEMORY_PRIORITY_LOWEST</c>, a real value and the priority a
+  /// process's pages are trimmed at before anybody else's, which is why the absence of a reading has
+  /// to be a reason rather than this number (PRD §72.3).
+  /// </remarks>
+  private static string? PagePriorityName(Counter priority) {
+    if (!priority.TryGetValue(out var value))
+      return null;
+
+    return value switch {
+      0 => "lowest",
+      1 => "very low",
+      2 => "low",
+      3 => "medium",
+      4 => "below normal",
+      5 => "normal",
+      _ => value.ToString(CultureInfo.InvariantCulture),
+    };
+  }
+
+  #endregion
 
   /// <summary>A capability mask by name, or the reason there is none.</summary>
   private static string Names(Counter mask)

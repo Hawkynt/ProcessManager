@@ -228,6 +228,9 @@ public sealed class MainWindow : Form {
     this._view.SortDescending = settings.SortDescending;
     this._view.TreeMode = settings.TreeMode;
     this._sampler.CpuPercentMode = settings.CpuMode;
+    // Static because every percentage in the program renders through Humanize; applied here so that
+    // a change made in the settings dialog reaches the table on the next draw (PRD §15).
+    Humanize.PercentDecimals = settings.PercentDecimals;
     this.Interval = (int)Math.Round(settings.IntervalSeconds * 1000);
     // Not the pause: pausing is a toggle somebody flips for a few seconds, and a monitor that opened
     // paused because it was paused when it was closed shows a table of nothing (PRD §12).
@@ -308,6 +311,7 @@ public sealed class MainWindow : Form {
       SortDescending = this._view.SortDescending,
       TreeMode = this._view.TreeMode,
       CpuMode = this._sampler.CpuPercentMode,
+      PercentDecimals = Humanize.PercentDecimals,
       DesktopColumns = this._columns.Fields,
       DesktopColumnWidths = this._columns.ChosenWidths,
       PinnedDesktopColumns = this._columns.Frozen,

@@ -121,6 +121,16 @@ internal static class ProbeFactory {
   /// use. One call per process per sample and uncacheable, because the state can be changed while
   /// the table is open (PRD §5.4, §22).
   /// </param>
+  /// <param name="wantMappedFileBytes">
+  /// Whether anything on this run asked how much of each address space is backed by a file. It reads
+  /// <c>maps</c> once per process per <em>sample</em> — a process maps and unmaps files while it
+  /// runs, so unlike the runtime it cannot be worked out once and kept (PRD §5.4, §16).
+  /// </param>
+  /// <param name="wantProcessDetails">
+  /// Whether anything on this run asked for the Windows page priority, power-throttling state or CPU
+  /// sets. One <c>OpenProcess</c> per process per sample answers all three, and none of them can be
+  /// cached for a process's lifetime because all three are settable while it runs (PRD §5.4, §15).
+  /// </param>
   /// <param name="wantSecurityStatus">
   /// Whether anything on this run asked for the mitigation states, the umask, the tracer or the
   /// descriptor-table size. The lines are in a file already open, so this buys no read — it buys
@@ -147,12 +157,14 @@ internal static class ProbeFactory {
     bool wantImageCreationTime = false,
     bool wantSecurityStatus = false,
     bool wantIoPriority = false,
+    bool wantMappedFileBytes = false,
     bool wantWindowsMitigations = false,
     bool wantObjectCounts = false,
     bool wantGuiObjectCounts = false,
     bool wantImageVersions = false,
     bool wantImageSignatures = false,
-    bool wantPowerThrottling = false
+    bool wantPowerThrottling = false,
+    bool wantProcessDetails = false
   ) {
     if (OperatingSystem.IsLinux()) {
       // A recorded tree is somebody else's machine; asking a helper about pids in it would be asking
@@ -189,6 +201,7 @@ internal static class ProbeFactory {
             ReadImageCreationTime = wantImageCreationTime,
             ReadSecurityStatus = wantSecurityStatus,
             ReadIoPriority = wantIoPriority,
+            ReadMappedFileBytes = wantMappedFileBytes,
           }
           // A recorded tree was captured by somebody else, so the live user's id would refuse every
           // file in it. Root reads everything, which is what a replay wants (PRD §9.1).
@@ -232,6 +245,9 @@ internal static class ProbeFactory {
             // kernel about a live pid, and the pids in a recorded tree belong to somebody else's
             // machine. Asking would describe whatever happens to hold those numbers here (PRD §9.1).
             ReadIoPriority = false,
+            // The recorded tree carries each process's maps, so the file-backed total replays the
+            // same way the runtime does.
+            ReadMappedFileBytes = wantMappedFileBytes,
           }
       );
     }
@@ -244,6 +260,8 @@ internal static class ProbeFactory {
         ReadImageVersions = wantImageVersions,
         ReadSignatures = wantImageSignatures,
         ReadPowerThrottling = wantPowerThrottling,
+        ReadImageCreationTime = wantImageCreationTime,
+        ReadProcessDetails = wantProcessDetails,
       });
 
     if (OperatingSystem.IsMacOS())

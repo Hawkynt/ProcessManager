@@ -44,6 +44,7 @@ internal static class SystemProcessInformationReader {
     var anyPrivateWorkingSet = false;
     var anyPageFaults = false;
     var anyCycles = false;
+    var anyPeakPrivateBytes = false;
 
     while (offset >= 0 && offset < buffer.Length && written < records.Length) {
       ref readonly var entry = ref MemoryMarshal.AsRef<NtStructures.SystemProcessInformation>(buffer[offset..]);
@@ -59,6 +60,7 @@ internal static class SystemProcessInformationReader {
       record.SessionId = (int)entry.SessionId;
       record.ThreadCount = (int)entry.NumberOfThreads;
       record.Priority = entry.BasePriority;
+      record.PriorityClass = PriorityClassOf(entry.BasePriority);
       record.Nice = 0;
       record.UserId = -1;
       record.StartTimeUtcTicks = entry.CreateTime > 0 ? DateTime.FromFileTimeUtc(entry.CreateTime).Ticks : 0;
@@ -72,6 +74,10 @@ internal static class SystemProcessInformationReader {
       // part of it. The private column is the commit charge, because that is what the process would
       // give back, which is the question the column exists to answer (PRD §6.1).
       record.PrivateBytes = Counter.Of((ulong)entry.PrivatePageCount);
+      // PRD §16. The high-water mark of the same charge, from the field beside it: PagefileUsage is
+      // the commit charge and PeakPagefileUsage is the largest it has been. Free, being a field of a
+      // structure already in hand.
+      record.PeakPrivateBytes = Counter.Of((ulong)entry.PeakPagefileUsage);
       record.PrivateWorkingSetBytes = Counter.Of((ulong)Math.Max(0, entry.WorkingSetPrivateSize));
       record.WorkingSetBytes = Counter.Of((ulong)entry.WorkingSetSize);
       record.PeakWorkingSetBytes = Counter.Of((ulong)entry.PeakWorkingSetSize);
@@ -96,6 +102,11 @@ internal static class SystemProcessInformationReader {
       // proportional set is not reachable at all: Windows keeps no share-of-a-shared-page accounting
       // anywhere, which is a fact about the platform, and the two must not say the same thing
       // (PRD §7).
+      // PRD §16. The mapped size of everything file-backed is reachable on Windows by walking the
+      // address space with VirtualQueryEx and adding up the MEM_MAPPED and MEM_IMAGE regions, which
+      // is a call loop per process and is not written. A fact about us and not about the machine, so
+      // it says so rather than claiming Windows has no such notion (PRD §7).
+      record.MappedFileBytes = Counter.Unknown(UnknownReason.NotImplementedHere);
       record.FileBackedBytes = Counter.Unknown(UnknownReason.NotImplementedHere);
       record.SharedResidentBytes = Counter.Unknown(UnknownReason.NotImplementedHere);
       record.UniqueBytes = Counter.Unknown(UnknownReason.NotImplementedHere);
@@ -128,6 +139,7 @@ internal static class SystemProcessInformationReader {
       anyPrivateWorkingSet |= entry.WorkingSetPrivateSize > 0;
       anyPageFaults |= entry.PageFaultCount != 0;
       anyCycles |= entry.CycleTime != 0;
+      anyPeakPrivateBytes |= entry.PeakPagefileUsage != 0;
       record.ReadBytes = Counter.Of((ulong)Math.Max(0, entry.ReadTransferCount));
       record.WriteBytes = Counter.Of((ulong)Math.Max(0, entry.WriteTransferCount));
       record.OtherBytes = Counter.Of((ulong)Math.Max(0, entry.OtherTransferCount));
@@ -242,7 +254,7 @@ internal static class SystemProcessInformationReader {
       offset += (int)entry.NextEntryOffset;
     }
 
-    if (!anyPrivateBytes || !anyPrivateWorkingSet || !anyPageFaults || !anyCycles) {
+    if (!anyPrivateBytes || !anyPrivateWorkingSet || !anyPageFaults || !anyCycles || !anyPeakPrivateBytes) {
       var parsed = records[..written];
       for (var i = 0; i < parsed.Length; ++i) {
         ref var record = ref parsed[i];
@@ -254,12 +266,45 @@ internal static class SystemProcessInformationReader {
           record.PageFaults = Counter.NotSupported;
         if (!anyCycles)
           record.Cycles = Counter.NotSupported;
+        if (!anyPeakPrivateBytes)
+          record.PeakPrivateBytes = Counter.NotSupported;
       }
     }
 
     snapshot.PrepareProcesses(written);
     snapshot.System.TotalThreads = totalThreads;
   }
+
+  /// <summary>
+  /// The priority class a base priority came from, or the reason there is none (PRD §15).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Kept as the base priority rather than as a class ordinal, and that is the point of it: the six
+  /// numbers are ordered the way the bands are, so sorting the column puts idle at one end and real
+  /// time at the other, while <c>PROCESS_PRIORITY_CLASS_*</c> numbers below normal above high and
+  /// would sort into nonsense.
+  /// </para>
+  /// <para>
+  /// Read out of the base priority rather than through <c>GetPriorityClass</c> on a handle, for two
+  /// reasons and neither is the call's cost. A handle per process per sample is the
+  /// <c>OpenProcess</c> in the sampling loop §5.2 forbids; a handle once per process, cached the way
+  /// the identity is, would be wrong the instant somebody changed the class — and this program has a
+  /// menu item that changes it (§25.2). The base priority arrives with every sample, and the kernel
+  /// derives it from the class by a table that is one-to-one, so inverting it is both free and
+  /// current.
+  /// </para>
+  /// <para>
+  /// The six numbers are the ones <c>SetPriorityClass</c>'s own reference page gives. Anything else
+  /// is a base priority no class produces — a thread-priority-boosted value read out of the wrong
+  /// field, or a Windows with a band this build has not heard of — and is left unknown rather than
+  /// rounded into the nearest band it is not (PRD §72.3).
+  /// </para>
+  /// </remarks>
+  private static Counter PriorityClassOf(int basePriority) => basePriority switch {
+    4 or 6 or 8 or 10 or 13 or 24 => Counter.Of((ulong)basePriority),
+    _ => Counter.Unknown(UnknownReason.CounterInvalid),
+  };
 
   private static int CountProcesses(ReadOnlySpan<byte> buffer) {
     var count = 0;
