@@ -278,6 +278,7 @@ internal static class Program {
       probe,
       actions,
       ProbeFactory.CreateServiceControl(),
+      ProbeFactory.CreateStartupControl(),
       options.ShootPath,
       options.ShootHoldSeconds,
       options.FlatRequested,

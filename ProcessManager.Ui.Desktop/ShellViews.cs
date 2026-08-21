@@ -65,6 +65,42 @@ internal sealed class ShellViews(ISystemProbe probe) {
     ("Configured by", 250)
   );
 
+  /// <summary>
+  /// The entries as they were last read, so the menu acts on the one the reader is looking at rather
+  /// than on a row index into a list that has since been read again.
+  /// </summary>
+  private IReadOnlyList<StartupEntry> _startupEntries = [];
+
+  /// <summary>What may be done to the entry under the pointer, hung on the startup table.</summary>
+  public ContextMenuStrip? StartupMenu {
+    get => this._startup.ContextMenuStrip;
+    set => this._startup.ContextMenuStrip = value;
+  }
+
+  /// <summary>The entry the cursor is on, or null when it is on nothing.</summary>
+  /// <remarks>
+  /// Matched by the file it came from rather than by its name: two entries may share a name — a
+  /// system one and the user override that replaced it are the obvious pair — and the path is what
+  /// the switch actually needs.
+  /// </remarks>
+  public StartupEntry? SelectedStartup {
+    get {
+      if (this._startup.Selected is not { Length: > 5 } cells)
+        return null;
+
+      foreach (var entry in this._startupEntries)
+        if (string.Equals(entry.Path, cells[5], StringComparison.Ordinal))
+          return entry;
+
+      return null;
+    }
+  }
+
+  /// <summary>Says the switch is there, and how to get at it.</summary>
+  public void StartupIsSwitchable() => this._startupHint = "  Right-click an entry to turn it on or off.";
+
+  private string _startupHint = string.Empty;
+
   public Control StartupControl => this._startup.Control;
 
   public string StartupText => this._startup.Description;
@@ -73,6 +109,7 @@ internal sealed class ShellViews(ISystemProbe probe) {
 
   public void RefreshStartup() {
     var entries = this._probe.GetStartupEntries();
+    this._startupEntries = entries;
     var enabled = 0;
     foreach (var entry in entries)
       if (entry.Enabled)
@@ -81,7 +118,7 @@ internal sealed class ShellViews(ISystemProbe probe) {
     this._startup.Fill(
       entries.Count == 0
         ? "Nothing is configured to start at login — or nothing this build knows how to read is."
-        : $"{entries.Count} entries, {enabled} of which will run.  {AsOf()}",
+        : $"{entries.Count} entries, {enabled} of which will run.  {AsOf()}{this._startupHint}",
       entries.Count,
       i => [
         entries[i].Name,

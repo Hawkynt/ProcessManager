@@ -268,6 +268,22 @@ internal static class ProbeFactory {
   }
 
   /// <summary>
+  /// The thing that can turn a login entry on and off, or null where nothing can.
+  /// </summary>
+  /// <remarks>
+  /// Null on a machine with no home directory to keep an entry in, and on Windows until the Run keys
+  /// and the Startup folder are written — neither is read yet either, so there is nothing there to
+  /// switch.
+  /// </remarks>
+  public static IStartupControl? CreateStartupControl() {
+    if (!OperatingSystem.IsLinux())
+      return null;
+
+    var control = new Platform.Linux.XdgAutostartControl();
+    return control.IsAvailable ? control : null;
+  }
+
+  /// <summary>
   /// Where the helper is. The installed path first, because that is the one the polkit policy names
   /// and therefore the only one that can actually be elevated; the build layout second, so that
   /// `--helper-check` works from a source tree.
