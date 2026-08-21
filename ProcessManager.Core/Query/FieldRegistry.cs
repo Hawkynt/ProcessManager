@@ -108,7 +108,7 @@ public static class FieldRegistry {
     // counter would be a third spelling of one answer, which is the drift the one catalogue exists
     // to stop (§5.1).
     new(ProcessField.CpuHistory, "cpu.history", "CPU history", "CPU hist",
-      "The last sixty seconds of processor use.",
+      "The last sixty seconds of processor use, on the same scale as the CPU column beside it: 100% is the whole machine, or one core if the per-core convention is chosen. A plot with no stated scale is a shape rather than a measurement.",
       FieldKind.Graph, FieldUnit.Percent, _ALL, FieldCost.Derived, 90, 12, false, false,
       HistorySeries.Cpu),
 

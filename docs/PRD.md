@@ -5195,7 +5195,18 @@ v1 does not ship unless every one of these is true:
 - [x] The process list updates continuously without losing selection
 - [x] PID reuse cannot corrupt process identity
 - [x] GUI and TUI report matching canonical counters within the sampling tolerance
-- [ ] 🟡 CPU and memory metrics have documented semantics
+- [x] CPU and memory metrics have documented semantics — and the documentation is held true by
+      assertion rather than by good intentions. Every field's meaning lives in the registry, which is
+      what `--help-fields` prints, what the column chooser shows and what the terminal's help screen
+      carries, so a sentence nobody kept true would be worse than none. Four invariants: every field
+      is described; no two share a description, since two columns described identically are two
+      columns one of which is mislabelled and nothing says which; a description says more than its
+      own header did; and **every percentage names its denominator**, either as a number ("100% is
+      one core") or in the ordinary English form ("how much of its adapter"). That last one found the
+      CPU history plot saying "the last sixty seconds of processor use" and no scale at all — the one
+      column where a reader cannot work the scale out from the number, because there is no number.
+      Every byte-valued memory figure has to name which kind of memory it counts, which is the whole
+      difference between figures several of which are legitimately larger than the machine's RAM
 - [x] The user can kill a process from GUI, TUI **and** CLI
 - [x] The user can suspend and resume where supported
 - [x] The user can inspect process path and command line
