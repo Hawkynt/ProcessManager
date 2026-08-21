@@ -278,8 +278,28 @@ public enum SocketKind : byte { Unknown = 0, Stream, Datagram, SeqPacket }
 /// </param>
 /// <param name="Retransmits">
 /// How often the segment currently awaiting acknowledgement has been sent again — not a total of
-/// everything ever retransmitted on this connection, which needs the netlink socket diagnostics.
-/// Non-zero here means this connection is losing packets <em>now</em>.
+/// everything ever retransmitted on this connection, which is
+/// <see cref="SocketStatistics.TotalRetransmits"/>. Non-zero here means this connection is losing
+/// packets <em>now</em>.
+/// </param>
+/// <param name="Statistics">
+/// What the kernel's socket diagnostics said about this connection, or the reason they said nothing.
+/// The socket tables under <c>/proc/net</c> cannot fill this: they carry no byte counters and no
+/// round-trip time, and the only way to those is <c>NETLINK_INET_DIAG</c>.
+/// </param>
+/// <param name="SendRate">
+/// Bytes per second in each direction over the interval between the two readings this was derived
+/// from. <see cref="UnknownReason.NotSampledYet"/> on the first sight of a socket, because a rate
+/// needs two — and a one-shot listing never gets a second.
+/// </param>
+/// <param name="OwningService">
+/// The service or scope the owning process belongs to — a systemd unit name on Linux — or null when
+/// nothing owns it, no process was attributed, or the process is not under a unit at all. A socket
+/// is not charged to a unit by the kernel; this is the unit of whoever holds the descriptor.
+/// </param>
+/// <param name="ContainerPath">
+/// The owning process's cgroup path, which is what says whether a listening port belongs to the host
+/// or to a container. Null for the same three reasons <paramref name="OwningService"/> is.
 /// </param>
 public readonly record struct ConnectionRecord(
   ConnectionProtocol Protocol,
@@ -296,5 +316,89 @@ public readonly record struct ConnectionRecord(
   string? Interface,
   Counter SendQueueBytes,
   Counter ReceiveQueueBytes,
-  Counter Retransmits
+  Counter Retransmits,
+  SocketStatistics Statistics,
+  Rate SendRate,
+  Rate ReceiveRate,
+  string? OwningService,
+  string? ContainerPath
 );
+
+/// <summary>
+/// What <c>NETLINK_INET_DIAG</c> reports about one socket: the counters <c>/proc/net/tcp</c> has no
+/// column for (PRD §40).
+/// </summary>
+/// <remarks>
+/// <para>
+/// This is <c>ss -i</c>'s source. The kernel answers a <c>SOCK_DIAG_BY_FAMILY</c> request with an
+/// <c>inet_diag_msg</c> per socket and, where asked for it, a <c>tcp_info</c> attached — and
+/// <c>tcp_info</c> is where the bytes, the segments, the round-trip time and the lifetime
+/// retransmission count live.
+/// </para>
+/// <para>
+/// Every member is a <see cref="Counter"/> and none of them is ever a plain zero, because the four
+/// ways to have no reading are all common here: the kernel may be built without the diagnostics, the
+/// socket may be a datagram socket the module does not describe, the process may not be allowed to
+/// ask, or the connection may be in a state that has no <c>tcp_info</c> left. Constructing one of
+/// these positionally is deliberate: <c>default</c> would say every counter is a measured nought
+/// (PRD §72.3), so there is no parameterless way to make one.
+/// </para>
+/// </remarks>
+/// <param name="BytesSent">
+/// Payload bytes handed to the peer over this connection's life, retransmissions included — the
+/// figure <c>ss</c> prints as <c>bytes_sent</c>. Not what the interface carried: headers are not in
+/// it.
+/// </param>
+/// <param name="BytesReceived">Payload bytes taken from the peer, the same way round.</param>
+/// <param name="PacketsSent">
+/// Segments in each direction, which is the honest packet count for a TCP connection: the kernel
+/// counts segments and the wire carries one packet per segment except where something fragments.
+/// </param>
+/// <param name="TotalRetransmits">
+/// Every retransmission this connection has ever made, as against <see cref="ConnectionRecord.Retransmits"/>,
+/// which is only the segment being retried right now.
+/// </param>
+/// <param name="RoundTripTimeMicroseconds">
+/// The smoothed round-trip time, in microseconds, and the variance the kernel keeps beside it. This
+/// is the latency of the path this connection is actually using, measured by the connection itself
+/// — not a ping to the same address, which may take a different route.
+/// </param>
+public readonly record struct SocketStatistics(
+  Counter BytesSent,
+  Counter BytesReceived,
+  Counter PacketsSent,
+  Counter PacketsReceived,
+  Counter TotalRetransmits,
+  Counter RoundTripTimeMicroseconds,
+  Counter RoundTripVarianceMicroseconds
+) {
+
+  /// <summary>
+  /// Nothing was read, and the reason is the same for every counter.
+  /// </summary>
+  /// <remarks>
+  /// The one supported way to make an empty set. A <c>TryGetValue</c> that misses leaves
+  /// <c>default</c> behind, whose reason is <see cref="UnknownReason.None"/> — "the value is here and
+  /// it is zero" — and that is the defect this exists to make impossible to write by accident.
+  /// </remarks>
+  public static SocketStatistics Unknown(UnknownReason reason) {
+    var counter = Counter.Unknown(reason);
+    return new(counter, counter, counter, counter, counter, counter, counter);
+  }
+
+  /// <summary>The socket diagnostics were not consulted, or have not answered about this socket.</summary>
+  public static readonly SocketStatistics NotRead = Unknown(UnknownReason.NotSampledYet);
+
+  /// <summary>There is no such source here: another platform, or a protocol with no such counters.</summary>
+  public static readonly SocketStatistics NotSupported = Unknown(UnknownReason.NotSupportedOnPlatform);
+
+  /// <summary>True when at least one counter carries a reading.</summary>
+  public bool HasAny
+    => this.BytesSent.HasValue
+    || this.BytesReceived.HasValue
+    || this.PacketsSent.HasValue
+    || this.PacketsReceived.HasValue
+    || this.TotalRetransmits.HasValue
+    || this.RoundTripTimeMicroseconds.HasValue;
+
+}

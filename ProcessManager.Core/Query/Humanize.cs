@@ -366,6 +366,20 @@ public static class Humanize {
   public static string SocketKindName(SocketKind kind) => kind == SocketKind.Unknown ? "—" : kind.ToString();
 
   /// <summary>
+  /// A connection's round-trip time, in the milliseconds everybody discusses latency in (PRD §40).
+  /// </summary>
+  /// <remarks>
+  /// The kernel keeps it in microseconds and <c>ss</c> prints milliseconds, so this does too — a
+  /// figure that can be read straight against a <c>ping</c> is worth more than one that is a
+  /// thousand times larger for no reason the reader can see. Three decimals, because a loopback
+  /// connection genuinely runs at eight microseconds and rounding it to zero would report the
+  /// fastest path on the machine as no path at all.
+  /// </remarks>
+  public static string RoundTrip(Counter microseconds) => microseconds.HasValue
+    ? (microseconds.Value / 1000d).ToString(microseconds.Value >= 100_000 ? "0" : "0.###", CultureInfo.InvariantCulture) + "ms"
+    : Placeholder(microseconds.Reason);
+
+  /// <summary>
   /// The kind of a handle or descriptor, in the platform's own vocabulary (PRD §5.3).
   /// </summary>
   /// <remarks>

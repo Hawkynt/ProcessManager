@@ -16,7 +16,7 @@ namespace Hawkynt.ProcessManager.Ui.Desktop;
 /// duplicating each one into this process and asking the kernel to name it; doing that for every
 /// process every second is how a monitor becomes the thing worth monitoring (PRD §3.5, §5.2).
 /// </remarks>
-public sealed class DetailPane {
+public sealed class DetailPane : IDisposable {
 
   private readonly ISystemProbe _probe;
   private readonly TabControl _tabs = new();
@@ -28,6 +28,21 @@ public sealed class DetailPane {
   private readonly TreeListView _environment = new();
   private readonly TreeListView _network = new();
   private readonly Label _hint = new();
+
+  /// <summary>
+  /// One socket's byte totals against the last reading of the same socket, which is the only way to
+  /// a rate: the kernel publishes totals and never a rate (PRD §40).
+  /// </summary>
+  private readonly ConnectionRates _rates = new();
+
+  /// <summary>
+  /// Addresses to names, off until somebody asks for it in the tab's own menu.
+  /// </summary>
+  /// <remarks>
+  /// Constructed either way and disabled, so that turning it on is a property assignment rather than
+  /// a thread start in the middle of a redraw. Nothing here ever waits for it (PRD §40).
+  /// </remarks>
+  private readonly HostnameCache _hostnames = new();
 
   private ProcessKey _key;
   private bool _dirty = true;
@@ -139,8 +154,22 @@ public sealed class DetailPane {
       // read. The pair says which end of a stalled connection is the slow one.
       ("Send-Q", 70),
       ("Recv-Q", 70),
-      ("Retrans", 70)
+      ("Retrans", 70),
+      // From here on it is the socket diagnostics rather than the tables — bytes, segments, latency
+      // and the lifetime retransmission count, none of which /proc/net/tcp has a column for.
+      ("Sent", 80),
+      ("Received", 80),
+      ("Send rate", 90),
+      ("Recv rate", 90),
+      ("Pkts out", 80),
+      ("Pkts in", 80),
+      ("RTT", 80),
+      ("Retrans total", 96),
+      ("Service", 180),
+      ("Cgroup", 220)
     );
+
+    this._network.ContextMenuStrip = this.BuildNetworkMenu();
 
     // Switching to a tab is the request to fill it; nothing is collected for a tab nobody looked at.
     this._tabs.SelectedIndexChanged += (_, _) => {
@@ -168,6 +197,16 @@ public sealed class DetailPane {
 
   /// <summary>The control to add to the form.</summary>
   public Control Control => this._tabs;
+
+  /// <summary>
+  /// Stops the name-lookup thread.
+  /// </summary>
+  /// <remarks>
+  /// It is a background thread and would not hold the program open on its own, so this is tidiness
+  /// rather than a leak — but a pane that owns something disposable and cannot be disposed is the
+  /// kind of thing that stops being true the moment somebody makes a second one.
+  /// </remarks>
+  public void Dispose() => this._hostnames.Dispose();
 
   /// <summary>Points the pane at a process. Cheap; the lists fill on the next <see cref="Refresh"/>.</summary>
   public void Select(ProcessKey key) {
@@ -434,19 +473,126 @@ public sealed class DetailPane {
   }
 
   private void FillNetwork() {
-    var connections = this._probe.GetConnections(this._key);
-    Fill(this._network, connections.Count, i => [
-      connections[i].Protocol.ToString(),
-      Humanize.SocketKindName(connections[i].Kind),
-      Humanize.LocalEndpoint(connections[i]),
-      Humanize.RemoteEndpoint(connections[i]),
-      connections[i].State,
-      Humanize.SocketUser(connections[i]),
-      connections[i].Interface ?? "—",
-      Humanize.Bytes(connections[i].SendQueueBytes),
-      Humanize.Bytes(connections[i].ReceiveQueueBytes),
-      Humanize.Count(connections[i].Retransmits),
-    ]);
+    var connections = new List<ConnectionRecord>(this._probe.GetConnections(this._key));
+
+    // The rates come from this reading against the last one of the same socket. The tab is filled on
+    // demand rather than every tick, so the interval is however long the reader took to look again —
+    // which is why it is measured rather than assumed (PRD §40).
+    this._rates.Observe(connections, DateTime.UtcNow.Ticks);
+
+    // Asked for every address on every fill, and answered only for the ones already known. Nothing
+    // here waits: a name that is not back yet shows the address, and the next fill shows the name
+    // (PRD §40).
+    var hosts = this._hostnames;
+    Fill(this._network, connections.Count, i => {
+      var connection = connections[i];
+      var statistics = connection.Statistics;
+      return [
+        connection.Protocol.ToString(),
+        Humanize.SocketKindName(connection.Kind),
+        Humanize.LocalEndpoint(connection, null, hosts),
+        Humanize.RemoteEndpoint(connection, null, hosts),
+        connection.State,
+        Humanize.SocketUser(connection),
+        connection.Interface ?? "—",
+        Humanize.Bytes(connection.SendQueueBytes),
+        Humanize.Bytes(connection.ReceiveQueueBytes),
+        Humanize.Count(connection.Retransmits),
+        Humanize.Bytes(statistics.BytesSent),
+        Humanize.Bytes(statistics.BytesReceived),
+        Humanize.BytesPerSecond(connection.SendRate),
+        Humanize.BytesPerSecond(connection.ReceiveRate),
+        Humanize.Count(statistics.PacketsSent),
+        Humanize.Count(statistics.PacketsReceived),
+        Humanize.RoundTrip(statistics.RoundTripTimeMicroseconds),
+        Humanize.Count(statistics.TotalRetransmits),
+        connection.OwningService ?? "—",
+        connection.ContainerPath ?? "—",
+      ];
+    });
+  }
+
+  /// <summary>
+  /// What can be done with a connection (PRD §40).
+  /// </summary>
+  /// <remarks>
+  /// Deliberately short. "Go to process" and "process properties" are absent because this tab shows
+  /// one process's own sockets and the owner is already the selected row of the tree; closing a
+  /// connection is absent because Linux offers it only to a process holding <c>CAP_NET_ADMIN</c>,
+  /// and an item that could only ever refuse is a lie dressed as a feature (PRD §32).
+  /// </remarks>
+  private ContextMenuStrip BuildNetworkMenu() {
+    var menu = new ContextMenuStrip();
+    var copy = new ToolStripMenuItem("Copy endpoint");
+    copy.Click += (_, _) => {
+      if (this.SelectedEndpoint is { } endpoint)
+        Clipboard.SetText(endpoint);
+    };
+
+    menu.Items.Add(copy);
+
+    // Checkable rather than a one-shot "resolve this row": the disclosure is the same either way —
+    // asking a resolver tells whoever runs it which addresses this machine is talking to — so it is
+    // one deliberate act with a visible state rather than a per-row habit (PRD §40).
+    this._resolveNames.Click += (_, _) => {
+      this._resolveNames.Checked = !this._resolveNames.Checked;
+      this._hostnames.Enabled = this._resolveNames.Checked;
+      this.Invalidate();
+    };
+
+    menu.Items.Add(this._resolveNames);
+    var terminate = new ToolStripMenuItem("Terminate owner…");
+    terminate.Click += (_, _) => this.TerminateOwner();
+    menu.Items.Add(terminate);
+    return menu;
+  }
+
+  private readonly ToolStripMenuItem _resolveNames = new("Resolve hostnames");
+
+  /// <summary>
+  /// The local and remote endpoint of the selected row, as one line worth pasting into a search.
+  /// </summary>
+  /// <remarks>
+  /// Taken from the drawn cells rather than re-read from the kernel: what the reader asked to copy
+  /// is what they are looking at, and re-reading would sometimes copy a different socket — the table
+  /// is a moment old and a connection can close between a right-click and a menu choice.
+  /// </remarks>
+  private string? SelectedEndpoint {
+    get {
+      if (this._network.SelectedNode?.Tag is not string[] cells || cells.Length < 4)
+        return null;
+
+      var local = cells[2];
+      var remote = cells[3];
+      return remote is "—" or "" ? local : $"{local} → {remote}";
+    }
+  }
+
+  /// <summary>
+  /// Ends the process whose sockets these are, which is the selected process and no other.
+  /// </summary>
+  /// <remarks>
+  /// It asks first, because ending a process loses whatever it had not written and there is no undo
+  /// (PRD §5.5). The key is the pane's own rather than anything read off a row: every row here
+  /// belongs to the same process by construction, and taking a pid out of a table would make the
+  /// action depend on which cell happened to be selected.
+  /// </remarks>
+  private void TerminateOwner() {
+    if (this.Actions is null || this._key.IsNone)
+      return;
+
+    var confirm = MessageBox.Show(
+      $"End process {this._key.Pid}? Anything it has not saved is lost.",
+      "Process Manager",
+      MessageBoxButtons.YesNo
+    );
+
+    if (confirm != DialogResult.Yes)
+      return;
+
+    var result = this.Actions.Terminate(this._key);
+    if (!result.Succeeded)
+      MessageBox.Show(result.Detail ?? result.Outcome.ToString(), "Process Manager");
   }
 
   private static void Fill(TreeListView list, int count, Func<int, string[]> row) {

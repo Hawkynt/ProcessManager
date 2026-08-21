@@ -786,6 +786,10 @@ Per-process byte counters have no portable source: Linux needs packet accounting
 needs ETW. Both are opt-in subsystems and **off by default** — §5.4 forbids making the ordinary
 process table depend on them.
 
+The four counts are read. The nine traffic fields are **not**, and the reason is written out below
+rather than being worked around, because the obvious workaround produces a number that is wrong in a
+way nothing on screen would betray.
+
 - [ ] `net.percent`
 - [ ] `net.send.rate`
 - [ ] `net.recv.rate`
@@ -795,10 +799,33 @@ process table depend on them.
 - [ ] `net.errors`
 - [ ] `net.packets.sent`
 - [ ] `net.packets.recv`
-- [ ] 🟡 `tcp.count` — endpoints are enumerated and attributed; not aggregated into a column
-- [ ] 🟡 `udp.count` — as above
-- [ ] 🟡 `net.listening` — as above
-- [ ] 🟡 `net.remote.count` — as above
+- [x] `tcp.count` — how many TCP sockets the process holds a descriptor on, listeners included
+- [x] `udp.count` — the same for datagram sockets, which have no connection to count and so are
+      counted themselves
+- [x] `net.listening` — TCP only: a UDP socket bound to a port is not listening in any sense the
+      kernel records, and counting one would invent a distinction the protocol does not make (§5.3)
+- [x] `net.remote.count` — distinct peers rather than connections, because two connections to one
+      machine are one correspondent, which is what the column is read for
+
+All four are `High`: the join from a socket to a process is a `readlink` for every open descriptor on
+the machine, so nothing is collected unless a column or a filter names one of them (§5.4).
+
+**The traffic fields are refused, not deferred.** The socket diagnostics of §40 give per-socket byte
+counters, and summing the ones a process currently holds is arithmetic anybody could do. It would not
+be the quantity the column claims:
+
+- A connection that closes takes its counters with it. A server handling short requests would report
+  near nothing while saturating its link, and a process that finished a large download an hour ago
+  would report having received nothing at all.
+- UDP has no byte accounting anywhere in the kernel — not in `/proc/net/udp`, not in `udp_diag`. A
+  process whose traffic is datagrams would read as idle.
+- The counters are payload. Headers, and every packet the process caused that was not carried on one
+  of its own sockets, are outside them.
+
+None of those three shortfalls announces itself in the cell, and a reader has no way to tell a quiet
+process from an unmeasurable one. That is a model presented as a measurement, which is what §72.3
+exists to prevent. Honest per-process traffic needs the packet accounting or eBPF named above; until
+one of them is built, the columns do not exist rather than existing and being wrong.
 
 # 19. Process table — GPU fields
 
@@ -1658,10 +1685,12 @@ Endpoints are enumerated on both platforms and attributed to processes.
 - [x] State
 - [x] Local address
 - [x] Local port
-- [ ] 🟡 Local hostname — resolved and shown by `--connections --resolve`; the window's network tab still shows addresses
+- [x] Local hostname — `--connections --resolve` on the command line, and the network tab's own
+      **Resolve hostnames** in the window. Off in both until asked for, and asynchronous in the
+      window: an address with no name yet shows the address and the name appears in a later fill
 - [x] Remote address
 - [x] Remote port
-- [ ] 🟡 Remote hostname — as above
+- [x] Remote hostname — as above
 - [x] Service name — from the machine's own `/etc/services`, in `--connections`; `-n` turns it off, as it does for `ss`
 - [ ] 🟡 Interface — Linux, from the address the socket is bound to. `/proc/net/if_inet6` names it
       outright for IPv6; an IPv4 address is on the interface whose on-link subnet contains it, longest
@@ -1669,20 +1698,43 @@ Endpoints are enumerated on both platforms and attributed to processes.
       route claims — a multicast group, a point-to-point peer — is left unknown rather than guessed at
 - [ ] Connection creation time
 - [ ] Connection age
-- [ ] Bytes sent / received
-- [ ] Send rate / receive rate
-- [ ] Packets sent / received
-- [ ] 🟡 Retransmissions — Linux reports how often the segment currently awaiting acknowledgement has
-      been sent again, which is the useful half: non-zero means this connection is losing packets
-      *now*. The cumulative count over the connection's life needs the netlink socket diagnostics and
-      is not read
-- [ ] Latency / RTT
+- [x] Bytes sent / received — payload each way over the connection's life, retransmissions included.
+      Not what the interface carried: headers are not in it
+- [x] Send rate / receive rate — those totals against the previous reading of the same socket, over
+      the measured interval between them. The window's network tab has both readings; a one-shot
+      listing has one, and says "not sampled yet" rather than dividing by an interval it invented
+- [x] Packets sent / received — segments each way, which is the honest packet count for TCP: the
+      kernel counts segments and the wire carries one packet per segment except where something
+      fragments
+- [x] **Retransmissions** — both halves. How often the segment currently awaiting acknowledgement has
+      been sent again, which says this connection is losing packets *now*; and the cumulative count
+      over its life, which says whether the path has ever been bad
+- [x] Latency / RTT — the connection's own smoothed round-trip time, which is the latency of the path
+      it is actually using rather than of a ping that may take a different route. A figure of zero is
+      the kernel's initial value showing through and is reported as unmeasured, not as no latency
 - [x] **Send / receive queue depth** — bytes written and not yet acknowledged by the peer, and bytes
       received and not yet read by the process. The pair is what says which end of a stalled
       connection is the slow one, and it is what `ss` puts in Send-Q and Recv-Q
-- [ ] Owning service
-- [ ] Container / cgroup
-- [ ] Firewall / security context
+- [x] Owning service — the systemd unit of whoever holds the descriptor, read off their cgroup,
+      because a unit *is* a cgroup. The innermost one: a desktop application sits inside its user's
+      session manager, which is itself a unit, and naming the outer one would report every program a
+      user starts as belonging to the manager that started it. A slice is not an owner — it holds no
+      processes of its own — so a cgroup with no unit in it answers nothing rather than the nearest
+      thing that looks like one
+- [x] Container / cgroup — the holder's cgroup path, which is what says whether a listening port
+      belongs to the host or to a container
+- [ ] Firewall / security context — no per-socket answer exists on Linux. A firewall rule matches
+      packets by address, port and mark, and the kernel records no link from a rule back to a socket;
+      answering it would mean reading the nftables ruleset and re-evaluating it against each row,
+      which is a simulation of the firewall rather than a reading of it. `conntrack` knows about
+      flows and not about which socket owns one
+
+**Where the numbers come from.** Addresses, ports, states, queues and the current retransmit count are
+read from `/proc/net/{tcp,tcp6,udp,udp6,unix}`. Everything else on a TCP row — bytes, segments,
+round-trip time, the lifetime retransmission count — is not in `/proc` at all and comes from
+`NETLINK_INET_DIAG`, which is the source `ss -i` reads. UDP is deliberately not asked: `udp_diag`
+answers, but Linux keeps no byte total, no segment count and no round-trip time for a datagram
+socket, so those columns say "there is no such thing" rather than "we have not looked".
 
 **The kernel writes zeros where it has nothing to say, and they are not readings.** A listening TCP
 socket's two queue columns hold the Fast Open queue length and the accept backlog rather than byte
@@ -1692,12 +1744,21 @@ because the protocol has no such concept. Each of those is reported as unknown, 
 on would say "owned by root, nothing queued, never retransmitted" about something nobody measured
 (§72.3).
 
+**A listening socket's `tcp_info` is the same trap one level down.** `tcp_get_info` clears the whole
+structure, fills in the four fields that mean something for a listener — the pacing rate, the receive
+threshold, and the accept backlog pair it aliases onto `tcpi_unacked` and `tcpi_sacked` — and
+returns. Every counter this program reads out of it is therefore the `memset` and not a measurement,
+so a listening row reports none of them. And `tcp_info` grows with every release: it was 240 bytes
+not long ago and is 280 now, so a field past the end of what a kernel sent is that kernel not having
+it, never a nought.
+
 **Connection creation time is not available on Linux and the box stays empty.** The obvious place to
 look is the descriptor — `/proc/[pid]/fd/[n]` has timestamps — and they are the time the `/proc`
 inode was materialised, which is when something last looked, not when the socket was opened. A
 process fourteen seconds old and a descriptor seven seconds old both stamp as *now* the moment they
 are read. Reporting either as the connection's age would produce a number that moves when you look
-at it.
+at it. The socket diagnostics do not change this: `tcp_info` carries no creation time either, and its
+closest fields are how long ago the connection last sent or received, which is not when it started.
 
 Protocols:
 
@@ -1713,13 +1774,22 @@ Protocols:
 
 Actions:
 
-- [ ] Go to process
-- [ ] Process properties
-- [ ] Copy endpoint
-- [ ] 🟡 Resolve hostname — `--connections --resolve`; no per-row command in the window yet
+- [ ] 🟡 Go to process — the window's network tab shows one process's own sockets, so the owner is
+      already the selected row of the tree and there is nowhere to go. It becomes a real command when
+      there is a machine-wide connection view to invoke it from
+- [ ] 🟡 Process properties — as above
+- [x] Copy endpoint — both ends of the selected row, as one line worth pasting into a search. Taken
+      from the drawn cells rather than re-read: a connection can close between a right-click and a
+      menu choice, and what the reader asked to copy is what they were looking at
+- [x] Resolve hostname — the network tab's own **Resolve hostnames**, checkable rather than per-row.
+      The disclosure is the same either way, so it is one deliberate act with a visible state
 - [x] Disable hostname resolution — off unless asked for, which is the stronger version of disableable
-- [ ] Close connection where natively supported
-- [ ] Terminate owner
+- [ ] Close connection where natively supported — Linux has `SOCK_DESTROY` on the same netlink family
+      the counters come from, and it is what `ss -K` uses. It needs `CAP_NET_ADMIN`, so for the user
+      a process manager is normally run as it could only ever refuse, and an item that can only
+      refuse is a lie dressed as a feature (§32). It belongs with the elevated helper of §8
+- [x] Terminate owner — with the confirmation §5.5 requires. The process is the pane's own rather
+      than one read off a row: every row here belongs to the same process by construction
 - [ ] Search remote endpoint
 
 - [x] **Hostname resolution is asynchronous and globally disableable** — a blocking DNS lookup in a

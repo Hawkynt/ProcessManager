@@ -555,6 +555,19 @@ public sealed class WindowsProbe : ISystemProbe {
   /// </remarks>
   private static readonly Counter _NotYetOnWindows = Counter.Unknown(UnknownReason.NotImplementedHere);
 
+  /// <summary>
+  /// The same gap, for the per-socket counters Linux reads through the socket diagnostics.
+  /// </summary>
+  /// <remarks>
+  /// <c>GetPerTcpConnectionEStats</c> is the Windows equivalent and reaches all of them — bytes,
+  /// segments, round-trip time, retransmissions — once it is enabled per connection. Until it is
+  /// called, these say so rather than claiming Windows has nothing to offer (PRD §7).
+  /// </remarks>
+  private static readonly SocketStatistics _StatisticsNotYetOnWindows
+    = SocketStatistics.Unknown(UnknownReason.NotImplementedHere);
+
+  private static readonly Rate _RateNotYetOnWindows = Rate.Unknown(UnknownReason.NotImplementedHere);
+
   private static void ReadTcp(int? pid, uint family, ConnectionProtocol protocol, List<ConnectionRecord> result) {
     // MIB_TCPROW_OWNER_PID for IPv4 is state, local addr, local port, remote addr, remote port,
     // owning pid — six 32-bit fields. The IPv6 row carries 16-byte addresses and scope ids instead.
@@ -583,7 +596,14 @@ public sealed class WindowsProbe : ISystemProbe {
             null,
             _NotYetOnWindows,
             _NotYetOnWindows,
-            _NotYetOnWindows
+            _NotYetOnWindows,
+            _StatisticsNotYetOnWindows,
+            _RateNotYetOnWindows,
+            _RateNotYetOnWindows,
+            // The owner table names a process and stops there. Which service that process belongs
+            // to is a second question, and the answer is not read yet (PRD §7).
+            null,
+            null
           ));
         } else {
           var owner = Marshal.ReadInt32(entry, 52);
@@ -605,7 +625,14 @@ public sealed class WindowsProbe : ISystemProbe {
             null,
             _NotYetOnWindows,
             _NotYetOnWindows,
-            _NotYetOnWindows
+            _NotYetOnWindows,
+            _StatisticsNotYetOnWindows,
+            _RateNotYetOnWindows,
+            _RateNotYetOnWindows,
+            // The owner table names a process and stops there. Which service that process belongs
+            // to is a second question, and the answer is not read yet (PRD §7).
+            null,
+            null
           ));
         }
       }
@@ -638,7 +665,12 @@ public sealed class WindowsProbe : ISystemProbe {
           null,
           _NotYetOnWindows,
           _NotYetOnWindows,
-          _NotYetOnWindows
+          _NotYetOnWindows,
+          _StatisticsNotYetOnWindows,
+          _RateNotYetOnWindows,
+          _RateNotYetOnWindows,
+          null,
+          null
         ));
       }
     );

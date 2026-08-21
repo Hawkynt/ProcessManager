@@ -162,6 +162,10 @@ public static class FieldAccessor {
       case ProcessField.SocketCount: return Humanize.Count(process.SocketCount);
       case ProcessField.FileCount: return Humanize.Count(process.FileCount);
       case ProcessField.PipeCount: return Humanize.Count(process.PipeCount);
+      case ProcessField.TcpConnectionCount: return Humanize.Count(process.TcpSocketCount);
+      case ProcessField.UdpSocketCount: return Humanize.Count(process.UdpSocketCount);
+      case ProcessField.ListeningSocketCount: return Humanize.Count(process.ListeningSocketCount);
+      case ProcessField.RemoteEndpointCount: return Humanize.Count(process.RemoteEndpointCount);
       case ProcessField.Priority: return process.Priority.ToString(CultureInfo.InvariantCulture);
       case ProcessField.Nice: return process.Nice.ToString(CultureInfo.InvariantCulture);
       case ProcessField.Terminal: return Humanize.Terminal(process.TerminalDevice);
@@ -264,6 +268,10 @@ public static class FieldAccessor {
       case ProcessField.SocketCount: return Number(process.SocketCount);
       case ProcessField.FileCount: return Number(process.FileCount);
       case ProcessField.PipeCount: return Number(process.PipeCount);
+      case ProcessField.TcpConnectionCount: return Number(process.TcpSocketCount);
+      case ProcessField.UdpSocketCount: return Number(process.UdpSocketCount);
+      case ProcessField.ListeningSocketCount: return Number(process.ListeningSocketCount);
+      case ProcessField.RemoteEndpointCount: return Number(process.RemoteEndpointCount);
 
       case ProcessField.GpuDedicatedMemory: return Number(process.GpuDedicatedBytes);
       case ProcessField.GpuSharedMemory: return Number(process.GpuSharedBytes);

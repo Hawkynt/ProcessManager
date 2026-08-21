@@ -59,6 +59,11 @@ internal static class ProbeFactory {
   /// costs the descriptor scan plus a link resolved per descriptor, which is the most expensive
   /// read there is, so it is done only when a column or a filter names one of the three (PRD §20).
   /// </param>
+  /// <param name="wantSocketCounts">
+  /// Whether anything on this run asked how many sockets each process holds. It costs a
+  /// <c>readlink</c> per open descriptor on the machine, which makes it dearer than the descriptor
+  /// count on its own, so the same rule applies (PRD §5.4, §18).
+  /// </param>
   public static ISystemProbe? Create(
     string? probeRoot,
     bool useHelper = true,
@@ -70,7 +75,8 @@ internal static class ProbeFactory {
     bool wantCpuAffinity = false,
     bool wantCpuThrottling = false,
     bool wantDescriptorKinds = false,
-    bool wantImageHashes = false
+    bool wantImageHashes = false,
+    bool wantSocketCounts = false
   ) {
     if (OperatingSystem.IsLinux()) {
       // A recorded tree is somebody else's machine; asking a helper about pids in it would be asking
@@ -99,6 +105,7 @@ internal static class ProbeFactory {
             CountDescriptorKinds = wantDescriptorKinds,
             ReadImageHashes = wantImageHashes,
             ReadCpuThrottling = wantCpuThrottling,
+            ReadSocketCounts = wantSocketCounts,
           }
           // A recorded tree was captured by somebody else, so the live user's id would refuse every
           // file in it. Root reads everything, which is what a replay wants (PRD §9.1).
@@ -120,6 +127,9 @@ internal static class ProbeFactory {
             // The recorded tree carries the process's cgroup path, but the group it names lives on
             // the machine that was recorded and its counters are not in the capture.
             ReadCpuThrottling = false,
+            // The socket tables and the fd links are both in a recorded tree, so this replays the
+            // same way the descriptor count does.
+            ReadSocketCounts = wantSocketCounts,
           }
       );
     }

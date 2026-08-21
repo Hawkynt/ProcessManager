@@ -110,6 +110,15 @@ internal static class SystemProcessInformationReader {
       record.CpuAffinity = null;
       record.CpuAffinityReason = UnknownReason.NotImplementedHere;
 
+      // Windows names the owning process in the connection table itself, so the socket counts are
+      // reachable here without the descriptor scan Linux needs — and are not read yet. Saying so
+      // beats a nought, which would report every service on the machine as holding no sockets
+      // (PRD §7, §18).
+      record.TcpSocketCount = Counter.Unknown(UnknownReason.NotImplementedHere);
+      record.UdpSocketCount = Counter.Unknown(UnknownReason.NotImplementedHere);
+      record.ListeningSocketCount = Counter.Unknown(UnknownReason.NotImplementedHere);
+      record.RemoteEndpointCount = Counter.Unknown(UnknownReason.NotImplementedHere);
+
       // Windows has no seccomp, no no_new_privs and no capability mask; it has integrity levels and
       // privileges instead, which are different things and get their own fields when they are built.
       record.SeccompMode = Counter.NotSupported;

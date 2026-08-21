@@ -136,6 +136,32 @@ public sealed class NetworkTests {
       Assert.That(connection.Retransmits.HasValue, Is.False);
   }
 
+  /// <summary>
+  /// The tables have no column for bytes, segments or round-trip time, and the two protocols are
+  /// unanswerable for different reasons — which the rows have to say, because "we have not looked
+  /// yet" and "there is no such thing" send a reader to two different places.
+  /// </summary>
+  /// <remarks>
+  /// A TCP row waits for the socket diagnostics to be merged onto it. A UDP row waits for nothing:
+  /// Linux keeps no byte total, no segment count and no round-trip time for a datagram socket, and
+  /// <c>udp_diag</c> has none to give either (PRD §40, §72.3).
+  /// </remarks>
+  [Test]
+  public void TheTablesLeaveTheDiagnosticsUnansweredForTheRightReason() {
+    foreach (var connection in Parse("tcp", ConnectionProtocol.Tcp)) {
+      Assert.That(connection.Statistics, Is.EqualTo(SocketStatistics.NotRead));
+      Assert.That(connection.SendRate.Reason, Is.EqualTo(UnknownReason.NotSampledYet));
+    }
+
+    foreach (var connection in Parse("udp", ConnectionProtocol.Udp)) {
+      Assert.That(connection.Statistics, Is.EqualTo(SocketStatistics.NotSupported));
+      Assert.That(connection.ReceiveRate.Reason, Is.EqualTo(UnknownReason.NotSupportedOnPlatform));
+    }
+
+    foreach (var connection in Unix())
+      Assert.That(connection.Statistics, Is.EqualTo(SocketStatistics.NotSupported));
+  }
+
   /// <summary>But a datagram socket's queues are real, and are what a dropped-packet hunt starts from.</summary>
   [Test]
   public void ADatagramSocketStillReportsItsQueues() {
@@ -453,6 +479,463 @@ public sealed class NetworkTests {
     // attributed — which is exactly the shape of an unreadable process on a live machine.
     foreach (var connection in probe.GetConnections())
       Assert.That(connection.Pid, Is.Zero);
+  }
+
+  /// <summary>
+  /// A recorded tree is somebody else's machine, so the live kernel is not asked about its sockets.
+  /// </summary>
+  /// <remarks>
+  /// The socket diagnostics answer about the machine running the test and know nothing of a fixture.
+  /// Merging them onto recorded rows would put this machine's byte counts against another machine's
+  /// connections whenever an inode happened to collide — and the whole point of a replay is that it
+  /// gives the same answers everywhere (PRD §9.1).
+  /// </remarks>
+  [Test]
+  public void ARecordedTreeIsNotAnnotatedWithThisMachinesSockets() {
+    using var probe = new LinuxProbe(new LinuxProbeOptions {
+      ProcRoot = FixtureRoot,
+      PasswdPath = Path.Combine(FixtureRoot, "passwd"),
+      EffectiveUserId = 0,
+      UsePortableFileAccess = !OperatingSystem.IsLinux(),
+    });
+
+    foreach (var connection in probe.GetConnections()) {
+      Assert.That(connection.Statistics.HasAny, Is.False, $"{connection.LocalPort} carried a live reading");
+      Assert.That(connection.SendRate.HasValue, Is.False);
+      Assert.That(connection.ReceiveRate.HasValue, Is.False);
+    }
+  }
+
+  #endregion
+
+  #region the socket diagnostics
+
+  /// <summary>
+  /// A netlink reply, built to the layout the running kernel's own headers describe.
+  /// </summary>
+  /// <remarks>
+  /// Synthesised rather than recorded, for two reasons. A recording of this machine's sockets is a
+  /// list of who it has been talking to, and that does not belong in a repository; and the awkward
+  /// cases — an old kernel's short <c>tcp_info</c>, a truncated datagram, an error where an answer
+  /// was expected — cannot be produced to order on a live machine anyway. The layout itself is not
+  /// guessed: it was taken from <c>linux/inet_diag.h</c> and <c>linux/tcp.h</c> and then checked
+  /// against <c>ss</c> on a live connection, field for field.
+  /// </remarks>
+  private static byte[] Message(ushort type, ReadOnlySpan<byte> body) {
+    var message = new byte[16 + body.Length];
+    BitConverter.TryWriteBytes(message.AsSpan(0), 16 + body.Length);
+    BitConverter.TryWriteBytes(message.AsSpan(4), type);
+    body.CopyTo(message.AsSpan(16));
+    return message;
+  }
+
+  /// <summary><c>SOCK_DIAG_BY_FAMILY</c>: an answer describing one socket.</summary>
+  private const ushort _Answer = 20;
+  private const ushort _Done = 3;
+  private const ushort _Error = 2;
+
+  /// <summary>Where the fields this reads sit in <c>struct tcp_info</c>.</summary>
+  private const int _RoundTripTime = 68;
+  private const int _TotalRetransmits = 100;
+  private const int _BytesReceived = 128;
+  private const int _SegmentsOut = 136;
+  private const int _SegmentsIn = 140;
+  private const int _BytesSent = 200;
+
+  /// <summary>The length of the structure a current kernel sends.</summary>
+  private const int _TcpInfoLength = 280;
+
+  /// <summary>
+  /// One <c>inet_diag_msg</c>, optionally with a <c>tcp_info</c> attached.
+  /// </summary>
+  /// <param name="state">1 is ESTABLISHED and 10 is LISTEN.</param>
+  /// <param name="infoLength">
+  /// How many bytes of <c>tcp_info</c> the kernel sent, or -1 for no attribute at all. The structure
+  /// grows with every release — it was 240 bytes not long ago and is 280 now — so a build talking to
+  /// an older kernel gets a short one.
+  /// </param>
+  private static byte[] Socket(
+    uint inode,
+    byte state = 1,
+    int infoLength = _TcpInfoLength,
+    ulong bytesSent = 0,
+    ulong bytesReceived = 0,
+    uint segmentsOut = 0,
+    uint segmentsIn = 0,
+    uint totalRetransmits = 0,
+    uint roundTripTime = 0
+  ) {
+    var attribute = infoLength < 0 ? 0 : 4 + ((infoLength + 3) & ~3);
+    var body = new byte[72 + attribute];
+    body[1] = state;
+    BitConverter.TryWriteBytes(body.AsSpan(68), inode);
+    if (infoLength < 0)
+      return body;
+
+    BitConverter.TryWriteBytes(body.AsSpan(72), (ushort)(4 + infoLength));
+    BitConverter.TryWriteBytes(body.AsSpan(74), (ushort)2);        // INET_DIAG_INFO
+    var info = body.AsSpan(76, infoLength);
+    Write64(info, _BytesSent, bytesSent);
+    Write64(info, _BytesReceived, bytesReceived);
+    Write32(info, _SegmentsOut, segmentsOut);
+    Write32(info, _SegmentsIn, segmentsIn);
+    Write32(info, _TotalRetransmits, totalRetransmits);
+    Write32(info, _RoundTripTime, roundTripTime);
+    return body;
+
+    static void Write32(Span<byte> into, int offset, uint value) {
+      if (into.Length >= offset + 4)
+        BitConverter.TryWriteBytes(into[offset..], value);
+    }
+
+    static void Write64(Span<byte> into, int offset, ulong value) {
+      if (into.Length >= offset + 8)
+        BitConverter.TryWriteBytes(into[offset..], value);
+    }
+  }
+
+  private static byte[] Datagram(params byte[][] messages) {
+    var total = 0;
+    foreach (var message in messages)
+      total += message.Length;
+
+    var buffer = new byte[total];
+    var offset = 0;
+    foreach (var message in messages) {
+      message.CopyTo(buffer.AsSpan(offset));
+      offset += message.Length;
+    }
+
+    return buffer;
+  }
+
+  private static Dictionary<ulong, SocketStatistics> Parse(byte[] datagram, out bool finished) {
+    var into = new Dictionary<ulong, SocketStatistics>();
+    Assert.That(InetDiagParser.Parse(datagram, into, out finished, out var error), Is.True);
+    Assert.That(error, Is.Zero);
+    return into;
+  }
+
+  /// <summary>
+  /// The request is what the kernel rejects or answers, and every byte of it has to be in the right
+  /// place: a wrong family or an unset state mask comes back as EINVAL rather than as no sockets.
+  /// </summary>
+  [Test]
+  public void TheRequestIsTheShapeTheKernelExpects() {
+    Span<byte> request = stackalloc byte[InetDiagParser.RequestLength];
+    var written = InetDiagParser.BuildRequest(request, 2, 6, InetDiagParser.ExtensionInfo, InetDiagParser.AllStates, 7);
+
+    Assert.That(written, Is.EqualTo(72), "sixteen bytes of netlink header and fifty-six of inet_diag_req_v2");
+    Assert.That(BitConverter.ToUInt32(request[..4]), Is.EqualTo(72u), "the length the kernel reads first");
+    Assert.That(BitConverter.ToUInt16(request.Slice(4, 2)), Is.EqualTo(InetDiagParser.SockDiagByFamily));
+    Assert.That(BitConverter.ToUInt16(request.Slice(6, 2)), Is.EqualTo(0x301), "request and dump");
+    Assert.That(BitConverter.ToUInt32(request.Slice(8, 4)), Is.EqualTo(7u), "the sequence, echoed back");
+    Assert.That(request[16], Is.EqualTo(2), "AF_INET");
+    Assert.That(request[17], Is.EqualTo(6), "IPPROTO_TCP");
+    Assert.That(request[18], Is.EqualTo(2), "the extension bitmask asks for attribute 2 by setting bit 1");
+    Assert.That(BitConverter.ToUInt32(request.Slice(20, 4)), Is.EqualTo(0xFFFEu), "every state, and never bit 0");
+  }
+
+  /// <summary>
+  /// The four figures <c>/proc/net/tcp</c> has no column for. These are the whole reason for opening
+  /// a netlink socket at all.
+  /// </summary>
+  [Test]
+  public void AConnectionCarriesItsBytesSegmentsAndRoundTripTime() {
+    var sockets = Parse(
+      Datagram(
+        Message(_Answer, Socket(
+          inode: 4242,
+          bytesSent: 43_985_955,
+          bytesReceived: 177_498,
+          segmentsOut: 31_099,
+          segmentsIn: 7_266,
+          totalRetransmits: 60,
+          roundTripTime: 55_776
+        )),
+        Message(_Done, [])
+      ),
+      out var finished
+    );
+
+    Assert.That(finished, Is.True);
+    var statistics = sockets[4242];
+    Assert.That(statistics.BytesSent.Value, Is.EqualTo(43_985_955ul));
+    Assert.That(statistics.BytesReceived.Value, Is.EqualTo(177_498ul));
+    Assert.That(statistics.PacketsSent.Value, Is.EqualTo(31_099ul));
+    Assert.That(statistics.PacketsReceived.Value, Is.EqualTo(7_266ul));
+    Assert.That(statistics.TotalRetransmits.Value, Is.EqualTo(60ul));
+    Assert.That(statistics.RoundTripTimeMicroseconds.Value, Is.EqualTo(55_776ul));
+  }
+
+  /// <summary>
+  /// A listening socket's <c>tcp_info</c> is a block of zeros the kernel never wrote to.
+  /// </summary>
+  /// <remarks>
+  /// <c>tcp_get_info</c> clears the structure, fills in the four fields that mean anything for a
+  /// listener — none of which is read here — and returns. Passing the rest on would say a listening
+  /// socket has moved no bytes, sent no segments, never retransmitted and has a round-trip time of
+  /// nought, about something nobody measured. It is the same trap the queue columns of
+  /// <c>/proc/net/tcp</c> set (PRD §72.3).
+  /// </remarks>
+  [Test]
+  public void AListeningSocketsStatisticsAreZerosAndNotReadings() {
+    var sockets = Parse(Datagram(Message(_Answer, Socket(inode: 99, state: 10))), out _);
+
+    var statistics = sockets[99];
+    Assert.That(statistics.HasAny, Is.False);
+    Assert.That(statistics.BytesSent.Reason, Is.EqualTo(UnknownReason.NotSupportedOnPlatform));
+    Assert.That(statistics.RoundTripTimeMicroseconds.HasValue, Is.False);
+    Assert.That(statistics.TotalRetransmits.HasValue, Is.False);
+  }
+
+  /// <summary>
+  /// A round-trip time of zero is a connection that has never measured one, not a connection with no
+  /// latency.
+  /// </summary>
+  /// <remarks>
+  /// The kernel starts the smoothed figure at zero and clamps every sample it takes to at least a
+  /// microsecond, so anything that has measured anything reports at least 1. A socket still in
+  /// <c>SYN_SENT</c> is the ordinary way to see the zero, and reporting it as a latency would make
+  /// the connection that has not connected yet the fastest one on the machine.
+  /// </remarks>
+  [Test]
+  public void AnUnmeasuredRoundTripTimeIsNotZeroLatency() {
+    var sockets = Parse(Datagram(Message(_Answer, Socket(inode: 5, state: 2, bytesSent: 1, roundTripTime: 0))), out _);
+
+    var statistics = sockets[5];
+    Assert.That(statistics.RoundTripTimeMicroseconds.HasValue, Is.False);
+    Assert.That(statistics.RoundTripTimeMicroseconds.Reason, Is.EqualTo(UnknownReason.NotSampledYet));
+    // And the rest of the structure is still read: only the latency was missing.
+    Assert.That(statistics.BytesSent.Value, Is.EqualTo(1ul));
+  }
+
+  /// <summary>
+  /// <c>tcp_info</c> grows with every kernel release, and a field past the end of what arrived is a
+  /// field this kernel does not have — not a zero.
+  /// </summary>
+  /// <remarks>
+  /// It was 240 bytes a few releases ago and is 280 now. A kernel without <c>tcpi_bytes_sent</c> has
+  /// not said the connection sent nothing; it has said nothing at all, and the two must not render
+  /// the same (PRD §72.3).
+  /// </remarks>
+  [Test]
+  public void AnOlderKernelsShorterStructureIsShortAndNotEmpty() {
+    // 144 bytes reaches segs_in and stops before notsent_bytes — and well before bytes_sent at 200.
+    var sockets = Parse(
+      Datagram(Message(_Answer, Socket(
+        inode: 11,
+        infoLength: 144,
+        bytesReceived: 4096,
+        segmentsOut: 9,
+        segmentsIn: 11,
+        roundTripTime: 158
+      ))),
+      out _
+    );
+
+    var statistics = sockets[11];
+    Assert.That(statistics.BytesReceived.Value, Is.EqualTo(4096ul), "at 128, inside what arrived");
+    Assert.That(statistics.PacketsSent.Value, Is.EqualTo(9ul));
+    Assert.That(statistics.PacketsReceived.Value, Is.EqualTo(11ul));
+    Assert.That(statistics.RoundTripTimeMicroseconds.Value, Is.EqualTo(158ul));
+    Assert.That(statistics.BytesSent.HasValue, Is.False, "at 200, past the end of this kernel's structure");
+    Assert.That(statistics.BytesSent.Reason, Is.EqualTo(UnknownReason.NotSupportedOnPlatform));
+  }
+
+  /// <summary>
+  /// A reply with no <c>tcp_info</c> on it is the ordinary answer for a datagram socket, and it says
+  /// so rather than reporting a connection that has moved nothing.
+  /// </summary>
+  [Test]
+  public void ASocketWithNoInfoAttachedIsUnknownAndNotEmpty() {
+    var sockets = Parse(Datagram(Message(_Answer, Socket(inode: 21, infoLength: -1))), out _);
+
+    Assert.That(sockets[21].HasAny, Is.False);
+    Assert.That(sockets[21], Is.EqualTo(SocketStatistics.NotSupported));
+  }
+
+  /// <summary>
+  /// An inode of zero is no inode: no descriptor refers to the socket, so nothing can join it to a
+  /// process, and several such sockets in one dump would all land on the same key.
+  /// </summary>
+  [Test]
+  public void ASocketWithNoInodeIsNotKeyedOnZero() {
+    var sockets = Parse(
+      Datagram(Message(_Answer, Socket(inode: 0, bytesSent: 5)), Message(_Answer, Socket(inode: 0, bytesSent: 9))),
+      out _
+    );
+
+    Assert.That(sockets, Is.Empty);
+  }
+
+  /// <summary>The kernel's own end-of-dump marker, which is what stops the read loop.</summary>
+  [Test]
+  public void ADumpEndsWhenTheKernelSaysItHas() {
+    Parse(Datagram(Message(_Answer, Socket(inode: 1))), out var unfinished);
+    Assert.That(unfinished, Is.False, "more datagrams to come");
+
+    Parse(Datagram(Message(_Done, [])), out var finished);
+    Assert.That(finished, Is.True);
+  }
+
+  /// <summary>
+  /// An error where an answer was expected. The payload is a negated errno, and it ends the dump
+  /// just as firmly as a done does.
+  /// </summary>
+  [Test]
+  public void AnErrorIsReportedRatherThanReadAsASocket() {
+    var body = new byte[4];
+    BitConverter.TryWriteBytes(body.AsSpan(), -1);        // -EPERM, the way netlink writes it
+    var into = new Dictionary<ulong, SocketStatistics>();
+
+    Assert.That(InetDiagParser.Parse(Message(_Error, body), into, out var finished, out var code), Is.False);
+    Assert.That(finished, Is.True);
+    Assert.That(code, Is.EqualTo(1));
+    Assert.That(into, Is.Empty);
+  }
+
+  /// <summary>
+  /// A datagram cut short is not walked past its end. A length longer than what arrived would
+  /// otherwise send the walk on to read a message header out of the middle of somebody's payload.
+  /// </summary>
+  [Test]
+  public void ATruncatedDatagramStopsRatherThanReadingPastIt() {
+    var first = Message(_Answer, Socket(inode: 3, bytesSent: 77));
+    var whole = Datagram(first, Message(_Answer, Socket(inode: 4, bytesSent: 88)), Message(_Done, []));
+
+    // Cut inside the second message, so its header is readable and claims more than arrived. That is
+    // the case the length check exists for: walking on from it would read the next header out of the
+    // middle of this one's payload.
+    var sockets = Parse(whole.AsSpan(0, first.Length + 100).ToArray(), out var finished);
+
+    Assert.That(finished, Is.False, "the done marker was in the part that did not arrive");
+    Assert.That(sockets[3].BytesSent.Value, Is.EqualTo(77ul), "the message that did arrive whole is still read");
+    Assert.That(sockets.ContainsKey(4), Is.False, "and the one that did not is not half-read");
+  }
+
+  #endregion
+
+  #region the owning service
+
+  /// <summary>
+  /// A systemd unit is a cgroup, so the unit a socket's holder belongs to is read off its cgroup
+  /// path and nowhere else.
+  /// </summary>
+  [Test]
+  public void AUnitIsReadOffTheCgroupPath() {
+    Assert.That(CgroupUnit.Of("/system.slice/sshd.service"), Is.EqualTo("sshd.service"));
+    Assert.That(CgroupUnit.Of("/system.slice/system-getty.slice/getty@tty1.service"), Is.EqualTo("getty@tty1.service"));
+    Assert.That(CgroupUnit.Of("/user.slice/user-1000.slice/session-2.scope"), Is.EqualTo("session-2.scope"));
+    Assert.That(CgroupUnit.Of("/system.slice/sshd.socket"), Is.EqualTo("sshd.socket"));
+  }
+
+  /// <summary>
+  /// The innermost unit wins. A desktop application sits inside its user's session manager, which is
+  /// itself a unit — naming the outer one would report every program a user has started as belonging
+  /// to the manager that started it.
+  /// </summary>
+  [Test]
+  public void TheInnermostUnitIsTheOwner() {
+    Assert.That(
+      CgroupUnit.Of("/user.slice/user-1000.slice/user@1000.service/app.slice/app-firefox.scope"),
+      Is.EqualTo("app-firefox.scope")
+    );
+  }
+
+  /// <summary>
+  /// A slice holds no processes of its own — it only groups other units — so reporting one as the
+  /// owner of a socket would name a container rather than an owner. A path with no unit in it says
+  /// so rather than picking the nearest thing that looks like one.
+  /// </summary>
+  [Test]
+  public void ACgroupThatIsNotAUnitHasNoOwningService() {
+    Assert.That(CgroupUnit.Of("/system.slice"), Is.Null);
+    Assert.That(CgroupUnit.Of("/user.slice/user-1000.slice"), Is.Null);
+    Assert.That(CgroupUnit.Of("/"), Is.Null);
+    Assert.That(CgroupUnit.Of(""), Is.Null);
+    Assert.That(CgroupUnit.Of(null), Is.Null);
+    Assert.That(CgroupUnit.Of("/docker/3f2a9b8c1d4e"), Is.Null, "a container runtime's layout is not systemd's");
+  }
+
+  #endregion
+
+  #region live sockets
+
+  /// <summary>
+  /// The whole path against a connection this test made itself, so the expected answer is arranged
+  /// rather than guessed at (PRD §9).
+  /// </summary>
+  /// <remarks>
+  /// Linux only, and skipped elsewhere rather than failed: there is no <c>NETLINK_SOCK_DIAG</c> to
+  /// open on the other two legs. A kernel built without the diagnostics, or a sandbox that refuses
+  /// the netlink family, is also a skip — the point of the test is the arithmetic on the reply, and
+  /// there is no reply to do arithmetic on.
+  /// </remarks>
+  [Test]
+  public void AnArrangedConnectionReportsTheBytesItWasGiven() {
+    // Split rather than guarded in place: the analyzer reads an `if` on the platform as a guard and
+    // does not know that Assert.Ignore never returns, so the body has to sit behind one.
+    if (!OperatingSystem.IsLinux()) {
+      Assert.Ignore("the socket diagnostics are a Linux netlink family");
+      return;
+    }
+
+    ArrangeAConnectionAndReadItBack();
+  }
+
+  [System.Runtime.Versioning.SupportedOSPlatform("linux")]
+  private static void ArrangeAConnectionAndReadItBack() {
+    const int Payload = 200_000;
+    using var listener = new System.Net.Sockets.Socket(
+      System.Net.Sockets.AddressFamily.InterNetwork,
+      System.Net.Sockets.SocketType.Stream,
+      System.Net.Sockets.ProtocolType.Tcp
+    );
+
+    listener.Bind(new System.Net.IPEndPoint(System.Net.IPAddress.Loopback, 0));
+    listener.Listen(1);
+    using var client = new System.Net.Sockets.Socket(
+      System.Net.Sockets.AddressFamily.InterNetwork,
+      System.Net.Sockets.SocketType.Stream,
+      System.Net.Sockets.ProtocolType.Tcp
+    );
+
+    client.Connect(listener.LocalEndPoint!);
+    using var accepted = listener.Accept();
+    client.Send(new byte[Payload]);
+
+    // Read it all, so that the bytes are not merely queued: the counter this checks is what the
+    // connection put on the wire, and a send that is still sitting in a buffer has not.
+    var drained = 0;
+    var buffer = new byte[65536];
+    while (drained < Payload)
+      drained += accepted.Receive(buffer);
+
+    var statistics = new Dictionary<ulong, SocketStatistics>();
+    if (!Platform.Linux.InetDiagReader.TryRead(statistics, out var reason))
+      Assert.Ignore($"this kernel would not answer the socket diagnostics: {reason}");
+
+    var inode = InodeOf(client);
+    Assert.That(statistics.ContainsKey(inode), Is.True, "the dump did not describe the socket this test opened");
+
+    var arranged = statistics[inode];
+    Assert.That(arranged.BytesSent.Value, Is.EqualTo((ulong)Payload));
+    Assert.That(arranged.BytesReceived.Value, Is.Zero, "the peer sent nothing back");
+    Assert.That(arranged.PacketsSent.Value, Is.GreaterThan(0ul));
+    Assert.That(arranged.RoundTripTimeMicroseconds.HasValue, Is.True, "a loopback round trip is still a round trip");
+  }
+
+  /// <summary>
+  /// The inode behind a socket, through the same <c>socket:[n]</c> link the probe joins on.
+  /// </summary>
+  [System.Runtime.Versioning.SupportedOSPlatform("linux")]
+  private static ulong InodeOf(System.Net.Sockets.Socket socket) {
+    var target = File.ResolveLinkTarget($"/proc/self/fd/{socket.Handle}", returnFinalTarget: false)?.Name
+      ?? throw new InvalidOperationException("the descriptor has no link to read");
+
+    Assert.That(ProcNetParser.TryParseSocketInode(target, out var inode), Is.True, $"unexpected link target {target}");
+    return inode;
   }
 
   #endregion
