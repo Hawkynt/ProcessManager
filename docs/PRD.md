@@ -2079,7 +2079,8 @@ Actions:
 
 # 41. Services view
 
-Read on Linux; unbuilt on Windows and macOS. Control — start, stop, enable — is unbuilt everywhere.
+Read on Linux; unbuilt on Windows and macOS. Control is written for systemd and reachable from the
+command line; neither front-end offers it as a menu item yet.
 
 Shared columns:
 
@@ -2105,7 +2106,9 @@ launchd-specific:
 
 Actions:
 
-- [ ] Start · stop · restart · pause/continue where native · enable · disable · reload
+- [ ] 🟡 Start · stop · restart · enable · disable · reload — from `--service`, through systemctl and
+      whatever polkit decides; no menu item in either front-end yet, and pause/continue is not a
+      thing systemd offers
 - [ ] Open configuration · reveal executable · go to process · properties · copy ·
       inspect dependencies
 - [ ] Creating and editing services — deferred to a later release

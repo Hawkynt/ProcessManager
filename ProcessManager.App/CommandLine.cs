@@ -7,7 +7,7 @@ using Hawkynt.ProcessManager.Ui.Terminal;
 namespace Hawkynt.ProcessManager.App;
 
 /// <summary>Which face of the program the arguments asked for.</summary>
-internal enum RunMode : byte { Desktop, Terminal, List, Find, Kill, EndTask, Restart, Scheduling, Signal, ResourceLimit, OutOfMemory, Freezer, SelfTest, HelperCheck, Help, HelpFields, Host, Startup, Users, Services, Connections, Limits, Run, Version }
+internal enum RunMode : byte { Desktop, Terminal, List, Find, Kill, EndTask, Restart, Scheduling, Signal, ResourceLimit, OutOfMemory, Freezer, SelfTest, HelperCheck, Help, HelpFields, Host, Startup, Users, Services, ServiceControl, Connections, Limits, Run, Version }
 
 /// <summary>
 /// Which sockets <c>--connections</c> lists.
@@ -90,6 +90,12 @@ internal sealed record CommandLineOptions {
 
   /// <summary>A filter in the query language of PRD §56, applied to --list and the two UIs.</summary>
   public string? Filter { get; init; }
+
+  /// <summary>What to do to a unit, and which one, for <c>--service</c> (PRD §41).</summary>
+  public string? ServiceVerb { get; init; }
+
+  /// <summary>The unit <c>--service</c> names.</summary>
+  public string? ServiceUnit { get; init; }
 
   /// <summary>Which sockets --connections lists (PRD §40).</summary>
   public ConnectionScope ConnectionScope { get; init; } = ConnectionScope.Internet;
@@ -812,6 +818,20 @@ internal sealed record CommandLineOptions {
           options = options with { Mode = RunMode.Services };
           explicitMode = true;
           break;
+        case "--service":
+          // Two words: what to do, and to which unit. Both required, because a verb with no unit and
+          // a unit with no verb are each a way of asking for something nobody meant.
+          if (i + 2 >= args.Length)
+            return options with { Error = "--service needs a command and a unit: --service restart nginx.service" };
+
+          options = options with {
+            Mode = RunMode.ServiceControl,
+            ServiceVerb = args[++i],
+            ServiceUnit = args[++i],
+          };
+
+          explicitMode = true;
+          break;
 
         case "--connections": {
           // The value is only read inline. Taking the next argument instead would make a bare
@@ -954,6 +974,7 @@ internal sealed record CommandLineOptions {
       procman --startup              what is configured to start when you log in
       procman --users                who is logged in, and what their processes cost
       procman --services             which services exist and which are running
+      procman --service <cmd> <unit> start, stop, restart, reload, enable or disable a unit
       procman --connections[=what]   every socket and who owns it: inet (default), unix or all
       procman --help-fields          every field that can be sorted, filtered or shown
       procman --kill <pid> [--tree]  end a process, optionally with its descendants
