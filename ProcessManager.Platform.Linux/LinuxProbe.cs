@@ -408,6 +408,120 @@ public sealed class LinuxProbe : ISystemProbe {
     return null;
   }
 
+  /// <summary>
+  /// What the running program actually is (PRD §14).
+  /// </summary>
+  /// <remarks>
+  /// The executable is read through <c>/proc/[pid]/exe</c> rather than through the path it reports.
+  /// The two differ exactly when it matters: a program whose binary was replaced or deleted while it
+  /// ran still has a readable <c>exe</c> link to the old inode, and the path on disk now names
+  /// something else or nothing.
+  /// </remarks>
+  public ImageInfo? DescribeImage(ProcessKey key) {
+    var directory = Path.Combine(this._options.ProcRoot, key.Pid.ToString(System.Globalization.CultureInfo.InvariantCulture));
+    if (!Directory.Exists(directory))
+      return null;
+
+    var executable = Path.Combine(directory, "exe");
+    var path = TryLink(executable);
+    var header = ReadImageHeader(executable);
+    var size = Counter.NotPermitted;
+    DateTime? modified = null;
+
+    try {
+      // The resolved target, not the /proc link. Asking the link its length gives nought — it is a
+      // symlink, and its own size is not the executable's — which is how this first reported every
+      // program as being no bytes long.
+      var info = path is { Length: > 0 } ? new FileInfo(path) : null;
+      if (info is { Exists: true }) {
+        size = Counter.Of((ulong)Math.Max(0, info.Length));
+        modified = info.LastWriteTimeUtc;
+      }
+    } catch (IOException) {
+    } catch (UnauthorizedAccessException) {
+    }
+
+    return new(
+      path,
+      header?.Architecture,
+      header is not null,
+      header?.Bits ?? 0,
+      header?.IsPositionIndependent,
+      header?.Interpreter,
+      size,
+      modified,
+      TryLink(Path.Combine(directory, "cwd")),
+      ReadNamespaces(Path.Combine(directory, "ns"))
+    );
+  }
+
+  /// <summary>
+  /// The first page of an executable, which is all the header and the program headers need.
+  /// </summary>
+  /// <remarks>
+  /// Every linker in use puts the program headers immediately after the sixty-four byte header, so
+  /// a page reaches them. A file that needs more is one this reports no interpreter for, which is
+  /// the same answer a static binary gets — worth knowing, and better than reading a megabyte of
+  /// somebody's executable to be sure.
+  /// </remarks>
+  private static Query.ElfHeader.Image? ReadImageHeader(string path) {
+    try {
+      using var file = File.OpenRead(path);
+      Span<byte> bytes = stackalloc byte[4096];
+      var read = file.Read(bytes);
+      return read <= 0 ? null : Query.ElfHeader.Read(bytes[..read]);
+    } catch (IOException) {
+      return null;
+    } catch (UnauthorizedAccessException) {
+      return null;
+    }
+  }
+
+  /// <summary>
+  /// The namespaces a process is in, by kind and inode.
+  /// </summary>
+  /// <remarks>
+  /// The inode is the identity: two processes sharing one share that namespace, which is how a
+  /// container's members are actually told apart — rather than by a cgroup path, which anybody can
+  /// write anything into.
+  /// </remarks>
+  private static IReadOnlyList<KeyValuePair<string, string>> ReadNamespaces(string directory) {
+    if (!Directory.Exists(directory))
+      return [];
+
+    var found = new List<KeyValuePair<string, string>>();
+    try {
+      foreach (var entry in Directory.EnumerateFiles(directory)) {
+        if (TryLink(entry) is not { Length: > 0 } target)
+          continue;
+
+        // "mnt:[4026531832]" — the kind is already in the link, so the inode alone is what is worth
+        // keeping beside a name we already have from the file.
+        var open = target.IndexOf('[');
+        var close = target.IndexOf(']');
+        found.Add(new(
+          Path.GetFileName(entry),
+          open >= 0 && close > open ? target[(open + 1)..close] : target
+        ));
+      }
+    } catch (IOException) {
+    } catch (UnauthorizedAccessException) {
+    }
+
+    found.Sort(static (a, b) => string.CompareOrdinal(a.Key, b.Key));
+    return found;
+  }
+
+  private static string? TryLink(string path) {
+    try {
+      return File.ResolveLinkTarget(path, returnFinalTarget: false)?.FullName;
+    } catch (IOException) {
+      return null;
+    } catch (UnauthorizedAccessException) {
+      return null;
+    }
+  }
+
   /// <summary>The desktop's windows, if this session has a desktop willing to say (PRD §39).</summary>
   public WindowList GetWindows() => X11Windows.Enumerate();
 
