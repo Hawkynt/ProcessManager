@@ -335,6 +335,8 @@ public sealed class ScaleTests {
           Counter.NotSupported,
           null,
           null,
+          null,
+          FileNodeType.Unknown,
           null
         );
 
@@ -423,6 +425,8 @@ public sealed class ScaleTests {
         Counter.NotSupported,
         null,
         null,
+        null,
+        FileNodeType.Unknown,
         null
       );
 

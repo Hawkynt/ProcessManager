@@ -103,7 +103,9 @@ public sealed class ResourceSearchTests {
       MountId: Counter.NotSampledYet,
       Device: null,
       FileSystem: null,
-      Detail: null
+      Detail: null,
+      NodeType: FileNodeType.Unknown,
+      NodeDevice: null
     )];
     probe.Modules[100] = [new(
       Path: "/usr/lib/libssl.so.3",
@@ -126,7 +128,9 @@ public sealed class ResourceSearchTests {
       Interpreter: null,
       Mitigations: ImageMitigations.None,
       BuildId: null,
-      LoadReason: ModuleLoadReason.Unknown
+      LoadReason: ModuleLoadReason.Unknown,
+      LoadCount: 1,
+      Runtime: ModuleRuntime.Unknown
     )];
     probe.Connections[100] = [
       new(
@@ -149,7 +153,8 @@ public sealed class ResourceSearchTests {
         Rate.NotSampledYet,
         Rate.NotSampledYet,
         null,
-        null
+        null,
+        Counter.NotSupported
       ),
     ];
     probe.Services.Add(new("systemd-journald.service", "Journal Service", ServiceState.Running, true, false, 300, null, "/x", null));

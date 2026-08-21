@@ -31,8 +31,14 @@ namespace Hawkynt.ProcessManager.Query;
 public static class ModuleGraph {
 
   /// <summary>
-  /// Fills in <see cref="ModuleRecord.LoadReason"/> for a whole modules list.
+  /// Fills in <see cref="ModuleRecord.LoadReason"/> and <see cref="ModuleRecord.LoadCount"/> for a
+  /// whole modules list.
   /// </summary>
+  /// <remarks>
+  /// Both in one pass, because both are statements about the list rather than about a row: a load
+  /// reason is which <em>other</em> rows name this one, and a load count is how many rows name the
+  /// same file.
+  /// </remarks>
   /// <param name="modules">The rows, in the order <see cref="MapsParser"/> produced them.</param>
   /// <param name="descriptions">
   /// What each row's file declared, one per row and in the same order. A row whose file could not be
@@ -69,8 +75,18 @@ public static class ModuleGraph {
         into.Add(needed[n]);
     }
 
+    // How many rows name each file. The map parser folds a library's consecutive mappings into one
+    // row and starts a new one where they are not consecutive, so a second row for a path is a
+    // second load of that file rather than a second segment of the first (PRD §31).
+    var loads = new Dictionary<string, int>(StringComparer.Ordinal);
     for (var i = 0; i < modules.Count; ++i)
-      modules[i] = modules[i] with { LoadReason = Reason(modules[i], descriptions[i]) };
+      loads[modules[i].Path] = loads.GetValueOrDefault(modules[i].Path) + 1;
+
+    for (var i = 0; i < modules.Count; ++i)
+      modules[i] = modules[i] with {
+        LoadReason = Reason(modules[i], descriptions[i]),
+        LoadCount = loads[modules[i].Path],
+      };
 
     ModuleLoadReason Reason(in ModuleRecord module, in ElfImage.Description description) {
       if (image >= 0 && string.Equals(module.Path, modules[image].Path, StringComparison.Ordinal))

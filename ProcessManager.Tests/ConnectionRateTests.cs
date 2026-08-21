@@ -37,7 +37,8 @@ public sealed class ConnectionRateTests {
     Rate.NotSampledYet,
     Rate.NotSampledYet,
     null,
-    null
+    null,
+    Counter.NotSupported
   );
 
   private static ConnectionRecord Socket(ulong inode, ulong sent, ulong received)

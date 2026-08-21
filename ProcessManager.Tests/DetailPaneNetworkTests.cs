@@ -75,7 +75,8 @@ public sealed class DetailPaneNetworkTests {
     Rate.NotSampledYet,
     Rate.NotSampledYet,
     "sshd.service",
-    "/system.slice/sshd.service"
+    "/system.slice/sshd.service",
+    Counter.NotSupported
   );
 
   /// <summary>

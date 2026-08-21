@@ -344,7 +344,152 @@ public sealed class ElfImageTests {
         Architecture.X86 => "x86",
         _ => description.Architecture,
       }));
+
+      // A shared object is ET_DYN by definition, which is what §31's ASLR box asks about — held
+      // here against a file the toolchain produced rather than against one this file assembled.
+      Assert.That(description.Mitigations.HasFlag(ImageMitigations.Read), Is.True);
+      Assert.That(description.Mitigations.HasFlag(ImageMitigations.PositionIndependent), Is.True);
+      Assert.That(description.Runtime, Is.EqualTo(ModuleRuntime.Native));
+
+      // Every distribution builds its C library with --build-id, and the note is twenty bytes of
+      // SHA-1 by default. Compare against `readelf -n` on the same file.
+      Assert.That(description.BuildId, Is.Not.Null);
+      Assert.That(description.BuildId!.Length % 2, Is.Zero);
+      Assert.That(description.BuildId, Does.Match("^[0-9a-f]+$"));
+
+      // libc names other libraries and is named by them, so an empty list would mean the dynamic
+      // section was not walked rather than that it depends on nothing.
+      Assert.That(description.Needed, Is.Not.Null);
     });
+  }
+
+  #region what the file asks the kernel for (PRD §31 — ASLR, CFG)
+
+  /// <summary>
+  /// §31's ASLR box. An <c>ET_DYN</c> image is the one the kernel is free to place where it likes,
+  /// and an <c>ET_EXEC</c> one names its own addresses and is put where it says.
+  /// </summary>
+  [Test]
+  public void PositionIndependenceIsWhatMakesRandomisationPossible() {
+    var pie = Describe(BuildHardened(is64: true, executableStack: false, relro: true, bindNow: true, aarch64: false));
+    Assert.That(pie.Mitigations.HasFlag(ImageMitigations.PositionIndependent), Is.True);
+
+    // The same reader over a fixed-address executable. Its type is the only thing that changed.
+    var fixedAddress = Build(is64: true, isLittleEndian: true, machine: 62, type: 2, entry: 0x401000);
+    Assert.That(
+      Describe(fixedAddress).Mitigations.HasFlag(ImageMitigations.PositionIndependent),
+      Is.False,
+      "an ET_EXEC image is loaded where it says it goes"
+    );
+  }
+
+  /// <summary>
+  /// The mitigation word must never be read as "this image asks for nothing" when nobody read it.
+  /// </summary>
+  [Test]
+  public void AnUnreadImageAsksForNothingAndSaysSoDifferently() {
+    Assert.Multiple(() => {
+      Assert.That(ElfImage.Unread.Mitigations.HasFlag(ImageMitigations.Read), Is.False);
+      Assert.That(Humanize.Mitigations(ElfImage.Unread.Mitigations), Is.EqualTo(Humanize.Placeholder(UnknownReason.NotSampledYet)));
+
+      // And a file that was read and asks for nothing is a finding, which renders as one.
+      var bare = Build(is64: true, isLittleEndian: true, machine: 62, type: 2, entry: 0x401000);
+      var read = Describe(bare).Mitigations;
+      Assert.That(read.HasFlag(ImageMitigations.Read), Is.True);
+      Assert.That(Humanize.Mitigations(read), Is.Not.EqualTo(Humanize.Placeholder(UnknownReason.NotSampledYet)));
+    });
+  }
+
+  /// <summary>
+  /// §31's CFG box: Linux's control-flow protection is Intel CET on x86 and BTI plus pointer
+  /// authentication on AArch64, and both are declared the same way — a feature word in a
+  /// <c>GNU_PROPERTY</c> note, whose bits mean "every object linked into this image had it".
+  /// </summary>
+  [Test]
+  public void ControlFlowProtectionIsReadFromTheProcessorFeatureNote() {
+    var x86 = Describe(BuildHardened(is64: true, executableStack: false, relro: true, bindNow: true, aarch64: false));
+    Assert.Multiple(() => {
+      Assert.That(x86.Mitigations.HasFlag(ImageMitigations.IndirectBranchTracking), Is.True);
+      Assert.That(x86.Mitigations.HasFlag(ImageMitigations.ShadowStack), Is.True);
+      Assert.That(Humanize.Mitigations(x86.Mitigations), Does.Contain("CET"));
+    });
+
+    var arm = Describe(BuildHardened(is64: true, executableStack: false, relro: true, bindNow: true, aarch64: true));
+    Assert.Multiple(() => {
+      Assert.That(arm.Mitigations.HasFlag(ImageMitigations.BranchTargetIdentification), Is.True);
+      Assert.That(arm.Mitigations.HasFlag(ImageMitigations.PointerAuthentication), Is.True);
+      Assert.That(Humanize.Mitigations(arm.Mitigations), Does.Contain("BTI"));
+      Assert.That(Humanize.Mitigations(arm.Mitigations), Does.Contain("PAC"));
+      // The x86 pair must not be reported off an AArch64 note: the two properties have different
+      // type numbers and the same bit values, so reading the bits without the type says CET.
+      Assert.That(arm.Mitigations.HasFlag(ImageMitigations.ShadowStack), Is.False);
+    });
+  }
+
+  /// <summary>
+  /// The property note's data is padded to the size of an address, which differs between the two
+  /// classes — so a 32-bit image walked with the 64-bit stride reads the next property as this one.
+  /// </summary>
+  [Test]
+  public void TheFeatureNoteIsWalkedWithTheRightStrideInBothClasses() {
+    var thirtyTwo = Describe(BuildHardened(is64: false, executableStack: false, relro: true, bindNow: true, aarch64: false));
+    Assert.That(thirtyTwo.Mitigations.HasFlag(ImageMitigations.IndirectBranchTracking), Is.True);
+    Assert.That(thirtyTwo.Mitigations.HasFlag(ImageMitigations.ShadowStack), Is.True);
+  }
+
+  /// <summary>
+  /// An executable stack is a finding, and a missing <c>PT_GNU_STACK</c> is neither answer — which
+  /// is why the two have a flag each instead of one flag between them.
+  /// </summary>
+  [Test]
+  public void AnExecutableStackIsNamedAndAMissingSegmentIsNeitherAnswer() {
+    var executable = Describe(BuildHardened(is64: true, executableStack: true, relro: false, bindNow: false, aarch64: false));
+    Assert.Multiple(() => {
+      Assert.That(executable.Mitigations.HasFlag(ImageMitigations.ExecutableStack), Is.True);
+      Assert.That(executable.Mitigations.HasFlag(ImageMitigations.NonExecutableStack), Is.False);
+      Assert.That(Humanize.Mitigations(executable.Mitigations), Does.Contain("X-STACK"));
+    });
+
+    // Build() writes no PT_GNU_STACK at all, which leaves the decision to the ABI.
+    var silent = Describe(Build(is64: true, isLittleEndian: true, machine: 62, type: 3, entry: 0x1000)).Mitigations;
+    Assert.Multiple(() => {
+      Assert.That(silent.HasFlag(ImageMitigations.ExecutableStack), Is.False);
+      Assert.That(silent.HasFlag(ImageMitigations.NonExecutableStack), Is.False);
+    });
+  }
+
+  /// <summary>
+  /// Full RELRO is the pair, and eager binding is asked for in three ways. A reader that knows only
+  /// the ancient <c>DT_BIND_NOW</c> reports half the binaries on a current machine as partial.
+  /// </summary>
+  [Test]
+  public void FullRelroNeedsBothHalvesAndBindNowHasThreeSpellings() {
+    var full = Describe(BuildHardened(is64: true, executableStack: false, relro: true, bindNow: true, aarch64: false));
+    Assert.That(Humanize.Mitigations(full.Mitigations), Does.Contain("RELRO+NOW"));
+
+    var partial = Describe(BuildHardened(is64: true, executableStack: false, relro: true, bindNow: false, aarch64: false));
+    Assert.That(Humanize.Mitigations(partial.Mitigations), Does.Contain("RELRO"));
+    Assert.That(Humanize.Mitigations(partial.Mitigations), Does.Not.Contain("RELRO+NOW"));
+  }
+
+  /// <summary>
+  /// The build identity, which is what a distribution's debug packages and crash reports are keyed
+  /// by — and which is absent from a binary built without it, as a fact about the build.
+  /// </summary>
+  [Test]
+  public void TheBuildIdentityIsReadFromItsNoteAndIsAbsentWhenThereIsNone() {
+    var built = Describe(BuildHardened(is64: true, executableStack: false, relro: true, bindNow: true, aarch64: false));
+    Assert.That(built.BuildId, Is.EqualTo("a0a1a2a3a4a5a6a7"));
+
+    // Build() writes no note segment at all.
+    Assert.That(Describe(Build(is64: true, isLittleEndian: true, machine: 62, type: 3, entry: 0x1000)).BuildId, Is.Null);
+  }
+
+  #endregion
+
+  private static ElfImage.Description Describe(byte[] image) {
+    Assert.That(ElfImage.TryDescribe(Over(image), out var description), Is.True);
+    return description;
   }
 
   /// <summary>The path of a mapped <c>libc</c>, straight out of this process's own map file.</summary>

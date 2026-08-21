@@ -159,7 +159,11 @@ public sealed class DescriptorTests {
         // travels beside the two fields it would have filled.
         null,
         null,
-        info.Detail
+        info.Detail,
+        // The recording is a directory of files and not a live /proc, so there is no descriptor to
+        // stat: the kernel's own answer is absent rather than nought (PRD §72.3).
+        FileNodeType.Unknown,
+        null
       ));
     }
 

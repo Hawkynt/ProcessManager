@@ -214,7 +214,12 @@ public static class MapsParser {
             Interpreter: null,
             Mitigations: ImageMitigations.None,
             BuildId: null,
-            LoadReason: ModuleLoadReason.Unknown
+            LoadReason: ModuleLoadReason.Unknown,
+            // Zero rather than one: how many times a file is loaded is a fact about the whole list
+            // and this row is being added to it. ModuleGraph fills it once the list is complete,
+            // and a nought that survives says that pass never ran (PRD §31, §72.3).
+            LoadCount: 0,
+            Runtime: ModuleRuntime.Unknown
           ));
         }
 

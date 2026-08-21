@@ -1,8 +1,10 @@
+using System.IO.Pipes;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using Hawkynt.ProcessManager.Model;
 using Hawkynt.ProcessManager.Platform.Linux;
+using Hawkynt.ProcessManager.Query;
 
 namespace Hawkynt.ProcessManager.Tests;
 
@@ -170,6 +172,20 @@ public sealed partial class LinuxDetailTests {
   [System.Runtime.InteropServices.LibraryImport("libc", EntryPoint = "lseek", SetLastError = true)]
   private static partial long Seek(int fd, long offset, int whence);
 
+  /// <summary>
+  /// <c>open</c>, for the one descriptor the managed API will not make: a directory.
+  /// </summary>
+  /// <remarks>
+  /// .NET refuses to open a directory as a stream, and a directory descriptor is exactly what the
+  /// classifier had to guess about before the kernel was asked — so the test that proves it no
+  /// longer guesses has to make one the way a file manager does.
+  /// </remarks>
+  [System.Runtime.InteropServices.LibraryImport("libc", EntryPoint = "open", SetLastError = true, StringMarshalling = System.Runtime.InteropServices.StringMarshalling.Utf8)]
+  private static partial int OpenPath(string path, int flags);
+
+  [System.Runtime.InteropServices.LibraryImport("libc", EntryPoint = "close")]
+  private static partial int ClosePath(int fd);
+
   [Test]
   public void AnOpenFileIsReportedWithItsPositionAndAccess() {
     var path = Path.Combine(Path.GetTempPath(), $"pm-descriptor-{Environment.ProcessId}.bin");
@@ -248,6 +264,222 @@ public sealed partial class LinuxDetailTests {
     foreach (var handle in handles)
       if (handle.Name is not null)
         Assert.That(handle.Kind, Is.Not.EqualTo(HandleKind.Unknown), handle.Name);
+  }
+
+  #region what the kernel says a descriptor points at (PRD §32 — file type, device)
+
+  /// <summary>
+  /// The file type, against the seven the kernel actually reports — including the one that is not a
+  /// type at all.
+  /// </summary>
+  /// <remarks>
+  /// Every kind is opened here rather than looked for in whatever the runtime happens to hold,
+  /// because the interesting one is the anonymous inode: an eventfd's <c>st_mode</c> is <c>0600</c>
+  /// with the type bits clear, and a reader that maps that nought onto a POSIX type files every
+  /// event descriptor on the machine under something it is not (PRD §72.3).
+  /// </remarks>
+  [Test]
+  public void EveryKindOfNodeIsReportedAsTheKernelsOwnStatWouldReportIt() {
+    var path = Path.Combine(Path.GetTempPath(), $"pm-nodes-{Environment.ProcessId}.bin");
+    File.WriteAllBytes(path, new byte[8]);
+    var fifo = Path.Combine(Path.GetTempPath(), $"pm-fifo-{Environment.ProcessId}");
+    try {
+      using var file = File.OpenRead(path);
+      using var device = File.OpenRead("/dev/null");
+      // O_RDONLY | O_DIRECTORY, as the kernel numbers them on every architecture this builds for.
+      var directory = OpenPath(Path.GetTempPath(), 0x10000);
+      var pipe = new AnonymousPipeServerStream();
+      using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+
+      using var probe = Probe();
+      var byFd = probe.GetHandles(Self).ToDictionary(h => h.Handle);
+
+      Assert.Multiple(() => {
+        Assert.That(Node(byFd, file).NodeType, Is.EqualTo(FileNodeType.Regular));
+        Assert.That(Node(byFd, directory).NodeType, Is.EqualTo(FileNodeType.Directory));
+        Assert.That(Node(byFd, socket.Handle.ToInt64()).NodeType, Is.EqualTo(FileNodeType.Socket));
+        Assert.That(Node(byFd, pipe.ClientSafePipeHandle.DangerousGetHandle().ToInt64()).NodeType, Is.EqualTo(FileNodeType.Fifo));
+
+        // /dev/null is character device 1:3 on every Linux there has ever been, and the number it
+        // *is* must not be confused with the device it is *on* — the devtmpfs it lives on has a
+        // different one, and that is the other column.
+        var nul = Node(byFd, device);
+        Assert.That(nul.NodeType, Is.EqualTo(FileNodeType.CharacterDevice));
+        Assert.That(nul.NodeDevice, Is.EqualTo("1:3"));
+        Assert.That(nul.NodeDevice, Is.Not.EqualTo(nul.Device));
+        Assert.That(Humanize.FileNode(nul.NodeType, nul.NodeDevice), Is.EqualTo("character 1:3"));
+      });
+
+      pipe.Dispose();
+      if (directory >= 0)
+        ClosePath(directory);
+    } finally {
+      File.Delete(path);
+      File.Delete(fifo);
+    }
+  }
+
+  /// <summary>
+  /// An anonymous inode has no file type, which is a fact about eventfds and not a failure to look.
+  /// </summary>
+  [Test]
+  public void AnAnonymousInodeHasNoFileTypeAndSaysThatRatherThanNothing() {
+    using var probe = Probe();
+    var anonymous = probe.GetHandles(Self)
+      .Where(h => h.Kind is HandleKind.Event or HandleKind.EventPoll or HandleKind.Timer or HandleKind.Signal)
+      .ToList();
+
+    if (anonymous.Count == 0) {
+      Assert.Ignore("This runtime is holding no anonymous inode to ask about.");
+      return;
+    }
+
+    Assert.Multiple(() => {
+      foreach (var handle in anonymous)
+        Assert.That(handle.NodeType, Is.EqualTo(FileNodeType.None), handle.Name);
+
+      Assert.That(Humanize.FileNode(FileNodeType.None), Is.EqualTo("no type"));
+      // And the two that must never render alike: "there is no type" and "nobody asked".
+      Assert.That(Humanize.FileNode(FileNodeType.None), Is.Not.EqualTo(Humanize.FileNode(FileNodeType.Unknown)));
+    });
+  }
+
+  /// <summary>
+  /// The kernel corrects the name where the name was only a guess: a FIFO on a path outside
+  /// <c>/dev</c> looks exactly like an ordinary file to the classifier that reads the link target.
+  /// </summary>
+  [Test]
+  public void ANamedPipeOutsideDevIsAPipeAndNotAFile() {
+    using var probe = Probe();
+    foreach (var handle in probe.GetHandles(Self))
+      if (handle.NodeType == FileNodeType.Fifo)
+        Assert.That(handle.Kind, Is.EqualTo(HandleKind.Pipe), handle.Name);
+  }
+
+  #endregion
+
+  #region how many holders a socket has (PRD §32 — reference count)
+
+  /// <summary>
+  /// The reference count of §32, out of the network table's own column and held against the fact
+  /// that no live socket has none.
+  /// </summary>
+  /// <remarks>
+  /// Not asserted as an exact number. A socket held by one descriptor commonly reads two or three —
+  /// the descriptor is one reference and the protocol's hash tables are the rest — and pinning the
+  /// figure would be a test of this kernel version rather than of the parse. What is asserted is
+  /// what the field means: it was read, and it is not nought.
+  /// </remarks>
+  [Test]
+  public void AListeningSocketHasHoldersAndTheTableSaysHowMany() {
+    var listener = new TcpListener(IPAddress.Loopback, 0);
+    listener.Start();
+    try {
+      var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+      using var probe = Probe();
+
+      ConnectionRecord? listening = null;
+      foreach (var connection in probe.GetConnections(Self))
+        if (connection.LocalPort == port && connection.State == "LISTEN")
+          listening = connection;
+
+      Assert.That(listening, Is.Not.Null, $"nothing in the network tables is listening on {port}");
+      Assert.Multiple(() => {
+        Assert.That(listening!.Value.References.HasValue, Is.True, "the column is there on every kernel that has the table");
+        Assert.That(listening!.Value.References.Value, Is.GreaterThan(0ul), "a socket in the table has at least the table's own reference");
+      });
+    } finally {
+      listener.Stop();
+    }
+  }
+
+  /// <summary>
+  /// A Unix socket's count is in the same column of a different table, printed in a different base
+  /// — hex there, decimal in the internet tables — which is a fact about the kernel's format strings
+  /// and not about sockets.
+  /// </summary>
+  [Test]
+  public void AUnixSocketsCountIsReadFromItsOwnTable() {
+    using var probe = Probe();
+    var unix = probe.GetConnections(Self).Where(c => c.Protocol == ConnectionProtocol.Unix).ToList();
+    if (unix.Count == 0) {
+      Assert.Ignore("This process holds no Unix socket.");
+      return;
+    }
+
+    foreach (var connection in unix)
+      Assert.That(connection.References.HasValue, Is.True, connection.LocalAddress);
+  }
+
+  #endregion
+
+  /// <summary>
+  /// The measurement behind §32's unticked "creation / open time": the timestamps on
+  /// <c>/proc/[pid]/fd/[n]</c> belong to the <c>procfs</c> directory entry and not to the open.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Shown by reusing a descriptor number. One file is opened and its link looked at; the
+  /// descriptor is closed, a second and quite different file is opened over a second later, and the
+  /// kernel hands back the same number. The link now points at the second file and its timestamp
+  /// has not moved by a nanosecond — so a program reporting it as an open time would say the second
+  /// file had been open since before it existed.
+  /// </para>
+  /// <para>
+  /// Kept as a test rather than as a sentence in a document, because it is the whole justification
+  /// for leaving a box unticked and it is the kind of claim that quietly stops being true. If a
+  /// kernel ever starts recording the open, this fails and the box becomes answerable.
+  /// </para>
+  /// </remarks>
+  [Test]
+  public void TheKernelRecordsNoTimeAtWhichADescriptorWasOpened() {
+    var first = Path.Combine(Path.GetTempPath(), $"pm-opened-a-{Environment.ProcessId}.bin");
+    var second = Path.Combine(Path.GetTempPath(), $"pm-opened-b-{Environment.ProcessId}.bin");
+    File.WriteAllBytes(first, new byte[8]);
+    File.WriteAllBytes(second, new byte[8]);
+    try {
+      var fd = OpenPath(first, 0);
+      Assert.That(fd, Is.GreaterThanOrEqualTo(0), "the first file did not open");
+
+      var link = $"/proc/self/fd/{fd}";
+      var before = new FileInfo(link).LastWriteTimeUtc;
+      ClosePath(fd);
+
+      // Well past any clock granularity. Nothing else in this test opens a descriptor, so the
+      // kernel hands the lowest free number back — the one just closed.
+      Thread.Sleep(1200);
+      var again = OpenPath(second, 0);
+      if (again != fd) {
+        ClosePath(again);
+        Assert.Ignore("The kernel did not reuse the descriptor number, so there is nothing to compare.");
+        return;
+      }
+
+      var after = new FileInfo(link).LastWriteTimeUtc;
+      var target = File.ResolveLinkTarget(link, returnFinalTarget: false)?.FullName;
+      ClosePath(again);
+
+      Assert.Multiple(() => {
+        // A genuinely different open, over a second later.
+        Assert.That(target, Is.EqualTo(second));
+        Assert.That(
+          after,
+          Is.EqualTo(before),
+          "the timestamp is the directory entry's; it did not move when the descriptor behind it was replaced"
+        );
+      });
+    } finally {
+      File.Delete(first);
+      File.Delete(second);
+    }
+  }
+
+  private static HandleRecord Node(Dictionary<ulong, HandleRecord> byFd, FileStream stream)
+    => Node(byFd, stream.SafeFileHandle.DangerousGetHandle().ToInt64());
+
+  private static HandleRecord Node(Dictionary<ulong, HandleRecord> byFd, long fd) {
+    Assert.That(byFd.ContainsKey((ulong)fd), Is.True, $"descriptor {fd} is not in the list");
+    return byFd[(ulong)fd];
   }
 
 }

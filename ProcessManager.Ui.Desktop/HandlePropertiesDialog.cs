@@ -49,12 +49,24 @@ public sealed class HandlePropertiesDialog : Form {
   /// for every kind that is not a socket, and for a socket whose row had gone by the time the two
   /// tables were read (PRD §40).
   /// </param>
+  /// <param name="references">
+  /// The socket's reference count, from the same join. Handed in rather than looked up, for the
+  /// same reason the endpoint is: the five network tables are read whole, and reading them again
+  /// for one row would cost the list what the list already paid (PRD §32).
+  /// </param>
+  /// <remarks>
+  /// <paramref name="references"/> is nullable and not a bare <see cref="Counter"/> with a default,
+  /// because <c>default(Counter)</c> is a reading of nought that believes in itself: every caller
+  /// that left the argument out would have been telling this box the socket has no holders left
+  /// (PRD §72.3).
+  /// </remarks>
   public HandlePropertiesDialog(
     ISystemProbe probe,
     ProcessKey owner,
     in HandleRecord handle,
     string? endpoint = null,
-    IProcessActions? actions = null
+    IProcessActions? actions = null,
+    Counter? references = null
   ) {
     ArgumentNullException.ThrowIfNull(probe);
 
@@ -71,16 +83,26 @@ public sealed class HandlePropertiesDialog : Form {
     var lines = new List<string> {
       $"descriptor  {handle.Handle.ToString(CultureInfo.InvariantCulture)}",
       $"kind        {Humanize.ResourceKind(handle.Kind)}",
+      $"file type   {NodeType(in handle)}",
       $"name        {handle.Name ?? "the kernel would not name it"}",
       $"access      {Access(in handle)}",
       $"flags       {DescriptorParser.DescribeFlags(handle.OpenFlags) ?? Humanize.Placeholder(handle.OpenFlags.Reason)}",
       $"position    {Humanize.Count(handle.Position)}",
       $"inode       {Humanize.Count(handle.Inode)}",
       $"filesystem  {FileSystem(in handle)}",
+      // Said rather than left out, because an absent line reads as an oversight. The kernel records
+      // nothing about when a descriptor was opened, and the timestamps on /proc/[pid]/fd/[n] are
+      // the time of the lookup that read them — a second lstat of a descriptor opened an hour ago
+      // reports it as a second old (PRD §32, §72.3).
+      "opened      not recorded — Linux keeps no time for a descriptor, and /proc/[pid]/fd's own"
+      + "\n            timestamps are the moment they were read",
     };
 
     if (endpoint is { Length: > 0 })
       lines.Add($"endpoint    {endpoint}");
+
+    if (references is { } reading && reading.TryGetValue(out var count))
+      lines.Add($"references  {count.ToString(CultureInfo.InvariantCulture)} — holders of the socket, of which this descriptor is one");
 
     if (handle.TargetPid.TryGetValue(out var target))
       lines.Add($"names       process {target.ToString(CultureInfo.InvariantCulture)}");
@@ -184,6 +206,22 @@ public sealed class HandlePropertiesDialog : Form {
     "path" => "O_PATH — refers to the file, and may neither read nor write it",
     { Length: > 0 } other => other,
     _ => Humanize.Placeholder(handle.OpenFlags.Reason),
+  };
+
+  /// <summary>
+  /// What the kernel says the target is, spelled out rather than left as the one word (PRD §32).
+  /// </summary>
+  /// <remarks>
+  /// The anonymous inodes are the case worth a sentence. Their <c>st_mode</c> is <c>0600</c> — the
+  /// file-type bits are clear — and a reader who checks with <c>stat</c> will see the same nought
+  /// and want to know whether the program failed to look or the kernel had nothing to say.
+  /// </remarks>
+  private static string NodeType(in HandleRecord handle) => handle.NodeType switch {
+    FileNodeType.None => "none — an anonymous inode has no file type, and the kernel reports mode 0600",
+    FileNodeType.CharacterDevice => $"character device {handle.NodeDevice ?? "of no number"}",
+    FileNodeType.BlockDevice => $"block device {handle.NodeDevice ?? "of no number"}",
+    FileNodeType.Unknown => "not asked — this descriptor was listed by the elevated helper, whose protocol does not carry it",
+    var known => Humanize.FileNode(known),
   };
 
   /// <summary>Which mount the descriptor's inode is on, or why there is none.</summary>

@@ -78,6 +78,11 @@ public static class ProcNetParser {
       if (onlyInodes is not null && !onlyInodes.Contains(inode))
         continue;
 
+      // Decimal, unlike almost everything else on the line and unlike the same column in
+      // /proc/net/unix, which the kernel prints as %08X. Reading this one as hex agrees with the
+      // truth for the first ten values and then quietly starts reporting sixteen as twenty-two.
+      var references = fields.NextField();
+
       var localLength = SplitEndpoint(local, localAddress, out var localPort);
       var remoteLength = SplitEndpoint(remote, remoteAddress, out var remotePort);
       if (localLength == 0)
@@ -122,7 +127,11 @@ public static class ProcNetParser {
         isTcp ? Rate.NotSampledYet : Rate.NotSupported,
         isTcp ? Rate.NotSampledYet : Rate.NotSupported,
         null,                                              // the owning unit; joined by the probe
-        null                                               // and its cgroup, from the same place
+        null,                                              // and its cgroup, from the same place
+        // A kernel that stops short of this column is one that never had it. Every version since
+        // the table existed prints it, so an empty field here means the line was truncated rather
+        // than that the socket has no holders — and no socket has none (PRD §72.3).
+        references.IsEmpty ? Counter.NotSupported : Counter.Of(TextScanner.ParseUInt64(references))
       ));
     }
   }
@@ -154,7 +163,10 @@ public static class ProcNetParser {
       if (slot.IsEmpty || slot[^1] != ':')
         continue;                                          // the header line
 
-      fields.Skip(2);                                      // reference count, protocol
+      // Hex here, decimal in the internet tables. Same quantity, same meaning, two formats — which
+      // is a fact about the kernel's printf strings and not about sockets (PRD §5.3).
+      var references = fields.NextField();
+      fields.NextField();                                  // protocol, which is always zero here
       var flags = TextScanner.ParseHex32(fields.NextField());
       var type = TextScanner.ParseHex32(fields.NextField());
       var state = TextScanner.ParseHex32(fields.NextField());
@@ -188,7 +200,8 @@ public static class ProcNetParser {
         Rate.NotSupported,
         Rate.NotSupported,
         null,
-        null
+        null,
+        references.IsEmpty ? Counter.NotSupported : Counter.Of(TextScanner.ParseHex64(references))
       ));
     }
   }

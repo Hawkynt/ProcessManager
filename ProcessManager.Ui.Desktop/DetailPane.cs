@@ -91,6 +91,9 @@ public sealed class DetailPane : IDisposable {
   /// </remarks>
   private readonly Dictionary<ulong, string> _endpoints = [];
 
+  /// <summary>The same join, for the reference count the same tables print (PRD §32).</summary>
+  private readonly Dictionary<ulong, Counter> _socketReferences = [];
+
   /// <summary>
   /// A snapshot for the actions that need to know about processes other than this one.
   /// </summary>
@@ -181,7 +184,7 @@ public sealed class DetailPane : IDisposable {
       ("Start module", 132),
       ("Started", 108)
     );
-    // Nineteen columns, which is more than fits: the list scrolls sideways now, so the ones past the
+    // Twenty-one columns, which is more than fits: the list scrolls sideways now, so the ones past the
     // edge are reachable rather than lost. The order is what that changes — everything a reader
     // opens this tab for is in the first screenful, and the addresses, timestamps and identities
     // they go looking for on purpose are behind a scroll (PRD §31).
@@ -193,14 +196,24 @@ public sealed class DetailPane : IDisposable {
       ("Size", 76),
       ("Resident", 78),
       ("Perm", 52),
-      ("Type", 96),
+      // Wide enough for "shared object", measured off a capture: at 96 the longest of the six type
+      // names filled the cell exactly and ran into the column beside it with no gap between them.
+      ("Type", 118),
+      // Which engine reads the file, which is not what its format is called: a .NET process maps
+      // every assembly it loads and every one of them is a file that is not an ELF (PRD §31).
+      ("Runtime", 76),
       // Why the image is here: the program, its loader, something it links against, something that
       // links against that, or nothing anybody named. Derived from the dependency graph, because
       // Linux publishes no load reason at all (PRD §31).
       ("Load", 84),
+      // How many separate loads of this file are in the process. One for nearly every row, which is
+      // what makes a two worth the width: two copies of a library is two sets of its globals.
+      ("Loads", 52),
       // What the file asks the kernel for, in checksec's vocabulary. As wide as
-      // "PIE NX RELRO+NOW CET", which is what a current distribution's binaries say.
-      ("Mitigations", 168),
+      // "PIE NX RELRO+NOW CET", which is what a current distribution's binaries say — and measured
+      // off a capture rather than guessed, because at 168 that exact string ran into the next
+      // column on every row of a real machine.
+      ("Mitigations", 198),
       ("Arch", 74),
       ("SONAME", 150),
       ("End", 124),
@@ -221,13 +234,25 @@ public sealed class DetailPane : IDisposable {
       this._handles,
       ("Type", 100),
       ("FD", 46),
+      // What the kernel's own st_mode says the target is, which is the answer wherever the name
+      // above was only a good guess — and "no type" for the anonymous inodes, which have none
+      // (PRD §32).
+      //
+      // Wide enough for "character 226:129", which is a graphics card's render node and is on every
+      // desktop process: at 96 it photographed as "character 226", which is a different device, and
+      // at 124 it lost the last digit of the minor number, which is a different device again.
+      ("File type", 140),
       ("Access", 58),
       ("Position", 84),
+      // How many references the kernel holds to the socket behind this descriptor, from the network
+      // table's own column. Sockets only: nothing else a process holds has a count anybody may read.
+      ("Refs", 48),
       // Which device the descriptor's inode is on and what kind of file system that is, from the
       // mount its fdinfo names. Empty for a socket or a pipe, which are on file systems the kernel
       // mounts nowhere (PRD §32).
       ("Device", 62),
-      ("Filesystem", 76),
+      // Its own header is the longest thing in it, and at 76 the header itself lost a letter.
+      ("Filesystem", 88),
       ("Inode", 92),
       ("Endpoint", 190),
       ("Flags", 200),
@@ -659,7 +684,10 @@ public sealed class DetailPane : IDisposable {
       this._key,
       in handle,
       handle.Inode.TryGetValue(out var inode) && this._endpoints.TryGetValue(inode, out var endpoint) ? endpoint : null,
-      this.Actions
+      this.Actions,
+      handle.Inode.TryGetValue(out var key) && this._socketReferences.TryGetValue(key, out var references)
+        ? references
+        : null
     );
 
     dialog.Show();
@@ -730,10 +758,12 @@ public sealed class DetailPane : IDisposable {
         continue;
 
       extra.Add(new("image type", Humanize.ImageType(module.Type)));
+      extra.Add(new("runtime", Humanize.ImageRuntime(module.Runtime)));
       extra.Add(new("architecture", module.Architecture ?? "—"));
       extra.Add(new("soname", module.Soname ?? "—"));
       extra.Add(new("mapped at", Humanize.Address(module.BaseAddress)));
       extra.Add(new("mappings", module.MappingCount.ToString(CultureInfo.InvariantCulture)));
+      extra.Add(new("loads", Humanize.LoadCount(module.LoadCount)));
       break;
     }
 
@@ -1013,7 +1043,9 @@ public sealed class DetailPane : IDisposable {
       // flags in one column, in the notation anybody who has read a maps file already knows.
       modules[i].Permissions.Length > 0 ? modules[i].Permissions : "—",
       Humanize.ImageType(modules[i].Type),
+      Humanize.ImageRuntime(modules[i].Runtime),
       Humanize.LoadReason(modules[i].LoadReason),
+      Humanize.LoadCount(modules[i].LoadCount),
       Humanize.Mitigations(modules[i].Mitigations),
       modules[i].Architecture ?? "—",
       modules[i].Soname ?? "—",
@@ -1038,17 +1070,22 @@ public sealed class DetailPane : IDisposable {
     // The socket join, done once for the list rather than once per row: the five network tables are
     // read whole either way, and a per-row lookup would read them once per socket the process holds.
     this._endpoints.Clear();
-    foreach (var connection in this._probe.GetConnections(this._key))
+    this._socketReferences.Clear();
+    foreach (var connection in this._probe.GetConnections(this._key)) {
       this._endpoints[connection.Inode] = connection.RemotePort == 0
         ? $"{Humanize.LocalEndpoint(connection)} {connection.State}"
         : $"{Humanize.LocalEndpoint(connection)} → {Humanize.RemoteEndpoint(connection)}";
+      this._socketReferences[connection.Inode] = connection.References;
+    }
 
     this._handleSummary.Text = HandleTally.From(handles).Describe();
     Fill(this._handles, handles.Count, i => [
       Humanize.ResourceKind(handles[i].Kind),
       handles[i].Handle.ToString(CultureInfo.InvariantCulture),
+      Humanize.FileNode(handles[i].NodeType, handles[i].NodeDevice),
       handles[i].Access ?? "—",
       Humanize.Count(handles[i].Position),
+      this.ReferencesOf(handles[i]),
       // A descriptor on no mounted file system — a socket, a pipe, an anonymous inode — has no
       // device to name, and the mount id it carries names a file system the kernel keeps to itself.
       // The dash is that answer; a refusal shows the reason the mount id carries instead.
@@ -1066,6 +1103,25 @@ public sealed class DetailPane : IDisposable {
       // hundred lines in a cell one line high, and the properties box is where the rest of it is.
       OneLine(handles[i].Detail),
     ], identity: 1);
+  }
+
+  /// <summary>
+  /// How many references the kernel holds to what this descriptor points at (PRD §32).
+  /// </summary>
+  /// <remarks>
+  /// A socket, and nothing else. The five network tables print <c>sk_refcnt</c> beside every row;
+  /// no file under <c>/proc</c> prints the count in the <c>struct file</c> behind a file, a pipe or
+  /// an event descriptor, so those say "there is no such number here" rather than showing one they
+  /// do not have.
+  /// </remarks>
+  private string ReferencesOf(in HandleRecord handle) {
+    if (handle.Kind != HandleKind.Socket)
+      return Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform);
+
+    return handle.Inode.TryGetValue(out var inode) && this._socketReferences.TryGetValue(inode, out var references)
+      ? Humanize.Count(references)
+      // The socket closed between the two reads, which is the same reason its endpoint is a dash.
+      : "—";
   }
 
   /// <summary>The row of the five network tables this descriptor's inode belongs to, if any.</summary>

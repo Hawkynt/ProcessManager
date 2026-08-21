@@ -40,6 +40,10 @@ public static class ElfImage {
   /// two are told apart by <paramref name="Mitigations"/>, which carries
   /// <see cref="ImageMitigations.Read"/> only in the first case.
   /// </param>
+  /// <param name="Runtime">
+  /// Which execution engine reads the file. Answered for a file that is not an ELF too — a managed
+  /// assembly and a font are both "not an ELF" and are not the same row (PRD §31).
+  /// </param>
   public readonly record struct Description(
     ModuleType Type,
     string? Architecture,
@@ -48,7 +52,8 @@ public static class ElfImage {
     string? Interpreter,
     ImageMitigations Mitigations,
     string? BuildId,
-    IReadOnlyList<string> Needed
+    IReadOnlyList<string> Needed,
+    ModuleRuntime Runtime
   );
 
   /// <summary>Nothing was read, and every field says so rather than saying zero (PRD §72.3).</summary>
@@ -60,7 +65,8 @@ public static class ElfImage {
     null,
     ImageMitigations.None,
     null,
-    []
+    [],
+    ModuleRuntime.Unknown
   );
 
   private const int _Ei_Class = 4;
@@ -130,8 +136,15 @@ public static class ElfImage {
 
     if (header[0] != 0x7F || header[1] != (byte)'E' || header[2] != (byte)'L' || header[3] != (byte)'F') {
       // Readable and not an image: a locale archive, a font, a managed assembly. It has no entry
-      // point in the sense this asks about, which is a different answer from "not read yet".
-      description = Unread with { Type = ModuleType.Data, EntryPoint = Counter.NotSupported };
+      // point in the sense this asks about, which is a different answer from "not read yet" — and
+      // "not an ELF" is where the interesting distinction starts rather than ends, because a .NET
+      // process maps every assembly it loads and none of them is an ELF (PRD §31).
+      description = Unread with {
+        Type = ModuleType.Data,
+        EntryPoint = Counter.NotSupported,
+        Runtime = ImageFormat.Identify(read, header),
+      };
+
       return true;
     }
 
@@ -169,7 +182,8 @@ public static class ElfImage {
       // where every one of those flags is written.
       ImageMitigations.None,
       null,
-      []
+      [],
+      ModuleRuntime.Native
     );
 
     if (programHeaderOffset <= 0 || programHeaderSize < (is64 ? 56 : 32) || programHeaderCount is 0 or > _MaxProgramHeaders)

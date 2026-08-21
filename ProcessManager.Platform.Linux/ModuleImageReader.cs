@@ -75,6 +75,9 @@ internal sealed class ModuleImageReader {
       return enriched with {
         Type = ModuleType.Data,
         EntryPoint = Counter.NotSupported,
+        // Not NotCode either: nothing was read, and a device node that was never opened has not
+        // been found to be anything (PRD §72.3).
+        Runtime = ModuleRuntime.Unknown,
       };
     }
 
@@ -83,6 +86,7 @@ internal sealed class ModuleImageReader {
       return enriched with {
         Type = ModuleType.Unknown,
         EntryPoint = Counter.Unknown(failure),
+        Runtime = ModuleRuntime.Unknown,
       };
     }
 
@@ -100,6 +104,7 @@ internal sealed class ModuleImageReader {
         : description.EntryPoint,
       Soname = description.Soname,
       Interpreter = description.Interpreter,
+      Runtime = description.Runtime,
     };
   }
 
@@ -185,6 +190,7 @@ internal sealed class ModuleImageReader {
     Interpreter = null,
     Mitigations = ImageMitigations.None,
     BuildId = null,
+    Runtime = ModuleRuntime.Unknown,
   };
 
 }
