@@ -34,6 +34,19 @@ public sealed class ColumnChooserTests {
     Assert.That(chooser.Selection[0], Is.EqualTo(ProcessField.Name));
   }
 
+  /// <summary>
+  /// The order somebody put the columns in survives a trip through the dialog. Columns can be
+  /// reordered now, and a chooser that listed everything in registry order would throw that order
+  /// away every time one more column was ticked (PRD §11).
+  /// </summary>
+  [Test]
+  public void TheOrderOfTheShowingColumnsIsPreserved() {
+    ProcessField[] chosen = [ProcessField.PrivateBytes, ProcessField.Name, ProcessField.Pid];
+    var chooser = new ColumnChooser(chosen);
+
+    Assert.That(chooser.Selection, Is.EqualTo(chosen));
+  }
+
   [Test]
   public void ClosingItWithoutOkIsNotAnAcceptance() =>
     Assert.That(new ColumnChooser([ProcessField.Name]).Accepted, Is.False);

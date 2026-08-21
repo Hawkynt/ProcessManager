@@ -97,6 +97,47 @@ public static class RowPalette {
     };
   }
 
+  /// <summary>
+  /// The band behind a grouping heading (PRD §83).
+  /// </summary>
+  /// <remarks>
+  /// Grey rather than any hue, because every colour in this list already means something about a
+  /// <em>process</em> and a heading is not one: a heading tinted green would read as a group that
+  /// had just started. A step away from the field background in whichever direction the theme has
+  /// room for, so the band is visible on a light desktop and on a dark one without a second palette.
+  /// </remarks>
+  public static Color GroupHeading(ITheme theme) {
+    ArgumentNullException.ThrowIfNull(theme);
+    var ground = theme.FieldBackground;
+    var shift = IsDark(ground) ? 26 : -26;
+    return Pick(
+      "group",
+      Color.FromArgb(
+        0xFF,
+        Math.Clamp(ground.R + shift, 0, 255),
+        Math.Clamp(ground.G + shift, 0, 255),
+        Math.Clamp(ground.B + shift, 0, 255)
+      )
+    );
+  }
+
+  /// <summary>
+  /// The wash behind the run of characters a filter matched (PRD §11).
+  /// </summary>
+  /// <remarks>
+  /// Amber for the same reason the terminal's match attribute is: it has to sit under text that
+  /// keeps its own colour, and it must not be one of the category colours, which say something else.
+  /// </remarks>
+  public static Color MatchHighlight(ITheme theme) {
+    ArgumentNullException.ThrowIfNull(theme);
+    return Pick(
+      "match",
+      IsDark(theme.FieldBackground)
+        ? Color.FromArgb(0xFF, 0x6B, 0x5A, 0x10)
+        : Color.FromArgb(0xFF, 0xFF, 0xF0, 0x8A)
+    );
+  }
+
   /// <summary>The colour of the plot series and meters, so the whole window agrees with itself.</summary>
   public static Color Cpu => Pick("cpu", Color.FromArgb(0xFF, 0x28, 0xC8, 0x28));
 

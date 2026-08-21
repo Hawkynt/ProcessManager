@@ -8,8 +8,14 @@ namespace Hawkynt.ProcessManager.Ui.Desktop;
 /// </summary>
 /// <remarks>
 /// A checked list rather than the drag-and-drop header menu the reference tools use: the header has
-/// no context menu of its own to hang one on, and a dialog that lists every column with what it costs
-/// is arguably clearer anyway. Order is fixed — reordering columns is not implemented.
+/// no context menu of its own to hang one on, and a dialog that lists every column with what it
+/// costs is arguably clearer anyway.
+/// <para>
+/// The columns that are showing come first, in the order they are in, and the rest follow in
+/// registry order. That is not cosmetic: columns can be reordered now, and a chooser that listed
+/// everything in registry order would silently throw that order away every time somebody ticked one
+/// more column (PRD §11).
+/// </para>
 /// </remarks>
 public sealed class ColumnChooser : Form {
 
@@ -21,6 +27,10 @@ public sealed class ColumnChooser : Form {
   private readonly Button _ok = new() { Text = "OK" };
   private readonly Button _cancel = new() { Text = "Cancel" };
 
+  /// <param name="visible">
+  /// The columns that are showing, in the order they are showing in. That order is preserved: the
+  /// dialog lists them first and hands them back the same way round.
+  /// </param>
   public ColumnChooser(IReadOnlyCollection<ProcessField> visible) {
     ArgumentNullException.ThrowIfNull(visible);
 
@@ -31,11 +41,12 @@ public sealed class ColumnChooser : Form {
     this.QuitsOnClose = false;
     this.Bounds = new(0, 0, 380, 560);
 
-    foreach (var info in ColumnSet.All) {
-      this._order.Add(info.Id);
-      this._list.Items.Add(info.Header);
-      this._list.SetItemChecked(this._list.Items.Count - 1, visible.Contains(info.Id));
-    }
+    foreach (var field in visible)
+      this.Add(field, ticked: true);
+
+    foreach (var info in ColumnSet.All)
+      if (!visible.Contains(info.Id))
+        this.Add(info.Id, ticked: false);
 
     this._ok.Click += (_, _) => {
       this.Accepted = true;
@@ -53,6 +64,12 @@ public sealed class ColumnChooser : Form {
     // the list showing a fraction of the columns it holds.
     this.Resize += (_, _) => this.ApplyLayout();
     this.ApplyLayout();
+  }
+
+  private void Add(ProcessField field, bool ticked) {
+    this._order.Add(field);
+    this._list.Items.Add(ColumnSet.Info(field).Header);
+    this._list.SetItemChecked(this._list.Items.Count - 1, ticked);
   }
 
   /// <summary>
