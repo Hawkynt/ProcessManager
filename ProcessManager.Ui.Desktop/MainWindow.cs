@@ -367,7 +367,15 @@ public sealed class MainWindow : Form {
     if (count == 0)
       return;
 
-    var available = this._tree.Width;
+    // The scrollbar sits over the right-hand edge, so the width of the control is not the width
+    // available to draw in. Stretching the last column to the full width put its right-aligned
+    // values underneath the scrollbar and cut the last character off every one of them: "6.8G" of
+    // private bytes was drawn as "6.8", which is not a smaller number, it is a different one.
+    //
+    // Subtracted whether or not the bar is showing, because whether it is showing is not something
+    // this side can ask. A process list long enough to need one is the ordinary case, and the cost
+    // when there is none is that the last column ends a few pixels early.
+    var available = this._tree.Width - this._theme.ScrollBarSize;
     if (available <= 0)
       return;
 
