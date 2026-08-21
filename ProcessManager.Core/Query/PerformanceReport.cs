@@ -65,13 +65,30 @@ public readonly record struct PerformanceRow(
 /// <param name="Accent">Which colour it takes: <c>cpu</c>, <c>memory</c>, <c>temperature</c>,
 /// <c>fan</c>, <c>power</c>, <c>io</c>. Temperature especially, so it never reads as another
 /// utilisation figure (PRD §50.1).</param>
+/// <param name="Unit">
+/// What one sample of it is, so a front-end can render a sample it was not given a label for — the
+/// reading under a hover cursor, an exported point. Without it a plot can only guess from its own
+/// scale, and guessing turns 1.2 MB/s into "1.2M" (PRD §45.4, §76).
+/// </param>
 public readonly record struct PerformanceGraph(
   string Label,
   Rate Value,
   double Maximum,
   string ValueLabel,
-  string Accent
+  string Accent,
+  PerformanceUnit Unit = PerformanceUnit.Percent
 );
+
+/// <summary>What a plotted sample is measured in (PRD §76).</summary>
+public enum PerformanceUnit {
+
+  Percent,
+  Bytes,
+  BytesPerSecond,
+  Celsius,
+  Watts,
+
+}
 
 /// <summary>
 /// A group of figures under one heading, and the one number that stands for the whole group.
@@ -165,7 +182,16 @@ public readonly record struct PerformanceSection(
   /// </summary>
   public IReadOnlyList<PerformanceGraph> Series => this.Graphs
     ?? (this.HasPrimary
-      ? [new(this.Title, this.Primary, this.PrimaryMaximum, this.PrimaryLabel, DefaultAccent(this.Title))]
+      ? [new(
+          this.Title,
+          this.Primary,
+          this.PrimaryMaximum,
+          this.PrimaryLabel,
+          DefaultAccent(this.Title),
+          // A fixed hundred is a percentage and anything without a ceiling is a throughput, which
+          // between them are every primary a resource has: utilisation, active time, bytes a second.
+          this.PrimaryMaximum == 100 ? PerformanceUnit.Percent : PerformanceUnit.BytesPerSecond
+        )]
       : []);
 
   private static string DefaultAccent(string title) => title switch {
@@ -306,7 +332,8 @@ public static class PerformanceReport {
             rates is { } shown
               ? $"{Humanize.BytesPerSecond(shown.ReadBytesPerSecond)} read, {Humanize.BytesPerSecond(shown.WriteBytesPerSecond)} write"
               : Pending,
-            "io"
+            "io",
+            PerformanceUnit.BytesPerSecond
           ),
         ]
       ));
@@ -633,7 +660,8 @@ public static class PerformanceReport {
         gpu.MemoryTotalBytes.HasValue
           ? $"{Humanize.Bytes(gpu.MemoryUsedBytes)} / {Humanize.Bytes(gpu.MemoryTotalBytes)}"
           : Humanize.Bytes(gpu.MemoryUsedBytes),
-        "gpu"
+        "gpu",
+        PerformanceUnit.Bytes
       ));
 
     if (gpu.MemoryBusyPercent.HasValue)
@@ -645,7 +673,8 @@ public static class PerformanceReport {
         Rate.Of(gpu.PowerMicrowatts.Value / 1_000_000d),
         gpu.PowerLimitMicrowatts.HasValue ? gpu.PowerLimitMicrowatts.Value / 1_000_000d : 0,
         PowerDraw(gpu.PowerMicrowatts, gpu.PowerLimitMicrowatts),
-        "power"
+        "power",
+        PerformanceUnit.Watts
       ));
 
     if (gpu.TemperatureMilliCelsius.HasValue)
@@ -656,7 +685,8 @@ public static class PerformanceReport {
         // otherwise fill its graph and look alarming (PRD §45.4).
         100,
         Celsius(gpu.TemperatureMilliCelsius),
-        "temperature"
+        "temperature",
+        PerformanceUnit.Celsius
       ));
 
     if (gpu.FanPercent.HasValue)
@@ -752,7 +782,8 @@ public static class PerformanceReport {
         used,
         total,
         used.HasValue ? $"{Humanize.Bytes(Counter.Of((ulong)used.Value))} of {Humanize.Bytes(system.TotalMemoryBytes)}" : Pending,
-        "memory"
+        "memory",
+        PerformanceUnit.Bytes
       ),
     };
 
@@ -762,7 +793,8 @@ public static class PerformanceReport {
         Rate.Of(system.CommittedBytes.Value),
         system.CommitLimitBytes.HasValue ? system.CommitLimitBytes.Value : 0,
         Pair(system.CommittedBytes, system.CommitLimitBytes),
-        "memory"
+        "memory",
+        PerformanceUnit.Bytes
       ));
 
     // The file cache, on the machine's own scale so it can be read against the physical series
@@ -775,7 +807,8 @@ public static class PerformanceReport {
         cache,
         total,
         $"{Humanize.Bytes(Counter.Of((ulong)cache.Value))} of {Humanize.Bytes(system.TotalMemoryBytes)}",
-        "memory"
+        "memory",
+        PerformanceUnit.Bytes
       ));
 
     // Only where there is somewhere to swap to. A machine with no swap device gets no swap graph
@@ -787,7 +820,8 @@ public static class PerformanceReport {
         AsRate(system.UsedSwapBytes),
         swap.Value,
         Pair(system.UsedSwapBytes, system.TotalSwapBytes),
-        "memory"
+        "memory",
+        PerformanceUnit.Bytes
       ));
 
     return [.. graphs];

@@ -1075,6 +1075,7 @@ public sealed class PerformanceWindow : Form {
     }
 
     this._plot.Maximum = chosen.PrimaryMaximum > 0 ? chosen.PrimaryMaximum : this.Ceiling(title);
+    this._plot.Unit = series.Count > 0 ? series[0].Unit : PerformanceUnit.Percent;
     this._plot.ScaleLabel = ScaleLabelFor(chosen.PrimaryMaximum, this._plot.Maximum);
     this._plot.Value = chosen.PrimaryLabel;
     this._plot.Invalidate();
@@ -1285,6 +1286,7 @@ public sealed class PerformanceWindow : Form {
       plot.Caption = parts[i].Title;
       plot.AccessibleName = parts[i].Title;
       plot.Maximum = 100;
+      plot.Unit = PerformanceUnit.Percent;
       plot.ScaleLabel = string.Empty;
       plot.Visible = true;
       plot.ClearSeries();
@@ -1318,6 +1320,7 @@ public sealed class PerformanceWindow : Form {
       plot.AccessibleName = $"{title} — {series[i].Label}";
       plot.Value = series[i].ValueLabel;
       plot.Maximum = series[i].Maximum > 0 ? series[i].Maximum : this.Ceiling(SeriesKey(title, series[i].Label));
+      plot.Unit = series[i].Unit;
       plot.ScaleLabel = ScaleLabelFor(series[i].Maximum == 100 ? 100 : 0, plot.Maximum);
       plot.Visible = true;
       plot.ClearSeries();

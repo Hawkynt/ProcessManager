@@ -2,6 +2,7 @@ using System.Drawing;
 using Hawkynt.NativeForms;
 using Hawkynt.NativeForms.Drawing;
 using Hawkynt.ProcessManager.Model;
+using Hawkynt.ProcessManager.Query;
 using Hawkynt.ProcessManager.Sampling;
 
 namespace Hawkynt.ProcessManager.Ui.Desktop;
@@ -56,6 +57,16 @@ public sealed class HistoryPlot : OwnerDrawnControl {
 
   /// <summary>The top of the scale. 100 for percentages; set higher for rates.</summary>
   public double Maximum { get; set; } = 100;
+
+  /// <summary>
+  /// What one sample is measured in, for the readings under the cursor.
+  /// </summary>
+  /// <remarks>
+  /// Told rather than inferred from the scale. A plot whose ceiling is not a hundred could be
+  /// holding bytes, bytes a second, degrees or watts, and rendering a disk's 1.2 MB/s as "1.2M" is
+  /// a small lie of exactly the kind this program exists not to tell (PRD §76).
+  /// </remarks>
+  public PerformanceUnit Unit { get; set; } = PerformanceUnit.Percent;
 
   /// <summary>
   /// How the top of the scale reads — <c>100%</c>, <c>16 GB</c> (PRD §45.4).
@@ -194,27 +205,25 @@ public sealed class HistoryPlot : OwnerDrawnControl {
       // Outside the history the plot has is not a reading of zero — it is a part of the axis this
       // machine has not been running long enough to fill.
       text.Append(index < 0 || index >= series.Values.Count
-        ? $"  ·  {label}{Query.Humanize.Placeholder(UnknownReason.NotSampledYet)}"
-        : $"  ·  {label}{Reading(series.Values[index], this.Maximum)}");
+        ? $"  ·  {label}{Humanize.Placeholder(UnknownReason.NotSampledYet)}"
+        : $"  ·  {label}{this.Reading(series.Values[index])}");
     }
 
     this.HoverText = text.ToString();
   }
 
-  /// <summary>
-  /// One sample, formatted for a tooltip: a percentage where the scale is one, and otherwise bytes.
-  /// </summary>
-  /// <remarks>
-  /// The scale is the only clue this control has about what it is drawing, and it is enough for the
-  /// two cases that matter — a fixed hundred is a percentage, anything else is a quantity.
-  /// </remarks>
-  private static string Reading(Rate value, double maximum) {
+  /// <summary>One sample, in the unit the series was declared in.</summary>
+  private string Reading(Rate value) {
     if (!value.HasValue)
-      return Query.Humanize.Placeholder(value.Reason);
+      return Humanize.Placeholder(value.Reason);
 
-    return maximum == 100
-      ? Query.Humanize.Percent(value) + " %"
-      : Query.Humanize.Bytes(Counter.Of((ulong)Math.Max(0, value.Value)));
+    return this.Unit switch {
+      PerformanceUnit.Bytes => Humanize.Bytes(Counter.Of((ulong)Math.Max(0, value.Value))),
+      PerformanceUnit.BytesPerSecond => Humanize.BytesPerSecond(value),
+      PerformanceUnit.Celsius => string.Format(System.Globalization.CultureInfo.InvariantCulture, "{0:0.0} °C", value.Value),
+      PerformanceUnit.Watts => string.Format(System.Globalization.CultureInfo.InvariantCulture, "{0:0.0} W", value.Value),
+      _ => Humanize.Percent(value) + " %",
+    };
   }
 
   #endregion
@@ -248,15 +257,15 @@ public sealed class HistoryPlot : OwnerDrawnControl {
 
       text.Append(series.Label.Length > 0 ? series.Label : this.Caption).Append(": ");
       if (seen == 0) {
-        text.Append(Query.Humanize.Placeholder(UnknownReason.NotSampledYet));
+        text.Append(Humanize.Placeholder(UnknownReason.NotSampledYet));
         continue;
       }
 
       var current = series.Values[count - 1];
-      text.Append("current ").Append(Reading(current, this.Maximum))
-        .Append(", minimum ").Append(Reading(Rate.Of(lowest), this.Maximum))
-        .Append(", maximum ").Append(Reading(Rate.Of(highest), this.Maximum))
-        .Append(", average ").Append(Reading(Rate.Of(total / seen), this.Maximum));
+      text.Append("current ").Append(this.Reading(current))
+        .Append(", minimum ").Append(this.Reading(Rate.Of(lowest)))
+        .Append(", maximum ").Append(this.Reading(Rate.Of(highest)))
+        .Append(", average ").Append(this.Reading(Rate.Of(total / seen)));
     }
 
     return text.ToString();
