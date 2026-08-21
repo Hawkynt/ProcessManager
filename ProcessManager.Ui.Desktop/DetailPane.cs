@@ -521,7 +521,18 @@ public sealed class DetailPane : IDisposable {
     menu.Items.Add(all);
 
     menu.Items.Add(ModuleItem("Open folder", this.RevealModule));
-    menu.Items.Add(ModuleItem("File properties…", path => new FilePropertiesDialog(path, this.ModuleFacts(path), this.Actions).ShowDialog()));
+    menu.Items.Add(ModuleItem(
+      "File properties…",
+      // The verify delegate is what turns the hash button into §31's signature status: one read of
+      // the image answers "what are these bytes" and "does whoever shipped them still recognise
+      // them", and neither is paid for until it is pressed (PRD §5.4, §70).
+      path => new FilePropertiesDialog(
+        path,
+        this.ModuleFacts(path),
+        this.Actions,
+        image => this._probe.DescribeImage(image, verify: true)
+      ).ShowDialog()
+    ));
     return menu;
   }
 
@@ -767,7 +778,46 @@ public sealed class DetailPane : IDisposable {
       break;
     }
 
+    this.AddPublisherFacts(path, extra);
     return extra;
+  }
+
+  /// <summary>
+  /// The four things §31 asks a file for that an ELF does not carry: version, description, company
+  /// and product.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A PE keeps them in a version resource. ELF has no such section and never has, so on this
+  /// platform they are the packaging system's account of the package the file arrived in — which is
+  /// what a Linux machine actually publishes about a file. Each line says so: "product" is a package
+  /// name and the reader is told it is, because a package version read as a file version is exactly
+  /// the false equivalence §5.3 forbids.
+  /// </para>
+  /// <para>
+  /// Asked when the box is opened and not while the list is filled. The lookup builds an index of
+  /// every path every installed package owns — half a million of them on an ordinary desktop — and
+  /// putting it behind a column would spend that on a tab somebody clicked (PRD §5.4). The bytes are
+  /// not read at all: the signature check that would read them is the "Compute SHA-256" button, and
+  /// this is the question that can be answered without opening the file.
+  /// </para>
+  /// </remarks>
+  private void AddPublisherFacts(string path, List<KeyValuePair<string, string>> extra) {
+    var trust = this._probe.DescribeImage(path);
+    if (trust.Package.Text is not { Length: > 0 } package) {
+      // Nothing claims it, or nothing could be asked. Said rather than left out: four missing lines
+      // read as four fields nobody implemented (PRD §72.3).
+      extra.Add(new("product", trust.Package.WasChecked
+        ? "no package on this machine claims this file"
+        : Humanize.Placeholder(trust.Package.Reason)));
+
+      return;
+    }
+
+    extra.Add(new("product", package));
+    extra.Add(new("version", trust.Package.Version ?? "the package database records none"));
+    extra.Add(new("company", trust.Publisher ?? "the package database names nobody"));
+    extra.Add(new("description", trust.Summary ?? "the package database carries none"));
   }
 
   private void RevealModule(string path) {

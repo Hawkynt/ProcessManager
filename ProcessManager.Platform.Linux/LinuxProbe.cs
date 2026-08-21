@@ -1781,6 +1781,38 @@ public sealed partial class LinuxProbe : ISystemProbe {
   private const string _DELETED = " (deleted)";
 
   /// <summary>The package databases, opened the first time a column asks for one (PRD §5.4).</summary>
+  /// <summary>
+  /// Who published one mapped image, for the modules view (PRD §31, §70).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The same two databases §14 asks about a process's own executable, asked about a library
+  /// instead. Both go through <see cref="PackageDatabaseReader"/>, so the half-million-path index
+  /// is built once for the machine and the answer for <c>libc</c> is remembered across every
+  /// process that maps it.
+  /// </para>
+  /// <para>
+  /// Neither half is paid for unless it was asked for. Without <paramref name="verify"/> the file
+  /// is not opened at all — the package lookup is a question about a path — and with it the image
+  /// is hashed once and the digest kept, so the properties box and the package check share one read
+  /// of the bytes (PRD §5.4).
+  /// </para>
+  /// </remarks>
+  public ImageTrust DescribeImage(string path, bool verify = false) {
+    if (string.IsNullOrWhiteSpace(path))
+      return ImageTrust.NotChecked;
+
+    // The kernel's suffix for a mapping whose file is gone. Left on, the lookup would ask the
+    // databases about a path with " (deleted)" on the end and be told, correctly and uselessly,
+    // that nothing owns it.
+    if (path.EndsWith(_DELETED, StringComparison.Ordinal))
+      path = path[..^_DELETED.Length];
+
+    var (size, modified) = ImageStamp(path);
+    var digest = verify ? this.DigestOf(path, size, modified) : default;
+    return this.Packages.Describe(path, size, modified, digest, verify);
+  }
+
   private PackageDatabaseReader Packages
     => this._packages ??= new(this._options.PackageDatabaseRoot);
 

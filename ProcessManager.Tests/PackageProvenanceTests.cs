@@ -67,6 +67,42 @@ public sealed class PackageProvenanceTests {
   }
 
   /// <summary>
+  /// §31 asks a mapped image for a description and a company, and an ELF has neither: there is no
+  /// version resource in the format. What a Linux machine publishes about a file is what the
+  /// database that installed it publishes about its package, and these are the two lines it is in.
+  /// </summary>
+  [Test]
+  public void APacmanDescriptionAlsoCarriesWhatThePackageIsAndWhoBuiltIt() {
+    var desc = File.ReadAllBytes(Path.Combine(ArchRoot, "pacman", "local", "which-2.25-1", "desc"));
+    var description = PacmanLocalDatabase.ReadDescription(desc);
+
+    Assert.Multiple(() => {
+      Assert.That(description.Summary, Is.EqualTo("A utility to show the full path of commands"));
+      Assert.That(description.Packager, Is.EqualTo("Tobias Powalowski <tpowa@archlinux.org>"));
+      // And the three that were already read are still read: the two new headers sit between
+      // %VERSION% and %VALIDATION% in a real file, and a walk that stops early loses the last of them.
+      Assert.That(description.Name, Is.EqualTo("which"));
+      Assert.That(description.Version, Is.EqualTo("2.25-1"));
+      Assert.That(description.Validation, Is.EqualTo(PacmanLocalDatabase.Validation.Signature));
+    });
+  }
+
+  /// <summary>
+  /// A package with no such lines has none, and null is that answer rather than an empty string a
+  /// properties box would render as a blank field (PRD §72.3).
+  /// </summary>
+  [Test]
+  public void APackageThatSaysNeitherIsNotReportedAsSayingNothing() {
+    var desc = Encoding.UTF8.GetBytes("%NAME%\nx\n\n%VERSION%\n1\n");
+    var description = PacmanLocalDatabase.ReadDescription(desc);
+
+    Assert.Multiple(() => {
+      Assert.That(description.Summary, Is.Null);
+      Assert.That(description.Packager, Is.Null);
+    });
+  }
+
+  /// <summary>
   /// A description with no validation line is not a package that was installed unchecked.
   /// </summary>
   [Test]
@@ -220,6 +256,60 @@ public sealed class PackageProvenanceTests {
       Assert.That(DpkgDatabase.FindVersion(status, "coreutils"), Is.EqualTo("9.1-1"));
       Assert.That(DpkgDatabase.FindVersion(status, "not-installed"), Is.Null);
     });
+  }
+
+  /// <summary>
+  /// The same three fields <c>pacman</c>'s <c>desc</c> carries, out of a <c>dpkg</c> stanza — and
+  /// out of <em>one</em> walk of it, because the file is one stanza per installed package and
+  /// walking it three times to answer three questions costs three times as much.
+  /// </summary>
+  [Test]
+  public void ADebianStanzaCarriesTheVersionTheSynopsisAndTheMaintainer() {
+    var status = File.ReadAllBytes(Path.Combine(DebianRoot, "dpkg", "status"));
+    var stanza = DpkgDatabase.FindStanza(status, "bash");
+
+    Assert.Multiple(() => {
+      Assert.That(stanza.Version, Is.EqualTo("5.2.15-2+b7"));
+      Assert.That(stanza.Summary, Is.EqualTo("GNU Bourne Again SHell"));
+      Assert.That(stanza.Maintainer, Is.EqualTo("Matthias Klose <doko@debian.org>"));
+    });
+  }
+
+  /// <summary>
+  /// Debian writes <c>Maintainer</c> above <c>Version</c> and <c>Description</c> at the end of the
+  /// stanza, and promises that order nowhere — so the stanza is walked to its end rather than
+  /// abandoned at whichever of the three came first.
+  /// </summary>
+  [Test]
+  public void TheWholeStanzaIsReadRatherThanTheFirstFieldFoundInIt() {
+    var status = File.ReadAllBytes(Path.Combine(DebianRoot, "dpkg", "status"));
+
+    Assert.Multiple(() => {
+      // The last stanza in the file, whose Description is its final line and has no blank line after
+      // it: a reader that needs the terminator to commit what it has read loses this one.
+      var last = DpkgDatabase.FindStanza(status, "coreutils");
+      Assert.That(last.Summary, Is.EqualTo("GNU core utilities"));
+      Assert.That(last.Maintainer, Is.EqualTo("Michael Stone <mstone@debian.org>"));
+
+      // And a package in no stanza has no fields, rather than the fields of the stanza beside it.
+      var absent = DpkgDatabase.FindStanza(status, "not-installed");
+      Assert.That(absent.Version, Is.Null);
+      Assert.That(absent.Summary, Is.Null);
+      Assert.That(absent.Maintainer, Is.Null);
+    });
+  }
+
+  /// <summary>
+  /// The extended description is the indented paragraphs under the synopsis, and a properties box
+  /// wants the sentence rather than the essay.
+  /// </summary>
+  [Test]
+  public void OnlyTheSynopsisIsTakenAndNotTheParagraphsUnderIt() {
+    var status = Encoding.UTF8.GetBytes(
+      "Package: x\nVersion: 1\nDescription: the one-line summary\n it goes on at length\n .\n and on\n"
+    );
+
+    Assert.That(DpkgDatabase.FindStanza(status, "x").Summary, Is.EqualTo("the one-line summary"));
   }
 
   [Test]
