@@ -461,7 +461,16 @@ public sealed class TerminalPageTests {
       ui.Resize(80, 24);
 
       Assert.That(ui.Columns.Count, Is.EqualTo(chosen), "a layout somebody chose is not undone by a resize");
-      Assert.That(Frame(ui), Does.Contain("CPU hist"), "and what fits of it is still drawn");
+
+      // Drawn, not merely kept in the model: at eighty columns the header is clipped to "CPU hi",
+      // so this asks the layout where the column went rather than reading the letters back.
+      Span<ColumnPlacement> placements = stackalloc ColumnPlacement[64];
+      var count = ui.Columns.Place(79, placements);
+      var found = false;
+      for (var i = 0; i < count; ++i)
+        found |= placements[i].Field == ProcessField.CpuHistory;
+
+      Assert.That(found, Is.True, "a chosen column is squeezed by a narrow terminal, never dropped from it");
     }
   }
 

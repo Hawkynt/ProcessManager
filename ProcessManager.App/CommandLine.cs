@@ -253,12 +253,20 @@ internal sealed record CommandLineOptions {
   /// it (PRD §5.4).
   /// </remarks>
   private bool Wants(ProcessField wanted) {
-    if (this.Fields is { } fields)
+    // Both lists, because both are somebody naming the column. The terminal's differs from the
+    // file's — it keeps the drawn histories, and it can come from the settings file rather than from
+    // this command line — and a saved terminal column that the sampler was never told to collect is
+    // a column that says "not sampled" for the whole session (PRD §5.4).
+    foreach (var list in (ReadOnlySpan<ProcessField[]?>)[this.Fields, this.TerminalColumns]) {
+      if (list is not { } fields)
+        continue;
+
       // Not "field": in C# 14 that is a keyword inside a property accessor and binds to the
       // synthesised backing field rather than to the loop variable.
       foreach (var candidate in fields)
         if (candidate == wanted)
           return true;
+    }
 
     var key = FieldRegistry.Get(wanted).Key;
     return this.Filter is { } filter && filter.Contains(key, StringComparison.OrdinalIgnoreCase);

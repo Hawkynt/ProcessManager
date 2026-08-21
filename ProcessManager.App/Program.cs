@@ -122,6 +122,12 @@ internal static class Program {
     ui.View.TreeMode = options.TreeMode;
     ui.View.SortColumn = options.SortColumn;
     ui.View.SortDescending = options.SortDescending;
+    // The same columns the interactive terminal would have opened with. Without this a capture could
+    // only ever photograph the set the width picked, which makes --columns untestable by the one
+    // test that looks at a whole frame (PRD §9.6).
+    if (options.TerminalColumns is { Length: > 0 } columns)
+      ui.Columns.Apply(columns);
+
     for (var i = 0; i < options.CaptureSamples; ++i) {
       ui.Update();
       // Only between samples, and only when more than the minimum were asked for: a golden frame is

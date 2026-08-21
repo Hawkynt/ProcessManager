@@ -172,6 +172,9 @@ public sealed class ColumnLayout {
   /// </summary>
   /// <returns>How many placements were written.</returns>
   public int Place(int screenWidth, Span<ColumnPlacement> destination) {
+    Span<int> reserved = stackalloc int[this._columns.Count + 1];
+    this.ReserveForTheColumnsAfterEachOne(reserved);
+
     var written = 0;
     var x = 0;
     for (var i = 0; i < this._columns.Count && written < destination.Length; ++i) {
@@ -183,15 +186,39 @@ public sealed class ColumnLayout {
       if (x >= screenWidth)
         break;
 
-      // The last column on the line is clipped rather than dropped: a name column that runs off the
-      // edge still names something, where an empty right margin names nothing.
-      var width = Math.Min(this._columns[i].Width, screenWidth - x);
+      // A column takes what it asks for, what is left, or what is left once the columns after it
+      // have their share — whichever is smallest. The last clause is what stops the process name
+      // from swallowing the line: it declares 120 characters because the window has them, and a
+      // terminal that gave it all of those drew nothing at all of whatever somebody had ordered
+      // after it. The floor keeps a squeezed column readable rather than letting it vanish.
+      var available = screenWidth - x;
+      var width = Math.Min(this._columns[i].Width, available);
+      var after = reserved[i + 1];
+      if (after > 0)
+        // The floor is never more than the column asked for: a five-character CPU% column squeezed
+        // up to a six-character minimum is a column that moved everything after it along by one.
+        width = Math.Max(Math.Min(width, available - after), Math.Min(width, _MinimumWidth));
+
       destination[written++] = new(this._columns[i].Field, i, x, width, frozen);
-      x += this._columns[i].Width + 1;
+      x += width + 1;
     }
 
     return written;
   }
+
+  /// <summary>The width the columns drawn after each one need, so it can leave them room.</summary>
+  private void ReserveForTheColumnsAfterEachOne(Span<int> reserved) {
+    reserved[this._columns.Count] = 0;
+    for (var i = this._columns.Count - 1; i >= 0; --i) {
+      var drawn = this._columns[i].Visible && (i < this.Frozen || i >= this.Scroll);
+      // Reserved at the declared width but no more than a squeezed one needs: reserving 120 for a
+      // trailing name column would starve everything in front of it instead.
+      reserved[i] = reserved[i + 1] + (drawn ? Math.Min(this._columns[i].Width, _MinimumWidth) + 1 : 0);
+    }
+  }
+
+  /// <summary>What a column squeezed by its neighbours still gets.</summary>
+  private const int _MinimumWidth = 6;
 
   /// <summary>Scrolls sideways until the cursor's column is on screen, the way a selection does.</summary>
   public void EnsureCurrentVisible(int screenWidth) {

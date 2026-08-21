@@ -137,6 +137,42 @@ public sealed class ColumnLayoutTests {
       Assert.That(columns.HitTest(120, placements[i].X + 1), Is.EqualTo(placements[i].Index), $"column {i}");
   }
 
+  /// <remarks>
+  /// The process name declares 120 characters because the window has them to give. A terminal that
+  /// handed it all 120 drew nothing whatever of the columns ordered after it — which nobody noticed
+  /// while the name was always last, and which appeared the moment a column set put something behind
+  /// it.
+  /// </remarks>
+  [Test]
+  public void AColumnOrderedAfterTheNameIsStillDrawn() {
+    var columns = new ColumnLayout([
+      ProcessField.Pid,
+      ProcessField.Name,
+      ProcessField.CpuPercentDelta,
+      ProcessField.ThreadCount,
+    ]);
+
+    Span<ColumnPlacement> placements = stackalloc ColumnPlacement[8];
+    var count = columns.Place(90, placements);
+
+    Assert.That(count, Is.EqualTo(4), "every column reached the line");
+    Assert.That(placements[3].X + placements[3].Width, Is.LessThanOrEqualTo(90), "and none of it hangs off the edge");
+    for (var i = 1; i < count; ++i)
+      Assert.That(placements[i].X, Is.GreaterThan(placements[i - 1].X), "in order, without overlapping");
+  }
+
+  [Test]
+  public void ASqueezedColumnKeepsEnoughOfItselfToBeRecognised() {
+    // Eleven columns in eighty characters: each one narrower than it asked for, none of them gone.
+    var columns = new ColumnLayout([.. Settings.UserSettings.Presets["expert"]]);
+    Span<ColumnPlacement> placements = stackalloc ColumnPlacement[32];
+    var count = columns.Place(80, placements);
+
+    Assert.That(count, Is.EqualTo(columns.Count));
+    for (var i = 0; i < count; ++i)
+      Assert.That(placements[i].Width, Is.GreaterThanOrEqualTo(Math.Min(6, columns.WidthAt(placements[i].Index))));
+  }
+
   [Test]
   public void AHiddenColumnIsNeitherDrawnNorSorted() {
     var columns = Layout();
