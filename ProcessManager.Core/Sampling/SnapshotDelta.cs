@@ -117,6 +117,15 @@ public sealed class SnapshotDelta {
   public Rate PerCoreUserPercent(int core)
     => (uint)core < (uint)this._perCoreUser.Length ? this._perCoreUser[core] : Rate.NotSampledYet;
 
+  /// <summary>
+  /// Context switches across the whole machine, per second (PRD §51).
+  /// </summary>
+  /// <remarks>
+  /// Not the sum of the per-process figures: the kernel's own counter includes switches into and out
+  /// of processes that came and went between two samples, which a sum over the survivors cannot see.
+  /// </remarks>
+  public Rate SystemContextSwitchesPerSecond { get; private set; } = Rate.NotSampledYet;
+
   /// <summary>The machine's kernel and user time, the same split as the per-core figures.</summary>
   public Rate SystemKernelPercent { get; private set; } = Rate.NotSampledYet;
 
@@ -157,6 +166,7 @@ public sealed class SnapshotDelta {
       this.SystemCpuPercent = Rate.NotSampledYet;
       this.SystemKernelPercent = Rate.NotSampledYet;
       this.SystemUserPercent = Rate.NotSampledYet;
+      this.SystemContextSwitchesPerSecond = Rate.NotSampledYet;
       this.PerCoreCount = 0;
       var processes = current.Processes;
       for (var i = 0; i < processes.Length; ++i) {
@@ -229,6 +239,8 @@ public sealed class SnapshotDelta {
     this.SystemCpuPercent = RateCalculator.BusyPercent(previous.System.Cpu, current.System.Cpu);
     this.SystemKernelPercent = RateCalculator.KernelPercent(previous.System.Cpu, current.System.Cpu);
     this.SystemUserPercent = RateCalculator.UserPercent(previous.System.Cpu, current.System.Cpu);
+    this.SystemContextSwitchesPerSecond =
+      RateCalculator.PerSecond(previous.System.ContextSwitches, current.System.ContextSwitches, elapsed);
 
     var coreCount = Math.Min(previous.PerCoreCount, current.PerCoreCount);
     EnsureLength(ref this._perCoreBusy, coreCount);

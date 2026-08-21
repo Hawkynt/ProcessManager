@@ -1998,20 +1998,43 @@ where supported the core and memory clocks, voltage, power limit and temperature
 
 # 51. System activity view — expert
 
-- [ ] Top CPU processes
-- [ ] Top memory processes
-- [ ] Top disk readers
-- [ ] Top disk writers
-- [ ] Top network senders
-- [ ] Top network receivers
-- [ ] Top GPU processes
-- [ ] Process creation rate
-- [ ] Process termination rate
-- [ ] Context-switch rate
-- [ ] Thread creation
-- [ ] Disk activity
+- [x] Top CPU processes
+- [x] Top memory processes
+- [x] Top disk readers
+- [x] Top disk writers
+- [ ] Top network senders — no per-process byte counters exist (§18)
+- [ ] Top network receivers — likewise
+- [ ] Top GPU processes — needs per-process GPU attribution (§19)
+- [x] Process creation rate
+- [x] Process termination rate
+- [x] Context-switch rate — machine-wide, from the kernel's own counter
+- [x] 🟡 Thread creation — the live thread count; the rate of creation is not tracked
+- [x] Disk activity
 - [ ] Network activity
-- [ ] Clicking any top-process entry navigates to that process
+- [ ] Clicking any top-process entry navigates to that process — the entry carries the identity pair
+      ready for it; the page has no click handling yet
+
+This is the question a sorted table answers only if you already sorted it by the right column.
+Somebody opening a system page wants three answers at once — what is using the processor, the memory
+and the disk — and getting them from a table means re-sorting it three times and losing their place
+each time.
+
+**Selection, not sorting.** Finding the top five of four hundred by sorting is four hundred log four
+hundred comparisons, three times over, every second; a single pass keeping the best five is four
+hundred. On a page refreshing at one hertz that difference is the whole cost of the feature. The
+selection is hand-written, so a test holds it against the answer a sort would have given, for several
+different arrival orders — a top-five list that is subtly wrong is worse than none, because nothing
+about it looks wrong.
+
+A process using none of a resource is left out rather than padding the list with zeros, and one whose
+counter cannot be read is left out too: an unreadable reading is not a small one, and must not sit at
+the bottom of the list as though the process were idle (§5.3).
+
+Started and ended come from comparing two snapshots rather than from the kernel's cumulative
+`processes` counter, which only ever counts *forks* — it cannot say how many went away, so a machine
+churning a thousand short-lived processes a second would look identical to one that started a
+thousand and kept them. Both are divided by the real elapsed interval rather than assumed to be a
+second, or a page refreshing every five seconds would quintuple everything.
 
 # 52. Disk activity view
 

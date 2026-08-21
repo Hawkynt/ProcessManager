@@ -59,13 +59,15 @@ public sealed class PerformanceReportTests {
   }
 
   [Test]
-  public void TheSectionsAreSystemProcessorAndMemory() {
+  public void AMachineWithNoDevicesStillHasItsFourStandingSections() {
     var sections = PerformanceReport.Build(Host(), Snapshot());
     var titles = new List<string>();
     foreach (var section in sections)
       titles.Add(section.Title);
 
-    Assert.That(titles, Is.EqualTo(new[] { "System", "Processor", "Memory" }));
+    // The four that exist on every machine, in the order a reader wants them: what this is, what is
+    // using it, and then the two resources it is mostly made of.
+    Assert.That(titles, Is.EqualTo(new[] { "System", "Activity", "Processor", "Memory" }));
     foreach (var section in sections)
       Assert.That(section.Rows, Is.Not.Empty, section.Title);
   }
