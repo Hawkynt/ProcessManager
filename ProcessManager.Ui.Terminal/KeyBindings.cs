@@ -12,7 +12,7 @@ public enum TerminalAction : byte {
   Collapse, Expand, Details, Quit,
 
   ToggleTree, Pause, RefreshNow, CpuMode, UserFilter, Search, Filter, CaseSensitive,
-  Graphs, LowerPane, PaneGrow, PaneShrink, Help,
+  Graphs, LowerPane, PaneGrow, PaneShrink, Help, GroupBy,
 
   SortNext, SortPrevious, SortReverse, SortAlso, SortByCpu, SortByMemory, SortByPid,
 
@@ -74,6 +74,7 @@ public sealed class KeyBindings {
     new(TerminalAction.PaneGrow, "pane-grow", "View", "a taller lower pane", ["+"]),
     new(TerminalAction.PaneShrink, "pane-shrink", "View", "a shorter lower pane", ["-"]),
     new(TerminalAction.Help, "help", "View", "this page", ["?", "f1"]),
+    new(TerminalAction.GroupBy, "group", "View", "group the rows by user, session, service…", ["G"]),
 
     new(TerminalAction.SortNext, "sort-next", "Sorting", "sort by the next column", ["f6", ">"]),
     new(TerminalAction.SortPrevious, "sort-previous", "Sorting", "sort by the previous column", ["<"]),

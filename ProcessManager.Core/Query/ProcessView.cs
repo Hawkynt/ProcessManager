@@ -1,10 +1,76 @@
+using System.Globalization;
 using Hawkynt.ProcessManager.Model;
 using Hawkynt.ProcessManager.Sampling;
 
 namespace Hawkynt.ProcessManager.Query;
 
-/// <summary>One visible row: where the process is in the snapshot, and how deep in the tree.</summary>
-public readonly record struct ViewRow(int Index, int Depth, bool HasChildren);
+/// <summary>
+/// One visible row: where the process is in the snapshot, how deep in the tree, and which group it
+/// belongs to.
+/// </summary>
+/// <param name="Index">
+/// The process's position in the snapshot, or -1 for a group header — which is not a process and has
+/// none. A caller that indexes the snapshot with this without asking
+/// <see cref="IsGroupHeader"/> first gets an exception rather than the wrong process, which is
+/// deliberate: a header row silently rendering process zero is exactly the class of bug §83 forbids.
+/// </param>
+/// <param name="Group">Which of <see cref="ProcessView.Groups"/> this row is in, or -1 when off.</param>
+public readonly record struct ViewRow(int Index, int Depth, bool HasChildren, int Group = -1) {
+
+  /// <summary>True for a heading row. It is not a process: not selectable, not counted, not actionable.</summary>
+  public bool IsGroupHeader => this.Index < 0;
+
+}
+
+/// <summary>
+/// One heading in a grouped list (PRD §83).
+/// </summary>
+/// <param name="Label">What the heading says — the user, the session, the unit, the image.</param>
+/// <param name="Count">How many processes are under it, whether or not they are on screen.</param>
+public readonly record struct ProcessGroup(string Label, int Count);
+
+/// <summary>
+/// What the rows are grouped by (PRD §83).
+/// </summary>
+/// <remarks>
+/// The parent tree is one of these rather than a flag beside them, because it is the same decision:
+/// a list is nested by parentage, or headed by user, or neither, and it can never be two of those at
+/// once. <see cref="ProcessView.TreeMode"/> remains as the name the rest of the program already uses
+/// for <see cref="ParentTree"/>.
+/// <para>
+/// §83's remaining three — application, package and publisher — are not here. Naming a group needs
+/// something to read it off, and this program has no notion of an application, no package database
+/// and no signature verification; a grouping that guessed would put processes under headings that
+/// are not true.
+/// </para>
+/// </remarks>
+public enum ProcessGrouping : byte {
+
+  /// <summary>One flat list.</summary>
+  None,
+
+  /// <summary>Children nested under their parents — the process tree.</summary>
+  ParentTree,
+
+  /// <summary>By the account the process runs as.</summary>
+  User,
+
+  /// <summary>By login session.</summary>
+  Session,
+
+  /// <summary>By the systemd unit the process lives in.</summary>
+  Service,
+
+  /// <summary>By the executable image.</summary>
+  Executable,
+
+  /// <summary>By container.</summary>
+  Container,
+
+  /// <summary>By the whole cgroup path, which is finer than either service or container.</summary>
+  Cgroup,
+
+}
 
 /// <summary>A column the order is decided by, and which way round (PRD §11).</summary>
 public readonly record struct SortKey(ProcessField Field, bool Descending);
@@ -26,6 +92,12 @@ public sealed class ProcessView {
   private byte[] _state = [];
   private bool[] _visible = [];
   private ViewRow[] _rows = [];
+  private int[] _groupOf = [];
+  private int[] _groupStart = [];
+  private int[] _groupCursor = [];
+  private readonly List<ProcessGroup> _groups = [];
+  private readonly Dictionary<string, int> _groupIndex = new(StringComparer.Ordinal);
+  private readonly HashSet<string> _collapsedGroups = new(StringComparer.Ordinal);
   private readonly Dictionary<int, int> _byPid = [];
   private readonly HashSet<int> _collapsed = [];
   private readonly List<SortKey> _secondary = [];
@@ -64,8 +136,39 @@ public sealed class ProcessView {
   /// <summary>Back to one sort column.</summary>
   public void ClearSecondarySort() => this._secondary.Clear();
 
+  /// <summary>
+  /// What the rows are grouped by (PRD §83).
+  /// </summary>
+  /// <remarks>
+  /// Changing it leaves the collapsed headings alone. They are keyed by label, so grouping by user,
+  /// looking at something else and coming back finds the same headings folded the same way.
+  /// </remarks>
+  public ProcessGrouping Grouping { get; set; }
+
   /// <summary>Nest children under their parent instead of showing one flat sorted list.</summary>
-  public bool TreeMode { get; set; }
+  /// <remarks>
+  /// The tree is one of <see cref="ProcessGrouping"/>'s options rather than a flag of its own; this
+  /// is the name everything from the settings file to the command line already calls it by.
+  /// </remarks>
+  public bool TreeMode {
+    get => this.Grouping == ProcessGrouping.ParentTree;
+    set => this.Grouping = value ? ProcessGrouping.ParentTree : ProcessGrouping.None;
+  }
+
+  /// <summary>The headings, in the order they appear (PRD §83). Empty unless something is grouped.</summary>
+  public IReadOnlyList<ProcessGroup> Groups => this._groups;
+
+  /// <summary>Whether a heading is folded shut.</summary>
+  public bool IsGroupCollapsed(string label) {
+    ArgumentNullException.ThrowIfNull(label);
+    return this._collapsedGroups.Contains(label);
+  }
+
+  /// <summary>Folds a heading, or opens it. Returns whether anything changed.</summary>
+  public bool SetGroupCollapsed(string label, bool collapsed) {
+    ArgumentNullException.ThrowIfNull(label);
+    return collapsed ? this._collapsedGroups.Add(label) : this._collapsedGroups.Remove(label);
+  }
 
   /// <summary>
   /// Whether text matching distinguishes case (PRD §11).
@@ -125,10 +228,20 @@ public sealed class ProcessView {
   /// <summary>Show only this user's processes; null for every user.</summary>
   public int? UserIdFilter { get; set; }
 
-  /// <summary>The rows to draw, in order.</summary>
+  /// <summary>The rows to draw, in order. Some of them may be headings rather than processes.</summary>
   public ReadOnlySpan<ViewRow> Rows => this._rows.AsSpan(0, this.RowCount);
 
+  /// <summary>How many rows there are to draw, headings included.</summary>
   public int RowCount { get; private set; }
+
+  /// <summary>
+  /// How many of the rows are processes.
+  /// </summary>
+  /// <remarks>
+  /// What "N of M processes" counts. A heading is not a process, and counting one would make a
+  /// grouped list claim more processes than the machine is running (PRD §83).
+  /// </remarks>
+  public int MatchCount { get; private set; }
 
   /// <summary>How many processes the snapshot held, before filtering.</summary>
   public int TotalCount => this._snapshot?.ProcessCount ?? 0;
@@ -141,7 +254,7 @@ public sealed class ProcessView {
     var processes = this._snapshot.Processes;
     var rows = this.Rows;
     for (var i = 0; i < rows.Length; ++i)
-      if (processes[rows[i].Index].Key == key)
+      if (!rows[i].IsGroupHeader && processes[rows[i].Index].Key == key)
         return i;
 
     return -1;
@@ -175,13 +288,15 @@ public sealed class ProcessView {
     for (var i = 0; i < count; ++i)
       this._visible[i] = this.Matches(processes[i], i);
 
-    if (this.TreeMode)
-      this.BuildTree(processes, count);
-    else
-      this.BuildFlat(count);
+    switch (this.Grouping) {
+      case ProcessGrouping.ParentTree: this.BuildTree(processes, count); break;
+      case ProcessGrouping.None: this.BuildFlat(count); break;
+      default: this.BuildGrouped(processes, delta, count); break;
+    }
   }
 
   private void BuildFlat(int count) {
+    this._groups.Clear();
     var written = 0;
     for (var i = 0; i < count; ++i)
       if (this._visible[i])
@@ -191,10 +306,121 @@ public sealed class ProcessView {
     for (var i = 0; i < written; ++i)
       this._rows[i] = new(this._order[i], 0, false);
 
-    this.RowCount = written;
+    this.RowCount = this.MatchCount = written;
+  }
+
+  /// <summary>
+  /// A heading per group, with its processes under it (PRD §83).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The groups come out in the order their first row does, which means the order the current sort
+  /// put them in: sorted by CPU, the busiest user's heading is at the top. Ordering them
+  /// alphabetically instead would answer a question nobody asked and bury the group somebody sorted
+  /// the table to find.
+  /// </para>
+  /// <para>
+  /// Two passes and no nested loop. Counting the members first and then placing each one at its
+  /// group's running cursor is linear; walking the sorted list once per group is not, and "once per
+  /// group" is once per executable on a machine with three hundred of them.
+  /// </para>
+  /// </remarks>
+  private void BuildGrouped(ReadOnlySpan<ProcessRecord> processes, SnapshotDelta delta, int count) {
+    var written = 0;
+    for (var i = 0; i < count; ++i)
+      if (this._visible[i])
+        this._order[written++] = i;
+
+    Array.Sort(this._order, 0, written, this._comparer);
+
+    this._groups.Clear();
+    this._groupIndex.Clear();
+    EnsureLength(ref this._groupOf, count);
+    for (var i = 0; i < written; ++i) {
+      var index = this._order[i];
+      var label = this.LabelOf(in processes[index], delta, index);
+      if (!this._groupIndex.TryGetValue(label, out var group)) {
+        group = this._groups.Count;
+        this._groupIndex[label] = group;
+        this._groups.Add(new(label, 0));
+      }
+
+      this._groups[group] = this._groups[group] with { Count = this._groups[group].Count + 1 };
+      this._groupOf[index] = group;
+    }
+
+    // Where each heading lands, and where its first member goes. A folded group takes one row and
+    // its members take none — they are still counted in the heading, because the count is a fact
+    // about the machine rather than about what is on screen.
+    EnsureLength(ref this._groupStart, this._groups.Count);
+    EnsureLength(ref this._groupCursor, this._groups.Count);
+    var running = 0;
+    for (var group = 0; group < this._groups.Count; ++group) {
+      this._groupStart[group] = running;
+      this._groupCursor[group] = running + 1;
+      running += 1 + (this._collapsedGroups.Contains(this._groups[group].Label) ? 0 : this._groups[group].Count);
+    }
+
+    EnsureLength(ref this._rows, running);
+    for (var group = 0; group < this._groups.Count; ++group)
+      this._rows[this._groupStart[group]] = new(-1, 0, true, group);
+
+    for (var i = 0; i < written; ++i) {
+      var index = this._order[i];
+      var group = this._groupOf[index];
+      if (this._collapsedGroups.Contains(this._groups[group].Label))
+        continue;
+
+      this._rows[this._groupCursor[group]++] = new(index, 1, false, group);
+    }
+
+    this.RowCount = running;
+    // The process rows that were actually emitted, so a folded group takes its members out of the
+    // count the way a collapsed subtree already does in the tree. The heading still says how many it
+    // is hiding, which is where that number belongs.
+    this.MatchCount = running - this._groups.Count;
+  }
+
+  /// <summary>
+  /// The heading one process belongs under.
+  /// </summary>
+  /// <remarks>
+  /// Read through <see cref="FieldAccessor"/> wherever the thing being grouped by is a field, so a
+  /// heading says exactly what the column of the same name would (PRD §5.1). The fallbacks are
+  /// statements rather than placeholders: a process in no container belongs under "not in a
+  /// container", which is true, and not under an em dash, which would read as a value nobody could
+  /// obtain (PRD §72.3).
+  /// </remarks>
+  private string LabelOf(in ProcessRecord process, SnapshotDelta delta, int index) {
+    switch (this.Grouping) {
+      case ProcessGrouping.User:
+        return FieldAccessor.RawText(ProcessField.UserName, in process, delta, index)
+          ?? (process.UserId >= 0
+            ? "uid " + process.UserId.ToString(CultureInfo.InvariantCulture)
+            : "user unknown");
+
+      case ProcessGrouping.Session:
+        return "session " + process.SessionId.ToString(CultureInfo.InvariantCulture);
+
+      // A unit rather than the slice above it: see CgroupUnit for why the innermost one is the answer.
+      case ProcessGrouping.Service:
+        return CgroupUnit.Of(process.ContainerPath) ?? "not a service";
+
+      case ProcessGrouping.Executable:
+        return FieldAccessor.RawText(ProcessField.ExecutableName, in process, delta, index)
+          ?? "no executable";
+
+      case ProcessGrouping.Container:
+        return FieldAccessor.RawText(ProcessField.ContainerId, in process, delta, index)
+          ?? "not in a container";
+
+      default:
+        return FieldAccessor.RawText(ProcessField.Container, in process, delta, index) ?? "no cgroup";
+    }
   }
 
   private void BuildTree(ReadOnlySpan<ProcessRecord> processes, int count) {
+    this._groups.Clear();
     this.LinkParents(processes, count);
     this.PromoteAncestorsOfMatches(count);
     this.IndexChildren(count);
@@ -239,6 +465,10 @@ public sealed class ProcessView {
         this._walk.Push(child);
       }
     }
+
+    // Every row in a tree is a process; a collapsed subtree is rows nobody can see rather than rows
+    // that are not processes.
+    this.MatchCount = this.RowCount;
   }
 
   private void LinkParents(ReadOnlySpan<ProcessRecord> processes, int count) {

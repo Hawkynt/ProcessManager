@@ -30,7 +30,20 @@ public sealed record UserSettings {
 
   public bool SortDescending { get; init; } = true;
 
-  public bool TreeMode { get; init; } = true;
+  /// <summary>
+  /// Whether the rows are the process tree.
+  /// </summary>
+  /// <remarks>
+  /// Derived from <see cref="Grouping"/> rather than kept beside it. They are one decision — a list
+  /// is nested by parentage or headed by something else, never both — and two fields for one
+  /// decision is two fields to disagree, which is what the field catalogue was split up to stop
+  /// (PRD §5.1). The <c>tree=</c> key stays because settings files and the command line already use
+  /// that word.
+  /// </remarks>
+  public bool TreeMode {
+    get => this.Grouping == ProcessGrouping.ParentTree;
+    init => this.Grouping = value ? ProcessGrouping.ParentTree : ProcessGrouping.None;
+  }
 
   /// <summary>Which convention CPU percentages are expressed in (PRD §3.2).</summary>
   public CpuPercentMode CpuMode { get; init; } = CpuPercentMode.Normalized;
@@ -43,6 +56,19 @@ public sealed record UserSettings {
 
   /// <summary>The columns the terminal opens with.</summary>
   public ProcessField[] TerminalColumns { get; init; } = [];
+
+  /// <summary>
+  /// Widths somebody dragged in the window, by field (PRD §11).
+  /// </summary>
+  /// <remarks>
+  /// Only the ones that differ from the registry's, so a file does not pin every width forever: a
+  /// column whose default is improved in a later build should get the improvement unless somebody
+  /// has actually chosen a width for it.
+  /// </remarks>
+  public IReadOnlyList<KeyValuePair<ProcessField, int>> DesktopColumnWidths { get; init; } = [];
+
+  /// <summary>What the rows are grouped by (PRD §83).</summary>
+  public ProcessGrouping Grouping { get; init; } = ProcessGrouping.ParentTree;
 
   /// <summary>
   /// The window's size, so it opens where it was left (PRD §11).
@@ -282,6 +308,18 @@ public sealed record UserSettings {
 
           break;
 
+        case "columns.desktop.widths":
+          if (TryParseWidths(value, out var widths))
+            settings = settings with { DesktopColumnWidths = widths };
+
+          break;
+
+        case "grouping":
+          if (TryParseGrouping(value, out var grouping))
+            settings = settings with { Grouping = grouping };
+
+          break;
+
         case "window.width":
           if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var width) && width is >= 320 and <= 30000)
             settings = settings with { WindowWidth = width };
@@ -374,6 +412,19 @@ public sealed record UserSettings {
     if (this.TerminalColumns.Length > 0)
       text.Append("columns.terminal=").AppendLine(Join(this.TerminalColumns));
 
+    if (this.DesktopColumnWidths.Count > 0) {
+      var widths = new List<string>(this.DesktopColumnWidths.Count);
+      foreach (var (field, width) in this.DesktopColumnWidths)
+        widths.Add($"{FieldRegistry.Get(field).Key}:{width.ToString(CultureInfo.InvariantCulture)}");
+
+      text.Append("columns.desktop.widths=").AppendLine(string.Join(",", widths));
+    }
+
+    // Only when it is not the tree. The tree is what the window opens on, so its being there is not
+    // a preference worth a line in everybody's file.
+    if (this.Grouping != ProcessGrouping.ParentTree)
+      text.Append("grouping=").AppendLine(NameOfGrouping(this.Grouping));
+
     if (this.WindowWidth > 0 && this.WindowHeight > 0) {
       text.AppendLine();
       text.Append("window.width=").AppendLine(this.WindowWidth.ToString(CultureInfo.InvariantCulture));
@@ -441,6 +492,61 @@ public sealed record UserSettings {
       keys.Add(FieldRegistry.Get(field).Key);
 
     return string.Join(",", keys);
+  }
+
+  /// <summary>
+  /// <c>name:220,pid:60</c> — a field key and the width somebody gave it (PRD §11).
+  /// </summary>
+  /// <remarks>
+  /// A pair this build cannot make sense of is skipped rather than failing the line, the same way an
+  /// unknown field key is: a settings file written by a newer version must still open an older one.
+  /// </remarks>
+  private static bool TryParseWidths(string text, out IReadOnlyList<KeyValuePair<ProcessField, int>> widths) {
+    var parsed = new List<KeyValuePair<ProcessField, int>>();
+    foreach (var part in text.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)) {
+      var colon = part.LastIndexOf(':');
+      if (colon <= 0
+          || !FieldRegistry.TryParse(part[..colon], out var field)
+          || !int.TryParse(part[(colon + 1)..], NumberStyles.Integer, CultureInfo.InvariantCulture, out var width)
+          || width <= 0)
+        continue;
+
+      parsed.Add(new(field, width));
+    }
+
+    widths = parsed;
+    return parsed.Count > 0;
+  }
+
+  /// <summary>The word a grouping is written as, which is also what <c>--group</c> takes.</summary>
+  public static string NameOfGrouping(ProcessGrouping grouping) => grouping switch {
+    ProcessGrouping.None => "none",
+    ProcessGrouping.ParentTree => "tree",
+    ProcessGrouping.User => "user",
+    ProcessGrouping.Session => "session",
+    ProcessGrouping.Service => "service",
+    ProcessGrouping.Executable => "executable",
+    ProcessGrouping.Container => "container",
+    _ => "cgroup",
+  };
+
+  /// <summary>Reads a grouping by name. False for a word no build of this understands.</summary>
+  public static bool TryParseGrouping(string? text, out ProcessGrouping grouping) {
+    grouping = ProcessGrouping.None;
+    if (string.IsNullOrWhiteSpace(text))
+      return false;
+
+    switch (text.Trim().ToLowerInvariant()) {
+      case "none" or "flat" or "off": grouping = ProcessGrouping.None; return true;
+      case "tree" or "parent" or "parent-tree": grouping = ProcessGrouping.ParentTree; return true;
+      case "user": grouping = ProcessGrouping.User; return true;
+      case "session": grouping = ProcessGrouping.Session; return true;
+      case "service" or "unit": grouping = ProcessGrouping.Service; return true;
+      case "executable" or "exe" or "image": grouping = ProcessGrouping.Executable; return true;
+      case "container": grouping = ProcessGrouping.Container; return true;
+      case "cgroup": grouping = ProcessGrouping.Cgroup; return true;
+      default: return false;
+    }
   }
 
   private static bool TryParseFields(string text, out ProcessField[] fields) {

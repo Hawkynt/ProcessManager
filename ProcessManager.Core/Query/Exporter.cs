@@ -210,6 +210,10 @@ public static class Exporter {
 
     var processes = snapshot.Processes;
     foreach (var row in view.Rows) {
+      // A heading is not a process and has no cells; an export carries the table's rows (PRD §83).
+      if (row.IsGroupHeader)
+        continue;
+
       ref readonly var process = ref processes[row.Index];
       for (var i = 0; i < fields.Length; ++i) {
         if (i > 0)
@@ -265,6 +269,10 @@ public static class Exporter {
     var processes = snapshot.Processes;
     var first = true;
     foreach (var row in view.Rows) {
+      // A heading is not a process and has no cells; an export carries the table's rows (PRD §83).
+      if (row.IsGroupHeader)
+        continue;
+
       ref readonly var process = ref processes[row.Index];
       builder.Clear();
       if (!lines && !first)
@@ -343,6 +351,10 @@ public static class Exporter {
 
     var processes = snapshot.Processes;
     foreach (var row in view.Rows) {
+      // A heading is not a process and has no cells; an export carries the table's rows (PRD §83).
+      if (row.IsGroupHeader)
+        continue;
+
       ref readonly var process = ref processes[row.Index];
       for (var i = 0; i < fields.Length; ++i) {
         var descriptor = FieldRegistry.Get(fields[i]);
@@ -378,6 +390,10 @@ public static class Exporter {
 
     var processes = snapshot.Processes;
     foreach (var row in view.Rows) {
+      // A heading is not a process and has no cells; an export carries the table's rows (PRD §83).
+      if (row.IsGroupHeader)
+        continue;
+
       ref readonly var process = ref processes[row.Index];
       output.Write('|');
       foreach (var field in fields) {
@@ -419,6 +435,10 @@ public static class Exporter {
 
     var processes = snapshot.Processes;
     foreach (var row in view.Rows) {
+      // A heading is not a process and has no cells; an export carries the table's rows (PRD §83).
+      if (row.IsGroupHeader)
+        continue;
+
       ref readonly var process = ref processes[row.Index];
       for (var i = 0; i < fields.Length; ++i)
         widths[i] = Math.Max(widths[i], Cell(fields[i], in process, delta, row.Index, row.Depth, treeIndent).Length);
