@@ -68,7 +68,11 @@ internal static class LimitsReport {
     Console.WriteLine($"  throttled            {Humanize.Count(cgroup.ThrottledCount)}");
     Console.WriteLine($"  memory               {Humanize.Bytes(cgroup.MemoryCurrentBytes)} of {Limit(cgroup.MemoryMaxBytes)}");
     Console.WriteLine($"  memory, soft cap     {Limit(cgroup.MemoryHighBytes)}");
-    Console.WriteLine($"  processes            {Humanize.Count(cgroup.PidsCurrent)} of {Limit(cgroup.PidsMax)}");
+    // Tasks and not processes. `pids.current` counts threads, so a cgroup with 58 processes in it
+    // routinely reports 892 — and printing that under a heading of "processes" is a figure wrong by
+    // an order of magnitude with nothing to say so. It is what systemd calls TasksMax (PRD §5.3).
+    Console.WriteLine($"  tasks                {Humanize.Count(cgroup.PidsCurrent)} of {Limit(cgroup.PidsMax)}");
+    Console.WriteLine("  a task is a thread, so a process with eight threads counts as eight");
     Console.WriteLine();
     Console.WriteLine($"  stalled on CPU       {Pressure(cgroup.CpuPressure)}");
     Console.WriteLine($"  stalled on memory    {Pressure(cgroup.MemoryPressure)}");

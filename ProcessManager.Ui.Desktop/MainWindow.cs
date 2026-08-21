@@ -999,13 +999,16 @@ public sealed class MainWindow : Form {
       return;
     }
 
+    // Named for what it counts. `pids.current` counts threads, so a confirmation reading "892
+    // processes" about a cgroup holding 58 of them states the consequence wrongly by an order of
+    // magnitude — which is the one thing §5.5 exists to prevent.
     var members = cgroup.PidsCurrent.HasValue
-      ? $"{Humanize.Count(cgroup.PidsCurrent)} processes"
-      : "every process";
+      ? $"every process in that cgroup — {Humanize.Count(cgroup.PidsCurrent)} tasks between them"
+      : "every process in that cgroup";
 
     var answer = MessageBox.Show(
       $"Freeze {cgroup.Path}?\n\n"
-      + $"This stops {members} in that cgroup, not only {row.Name} (PID {row.Pid}). "
+      + $"This stops {members}, not only {row.Name} (PID {row.Pid}). "
       + "They keep every file, socket and lock they hold, and each still reports itself as sleeping — "
       + "the kernel has no process state for frozen.",
       "Process Manager",
