@@ -29,6 +29,30 @@ public sealed class ProcessPropertiesWindowTests {
     public NetworkInterfaceInfo DescribeInterface(string name)
       => new(name, null, Counter.NotSupported, null, Counter.NotSupported, false);
 
+    /// <summary>
+    /// What the on-demand pages of §34, §36 and §38 get.
+    /// </summary>
+    /// <remarks>
+    /// The defaults are what a platform that reads none of them honestly knows, which is the case
+    /// most of these tests are about: a page must say which kind of nothing it is looking at rather
+    /// than coming up empty (PRD §5.3).
+    /// </remarks>
+    public MemoryMapReading Map { get; init; } = MemoryMapReading.NotImplemented;
+
+    public ProcessSecurity? Security { get; init; }
+
+    public CgroupInfo? Cgroup { get; init; }
+
+    public ImageInfo? Image { get; init; }
+
+    public MemoryMapReading GetMemoryRegions(ProcessKey key) => this.Map;
+
+    public ProcessSecurity? DescribeSecurity(ProcessKey key) => this.Security;
+
+    public CgroupInfo? DescribeCgroup(ProcessKey key) => this.Cgroup;
+
+    public ImageInfo? DescribeImage(ProcessKey key) => this.Image;
+
     public void Dispose() { }
   }
 
@@ -169,6 +193,9 @@ public sealed class ProcessPropertiesWindowTests {
     // And the pane's own, which is the whole reason the pages were added to its strip rather than
     // to a second one.
     Assert.That(window.TabTitles, Is.SupersetOf(new[] { "Overview", "Threads", "Modules", "Handles" }));
+    // The three §26 asked for and did not have: the address space, what confines the process, and
+    // the ceilings that belong to its group rather than to it (PRD §34, §36, §38).
+    Assert.That(window.TabTitles, Is.SupersetOf(new[] { "Memory map", "Security", "cgroup" }));
   }
 
   [Test]
@@ -282,6 +309,331 @@ public sealed class ProcessPropertiesWindowTests {
     window.UpdateFromSample(snapshot, delta, row, Counter.NotSampledYet);
 
     Assert.That(window.TabTitles, Does.Not.Contain("GPU"));
+  }
+
+  #endregion
+
+  #region the Security page (PRD §36)
+
+  [Test]
+  public void TheSecurityPageShowsWhoTheProcessIsAndWhatItMay() {
+    var (snapshot, delta, row, key) = Machine();
+    var window = new ProcessPropertiesWindow(
+      new StubProbe {
+        Security = new("unconfined", UnknownReason.None, [new(998, "wheel"), new(1000, null)], UnknownReason.None),
+        Image = new(
+          "/usr/bin/editor",
+          "x86-64",
+          HeaderRead: true,
+          Bits: 64,
+          IsPositionIndependent: true,
+          Interpreter: "/lib64/ld-linux-x86-64.so.2",
+          SizeBytes: Counter.Of(1024ul),
+          ModifiedUtc: null,
+          WorkingDirectory: "/home/alice",
+          Namespaces: [new("pid", "4026531836"), new("net", "4026531833")]
+        ),
+      },
+      key,
+      row.Name
+    );
+
+    // Shown first: nothing is collected for a tab nobody has opened, which is the discipline the
+    // pane's own tabs follow and the reason the label and the group list are not read on every tick
+    // of every open window (PRD §5.4).
+    window.ShowPage("Security");
+    window.UpdateFromSample(snapshot, delta, row, Counter.NotSampledYet);
+
+    Assert.Multiple(() => {
+      Assert.That(window.SecurityText, Does.Contain("alice"));
+      Assert.That(window.SecurityText, Does.Contain("unconfined"), "what AppArmor says is an answer, not a blank");
+      // The number always and the name where this machine's own file has one, which is what a group
+      // from a directory service does not (PRD §5.3).
+      Assert.That(window.SecurityText, Does.Contain("wheel (998)"));
+      Assert.That(window.SecurityText, Does.Contain("1000"));
+      // Where a container actually is: two processes sharing an inode share that namespace, which is
+      // a harder fact than a cgroup path anybody may write (PRD §14).
+      Assert.That(window.SecurityText, Does.Contain("Namespace, pid"));
+      Assert.That(window.SecurityText, Does.Contain("4026531836"));
+    });
+  }
+
+  /// <summary>
+  /// A kernel with no security module fails the read outright rather than producing an empty file,
+  /// so a blank row here would read as a process nothing is confining — which is a claim, and one
+  /// this program must never make out of an absence (PRD §70, §72.3).
+  /// </summary>
+  [Test]
+  public void NoSecurityModuleIsSaidRatherThanLeftBlank() {
+    var (snapshot, delta, row, key) = Machine();
+    var window = new ProcessPropertiesWindow(
+      new StubProbe { Security = new(null, UnknownReason.NotSupportedOnPlatform, [], UnknownReason.None) },
+      key,
+      row.Name
+    );
+
+    window.ShowPage("Security");
+    window.UpdateFromSample(snapshot, delta, row, Counter.NotSampledYet);
+
+    Assert.Multiple(() => {
+      Assert.That(window.SecurityText, Does.Contain("Security module"));
+      Assert.That(window.SecurityText, Does.Contain("no SELinux or AppArmor"));
+      // And a process in no supplementary group says so, which every kernel thread is.
+      Assert.That(window.SecurityText, Does.Contain("Supplementary groups: none"));
+    });
+  }
+
+  [Test]
+  public void ARefusedLabelIsNotReportedAsNoLabel() {
+    var (snapshot, delta, row, key) = Machine();
+    var window = new ProcessPropertiesWindow(
+      new StubProbe { Security = new(null, UnknownReason.NotPermitted, [], UnknownReason.NotPermitted) },
+      key,
+      row.Name
+    );
+
+    window.ShowPage("Security");
+    window.UpdateFromSample(snapshot, delta, row, Counter.NotSampledYet);
+
+    Assert.That(window.SecurityText, Does.Contain("not readable as this user"));
+    Assert.That(window.SecurityText, Does.Not.Contain("no SELinux"));
+  }
+
+  #endregion
+
+  #region the cgroup page (PRD §38)
+
+  [Test]
+  public void TheCgroupPageSaysWhatTheGroupAllows() {
+    var (snapshot, delta, row, key) = Machine();
+    var window = new ProcessPropertiesWindow(
+      new StubProbe {
+        Cgroup = new(
+          "/system.slice/indexer.service",
+          ["cpu", "memory", "pids"],
+          MemoryCurrentBytes: Counter.Of(64ul * 1024 * 1024),
+          MemoryMaxBytes: Counter.Of(256ul * 1024 * 1024),
+          MemoryHighBytes: Counter.NotSupported,
+          PidsCurrent: Counter.Of(12),
+          PidsMax: Counter.Of(100),
+          CpuQuotaCores: 0.5,
+          ThrottledCount: Counter.Of(37),
+          CpuPressure: PressureReading.Unknown,
+          MemoryPressure: PressureReading.Unknown,
+          IoPressure: PressureReading.Unknown,
+          Freezer: new(Supported: true, Frozen: true)
+        ),
+      },
+      key,
+      row.Name
+    );
+
+    window.UpdateFromSample(snapshot, delta, row, Counter.NotSampledYet);
+
+    Assert.Multiple(() => {
+      Assert.That(window.CgroupText, Does.Contain("/system.slice/indexer.service"));
+      // A quota as a number of cores, because "0.5 cores" is a sentence and "50000 100000" is not.
+      Assert.That(window.CgroupText, Does.Contain("0.5 cores"));
+      Assert.That(window.CgroupText, Does.Contain("37"), "how often it has actually been held back");
+      // Unlimited is not a quantity, and it must not look like one.
+      Assert.That(window.CgroupText, Does.Contain("Memory, soft cap: no limit"));
+      // Nothing in a process table will say this: there is no process state for frozen.
+      Assert.That(window.CgroupText, Does.Contain("Frozen: yes"));
+      // pids.current counts threads. A row headed "processes" would have been wrong by whatever
+      // factor the group's processes happen to be threaded (PRD §5.3).
+      Assert.That(window.CgroupText, Does.Contain("Tasks: 12"));
+      Assert.That(window.CgroupText, Does.Contain("a task is a thread"));
+      Assert.That(window.CgroupText, Does.Not.Contain("Processes:"));
+    });
+  }
+
+  /// <summary>
+  /// A controller that is off is not a limit that is absent.
+  /// </summary>
+  /// <remarks>
+  /// The reader cannot tell a missing limit file from the literal word <c>max</c> — both arrive as no
+  /// value — so where the controller is switched off, "no limit" would be an outright false
+  /// statement: an ancestor's quota still applies, and that is the case somebody opens this page to
+  /// find (PRD §38).
+  /// </remarks>
+  [Test]
+  public void ADisabledControllerIsNotReportedAsNoLimit() {
+    var (snapshot, delta, row, key) = Machine();
+    var window = new ProcessPropertiesWindow(
+      new StubProbe {
+        Cgroup = new(
+          "/user.slice/user-1000.slice/session.scope",
+          ["memory"],
+          MemoryCurrentBytes: Counter.Of(1024ul),
+          MemoryMaxBytes: Counter.NotSupported,
+          MemoryHighBytes: Counter.NotSupported,
+          PidsCurrent: Counter.Of(3),
+          PidsMax: Counter.NotSupported,
+          CpuQuotaCores: null,
+          ThrottledCount: Counter.NotSupported,
+          CpuPressure: PressureReading.Unknown,
+          MemoryPressure: PressureReading.Unknown,
+          IoPressure: PressureReading.Unknown,
+          Freezer: new(Supported: false, Frozen: false)
+        ),
+      },
+      key,
+      row.Name
+    );
+
+    window.UpdateFromSample(snapshot, delta, row, Counter.NotSampledYet);
+
+    Assert.Multiple(() => {
+      Assert.That(window.CgroupText, Does.Contain("the cpu controller is not enabled here"));
+      Assert.That(window.CgroupText, Does.Contain("the pids controller is not enabled here"));
+      // The one that is enabled still reports the absence of a limit as an absence of a limit.
+      Assert.That(window.CgroupText, Does.Contain("Memory, hard cap: no limit"));
+      Assert.That(window.CgroupText, Does.Contain("this kernel's cgroups have no freezer"));
+    });
+  }
+
+  [Test]
+  public void AProcessInNoReadableCgroupIsToldWhy() {
+    var (snapshot, delta, row, key) = Machine();
+    var window = new ProcessPropertiesWindow(new StubProbe(), key, row.Name);
+
+    window.UpdateFromSample(snapshot, delta, row, Counter.NotSampledYet);
+
+    Assert.That(window.CgroupText, Does.Contain("cgroup v1"));
+    Assert.That(window.TabTitles, Does.Contain("cgroup"), "disabled is the default, so the tab stays and explains");
+  }
+
+  [Test]
+  public void TheCgroupTabCanBeAskedToGoAway() {
+    var (snapshot, delta, row, key) = Machine();
+    var window = new ProcessPropertiesWindow(new StubProbe(), key, row.Name, null, UnavailableTabs.Hidden);
+
+    window.UpdateFromSample(snapshot, delta, row, Counter.NotSampledYet);
+
+    Assert.That(window.TabTitles, Does.Not.Contain("cgroup"));
+  }
+
+  #endregion
+
+  #region the Memory map page (PRD §34)
+
+  [Test]
+  public void TheMemoryMapListsWhatIsMappedAndSaysWhatItAddsUpTo() {
+    var (snapshot, delta, row, key) = Machine();
+    var window = new ProcessPropertiesWindow(
+      new StubProbe {
+        Map = new(MemoryMapState.Available, true, [
+          Region(0x400000, 0x402000, MapPermissions.Read | MapPermissions.Execute | MapPermissions.Private, MemoryRegionKind.FileBacked, "/usr/bin/editor", 8192),
+          Region(0x600000, 0x621000, MapPermissions.Read | MapPermissions.Write | MapPermissions.Private, MemoryRegionKind.Heap, "[heap]", 4096),
+        ]),
+      },
+      key,
+      row.Name
+    );
+
+    window.ShowPage("Memory map");
+    window.UpdateFromSample(snapshot, delta, row, Counter.NotSampledYet);
+
+    Assert.Multiple(() => {
+      Assert.That(window.MemoryMapRows, Is.EqualTo(2));
+      Assert.That(window.MemoryMapHeading, Does.Contain("2 mappings"));
+      // Reserved and resident are never added together: a process reserves gigabytes it has never
+      // touched, and the gap between the two is why "virtual size" answers nothing (PRD §17).
+      Assert.That(window.MemoryMapHeading, Does.Contain("of address space"));
+      Assert.That(window.MemoryMapHeading, Does.Contain("resident"));
+    });
+  }
+
+  /// <summary>
+  /// Nought mappings means two different things and the page has to say which.
+  /// </summary>
+  /// <remarks>
+  /// A kernel thread has no address space of its own; another user's process has one and the kernel
+  /// will not show it. Both arrive as an empty list, and only one of them is a fact about the process
+  /// (PRD §5.3, §72.3).
+  /// </remarks>
+  [Test]
+  public void AnEmptyMapSaysWhichKindOfEmptyItIs() {
+    var (snapshot, delta, row, key) = Machine();
+    var refused = new ProcessPropertiesWindow(
+      new StubProbe { Map = new(MemoryMapState.NotPermitted, false, []) },
+      key,
+      row.Name
+    );
+
+    refused.ShowPage("Memory map");
+    refused.UpdateFromSample(snapshot, delta, row, Counter.NotSampledYet);
+
+    var empty = new ProcessPropertiesWindow(
+      new StubProbe { Map = new(MemoryMapState.Available, true, []) },
+      key,
+      row.Name
+    );
+
+    empty.ShowPage("Memory map");
+    empty.UpdateFromSample(snapshot, delta, row, Counter.NotSampledYet);
+
+    Assert.Multiple(() => {
+      Assert.That(refused.MemoryMapRows, Is.Zero);
+      Assert.That(refused.MemoryMapHeading, Does.Contain("attaching a debugger"));
+      Assert.That(empty.MemoryMapRows, Is.Zero);
+      Assert.That(empty.MemoryMapHeading, Does.Contain("kernel thread"));
+    });
+  }
+
+  /// <summary>
+  /// Half an answer says so at the top rather than showing a column of dashes ten thousand times.
+  /// </summary>
+  [Test]
+  public void AMapWithoutItsCountersSaysSoOnce() {
+    var (snapshot, delta, row, key) = Machine();
+    var window = new ProcessPropertiesWindow(
+      new StubProbe {
+        Map = new(MemoryMapState.Available, false, [
+          Region(0x400000, 0x402000, MapPermissions.Read | MapPermissions.Private, MemoryRegionKind.FileBacked, "/usr/bin/editor", null),
+        ]),
+      },
+      key,
+      row.Name
+    );
+
+    window.ShowPage("Memory map");
+    window.UpdateFromSample(snapshot, delta, row, Counter.NotSampledYet);
+
+    Assert.That(window.MemoryMapHeading, Does.Contain("page tables"));
+    Assert.That(window.MemoryMapHeading, Does.Not.Contain("resident"));
+  }
+
+  private static MemoryRegionRecord Region(
+    ulong start,
+    ulong end,
+    MapPermissions permissions,
+    MemoryRegionKind kind,
+    string? path,
+    ulong? resident
+  ) {
+    var value = resident is { } bytes ? Counter.Of(bytes) : Counter.NotPermitted;
+    return new(
+      start,
+      end,
+      end - start,
+      permissions,
+      kind,
+      path,
+      IsDeleted: false,
+      FileOffset: Counter.Of(0ul),
+      Inode: Counter.Of(0ul),
+      Device: "00:00",
+      ResidentBytes: value,
+      ProportionalBytes: value,
+      PrivateDirtyBytes: value,
+      SharedDirtyBytes: value,
+      AnonymousBytes: value,
+      SwapBytes: value,
+      LockedBytes: value,
+      HugePageBytes: value,
+      Flags: null
+    );
   }
 
   #endregion

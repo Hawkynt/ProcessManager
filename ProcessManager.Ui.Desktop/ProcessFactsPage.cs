@@ -104,6 +104,22 @@ internal sealed class ProcessFactsPage {
   }
 
   /// <summary>
+  /// Refills the page from facts the field catalogue does not carry at all.
+  /// </summary>
+  /// <remarks>
+  /// For a page whose subject is not the process row: a cgroup's ceilings belong to the group rather
+  /// than to the process, so there is no field of the table for any of them and no row to read them
+  /// off. Same list, same two columns, no second formatter (PRD §5.1).
+  /// </remarks>
+  public void Update(IReadOnlyList<KeyValuePair<string, string>> facts) {
+    ArgumentNullException.ThrowIfNull(facts);
+
+    this._list.Nodes.Clear();
+    foreach (var (name, value) in facts)
+      this.Add(name, value);
+  }
+
+  /// <summary>
   /// Replaces the page with the reason there is nothing on it (PRD §26, §72.3).
   /// </summary>
   /// <remarks>

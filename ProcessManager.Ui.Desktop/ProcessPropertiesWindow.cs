@@ -49,6 +49,11 @@ public sealed class ProcessPropertiesWindow : Form {
   private const string _GeneralTab = "General";
   private const string _PerformanceTab = "Performance";
   private const string _GpuTab = "GPU";
+  private const string _MemoryMapTab = "Memory map";
+  private const string _SecurityTab = "Security";
+  // The kernel's own word for it. "Jobs" is a Windows object and "container" is a convention built on
+  // top of this one; naming the tab after either would be the false equivalence §5.3 forbids.
+  private const string _CgroupTab = "cgroup";
 
   private readonly ISystemProbe _probe;
   private readonly IProcessActions? _actions;
@@ -141,7 +146,59 @@ public sealed class ProcessPropertiesWindow : Form {
     ProcessField.GpuAdapter
   );
 
+  /// <summary>
+  /// What confines the process (PRD §36).
+  /// </summary>
+  /// <remarks>
+  /// Every field here is already in the sample — the uids and gids come off one line of
+  /// <c>status</c> each, and the five capability sets off five more — so the page costs nothing to
+  /// draw. The two that are not in the sample, the LSM label and the group list, cost a read apiece
+  /// and arrive as extras below (PRD §5.4).
+  /// <para>
+  /// The four user ids are all here rather than only the effective one, because the gap between them
+  /// is the interesting part: a process whose real and effective uids differ is running as somebody
+  /// it was not started by, which is what a setuid binary looks like from outside.
+  /// </para>
+  /// </remarks>
+  private readonly ProcessFactsPage _security = new(
+    ProcessField.UserName,
+    ProcessField.UserId,
+    ProcessField.EffectiveUserName,
+    ProcessField.EffectiveUserId,
+    ProcessField.SavedUserId,
+    ProcessField.FilesystemUserId,
+    ProcessField.PrivilegeChanged,
+    ProcessField.Elevated,
+    ProcessField.GroupId,
+    ProcessField.EffectiveGroupId,
+    ProcessField.SavedGroupId,
+    ProcessField.FilesystemGroupId,
+    ProcessField.NoNewPrivileges,
+    ProcessField.Seccomp,
+    ProcessField.SeccompFilters,
+    ProcessField.Capabilities,
+    ProcessField.PermittedCapabilities,
+    ProcessField.InheritableCapabilities,
+    ProcessField.BoundingCapabilities,
+    ProcessField.AmbientCapabilities,
+    ProcessField.CapabilitiesHex
+  );
+
+  /// <summary>
+  /// The ceilings that belong to the group rather than to the process (PRD §38).
+  /// </summary>
+  /// <remarks>
+  /// No fields, because none of this is a column of the process table: a quota, a memory cap and a
+  /// throttle count are facts about the cgroup, and several processes share one. The answer to "why
+  /// is this slow when the machine is idle".
+  /// </remarks>
+  private readonly ProcessFactsPage _cgroup = new();
+
+  private readonly ProcessMemoryMapPage _map;
+
   private TabPage? _gpuPage;
+  private TabPage? _mapPage;
+  private TabPage? _cgroupPage;
   private ImageInfo? _image;
   private FileFacts? _imageFacts;
   private bool _imageRead;
@@ -175,6 +232,7 @@ public sealed class ProcessPropertiesWindow : Form {
     this._name = name;
     this.Unavailable = unavailable;
     this._pane = new(probe) { Actions = actions };
+    this._map = new(probe, actions) { Key = key };
 
     this.Text = $"{name} ({key.Pid})";
     // A secondary window closing must not take the program with it. Form.QuitsOnClose defaults to
@@ -207,7 +265,14 @@ public sealed class ProcessPropertiesWindow : Form {
       AddPage(this._tabs, "Memory", this._memory.Control);
       AddPage(this._tabs, "I/O", this._io.Control);
       this._gpuPage = AddPage(this._tabs, _GpuTab, this._gpu.Control);
+      this._mapPage = AddPage(this._tabs, _MemoryMapTab, this._map.Control);
+      AddPage(this._tabs, _SecurityTab, this._security.Control);
+      this._cgroupPage = AddPage(this._tabs, _CgroupTab, this._cgroup.Control);
       this._tabs.SelectedTab = this.PageNamed(_GeneralTab);
+      // The map is the one page whose cost is the size of the process, so it is filled when somebody
+      // asks for it rather than when the window opens. The tick fills it too, for the same reason and
+      // idempotently — a tab selected between two ticks must not wait a second to show anything.
+      this._tabs.SelectedIndexChanged += (_, _) => this.FillVisiblePage();
     }
 
     this._pane.Select(key);
@@ -259,6 +324,10 @@ public sealed class ProcessPropertiesWindow : Form {
       return false;
 
     this._tabs.SelectedTab = page;
+    // Asking for a page is the request to fill it, which is the discipline the pane's own tabs
+    // follow. Setting the selection from code does not always raise the toolkit's own event, and a
+    // caller that had to remember to fill it afterwards is a caller that will not.
+    this.FillVisiblePage();
     return true;
   }
 
@@ -267,6 +336,18 @@ public sealed class ProcessPropertiesWindow : Form {
 
   /// <summary>What the graphs are drawing, for the same reason (PRD §9.6).</summary>
   public string PerformanceText => this._performance.Description;
+
+  /// <summary>What the Security page says (PRD §36).</summary>
+  public string SecurityText => this._security.Description;
+
+  /// <summary>What the cgroup page says (PRD §38).</summary>
+  public string CgroupText => this._cgroup.Description;
+
+  /// <summary>The sentence above the memory map, which is the half that explains an empty one.</summary>
+  public string MemoryMapHeading => this._map.Heading;
+
+  /// <summary>How many mappings the memory map is showing (PRD §34).</summary>
+  public int MemoryMapRows => this._map.RowCount;
 
   /// <summary>How wide the graphs' axis is, in seconds (PRD §28).</summary>
   public int SpanSeconds => this._performance.SpanSeconds;
@@ -333,6 +414,17 @@ public sealed class ProcessPropertiesWindow : Form {
     ]);
 
     this.UpdateGpu(row, in process, delta, index);
+    // Kept for the pages that are filled only when they are the one showing, which cannot ask the
+    // sample for a row of their own.
+    this._row = row;
+    // Once, on the first sample. The cgroup read is a dozen small files, which is cheap enough to
+    // spend on knowing whether there is anything to put on the tab — so the hidden preference has
+    // its answer before somebody clicks it rather than after, the way the graphics tab's does. Every
+    // tick after this it is filled only while its page is showing.
+    if (!this._cgroupProbed)
+      this.UpdateCgroup();
+
+    this.FillVisiblePage();
     this._performance.Append(in process, delta, index, descriptors);
     this._performance.Refresh();
 
@@ -402,6 +494,268 @@ public sealed class ProcessPropertiesWindow : Form {
     );
   }
 
+  #region the Security page (PRD §36)
+
+  /// <summary>
+  /// What confines the process: the identity from the sample, and the two things that cost a read.
+  /// </summary>
+  /// <remarks>
+  /// The two extras are read on every tick while the window is open rather than once, because unlike
+  /// the image they can change under a running process: a program may drop groups, and a label
+  /// changes at an <c>exec</c>. Two small files for one process is not a cost worth caching wrongly.
+  /// </remarks>
+  private void UpdateSecurity(ProcessRow row) {
+    var extras = new List<KeyValuePair<string, string>>();
+    var security = this._probe.DescribeSecurity(this.Key);
+
+    extras.Add(new("Security module", Label(security)));
+    extras.Add(new("Supplementary groups", Groups(security)));
+
+    // The namespaces, from the image description this window already reads once. They are where a
+    // container actually is: two processes sharing an inode share that namespace, which is a harder
+    // fact than a cgroup path anybody may write (PRD §14, §36).
+    if (this._image is { Namespaces.Count: > 0 } image)
+      foreach (var (kind, inode) in image.Namespaces)
+        extras.Add(new($"Namespace, {kind}", inode));
+    else
+      // Said rather than left off. Every process on Linux is in a namespace of every kind, so a page
+      // with no namespace rows on it would be stating something that cannot be true — the honest
+      // reading of an empty list here is that the links under /proc/[pid]/ns could not be followed
+      // (PRD §72.3).
+      extras.Add(new("Namespaces", "not readable — the links under /proc/[pid]/ns need the same permission as attaching a debugger"));
+
+    this._security.Update(row, extras);
+  }
+
+  /// <summary>
+  /// The LSM label, or which of the two reasons there is none.
+  /// </summary>
+  /// <remarks>
+  /// A kernel with no security module fails the read outright rather than producing an empty file, so
+  /// "nothing is confining this" and "we were not allowed to look" arrive the same way and must not be
+  /// reported the same way. Neither is a blank, which would read as a clean bill of health (PRD §70).
+  /// </remarks>
+  private static string Label(ProcessSecurity? security) => security switch {
+    null => "the process has ended",
+    { Label: { Length: > 0 } label } => label,
+    { LabelReason: UnknownReason.NotPermitted } => "not readable as this user",
+    _ => "none — this kernel has no SELinux or AppArmor loaded",
+  };
+
+  private static string Groups(ProcessSecurity? security) {
+    if (security is null)
+      return "the process has ended";
+
+    if (security.GroupsReason != UnknownReason.None)
+      return Humanize.Explain(security.GroupsReason);
+
+    if (security.SupplementaryGroups.Count == 0)
+      // A real answer rather than a hole. Every kernel thread is in none, and so is anything started
+      // by a service manager that cleared them.
+      return "none";
+
+    var names = new List<string>(security.SupplementaryGroups.Count);
+    foreach (var group in security.SupplementaryGroups)
+      // The number always, the name when this machine's own file has one. A group that comes from a
+      // directory service is in no file here and stays a number, which is the honest answer rather
+      // than a blank (PRD §5.3).
+      names.Add(group.Name is { Length: > 0 } name
+        ? $"{name} ({group.Id.ToString(CultureInfo.InvariantCulture)})"
+        : group.Id.ToString(CultureInfo.InvariantCulture));
+
+    return string.Join(", ", names);
+  }
+
+  #endregion
+
+  #region the cgroup page (PRD §38)
+
+  /// <summary>
+  /// What the process's cgroup allows it and what it is using.
+  /// </summary>
+  /// <remarks>
+  /// Read every tick, unlike the map: this is a dozen small files rather than a page-table walk, and
+  /// half of what is on the page — the memory in use, the throttle count, the pressure figures —
+  /// moves while somebody watches it. The other half does not, and reading them together is cheaper
+  /// than deciding which is which.
+  /// </remarks>
+  private void UpdateCgroup() {
+    this._cgroupProbed = true;
+    if (this._probe.DescribeCgroup(this.Key) is not { } cgroup) {
+      this.SettleCgroupTab();
+      this._cgroup.ShowUnavailable(
+        "This process is in no cgroup this build can read. Only the unified hierarchy is read; "
+        + "cgroup v1 splits a process across several hierarchies and no single one of them answers this."
+      );
+
+      return;
+    }
+
+    // The two kinds of ceiling are never added together and never share a heading: RLIMIT_NPROC is a
+    // limit on the user, pids.max is a limit on the cgroup, and one combined number would be the
+    // false equivalence §5.3 forbids. The process's own ceilings are on the Limits dialog (§25.2).
+    this._cgroup.Update([
+      new("cgroup", cgroup.Path),
+      new("Controllers enabled here", cgroup.Controllers.Count > 0 ? string.Join(", ", cgroup.Controllers) : "none"),
+      new("Processor", Limited(cgroup, "cpu", Cores(cgroup.CpuQuotaCores))),
+      new("Throttled", Limited(cgroup, "cpu", Humanize.Count(cgroup.ThrottledCount))),
+      new("Memory in use", Humanize.Bytes(cgroup.MemoryCurrentBytes)),
+      new("Memory, hard cap", Limited(cgroup, "memory", Limit(cgroup.MemoryMaxBytes))),
+      new("Memory, soft cap", Limited(cgroup, "memory", Limit(cgroup.MemoryHighBytes))),
+      // Tasks and not processes, which is not a quibble: pids.current counts threads. The cgroup
+      // this program's own window was in reported 892 against 58 entries in cgroup.procs — a figure
+      // fifteen times the one a row headed "processes" would have been read as. It is what systemd
+      // calls TasksMax for the same reason (PRD §5.3).
+      // The explanation goes in the value and not in the label: the label column is a fixed 220
+      // pixels, and "Tasks — processes and their threads" photographed running into the number
+      // beside it.
+      new("Tasks", $"{Humanize.Count(cgroup.PidsCurrent)} — a task is a thread, so this counts every thread of every process in the group"),
+      new("Tasks, limit", Limited(cgroup, "pids", Limit(cgroup.PidsMax))),
+      new("Stalled on CPU", Pressure(cgroup.CpuPressure)),
+      new("Stalled on memory", Pressure(cgroup.MemoryPressure)),
+      new("Stalled on I/O", Pressure(cgroup.IoPressure)),
+      new("Frozen", Frozen(cgroup.Freezer)),
+    ]);
+  }
+
+  /// <summary>
+  /// Takes the cgroup tab off the strip once, where that is the preference.
+  /// </summary>
+  /// <remarks>
+  /// Settled once, like the GPU tab's: a page removed and added back as a process moved between
+  /// cgroups would shift every tab to its right while somebody was reading one.
+  /// </remarks>
+  private void SettleCgroupTab() {
+    if (this._cgroupSettled)
+      return;
+
+    this._cgroupSettled = true;
+    if (this.Unavailable != UnavailableTabs.Hidden || this._cgroupPage is not { } page || this._tabs is null)
+      return;
+
+    this._tabs.TabPages.Remove(page);
+    this._cgroupPage = null;
+  }
+
+  private bool _cgroupSettled;
+
+  /// <summary>Whether the cgroup has been asked about at all yet — see the first sample above.</summary>
+  private bool _cgroupProbed;
+
+  /// <summary>
+  /// A quota as a number of cores, because that is the sentence somebody wants.
+  /// </summary>
+  /// <remarks>
+  /// No quota is <em>unlimited</em> rather than a very large number: unlimited is not a quantity, and
+  /// this is the difference between a process being held back and one that simply is not busy.
+  /// </remarks>
+  private static string Cores(double? quota)
+    => quota is { } cores
+      ? string.Format(CultureInfo.InvariantCulture, "{0:0.##} core{1}", cores, cores == 1 ? string.Empty : "s")
+      : "unlimited";
+
+  private static string Limit(Counter counter) => counter.HasValue ? Humanize.Bytes(counter) : "no limit";
+
+  /// <summary>
+  /// A ceiling, but only where the controller that enforces it is switched on here.
+  /// </summary>
+  /// <remarks>
+  /// A limit file existing is not the same as its controller being enabled, and the reader cannot
+  /// tell an absent file from the literal word <c>max</c> — both arrive as "no value". Where the
+  /// controller is off, "no limit" would be an outright false statement: a delegated cgroup with
+  /// <c>memory</c> and without <c>cpu</c> is still held to whichever ancestor's processor quota, and
+  /// that is exactly the case somebody opens this page to find (PRD §38).
+  /// </remarks>
+  private static string Limited(CgroupInfo cgroup, string controller, string value)
+    => cgroup.Has(controller)
+      ? value
+      : $"the {controller} controller is not enabled here — an ancestor's limit applies instead";
+
+  private static string Pressure(PressureReading reading)
+    => reading.Some.HasValue
+      ? $"{Humanize.Percent(reading.Some.Average10)} % · {Humanize.Percent(reading.Some.Average60)} % · {Humanize.Percent(reading.Some.Average300)} % (10 s · 1 min · 5 min)"
+      : Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform);
+
+  /// <summary>
+  /// Whether every process in the cgroup is stopped.
+  /// </summary>
+  /// <remarks>
+  /// Nothing in a process table will say so: there is no process state for frozen, and a frozen task
+  /// reports itself as sleeping whatever it was doing when the freeze landed (PRD §25.1, §38).
+  /// </remarks>
+  private static string Frozen(CgroupFreezer? freezer) => freezer switch {
+    { Supported: false } or null => "this kernel's cgroups have no freezer",
+    { Frozen: true } => "yes — every process in it is stopped, and each still reports itself as sleeping",
+    _ => "no",
+  };
+
+  #endregion
+
+  #region the Memory map page (PRD §34)
+
+  /// <summary>
+  /// Fills the page somebody is actually looking at.
+  /// </summary>
+  /// <remarks>
+  /// The three pages that cost a read to fill, and the only three that are not refilled from a sample
+  /// already taken. Nothing is collected for a tab nobody has opened, which is the discipline the
+  /// pane's own tabs follow and the reason this is a method rather than three calls in the tick
+  /// (PRD §5.4).
+  /// <para>
+  /// They are not the same kind of expensive, so they are not filled the same way. The map is a walk
+  /// of the process's page tables and is done once, with a button for a fresher one; the other two
+  /// are two or three small files and are re-read on every tick while their page is showing, because
+  /// a cgroup's memory, throttle count and pressure all move while somebody watches them.
+  /// </para>
+  /// </remarks>
+  private void FillVisiblePage() {
+    if (this._tabs?.SelectedTab is not { } page)
+      return;
+
+    if (string.Equals(page.Text, _MemoryMapTab, StringComparison.Ordinal)) {
+      this._map.EnsureFilled();
+      this.SettleMapTab();
+      return;
+    }
+
+    if (string.Equals(page.Text, _SecurityTab, StringComparison.Ordinal)) {
+      if (this._row is { } row)
+        this.UpdateSecurity(row);
+
+      return;
+    }
+
+    if (string.Equals(page.Text, _CgroupTab, StringComparison.Ordinal))
+      this.UpdateCgroup();
+  }
+
+  /// <summary>The last sample's row, for the pages that are filled only while they are showing.</summary>
+  private ProcessRow? _row;
+
+  /// <summary>
+  /// Takes the map off the strip once, on a platform that does not read one.
+  /// </summary>
+  /// <remarks>
+  /// On the state and not on the row count. A refused read and a kernel thread both give nought rows
+  /// and neither is a statement about this build's capability — the tab stays for both of those,
+  /// saying which it was (PRD §26).
+  /// </remarks>
+  private void SettleMapTab() {
+    if (this._mapSettled || this._map.State != MemoryMapState.NotImplemented)
+      return;
+
+    this._mapSettled = true;
+    if (this.Unavailable != UnavailableTabs.Hidden || this._mapPage is not { } page || this._tabs is null)
+      return;
+
+    this._tabs.TabPages.Remove(page);
+    this._mapPage = null;
+  }
+
+  private bool _mapSettled;
+
+  #endregion
+
   /// <summary>
   /// The facts about a process that are not fields of the table.
   /// </summary>
@@ -431,6 +785,11 @@ public sealed class ProcessPropertiesWindow : Form {
       extras.Add(new("Architecture", image.Architecture ?? (image.HeaderRead ? "unknown" : "—")));
       extras.Add(new("Interpreter", image.Interpreter ?? (image.HeaderRead ? "statically linked" : "—")));
       extras.Add(new("Working directory", image.WorkingDirectory ?? "—"));
+      // From the module list rather than from what the program calls itself, which is the whole
+      // reason it is worth a row: a .NET application and a shell script that launches one have the
+      // same name and are not the same thing (PRD §14, §80).
+      if (image.Runtime != ProcessRuntime.Unknown)
+        extras.Add(new("Running", image.Runtime.Text()));
     }
 
     if (this._imageFacts is { } facts) {
@@ -438,6 +797,12 @@ public sealed class ProcessPropertiesWindow : Form {
       extras.Add(new("Image modified", FileFactsFormatting.Modified(in facts)));
       extras.Add(new("Image permissions", facts.Permissions ?? "n/a"));
     }
+
+    // Only where the file system carries a birth time, which most do not. A row saying so on most
+    // machines would be a row of dashes; the fact that there is no row is the answer, and unlike a
+    // signature it is not one anybody would read as reassurance (PRD §14).
+    if (this._image?.CreatedUtc is { } created)
+      extras.Add(new("Image created", created.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture) + "Z"));
 
     // Said rather than left blank. A properties window with no signature row reads as one that
     // checked and found nothing wrong, which is the one thing this must never imply (PRD §70).
@@ -558,9 +923,18 @@ public sealed class ProcessPropertiesWindow : Form {
     this._reveal.Bounds = new(Margin + 100, y, 120, 28);
     this._file.Bounds = new(Margin + 230, y, 150, 28);
 
-    foreach (var page in (ReadOnlySpan<ProcessFactsPage>)[this._general, this._cpu, this._memory, this._io, this._gpu])
+    foreach (var page in (ReadOnlySpan<ProcessFactsPage>)[
+      this._general,
+      this._cpu,
+      this._memory,
+      this._io,
+      this._gpu,
+      this._security,
+      this._cgroup,
+    ])
       page.Stretch();
 
+    this._map.Stretch();
     this._performance.Refresh();
   }
 

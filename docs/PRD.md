@@ -1477,12 +1477,43 @@ which is a subprocess per query against a database whose format is the distribut
 - [ ] Inspect stacks (§30)
 - [x] Inspect modules
 - [x] Inspect handles / descriptors
-- [ ] 🟡 Inspect memory mappings — `maps` is parsed, nothing displays it
+- [x] **Inspect memory mappings** — every mapping of the address space, unfolded, with what each one
+      is costing (§34)
 - [x] Inspect environment
-- [ ] Inspect token / security context
+- [x] **Inspect token / security context** — the four uids, the four gids, the five capability sets,
+      seccomp, no-new-privileges, the LSM label and the namespaces (§36)
 - [x] Inspect network connections
 - [ ] Inspect windows
 - [ ] Inspect services
+
+**All of it is under one menu now, and for most of it that is the whole change.** Threads, modules,
+descriptors, environment and connections were all implemented and reachable only by opening a
+properties window and hunting along a tab strip for the right caption. The last two needed building:
+the memory map had a parser and no display at all, and the security context had every field the
+sampler already reads and no page to put them on, plus two more — the LSM label and the group list —
+that had to be read on demand for the process being looked at. A menu that names the question is the
+difference between a feature and a feature somebody can find (§5.2).
+
+The three pages the menu needed are the ones §26 was missing, and each is described where it belongs:
+the memory map in §34, the security context in §36, the cgroup's ceilings in §38. They are grouped
+with "Go to" rather than with the items above it, because none of them changes anything (§5.5).
+
+**The memory map is read when somebody asks for it and not on the tick.** Its counters come from
+`smaps`, which makes the kernel walk the whole page table of the process — a browser has ten thousand
+mappings to walk — so the page carries the time it was collected and a button, the same bargain every
+other on-demand list here makes (§5.4). The cgroup page is refreshed every tick instead: a dozen small
+files for one process is affordable, and half of what is on it moves while somebody watches.
+
+**Both files look world-readable and are not.** `/proc/[pid]/maps` is mode 0444 and reading another
+user's still fails with `EPERM`, because the permission the kernel checks is `ptrace_may_access` when
+it generates the content rather than the mode bits when the file is opened. So the refusal is reported
+as a refusal and says which permission is really in the way — a reader who looked at the mode and
+concluded the program was at fault would be looking in the wrong place (§72.3).
+
+Still unticked and why: **windows** needs the actions half of §39 as well as the list, and a page that
+could show a window and do nothing to it is half a feature; **services** is a navigation to a view that
+does not exist outside the CLI (§41). **Dumps** and **wait chains** are unchanged — both need an engine
+this program has not got, and §30's reasoning for stacks applies to the first of them wholesale.
 
 ## 25.5 Memory — expert
 
@@ -1492,10 +1523,29 @@ which is a subprocess per query against a database whose format is the distribut
 - [ ] Read memory
 - [ ] Save memory range
 - [ ] Search readable memory
-- [ ] Inspect mapped region
+- [ ] Inspect mapped region — the map of §34 now says which regions there are, which is the half of
+      this that does not need to read a byte of anybody's memory
 
 - [ ] Direct modification of another process's memory is classified expert/debugging and **disabled
       by default** — the only feature here requiring a deliberate per-session opt-in
+
+**Trimming another process's working set on Linux would be an item that could only ever refuse.**
+`process_madvise` with `MADV_PAGEOUT` is the closest thing there is, and its own manual page says
+what it needs: a `PTRACE_MODE_READ_FSCREDS` check *and* `CAP_SYS_NICE`, the second explicitly because
+of the performance implications of letting one program page out another's memory. Nothing on a
+desktop has `CAP_SYS_NICE`, so the menu item would refuse on every machine anybody is likely to run
+this on — and §25.6 already refused unloading a module on exactly that ground, that an item which can
+only ever refuse is a lie dressed as a feature.
+
+**The four that read memory need an engine that does not exist here, and a permission that usually
+does not either.** `process_vm_readv` and `/proc/[pid]/mem` are both governed by
+`PTRACE_MODE_ATTACH`, and every current distribution ships Yama's `ptrace_scope` at 1, where a
+process may read only its own descendants — so on an ordinary desktop reading the memory of something
+this program did not start is refused for the same user, never mind another. Building a hex viewer, a
+range exporter and a scanner on top of a call that is refused by default, for a feature that is
+supposed to be off by default anyway, is work whose first honest screen would be a permission error.
+The map of §34 is the piece of this that does not need the permission and it is built; the rest waits
+for somebody who actually wants a debugger.
 
 **The out-of-memory adjustment is not a memory limit and the dialogs say so.** It reserves nothing
 and caps nothing: it decides *which* process dies when something has to, so lowering one process's
@@ -1563,14 +1613,15 @@ Tabs:
 - [x] Threads (§29)
 - [x] Modules (§31)
 - [x] Handles / resources (§32)
-- [ ] Memory map (§34)
+- [x] **Memory map (§34)** — every mapping, unfolded, read when the page is asked for
 - [x] Network (§40)
 - [x] GPU (§19) — and the tab that proves the preference above: a machine whose driver publishes no
       per-process accounting has nothing to put on it, which is not the same as this build not
       having one
-- [ ] Security (§36)
+- [x] **Security (§36)** — who the process is, what it may do, and what is confining it
 - [x] Environment (§37)
-- [ ] Jobs / cgroups / containers (§38)
+- [x] **cgroup (§38)** — named for the thing rather than for the three things it is called on three
+      platforms. A Windows job object and a container are not this and would not be described by it
 - [ ] Windows (§39)
 - [ ] Services (§41)
 - [ ] Runtime (§80)
@@ -1591,16 +1642,67 @@ When the process ends the window stays open, says so in its title and stops aski
 a window that followed the number would quietly start describing whoever the kernel gave it to next
 (§72.2, §86).
 
+**Most pages are refilled from a sample already taken; the three that cost a read of their own are
+filled only while they are the page showing.** That is the discipline the pane's own tabs follow, and
+the three are not the same kind of expensive. The memory map is a walk of the process's page tables,
+so it is read once when the page is opened and re-read on a button. The security context is two small
+files and the cgroup a dozen, so both are re-read on every tick while their page is up — a cgroup's
+memory, throttle count and pressure figures all move while somebody is watching them, and a sheet
+that froze at the moment it was opened would be answering a question about the past.
+
+The `hidden` preference needs an answer earlier than that, so the cgroup is asked about once on the
+first sample whether or not its page is showing: a dozen small files once per window is a fair price
+for not moving every tab on the strip the moment somebody clicks the last one. The memory map cannot
+buy its answer that cheaply — walking a browser's page table to decide whether to draw a tab nobody
+asked for is exactly what §5.4 forbids — so its tab settles the first time it is opened instead. That
+is the trade showing through the preference, and it is the honest way round.
+
+The five still unticked, one line each: **Windows** has the list and none of the actions, and a page
+that shows a window and cannot close it is half a feature (§39); **Services** is a view that exists
+only in the CLI (§41); **Runtime** needs the managed and interpreted introspection of §80, none of
+which is written; **Strings** is two features under one heading — scanning the image on disk needs no
+permission and is honest work nobody has done, while scanning the process's memory is one of §25.5's
+readers wearing a different hat and is refused on the same ground, and shipping the first under a tab
+named for both would be promising the second; **Timeline** needs the event history of §63, which
+nothing records yet.
+
 ---
 
 # 27. General process properties
 
-- [ ] Icon, name, PID, PPID, start time, running duration, state, session, user, architecture,
-      executable path, command line, current directory, parent process, application identity,
-      package/bundle, version, company, description, signer, signature status, file hashes, file
-      size, creation/modification timestamps, runtime, service associations, container/cgroup/job
-      associations
-- [ ] Buttons: Copy · Reveal executable · File properties · Verify · Inspect binary
+- [ ] 🟡 name ✔ · PID ✔ · PPID ✔ · parent process ✔ · start time ✔ · running duration ✔ · state ✔ ·
+      session ✔ · user ✔ · effective user ✔ · architecture ✔ · executable path ✔ · command line ✔ ·
+      current directory ✔ · file size ✔ · modification timestamp ✔ · creation timestamp ✔ · file
+      permissions ✔ · runtime ✔ · container/cgroup association ✔ (and a page of its own — §38) —
+      against **icon**, **application identity**, **package/bundle**, **version**, **company**,
+      **description**, **signer**, **signature status**, **file hashes** and **service associations**
+- [ ] 🟡 Buttons: Copy ✔ · Reveal executable ✔ · File properties ✔ — against **Verify** and
+      **Inspect binary**
+
+**Everything unticked here is unticked for one of three reasons, and none of them is this page.**
+Version, company, description, signer and signature status are §21's, which verifies nothing yet —
+and the page says outright that no signature was checked rather than leaving a blank, because a
+properties window with no signature row reads as one that checked and was happy (§70). File hashes
+and package identity are both readable and both cost the size of the file or a scan of every
+installed package's file list, so they are opt-in elsewhere and would be a page that hung on opening
+if they were here (§5.4, §14, §21). **Verify** and **Inspect binary** are buttons onto §21 and §53,
+neither of which exists.
+
+**The runtime and the creation timestamp were being read and thrown away**, which is the cheapest
+kind of gap there is: `DescribeImage` already makes the one `statx` for the birth time and already
+walks the module list for what is executing inside the process, and neither reached the page. Both
+are rows now. The runtime is worth its own line because it comes from the modules rather than from
+the name — a .NET application and a shell script that launches one are called the same thing and are
+not the same thing (§14, §80).
+
+**Service associations are the one left that could be answered and is not.** The units exist in the
+CLI (§41); joining a process to the one that owns it is a row on this page and a view that does not
+exist yet.
+
+**Icon** is not a Linux fact about a process. It is a desktop-entry lookup by executable path against
+`/usr/share/applications`, which answers for the third of processes that have a launcher and for
+nothing else — a page that showed a picture for some rows and a blank for most would be describing
+which programs ship a `.desktop` file rather than describing the process.
 
 # 28. Performance process properties
 
@@ -1933,14 +2035,55 @@ counting the reads.
 
 # 34. Memory map
 
-`/proc/pid/maps` is parsed; nothing displays it.
+- [x] **Columns**: start ✔ · end ✔ · size ✔ · protection ✔ · private/shared ✔ · resident ✔ ·
+      proportional ✔ · dirty ✔ · swapped ✔ · locked ✔ · anonymous ✔ · huge-page state ✔ ·
+      backing file ✔ · region classification ✔ · file offset ✔ · device ✔ · inode ✔ · the kernel's
+      `VmFlags` verbatim ✔ — and *state*, *allocation protection*, *committed*, *copy-on-write*,
+      *NUMA node* and *stack owner* are the six Linux does not answer, below
+- [ ] 🟡 Actions: copy address ✔ · copy range ✔ · copy path ✔ · go to the mapped file's
+      properties ✔ — inspect bytes, save region and search strings are §25.5's, and refused there
 
-- [ ] Columns: start · end · size · state · type · protection · allocation protection ·
-      private/shared · committed · resident · dirty · executable · writable · copy-on-write ·
-      backing file · module · region classification · NUMA node · huge-page state · guard-page
-      state · stack owner · heap association
-- [ ] Actions: inspect bytes · save region · search strings · go to mapped file/module ·
-      copy address · copy range
+**One row per mapping, and deliberately not folded.** §31 turns the same file into one row per loaded
+image, because it is answering "which code is in this process" and a library's five consecutive
+mappings are one library. This is answering "what is at this address and what may be done to it", and
+the fold would destroy the answer: an image's read-only segment and the writable one above it become
+a single row claiming to be both readable and writable, which is the one fact somebody opens this
+view to check. The recording of a `cat` is twenty-six rows here and five in §31, and a test asserts
+both numbers over the same file so that neither view can quietly become the other.
+
+**The kernel's order is kept.** A memory map has one property a list of modules does not — the row
+above is the memory below — and sorting it by anything else here would take that away from every
+caller at once.
+
+**Classification is by prefix and never by a table of known names.** `[vvar_vclock]` arrived in 6.13
+and this build has never been taught it; a name-by-name table would have classified it as a file that
+does not exist, and it lands as a kernel-provided region under its own name instead. Named memory
+that is not a file on any disk — `/memfd:`, `/dev/shm`, System V segments — is its own kind for the
+same reason: a reader adding those to "what this process has open" would be counting shared memory as
+file cache.
+
+**Only the initial thread's stack is labelled a stack, and the page does not pretend otherwise.**
+Linux stopped labelling other threads' stacks in 4.5 — working out which anonymous region a given
+thread's stack pointer was in cost a walk of every thread per line of the file — so a threaded
+process shows one `[stack]` and its other stacks appear as ordinary anonymous regions. That is what
+the kernel says; saying more would be inventing it.
+
+**The two-letter `VmFlags` codes are kept as the kernel writes them**, and that is where the answers
+this section asks for that have no counter of their own actually live: `gd` for a region that grows
+down, `ht` for hugetlb pages, `nr` for memory with no swap reserved, `dd` for a region left out of a
+core dump. Inventing English for a set the kernel extends every few releases would go stale silently
+(§5.3).
+
+Still unticked and why: **state** and **committed** are Windows notions — Linux has no
+reserve-versus-commit distinction per region, and describing a mapping as "committed" because it is
+present in `maps` would be inventing a state the kernel does not have. **Allocation protection** is
+the protection a region was *created* with, which Linux does not record. **Copy-on-write** has no
+per-region flag: every private file mapping is copy-on-write by definition, and how much of one has
+actually been copied is the `Anonymous` counter, which is a column. **NUMA node** is in
+`numa_maps`, a third file and a second walk of the same page tables, and it does not name a node
+anyway — it reports how many of a mapping's pages are on each of them, so a mapping spread across two
+has no single answer to put in a column. **Stack owner** is the 4.5 change above.
+**Heap association** is `[heap]`, which is a classification and is one.
 
 # 35. Strings view — expert
 
@@ -1962,13 +2105,43 @@ Linux — most of this is already in `/proc/pid/status`, which the sampler alrea
 
 - [x] UID / eUID / sUID / fsUID and GID equivalents — all eight, plus the effective account by name
       as well as by number, and a field that says outright when the two disagree
-- [x] 🟡 Supplementary groups — the numbers, opt-in; not resolved to group names
+- [x] **Supplementary groups** — on the page, resolved to names where this machine's own file has
+      them and left as numbers where it does not. The *column* of the same name still shows the raw
+      line and is still opt-in, deliberately: resolving a name per process per sample is a lookup the
+      sample loop has no budget for, and the page resolves two numbers for one process (§5.4)
 - [x] Capabilities — all five sets, by name (§21)
 - [x] SELinux context
 - [x] AppArmor profile
 - [x] seccomp state — the mode and the filter count
-- [ ] Namespaces
+- [x] **Namespaces** — by kind and inode, from the same read §14 already makes
 - [x] no-new-privileges
+
+**There is a page now, and it is where the eight identities earn their place.** Every field above was
+readable and several were columns nobody turns on; a sheet that puts the real uid beside the effective
+one answers "is this running as somebody it was not started by" at a glance, which no single column
+does. The page costs nothing to draw — uids, gids, capabilities, seccomp and no-new-privileges are
+all lines of the `status` the sampler already reads for every process every second.
+
+**The two that are not in the sample are read for the one process being looked at.** The LSM label is
+a file per process and the group list is a string per process, and both were measured at the same
+order of cost as the descriptor scan that had to leave the sample loop — so a column that names them
+switches them on for the whole machine, and opening a properties window switches them on for one
+(§5.4). They fail independently and carry a reason each: `status` is readable for anybody's process
+and `attr/current` is not necessarily, so a machine can perfectly well answer the group list and
+refuse the label.
+
+**A kernel with no security module fails the label read outright rather than leaving the file empty.**
+It comes back `EINVAL`, not an empty string — so "nothing is confining this process" and "we were not
+allowed to look" arrive by different routes and are reported as different sentences. Neither is a
+blank, which would read as a clean bill of health (§70). AppArmor's `unconfined` is kept verbatim
+because it is an answer.
+
+**Group names come from `/etc/group` and not from `getgrgid`**, which is the trade the user-name
+resolver already makes and has the same stated cost: a group that comes from LDAP, SSSD or a
+container's own file is not in this machine's file and stays a number. The gain is that the resolver
+is a pure function of a file path and replays against a fixture, and that a lookup can never block on
+a network directory. The number is shown either way, so a resolved name is extra information and
+never the only information.
 
 macOS:
 
@@ -2008,7 +2181,8 @@ Linux cgroups:
 - [x] Memory limit — the hard cap and the soft one, which are different limits
 - [x] Current memory usage
 - [ ] I/O limits
-- [x] 🟡 Process membership — the count against the limit; the list of members is not read
+- [x] 🟡 **Task membership** — the count against the limit, named for what it counts; the list of
+      members is not read
 - [x] Pressure metrics (PSI) — per cgroup, through the same parser the machine-wide ones use
 - [x] **Frozen or not, and freeze / thaw** — the state from `cgroup.events` rather than from
       `cgroup.freeze`, because the first is what the cgroup *is* and the second is only what it was
@@ -2020,10 +2194,29 @@ be throttled to a fraction of a core or capped well below the machine's memory, 
 process table shows it — the process simply appears to be doing less than it should. `--limits PID`
 prints it, together with the process's own ceilings and its out-of-memory standing (§25.2, §25.5).
 
+There is a page as well as a flag now, and it is the answer to that question in the window rather than
+only at a prompt. Refreshed every tick, unlike the memory map: a dozen small files for one process is
+affordable, and the memory in use, the throttle count and the three pressure figures all move while
+somebody is watching them (§5.4).
+
 **The two kinds of ceiling are printed under separate headings and never added together**, because
 different parts of the kernel enforce them against different things: `RLIMIT_NPROC` is a limit on the
 *user*, `pids.max` is a limit on the *cgroup*, and a single combined number would be the false
 equivalence §5.3 forbids.
+
+**`pids.current` counts tasks and not processes, and both the page and `--limits` now say so.** They
+said "processes", which is wrong by whatever factor the group's programs happen to be threaded: the
+cgroup this program's own window was open in reported 892 against 58 entries in `cgroup.procs`, so
+the row was out by a factor of fifteen with nothing to indicate it. It is the figure systemd calls
+`TasksMax` for the same reason, and it is what the freeze confirmation counts as well — a destructive
+action naming a consequence an order of magnitude out is the one thing §5.5 exists to prevent.
+
+**A controller that is switched off is not a limit that is absent**, and the page distinguishes them
+where the reader cannot. `memory.max` missing and `memory.max` containing the literal word `max` both
+arrive as "no value", so where the controller is not enabled here, "no limit" would be an outright
+false statement — an ancestor's quota still applies, and that is precisely the case somebody opens
+this page to find. The first real machine it was run against had `memory` and `pids` enabled and not
+`cpu`, so the distinction was doing work immediately rather than guarding a hypothetical.
 
 **Unlimited is not a quantity.** `max` is reported as *no limit* rather than as the very large number
 the file literally contains on some kernels, because "no limit" and "a limit of nine million
@@ -2040,7 +2233,8 @@ giving half an answer.
 
 Containers:
 
-- [ ] 🟡 Runtime · container ID ✔ (§14) · locally resolvable name · namespaces · resource limits ✔
+- [ ] 🟡 Runtime · container ID ✔ (§14) · locally resolvable name · namespaces ✔ (on the security
+      page, where the boundary they draw belongs — §36) · resource limits ✔
 
 # 39. Windows / UI objects
 
