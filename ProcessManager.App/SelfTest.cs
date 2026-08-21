@@ -300,6 +300,51 @@ internal static class SelfTest {
       failures.Add($"{name} {Humanize.Bytes(peak)} is below the current {Humanize.Bytes(current)}");
   }
 
+  /// <summary>
+  /// Whether this is Wine rather than Windows.
+  /// </summary>
+  /// <remarks>
+  /// Told, rather than detected. Sniffing for an export in ntdll would mean interop in a file that
+  /// is compiled for every platform, to answer a question the thing running the test already knows —
+  /// so the leg that runs under wine says so, and nothing else has to guess.
+  /// <para>
+  /// Wine implements a great deal of Win32 and stubs the rest, and the stubs answer honestly: an
+  /// unimplemented call returns "not supported" and this program reports that faithfully. So a check
+  /// that asserts what a real Windows would say fails there for a reason that is neither a defect in
+  /// the program nor a defect in the reading — the machine genuinely cannot answer.
+  /// <para>
+  /// The leg is still worth running: it catches a call that crashes, one that returns nonsense, and
+  /// every reading Wine does implement. Only the assertions Wine cannot honour step aside, and they
+  /// say so rather than passing quietly.
+  /// </para>
+  /// </remarks>
+  private static bool OnWine { get; } =
+    Environment.GetEnvironmentVariable("PROCMAN_EMULATED") is "wine";
+
+  /// <summary>
+  /// A check that only a real Windows can answer.
+  /// </summary>
+  /// <remarks>
+  /// Reported as skipped under Wine rather than passed: a check that quietly succeeds where it was
+  /// never run is worse than one that fails, because it is counted.
+  /// </remarks>
+  private static void CheckOnWindowsOnly(
+    List<string> failures,
+    List<string> notes,
+    string name,
+    string value,
+    bool ok,
+    string why
+  ) {
+    if (!OnWine) {
+      Check(failures, notes, name, value, ok, why);
+      return;
+    }
+
+    Console.WriteLine($"  skip {name,-20} {value}  (wine does not implement this)");
+    notes.Add($"{name}: skipped, wine does not implement it");
+  }
+
   private static void Check(List<string> failures, List<string> notes, string name, string value, bool ok, string why) {
     Console.WriteLine($"  {(ok ? "ok  " : "FAIL")} {name,-20} {value}");
     if (ok)
@@ -468,7 +513,7 @@ internal static class SelfTest {
     // Not protected, and not an AppContainer. Both are true of anything a person runs from a shell,
     // and both would be false if the reading were coming back as a confident nought — PROTECTION
     // LEVEL nought is WinTCB-light, which is the most protected thing on the machine.
-    Check(
+    CheckOnWindowsOnly(
       failures,
       notes,
       "protection level",
@@ -601,7 +646,7 @@ internal static class SelfTest {
     // knowable independently of what any runtime asked for.
     if (System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture
         == System.Runtime.InteropServices.Architecture.X64)
-      Check(
+      CheckOnWindowsOnly(
         failures,
         notes,
         "dep is on",
@@ -658,7 +703,7 @@ internal static class SelfTest {
       ("user objects", self.UserObjectCount),
       ("gdi objects", self.GdiObjectCount),
     ])
-      Check(failures, notes, name, Said(Humanize.Count(counter), counter), counter.HasValue, "this count should have been read");
+      CheckOnWindowsOnly(failures, notes, name, Said(Humanize.Count(counter), counter), counter.HasValue, "this count should have been read");
   }
 
   /// <summary>

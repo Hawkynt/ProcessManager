@@ -215,6 +215,12 @@ jobs:
           # Ubuntu's wine builds a 32-bit prefix unless told otherwise, and reported
           # "Platform: x86_64 (guest: i386)" while failing to run a win-x64 binary at all.
           WINEARCH: win64
+          # Wine stubs part of Win32 and its stubs answer honestly — an unimplemented call returns
+          # "not supported" and the program reports that faithfully. The few checks that assert what
+          # a real Windows would say step aside here and report themselves as skipped, so this leg
+          # still catches a call that crashes or returns nonsense without failing on the ones wine
+          # was never going to answer.
+          PROCMAN_EMULATED: wine
         run: |
           mkdir -p "$WINEPREFIX"
           # First run initialises the prefix and is noisy; the exit code of the second is the answer.
