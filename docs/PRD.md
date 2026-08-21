@@ -3117,7 +3117,7 @@ Windows parsing on Linux.
 - [x] Sampling budget enforced as a build gate (§71.2)
 - [x] 10 000 processes
 - [ ] 100 000 threads
-- [ ] 1 000 000 resource rows
+- [x] 1 000 000 resource rows
 - [x] Rapid process churn
 - [ ] 100 % CPU load
 - [ ] Low-memory state

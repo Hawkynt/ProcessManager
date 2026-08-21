@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Hawkynt.ProcessManager.Abstractions;
 using Hawkynt.ProcessManager.Model;
 using Hawkynt.ProcessManager.Query;
 using Hawkynt.ProcessManager.Sampling;
@@ -300,6 +301,130 @@ public sealed class ScaleTests {
       Assert.That(view.RowCount, Is.EqualTo(10_000), field.ToString());
       Assert.That(clock.Elapsed, Is.LessThan(TimeSpan.FromSeconds(2)), $"sorting by {field} took too long");
     }
+  }
+
+  #endregion
+
+  #region a million resource rows
+
+  /// <summary>
+  /// A probe with as many descriptors as the test asks for, and nothing else. The names are shared
+  /// instances deliberately: a million distinct strings would measure the allocator rather than the
+  /// search.
+  /// </summary>
+  private sealed class CrowdedProbe : ISystemProbe {
+
+    private readonly HandleRecord[] _handles;
+
+    public CrowdedProbe(int handlesPerProcess) {
+      var names = new string[16];
+      for (var i = 0; i < names.Length; ++i)
+        names[i] = $"/var/lib/thing/{i}/data.db";
+
+      this._handles = new HandleRecord[handlesPerProcess];
+      for (var i = 0; i < handlesPerProcess; ++i)
+        this._handles[i] = new(
+          (ulong)i,
+          HandleKind.File,
+          names[i % names.Length],
+          "read/write",
+          Counter.NotSupported,
+          Counter.NotSupported,
+          Counter.Of((ulong)i),
+          Counter.NotSupported
+        );
+
+      // One of them, once, is the needle.
+      if (handlesPerProcess > 0)
+        this._handles[handlesPerProcess / 2] = this._handles[handlesPerProcess / 2] with { Name = "/var/lib/needle.sock" };
+    }
+
+    public int DeepReads { get; private set; }
+
+    public string Description => "crowded";
+
+    public IReadOnlyList<HandleRecord> GetHandles(ProcessKey key) {
+      ++this.DeepReads;
+      return this._handles;
+    }
+
+    public IReadOnlyList<ModuleRecord> GetModules(ProcessKey key) => [];
+    public IReadOnlyList<ConnectionRecord> GetConnections(ProcessKey key) => [];
+    public IReadOnlyList<ServiceRecord> GetServices() => [];
+    public HostInfo DescribeHost() => new();
+    public void Sample(SystemSnapshot snapshot) { }
+    public Counter GetHandleCount(ProcessKey key) => Counter.NotSupported;
+    public IReadOnlyList<ThreadRecord> GetThreads(ProcessKey key) => [];
+    public IReadOnlyList<KeyValuePair<string, string>> GetEnvironment(ProcessKey key) => [];
+    public IReadOnlyList<StartupEntry> GetStartupEntries() => [];
+    public IReadOnlyList<SessionRecord> GetSessions() => [];
+    public DiskInfo DescribeDisk(string name) => new(name, null, null, Counter.NotSupported);
+
+    public NetworkInterfaceInfo DescribeInterface(string name)
+      => new(name, null, Counter.NotSupported, null, Counter.NotSupported, false);
+
+    public void Dispose() { }
+
+  }
+
+  /// <summary>
+  /// A thousand processes holding a thousand descriptors each, which is what "who has this file
+  /// open" costs on a machine with a database on it. The search is the one place in the program that
+  /// deliberately reads everything, so it is the one place where a million rows is the ordinary case
+  /// rather than the pathological one (PRD §33).
+  /// </summary>
+  [Test]
+  public void AMillionResourceRowsCanBeSearched() {
+    var snapshot = Snapshot(1_000, i => i == 0 ? 0 : 1);
+    var probe = new CrowdedProbe(1_000);
+
+    var clock = Stopwatch.StartNew();
+    var matches = ResourceSearch.Find(probe, snapshot, "needle");
+    clock.Stop();
+    TestContext.Out.WriteLine($"1 000 000 rows searched in {clock.Elapsed.TotalMilliseconds:0} ms");
+
+    Assert.That(matches, Has.Count.EqualTo(1_000), "every process holds one");
+    Assert.That(probe.DeepReads, Is.EqualTo(1_000), "each process read once, not once per pattern");
+    Assert.That(clock.Elapsed, Is.LessThan(TimeSpan.FromSeconds(20)));
+  }
+
+  /// <summary>
+  /// The shallow search must not touch a descriptor at all. This is the rule that keeps the process
+  /// table affordable, and the only way to see it is to count the reads (PRD §5.4).
+  /// </summary>
+  [Test]
+  public void AShallowSearchReadsNoDescriptorsAtAnySize() {
+    var snapshot = Snapshot(1_000, i => i == 0 ? 0 : 1);
+    var probe = new CrowdedProbe(1_000);
+
+    ResourceSearch.Find(probe, snapshot, "needle", deep: false);
+
+    Assert.That(probe.DeepReads, Is.Zero);
+  }
+
+  /// <summary>Counting a million descriptors is one pass, and must stay one pass.</summary>
+  [Test]
+  public void AMillionDescriptorsCanBeCounted() {
+    var handles = new HandleRecord[1_000_000];
+    for (var i = 0; i < handles.Length; ++i)
+      handles[i] = new(
+        (ulong)i,
+        (HandleKind)(i % 8),
+        null,
+        null,
+        Counter.NotSupported,
+        Counter.NotSupported,
+        Counter.NotSupported,
+        Counter.NotSupported
+      );
+
+    var clock = Stopwatch.StartNew();
+    var tally = HandleTally.From(handles);
+    clock.Stop();
+    TestContext.Out.WriteLine($"1 000 000 descriptors tallied in {clock.Elapsed.TotalMilliseconds:0} ms");
+
+    Assert.That(tally.Total, Is.EqualTo(1_000_000));
+    Assert.That(clock.Elapsed, Is.LessThan(TimeSpan.FromSeconds(5)));
   }
 
   #endregion
