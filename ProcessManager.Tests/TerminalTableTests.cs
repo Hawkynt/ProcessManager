@@ -1,3 +1,4 @@
+using Hawkynt.ProcessManager.Model;
 using Hawkynt.ProcessManager.Query;
 using Hawkynt.ProcessManager.Ui.Terminal;
 using static Hawkynt.ProcessManager.Tests.TerminalFixture;

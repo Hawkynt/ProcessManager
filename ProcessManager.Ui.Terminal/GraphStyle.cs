@@ -5,23 +5,6 @@ using Hawkynt.ProcessManager.Sampling;
 
 namespace Hawkynt.ProcessManager.Ui.Terminal;
 
-/// <summary>How an in-row history is drawn (PRD §57.4).</summary>
-public enum GraphStyle : byte {
-
-  /// <summary>The eighth-block ramp: one sample per cell, eight levels.</summary>
-  Blocks,
-
-  /// <summary>Braille dots: two samples per cell, four levels — twice the time in the same width.</summary>
-  Braille,
-
-  /// <summary>A ramp of punctuation, for a terminal that can draw neither.</summary>
-  Ascii,
-
-  /// <summary>No plot at all: the numbers the plot would have shown.</summary>
-  Numbers,
-
-}
-
 /// <summary>
 /// A history plot drawn with the braille patterns (PRD §57.4).
 /// </summary>

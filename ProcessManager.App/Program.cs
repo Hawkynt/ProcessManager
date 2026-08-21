@@ -158,9 +158,13 @@ internal static class Program {
         Columns = options.TerminalColumns,
         PinnedColumns = options.PinnedTerminalColumns,
         ManualRefresh = options.ManualRefresh,
-        // Only when this run said so: otherwise the terminal decides from the locale, which is the
-        // one thing a capture may not do and a person watching wants.
-        Graphs = options.AsciiOnly ? GraphStyle.Ascii : options.GraphStyle == GraphStyle.Blocks ? null : options.GraphStyle,
+        // Only when somebody said so: otherwise the terminal decides from the locale, which is the
+        // one thing a capture may not do and a person watching wants. Saying so includes saying so
+        // in the settings file, which is what tui.graphs is for — before it existed, a preference
+        // for braille had to be retyped every run.
+        Graphs = options.AsciiOnly ? GraphStyle.Ascii
+          : options.GraphStyleWasStated || options.GraphStyle != GraphStyle.Blocks ? options.GraphStyle
+          : null,
       }, ProbeFactory.CreateServiceControl());
 
       return _ExitOk;

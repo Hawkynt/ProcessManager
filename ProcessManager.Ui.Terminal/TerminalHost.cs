@@ -1,3 +1,4 @@
+using Hawkynt.ProcessManager.Model;
 using System.Text;
 using Hawkynt.ProcessManager.Abstractions;
 using Hawkynt.ProcessManager.Query;

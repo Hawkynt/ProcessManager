@@ -616,6 +616,17 @@ internal sealed record CommandLineOptions {
   /// <summary>How the terminal draws its history columns (PRD §57.4).</summary>
   public GraphStyle GraphStyle { get; init; } = GraphStyle.Blocks;
 
+  /// <summary>
+  /// Whether anybody actually chose that style, as opposed to it being the default.
+  /// </summary>
+  /// <remarks>
+  /// The two are not the same and the difference matters at exactly one point: <c>Blocks</c> as a
+  /// default means "let the terminal work out what it can draw", and <c>Blocks</c> because somebody
+  /// said so means blocks. Without this the settings file could ask for blocks and be read as having
+  /// asked for nothing, because the flag it lands in already held that value.
+  /// </remarks>
+  public bool GraphStyleWasStated { get; init; }
+
   /// <summary>Whether the terminal asks for mouse reports (PRD §57.5).</summary>
   public bool UseMouse { get; init; } = true;
 
@@ -667,6 +678,10 @@ internal sealed record CommandLineOptions {
       Grouping = settings.Grouping,
       CpuMode = settings.CpuMode,
       AsciiOnly = !settings.BlockCharacters,
+      // A stated style beats the blocks flag, which only ever said "these two or those two". Left as
+      // it was when the file states nothing, so the terminal still reads its own locale.
+      GraphStyle = settings.TerminalGraphs ?? (settings.BlockCharacters ? GraphStyle.Blocks : GraphStyle.Ascii),
+      GraphStyleWasStated = settings.TerminalGraphs is not null,
       TerminalColumns = settings.TerminalColumns.Length > 0 ? settings.TerminalColumns : null,
       PinnedTerminalColumns = settings.PinnedTerminalColumns,
       ManualRefresh = settings.ManualRefresh,
@@ -998,7 +1013,7 @@ internal sealed record CommandLineOptions {
           if (!TryValue(args, ref i, inlineValue, out var style) || !Enum.TryParse<GraphStyle>(style, true, out var graph))
             return options with { Error = "--graph-style needs one of blocks, braille, ascii or numbers" };
 
-          options = options with { GraphStyle = graph };
+          options = options with { GraphStyle = graph, GraphStyleWasStated = true };
           break;
         }
         case "--no-mouse":
