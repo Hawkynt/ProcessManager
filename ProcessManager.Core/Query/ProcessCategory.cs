@@ -109,6 +109,19 @@ public static class ProcessCategories {
   /// is where the palette had nothing to say.
   /// </para>
   /// </remarks>
+  /// <summary>
+  /// Who is running this program, for the classifier's "yours or somebody else's" question.
+  /// </summary>
+  /// <remarks>
+  /// A static because it is a fact about the running program rather than about any process, and the
+  /// field accessor cannot be handed it: every front-end asks the same accessor for a column's text,
+  /// with no room for a caller's identity in that signature. Set once at start-up, the same way the
+  /// row palette and the heat thresholds are. Minus one until somebody says, which classifies nothing
+  /// as "yours" — an honest default, since claiming a process belongs to whoever is looking is the
+  /// one mistake here that would matter.
+  /// </remarks>
+  public static int CurrentUserId { get; set; } = -1;
+
   public static ProcessCategory Classify(in ProcessRecord process, int currentUserId, bool isNew) {
     if (isNew)
       return ProcessCategory.New;

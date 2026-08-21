@@ -38,6 +38,12 @@ public static class FieldRegistry {
       "The parent's name, or none when the parent has exited and this was reparented.",
       FieldKind.Text, FieldUnit.None, _ALL, FieldCost.Free, 120, 12, false, false,
       Aliases: "pname"),
+    new(ProcessField.Category, "category", "Kind", "KIND",
+      "What a row's colour means, in words: yours, the system's, elevated, a service, suspended, a "
+      + "zombie, newly started, packaged, or running a managed runtime. The same sentence the legend "
+      + "gives, so somebody who cannot tell the colours apart is not reading a different program.",
+      FieldKind.Text, FieldUnit.None, _ALL, FieldCost.Free, 190, 18, false, false,
+      Aliases: "kind"),
     new(ProcessField.UserName, "user", "User", "User",
       "The account the process runs as.",
       FieldKind.Text, FieldUnit.None, _ALL, FieldCost.Free, 130, 10, false, false,
