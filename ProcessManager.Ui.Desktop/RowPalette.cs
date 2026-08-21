@@ -54,6 +54,9 @@ public static class RowPalette {
     ProcessCategory.Elevated => "elevated",
     ProcessCategory.Service => "service",
     ProcessCategory.Own => "own",
+    ProcessCategory.ImageReplaced => "image.replaced",
+    ProcessCategory.Packaged => "packaged",
+    ProcessCategory.ManagedRuntime => "managed",
     _ => string.Empty,
   };
 
@@ -74,6 +77,19 @@ public static class RowPalette {
       ProcessCategory.Elevated => dark ? Color.FromArgb(0xFF, 0x3A, 0x1E, 0x4A) : Color.FromArgb(0xFF, 0xEB, 0xD6, 0xF7),
       ProcessCategory.Service => dark ? Color.FromArgb(0xFF, 0x14, 0x38, 0x3A) : Color.FromArgb(0xFF, 0xCF, 0xF0, 0xF2),
       ProcessCategory.Own => dark ? Color.FromArgb(0xFF, 0x3A, 0x36, 0x18) : Color.FromArgb(0xFF, 0xFB, 0xF5, 0xCE),
+      // Magenta, and the one row colour deliberately louder than the rest. Every other category here
+      // describes what a process is; this one says something is wrong with it and wants finding in a
+      // table of nine hundred rows.
+      ProcessCategory.ImageReplaced => dark ? Color.FromArgb(0xFF, 0x5C, 0x1B, 0x3A) : Color.FromArgb(0xFF, 0xFF, 0xC4, 0xDE),
+      // Periwinkle and olive: the two gaps left in a circle the eight above have most of. Both are a
+      // step deeper than the pale family, because their neighbours are the two closest hues here —
+      // periwinkle sits between System's sky and Elevated's lilac, and olive between Own's cream and
+      // New's green — and at the same lightness the legend's own swatches read as shades of one
+      // colour rather than as two. Neither can crowd the default table: neither is painted unless
+      // somebody switched on the package or runtime field it reads, and somebody who did is looking
+      // for exactly this.
+      ProcessCategory.Packaged => dark ? Color.FromArgb(0xFF, 0x25, 0x25, 0x5E) : Color.FromArgb(0xFF, 0xC2, 0xC4, 0xF0),
+      ProcessCategory.ManagedRuntime => dark ? Color.FromArgb(0xFF, 0x33, 0x42, 0x14) : Color.FromArgb(0xFF, 0xD8, 0xE9, 0xA8),
       _ => null,
     };
   }

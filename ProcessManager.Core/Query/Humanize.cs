@@ -472,6 +472,52 @@ public static class Humanize {
       ? $"[{address}]:{port}"
       : $"{address}:{port}";
 
+  /// <summary>
+  /// The host out of an endpoint this class drew, without its port, or null where the endpoint names
+  /// no host at all (PRD §40).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Deliberately the drawn cell rather than the record it came from, and deliberately in the same
+  /// file as the code that wrote it. A connection can close between a right-click and a menu choice,
+  /// so what somebody asked to search for has to be what they were looking at — the same reason
+  /// "copy endpoint" takes its text from the table. Writer and reader sit together, with one test
+  /// holding them to each other.
+  /// </para>
+  /// <para>
+  /// The bracket is what makes this possible at all: <c>fe80::1:22</c> is ambiguous and
+  /// <c>[fe80::1]:22</c> is not, which is why every tool that writes these brackets an IPv6 address.
+  /// </para>
+  /// <para>
+  /// The placeholders come back as null rather than as themselves. <c>—</c> is a listening socket
+  /// with no peer, <c>n/a</c> is a Unix socket, which has no address of the kind a search means, and
+  /// neither is a term anybody wants a browser opened for.
+  /// </para>
+  /// <para>
+  /// A Unix socket's <em>local</em> end is a filesystem path with no port on it, and comes back
+  /// whole. That is the right answer to "which part of this is not the port" and is not a host; the
+  /// remote column is the one this is used on, and for a Unix socket that column is a placeholder.
+  /// </para>
+  /// </remarks>
+  public static string? EndpointHost(string? endpoint) {
+    if (endpoint is not { Length: > 0 } text)
+      return null;
+
+    string host;
+    if (text[0] == '[') {
+      var close = text.IndexOf(']', StringComparison.Ordinal);
+      if (close < 0)
+        return null;
+
+      host = text[1..close];
+    } else {
+      var colon = text.LastIndexOf(':');
+      host = colon < 0 ? text : text[..colon];
+    }
+
+    return host.Length > 0 && host is not ("—" or "n/a" or "*" or "<unnamed>") ? host : null;
+  }
+
   /// <summary>Who the kernel charges a socket to, by name where the machine knows one.</summary>
   public static string SocketUser(in ConnectionRecord connection)
     => connection.UserName

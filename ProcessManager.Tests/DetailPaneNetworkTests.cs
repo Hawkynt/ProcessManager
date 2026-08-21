@@ -224,4 +224,114 @@ public sealed class DetailPaneNetworkTests {
     Assert.That(Cell(list, 0, "Remote"), Is.EqualTo("93.184.216.34:443"), "the address, not a name");
   }
 
+  #region searching for the far end (PRD §40)
+
+  /// <summary>What the pane was told to start, and nothing else.</summary>
+  private sealed class RecordingLauncher : IProcessActions {
+
+    public List<LaunchRequest> Launched { get; } = [];
+
+    public LaunchResult Launch(LaunchRequest request) {
+      this.Launched.Add(request);
+      return new(ActionResult.Ok, 0, default);
+    }
+
+    public ActionResult Terminate(ProcessKey key) => ActionResult.Ok;
+    public ActionResult Suspend(ProcessKey key) => ActionResult.Ok;
+    public ActionResult Resume(ProcessKey key) => ActionResult.Ok;
+    public ActionResult SetPriority(ProcessKey key, int priority) => ActionResult.Ok;
+    public ActionResult SetAffinity(ProcessKey key, ulong mask) => ActionResult.Ok;
+    public ActionResult SendSignal(ProcessKey key, int signal) => ActionResult.Ok;
+  }
+
+  /// <summary>
+  /// Finds the item by its label and clicks it, which is the only way to reach the handler behind it
+  /// — and the way that also proves the item is on the menu at all.
+  /// </summary>
+  private static ToolStripMenuItem NetworkItem(TreeListView list, string startsWith) {
+    var menu = list.ContextMenuStrip;
+    Assert.That(menu, Is.Not.Null, "the network list has no menu");
+    foreach (var item in menu!.Items)
+      if (item is ToolStripMenuItem entry && entry.Text.StartsWith(startsWith, StringComparison.Ordinal))
+        return entry;
+
+    Assert.Fail($"no item on the network menu begins '{startsWith}'");
+    return null!;
+  }
+
+  /// <summary>
+  /// The item names where it is going. This is the one thing in the program that reaches the network,
+  /// and §97's promise is that nothing goes out unasked — an item reading only "search online" would
+  /// be collecting consent without saying to what.
+  /// </summary>
+  [Test]
+  public void TheSearchItemNamesTheEngineItWillOpen() {
+    var list = Network(Established);
+    var labels = new List<string>();
+    foreach (var item in list.ContextMenuStrip!.Items)
+      if (item is ToolStripMenuItem entry)
+        labels.Add(entry.Text);
+
+    Assert.That(labels, Has.Some.Contains(DesktopOpen.SearchEngine));
+  }
+
+  [Test]
+  public void SearchingTheFarEndOpensTheAddressWithoutItsPort() {
+    var list = Network(Established);
+    var actions = new RecordingLauncher();
+    // The pane the fixture built has no actions; this is the same pane with a launcher on it.
+    var pane = this._panes[^1];
+    pane.Actions = actions;
+
+    list.SelectedNode = list.Nodes[0];
+    // What a right-click does before the menu appears. The toolkit will not open one without a
+    // backend to open it on, so the state is set here and the item worked directly.
+    pane.RefreshNetworkMenu();
+    NetworkItem(list, "Search remote address").PerformClick();
+
+    Assert.That(actions.Launched, Has.Count.EqualTo(1));
+    var argument = actions.Launched[0].Arguments[0];
+    Assert.That(argument, Does.Contain(DesktopOpen.SearchEngine));
+    Assert.That(argument, Does.Contain("93.184.216.34"));
+    // The port is noise in a search: the question is who the address belongs to, and ":443" only
+    // narrows it to pages that happen to mention the port too.
+    Assert.That(argument, Does.Not.Contain("443"));
+  }
+
+  /// <summary>
+  /// A listening socket has no peer, so the item is greyed rather than shown and then apologising —
+  /// and nothing is started even if it is worked anyway. The alternative, a search for the em dash
+  /// the cell shows, is the failure mode this guards.
+  /// </summary>
+  [Test]
+  public void ARowWithNoFarEndGreysTheItemAndStartsNothing() {
+    var list = Network(Listener);
+    var actions = new RecordingLauncher();
+    var pane = this._panes[^1];
+    pane.Actions = actions;
+
+    list.SelectedNode = list.Nodes[0];
+    pane.RefreshNetworkMenu();
+    var item = NetworkItem(list, "Search remote address");
+
+    Assert.That(item.Enabled, Is.False);
+    item.PerformClick();
+    Assert.That(actions.Launched, Is.Empty);
+  }
+
+  /// <summary>
+  /// The host is taken out of the drawn cell rather than out of the record behind it, so the two have
+  /// to agree — this is that agreement, over the endpoints the table actually writes.
+  /// </summary>
+  [Test]
+  public void TheHostComesBackOutOfEveryEndpointTheTableWrites() {
+    var list = Network(Established, Listener);
+
+    Assert.That(Humanize.EndpointHost(Cell(list, 0, "Remote")), Is.EqualTo("93.184.216.34"));
+    Assert.That(Humanize.EndpointHost(Cell(list, 0, "Local")), Is.EqualTo("192.168.1.5"));
+    Assert.That(Humanize.EndpointHost(Cell(list, 1, "Remote")), Is.Null, "a listener has no peer");
+  }
+
+  #endregion
+
 }

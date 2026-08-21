@@ -596,6 +596,7 @@ public sealed record UserSettings {
   /// </summary>
   public static IReadOnlyList<string> ColourNames { get; } = [
     "new", "exited", "zombie", "suspended", "system", "elevated", "service", "own",
+    "image.replaced", "packaged", "managed",
     "cpu", "cpu.kernel", "memory", "io", "plot.background", "plot.grid",
   ];
 

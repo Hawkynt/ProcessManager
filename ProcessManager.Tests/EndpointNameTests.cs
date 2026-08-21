@@ -328,4 +328,50 @@ public sealed class EndpointNameTests {
 
   #endregion
 
+  #region the host back out of an endpoint (PRD §40)
+
+  /// <summary>
+  /// The bracket is what makes this possible: <c>fe80::1:22</c> could be port 22 on <c>fe80::1</c> or
+  /// no port at all on <c>fe80::1:22</c>, and everything that writes endpoints brackets an IPv6
+  /// address for exactly that reason.
+  /// </summary>
+  [TestCase("93.184.216.34:443", "93.184.216.34")]
+  [TestCase("93.184.216.34:https", "93.184.216.34")]
+  [TestCase("[fe80::1]:22", "fe80::1")]
+  [TestCase("[::1]:ssh", "::1")]
+  [TestCase("example.test:https", "example.test")]
+  [TestCase("example.test", "example.test")]
+  public void TheHostComesBackOutOfAnEndpoint(string endpoint, string expected)
+    => Assert.That(Humanize.EndpointHost(endpoint), Is.EqualTo(expected));
+
+  /// <summary>
+  /// The placeholders are not hosts. Handing one to a search would open a browser looking for an em
+  /// dash, which is the shape of bug that ships because nothing throws.
+  /// </summary>
+  [TestCase("—")]
+  [TestCase("n/a")]
+  [TestCase("<unnamed>")]
+  [TestCase("")]
+  [TestCase(null)]
+  public void APlaceholderIsNotAHost(string? endpoint)
+    => Assert.That(Humanize.EndpointHost(endpoint), Is.Null);
+
+  /// <summary>
+  /// Whatever this class writes, it can read back. Held over the same two writers a table cell goes
+  /// through, so a change to either format fails here rather than in a context menu.
+  /// </summary>
+  [Test]
+  public void EveryEndpointThisClassWritesRoundTrips() {
+    var services = Parsed();
+
+    Assert.That(Humanize.EndpointHost(Humanize.RemoteEndpoint(Connection(), services, null)), Is.EqualTo("93.184.216.34"));
+    Assert.That(Humanize.EndpointHost(Humanize.LocalEndpoint(Connection(), services, null)), Is.EqualTo("192.168.1.5"));
+
+    var six = Connection(local: "::1", remote: "2606:2800:220:1:248:1893:25c8:1946");
+    Assert.That(Humanize.EndpointHost(Humanize.RemoteEndpoint(six, services, null)), Is.EqualTo("2606:2800:220:1:248:1893:25c8:1946"));
+    Assert.That(Humanize.EndpointHost(Humanize.LocalEndpoint(six, services, null)), Is.EqualTo("::1"));
+  }
+
+  #endregion
+
 }

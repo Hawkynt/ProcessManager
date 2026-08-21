@@ -23,7 +23,10 @@ public sealed class ProcessPropertiesWindowTests {
     public IReadOnlyList<KeyValuePair<string, string>> GetEnvironment(ProcessKey key) => [];
     public IReadOnlyList<StartupEntry> GetStartupEntries() => [];
     public IReadOnlyList<SessionRecord> GetSessions() => [];
-    public IReadOnlyList<ServiceRecord> GetServices() => [];
+    /// <summary>What the unit-file walk of §41 produced, or nothing on a machine with no systemd.</summary>
+    public IReadOnlyList<ServiceRecord> Services { get; init; } = [];
+
+    public IReadOnlyList<ServiceRecord> GetServices() => this.Services;
     public DiskInfo DescribeDisk(string name) => new(name, null, null, Counter.NotSupported);
 
     public NetworkInterfaceInfo DescribeInterface(string name)
@@ -60,7 +63,8 @@ public sealed class ProcessPropertiesWindowTests {
   private static (SystemSnapshot Snapshot, SnapshotDelta Delta, ProcessRow Row, ProcessKey Key) Machine(
     int pid = 4242,
     ulong startTicks = 100,
-    string name = "editor"
+    string name = "editor",
+    string? cgroup = null
   ) {
     var snapshot = new SystemSnapshot();
     var records = snapshot.PrepareProcesses(1);
@@ -91,6 +95,7 @@ public sealed class ProcessPropertiesWindowTests {
     records[0].GpuAdapterReason = UnknownReason.NotSupportedOnPlatform;
     records[0].ImagePath = "/usr/bin/" + name;
     records[0].CommandLine = "/usr/bin/" + name + " --file notes.txt";
+    records[0].ContainerPath = cgroup;
 
     var delta = new SnapshotDelta();
     delta.Update(null, snapshot, CpuPercentMode.Normalized);
@@ -196,6 +201,8 @@ public sealed class ProcessPropertiesWindowTests {
     // The three §26 asked for and did not have: the address space, what confines the process, and
     // the ceilings that belong to its group rather than to it (PRD §34, §36, §38).
     Assert.That(window.TabTitles, Is.SupersetOf(new[] { "Memory map", "Security", "cgroup" }));
+    // And which service the process belongs to, which §41 had only in the command line (PRD §26).
+    Assert.That(window.TabTitles, Does.Contain("Services"));
   }
 
   [Test]
@@ -511,6 +518,204 @@ public sealed class ProcessPropertiesWindowTests {
     window.UpdateFromSample(snapshot, delta, row, Counter.NotSampledYet);
 
     Assert.That(window.TabTitles, Does.Not.Contain("cgroup"));
+  }
+
+  #endregion
+
+  #region the Services page (PRD §41)
+
+  private static ServiceRecord Unit(
+    string name = "indexer.service",
+    int mainPid = 4242,
+    ServiceState state = ServiceState.Running,
+    bool? enabled = true,
+    bool masked = false
+  ) => new(
+    name,
+    "Indexes things",
+    state,
+    enabled,
+    masked,
+    mainPid,
+    "/usr/bin/indexer --daemon",
+    "/usr/lib/systemd/system/" + name,
+    "on-failure"
+  );
+
+  /// <summary>Opens the window on the Services page, which is what fills it.</summary>
+  private static ProcessPropertiesWindow OnServices(StubProbe probe, string? cgroup) {
+    var (snapshot, delta, row, key) = Machine(cgroup: cgroup);
+    var window = new ProcessPropertiesWindow(probe, key, row.Name);
+    window.UpdateFromSample(snapshot, delta, row, Counter.NotSampledYet);
+    window.ShowPage("Services");
+    return window;
+  }
+
+  [Test]
+  public void TheServicePageSaysWhatTheUnitFileSays() {
+    var window = OnServices(new() { Services = [Unit()] }, "/system.slice/indexer.service");
+
+    Assert.Multiple(() => {
+      Assert.That(window.ServicesText, Does.Contain("Service: indexer.service"));
+      Assert.That(window.ServicesText, Does.Contain("Indexes things"));
+      Assert.That(window.ServicesText, Does.Contain("State: running"));
+      Assert.That(window.ServicesText, Does.Contain("Starts at boot: yes"));
+      Assert.That(window.ServicesText, Does.Contain("/usr/lib/systemd/system/indexer.service"));
+      Assert.That(window.ServicesText, Does.Contain("on-failure"));
+    });
+  }
+
+  /// <summary>
+  /// The distinction the page is worth opening for. A unit's main process is the one systemd watches
+  /// and restarts; everything else in the cgroup is a child it will take down with it.
+  /// </summary>
+  [Test]
+  public void ItSaysWhetherThisProcessIsTheOneSystemdWatches() {
+    var main = OnServices(new() { Services = [Unit(mainPid: 4242)] }, "/system.slice/indexer.service");
+    var child = OnServices(new() { Services = [Unit(mainPid: 11)] }, "/system.slice/indexer.service");
+
+    Assert.That(main.ServicesText, Does.Contain("4242 — this process"));
+    Assert.That(child.ServicesText, Does.Contain("not the one systemd watches"));
+  }
+
+  /// <summary>
+  /// The innermost unit, which is the whole subtlety of the join. A desktop application sits inside
+  /// its user's session manager, which is itself a unit, and naming the outer one would report every
+  /// program somebody starts as belonging to the manager that started it.
+  /// </summary>
+  [Test]
+  public void TheInnermostUnitWinsOverTheSessionManagerAroundIt() {
+    var window = OnServices(
+      new() { Services = [Unit("app-firefox.scope"), Unit("user@1000.service")] },
+      "/user.slice/user-1000.slice/user@1000.service/app.slice/app-firefox.scope"
+    );
+
+    Assert.That(window.ServicesText, Does.Contain("app-firefox.scope"));
+    Assert.That(window.ServicesText, Does.Not.Contain("user@1000.service"));
+  }
+
+  /// <summary>
+  /// Most of a desktop is in no unit at all, and that is a finding about the process rather than a
+  /// hole — so the page says it, names the cgroup it looked in, and keeps its tab.
+  /// </summary>
+  [Test]
+  public void AProcessUnderNoUnitIsToldSoAndKeepsItsTab() {
+    var window = OnServices(new() { Services = [Unit()] }, "/user.slice/user-1000.slice");
+
+    Assert.That(window.ServicesText, Does.Contain("under no systemd unit"));
+    Assert.That(window.ServicesText, Does.Contain("/user.slice/user-1000.slice"));
+    Assert.That(window.TabTitles, Does.Contain("Services"));
+  }
+
+  /// <summary>
+  /// A slice is a unit to systemd and is deliberately not one here: it holds no processes of its own,
+  /// so naming it as the owner would name a container rather than an owner (PRD §40).
+  /// </summary>
+  [Test]
+  public void ASliceIsNotAnOwner() {
+    var window = OnServices(new() { Services = [Unit("user.slice")] }, "/user.slice");
+
+    Assert.That(window.ServicesText, Does.Contain("under no systemd unit"));
+  }
+
+  /// <summary>
+  /// The cgroup names a unit the walk of the unit files did not produce — a transient scope, made at
+  /// runtime and never written to disk. The name is still the truth about the process, so it is
+  /// reported and the absence of a file is explained.
+  /// </summary>
+  [Test]
+  public void AUnitWithNoFileOnDiskIsStillNamed() {
+    var window = OnServices(new() { Services = [Unit()] }, "/user.slice/session-3.scope");
+
+    Assert.That(window.ServicesText, Does.Contain("session-3.scope"));
+    Assert.That(window.ServicesText, Does.Contain("transient"));
+  }
+
+  /// <summary>
+  /// Three answers and not two. A unit started only by a socket or a timer is neither enabled nor
+  /// disabled in the sense the row means, and "no" would be wrong about a service that starts every
+  /// time (PRD §72.3).
+  /// </summary>
+  [Test]
+  public void NeitherEnabledNorDisabledIsItsOwnAnswer() {
+    var window = OnServices(new() { Services = [Unit(enabled: null)] }, "/system.slice/indexer.service");
+
+    Assert.That(window.ServicesText, Does.Contain("neither"));
+    Assert.That(window.ServicesText, Does.Contain("socket"));
+  }
+
+  /// <summary>
+  /// Masked is its own row rather than a shade of disabled: a masked unit can never run whatever else
+  /// is configured, and it is the setting people forget they made.
+  /// </summary>
+  [Test]
+  public void MaskedIsSaidSeparatelyFromDisabled() {
+    var window = OnServices(new() { Services = [Unit(enabled: false, masked: true)] }, "/system.slice/indexer.service");
+
+    Assert.That(window.ServicesText, Does.Contain("Starts at boot: no"));
+    Assert.That(window.ServicesText, Does.Contain("Masked: yes"));
+  }
+
+  /// <summary>
+  /// No service manager this build reads is a fact about the machine and not about the process, which
+  /// is the one case the tab may go — and the only case, so that "this process is in no unit" never
+  /// looks like "this build cannot tell you".
+  /// </summary>
+  [Test]
+  public void AMachineWithNoServiceManagerSaysSoAndMayHideTheTab() {
+    var shown = OnServices(new(), "/system.slice/indexer.service");
+    Assert.That(shown.ServicesText, Does.Contain("Only systemd is read"));
+    Assert.That(shown.TabTitles, Does.Contain("Services"), "disabled is the default");
+
+    var (snapshot, delta, row, key) = Machine(cgroup: "/system.slice/indexer.service");
+    var hidden = new ProcessPropertiesWindow(new StubProbe(), key, row.Name, null, UnavailableTabs.Hidden);
+    hidden.UpdateFromSample(snapshot, delta, row, Counter.NotSampledYet);
+    hidden.ShowPage("Services");
+
+    Assert.That(hidden.TabTitles, Does.Not.Contain("Services"));
+  }
+
+  /// <summary>
+  /// The page is read once and kept, so it must not be read before there is anything to read it by.
+  /// Opened inside the first tick it had no cgroup yet and would have latched "its cgroup could not
+  /// be read" for the rest of the window's life.
+  /// </summary>
+  [Test]
+  public void OpeningItBeforeTheFirstSampleDoesNotLatchTheWrongAnswer() {
+    var (snapshot, delta, row, key) = Machine(cgroup: "/system.slice/indexer.service");
+    var probe = new StubProbe { Services = [Unit()] };
+    var window = new ProcessPropertiesWindow(probe, key, row.Name);
+
+    // Quicker than the tick, which is a thing a person can be.
+    window.ShowPage("Services");
+    window.UpdateFromSample(snapshot, delta, row, Counter.NotSampledYet);
+
+    Assert.That(window.ServicesText, Does.Contain("indexer.service"));
+    Assert.That(window.ServicesText, Does.Not.Contain("could not be read"));
+  }
+
+  /// <summary>
+  /// The row §27 named as the one thing on the General page that could be answered and was not. It
+  /// costs nothing — the cgroup is already in the sample, and a systemd unit is a cgroup.
+  /// </summary>
+  [Test]
+  public void TheGeneralPageNamesTheServiceTheProcessBelongsTo() {
+    var (snapshot, delta, row, key) = Machine(cgroup: "/system.slice/indexer.service");
+    var window = new ProcessPropertiesWindow(new StubProbe(), key, row.Name);
+
+    window.UpdateFromSample(snapshot, delta, row, Counter.NotSampledYet);
+
+    Assert.That(window.GeneralText, Does.Contain("Service: indexer.service"));
+  }
+
+  [Test]
+  public void TheGeneralPageSaysWhenThereIsNoServiceRatherThanLeavingItBlank() {
+    var (snapshot, delta, row, key) = Machine();
+    var window = new ProcessPropertiesWindow(new StubProbe(), key, row.Name);
+
+    window.UpdateFromSample(snapshot, delta, row, Counter.NotSampledYet);
+
+    Assert.That(window.GeneralText, Does.Contain("Service: none"));
   }
 
   #endregion

@@ -1200,11 +1200,26 @@ Categories:
 - [x] Another user's process
 - [x] Elevated — and deliberately not the same colour as System: one is a process root started, the
       other is a process a user started that is root now, which is the more interesting of the two
-- [ ] Packaged application — needs `package` (§14)
-- [ ] Managed runtime — needs `runtime` (§14)
-- [x] Unsigned — no signature stands behind the package, which is most of a machine built locally executable — needs `signature.status` (§21)
-- [x] Invalid signature — the image no longer matches what the package recorded
-- [ ] Suspicious reputation — needs opt-in reputation
+- [x] Packaged application — a Flatpak, a snap or an AppImage, from `package` (§14). Deliberately not
+      "some package owns this file": `pacman` and `dpkg` own nearly every binary on a machine, and a
+      colour that paints nine rows in ten distinguishes nothing. What is worth a colour is the
+      application that brought its own filesystem with it, which is what Windows means by the word
+- [x] Managed runtime — from `runtime` (§14), which reads the module list rather than the name.
+      `native` is a finding and is not coloured; `unknown` is nobody having looked and is not either
+- [ ] Unsigned executable — **refused, not deferred.** §21 keeps `signature.status` a Windows and
+      macOS field because a Linux binary carries no signature to check. The two columns that come
+      nearest each answer something else: `package.status` is whether the bytes still match what the
+      package recorded, and `trust.chain` is whether anybody this machine trusts signed for that
+      package. `Unsigned` in the trust chain is the ordinary reading for a package built on the
+      machine it runs on, so a colour taken from it would paint every developer's own build as
+      suspect.
+
+      §70's whole design is that the word is meaningless without the column it is in — the same
+      vocabulary answers five questions, and which one was asked is the heading. **A row colour has
+      no heading.** That is the argument, and it does not depend on which of the five is read
+- [ ] Invalid signature — as above: there is no signature to be invalid
+- [ ] Suspicious reputation — needs opt-in reputation, and §97 promises nothing about an executable
+      leaves this machine unasked. There is no provider to ask
 - [x] High CPU
 - [x] High memory
 - [x] High disk
@@ -1238,12 +1253,44 @@ measurement at all (§5.3).
       could only ever fire on a benchmark. Each engine column is marked from its own reading and the
       summary column from the busiest engine; the graphics-memory columns are bytes and are left
       alone, because a percentage threshold has nothing to say about them.
-- [ ] Process with an active UI window — needs §39
-- [ ] Process with a changed executable — needs image mtime + hash watch
-- [ ] Process containing the selected search match — needs §56
+- [ ] Process with an active UI window — **refused on Linux.** §39's own finding is that a Wayland
+      client cannot enumerate other clients' surfaces by design, so the colour would appear on
+      XWayland rows and on nothing else. A mark that is present for a third of the windows on a
+      modern desktop and absent for the rest describes which toolkit a program was built with
+- [x] Process with a changed executable — the kernel appends `" (deleted)"` to the `exe` link of a
+      process whose image has been unlinked, which is an upgrade having replaced the file underneath
+      it. No mtime watch and no hash: the kernel states this rather than the program inferring it,
+      which is the difference between this and the two signature lines above.
+
+      **It under-reports and never over-reports.** The link is read once per process, so an image
+      replaced while this program is already watching shows on the next full build of the table
+      rather than at the moment it happens. The reverse is impossible — a path carrying the marker
+      was never a live file. An under-reported colour costs a reader one discovery; an over-reported
+      one costs them their trust in every other colour.
+
+      It is the one row colour deliberately louder than the rest, and it outranks System: after an
+      upgrade the rows that need restarting are almost all root daemons, and painting them the same
+      blue as every other daemon is exactly how they are missed
+- [ ] Process containing the selected search match — the match is already marked, on the run of
+      characters it matched, which is §11's wash and points at the word rather than at the row. A
+      second mark on the row would say the same thing less precisely. The one case the cell mark does
+      not cover is a match in a column that is not showing, and that is a reason to show the column
 
 The ones that are ticked are the ones the program can *prove*. The rest stay off rather than
 guessing: a colour claiming "unsigned" without having checked a signature is worse than no colour.
+
+**A row has one colour and most processes qualify for several, so the order is part of the design.**
+Two rules settle it. *The transient beats the permanent*: started, ended, stopped and
+running-a-deleted-image were all untrue an hour ago and will be untrue again, while being root, or
+yours, or a service is true for the process's whole life and is in a column besides. And *the two
+identity colours only ever replace "nothing distinguishing"*: packaged and managed-runtime are tested
+after privilege and service membership, so a .NET service stays a service and a snap running as root
+stays a system process. They take the place of "yours" and "somebody else's", which is where the
+palette had nothing to say.
+
+Neither of those two can crowd the default table, because neither is painted unless the `package` or
+`runtime` field is switched on — both cost a read, and an unread field is never marked in either
+direction. Somebody who switched one on is looking for exactly this.
 
 ---
 
@@ -1630,7 +1677,13 @@ Tabs:
 - [x] **cgroup (§38)** — named for the thing rather than for the three things it is called on three
       platforms. A Windows job object and a container are not this and would not be described by it
 - [ ] Windows (§39)
-- [ ] Services (§41)
+- [x] **Services (§41)** — which unit this process belongs to and what that unit's file says: its
+      description, whether it starts at boot, whether it is masked, its restart policy, its command
+      and the file itself. The unit comes from the cgroup, because a systemd unit *is* a cgroup — the
+      same join §40's owning-service column makes, through the same code, so the two cannot disagree.
+      The row worth opening it for is whether this process is the unit's **main** process: that is the
+      one systemd watches and restarts, and everything else in the cgroup is a child it will take down
+      with it
 - [ ] Runtime (§80)
 - [ ] Strings (§35)
 - [ ] Timeline (§63)
@@ -1664,10 +1717,22 @@ buy its answer that cheaply — walking a browser's page table to decide whether
 asked for is exactly what §5.4 forbids — so its tab settles the first time it is opened instead. That
 is the trade showing through the preference, and it is the honest way round.
 
-The five still unticked, one line each: **Windows** has the list and none of the actions, and a page
-that shows a window and cannot close it is half a feature (§39); **Services** is a view that exists
-only in the CLI (§41); **Runtime** needs the managed and interpreted introspection of §80, none of
-which is written; **Strings** is two features under one heading — scanning the image on disk needs no
+**The Services page is the fourth that costs a read, and the only one read exactly once.** Its
+reading is a walk of every unit file on the machine — 372 of them here — which is far too much for a
+tick and does not need spending twice: a process cannot move between units while it runs, and a unit
+that stops takes its processes with it, so this window would say *ended* rather than show a stale
+service. What can change underneath it is somebody running `systemctl disable` in another window,
+and that is a fair price for not walking a thousand files a second (§5.4).
+
+Its tab may be hidden only when nothing on the machine publishes services at all. A process in no
+unit is a finding about the *process* — most of a desktop is like that — so it keeps its tab and says
+so, naming the cgroup it looked in. Collapsing the two would make "you are in no service" and "this
+build cannot tell you" the same answer, which is the distinction §5.3 exists for.
+
+The four still unticked, one line each: **Windows** has the list and none of the actions, and a page
+that shows a window and cannot close it is half a feature (§39); **Runtime** needs the managed and
+interpreted introspection of §80, none of which is written; **Strings** is two features under one
+heading — scanning the image on disk needs no
 permission and is honest work nobody has done, while scanning the process's memory is one of §25.5's
 readers wearing a different hat and is refused on the same ground, and shipping the first under a tab
 named for both would be promising the second; **Timeline** needs the event history of §63, which
@@ -1680,9 +1745,10 @@ nothing records yet.
 - [ ] 🟡 name ✔ · PID ✔ · PPID ✔ · parent process ✔ · start time ✔ · running duration ✔ · state ✔ ·
       session ✔ · user ✔ · effective user ✔ · architecture ✔ · executable path ✔ · command line ✔ ·
       current directory ✔ · file size ✔ · modification timestamp ✔ · creation timestamp ✔ · file
-      permissions ✔ · runtime ✔ · container/cgroup association ✔ (and a page of its own — §38) —
-      against **icon**, **application identity**, **package/bundle**, **version**, **company**,
-      **description**, **signer**, **signature status**, **file hashes** and **service associations**
+      permissions ✔ · runtime ✔ · container/cgroup association ✔ (and a page of its own — §38) ·
+      service associations ✔ (and a page of its own — §41) — against **icon**, **application
+      identity**, **package/bundle**, **version**, **company**, **description**, **signer**,
+      **signature status** and **file hashes**
 - [ ] 🟡 Buttons: Copy ✔ · Reveal executable ✔ · File properties ✔ — against **Verify** and
       **Inspect binary**
 
@@ -1702,9 +1768,12 @@ are rows now. The runtime is worth its own line because it comes from the module
 the name — a .NET application and a shell script that launches one are called the same thing and are
 not the same thing (§14, §80).
 
-**Service associations are the one left that could be answered and is not.** The units exist in the
-CLI (§41); joining a process to the one that owns it is a row on this page and a view that does not
-exist yet.
+**Service associations were the one left that could be answered and was not, and now are.** The row
+names the unit the process belongs to, or says outright that it belongs to none. It costs nothing:
+the cgroup is already in the sample and a systemd unit *is* a cgroup, so it is the same join §40's
+owning-service column makes, through the same code. What the unit itself says — its description, its
+restart policy, whether this process is the one systemd watches — is a page of its own (§26, §41),
+because those are facts about the service and several processes share one.
 
 **Icon** is not a Linux fact about a process. It is a desktop-entry lookup by executable path against
 `/usr/share/applications`, which answers for the third of processes that have a launcher and for
@@ -2377,7 +2446,12 @@ Endpoints are enumerated on both platforms and attributed to processes.
 - [x] Remote address
 - [x] Remote port
 - [x] Remote hostname — as above
-- [x] Service name — from the machine's own `/etc/services`, in `--connections`; `-n` turns it off, as it does for `ss`
+- [ ] 🟡 Service name — from the machine's own `/etc/services`, in `--connections`; `-n` turns it off,
+      as it does for `ss`. **The window's network tab shows numbers instead**, and that is a gap
+      rather than a decision: reading the file is `ProcessManager.Platform.Linux`'s job (§8.1) and the
+      desktop project references only `ProcessManager.Core`, so naming a port there needs a probe
+      method the interface has not got. It is one addition across three probes, and it is the kind of
+      front-end disagreement §58 exists to stop
 - [ ] 🟡 Interface — Linux, from the address the socket is bound to. `/proc/net/if_inet6` names it
       outright for IPv6; an IPv4 address is on the interface whose on-link subnet contains it, longest
       prefix first. A socket on the wildcard address is on all of them and shows `*`; an address no
@@ -2476,7 +2550,17 @@ Actions:
       refuse is a lie dressed as a feature (§32). It belongs with the elevated helper of §8
 - [x] Terminate owner — with the confirmation §5.5 requires. The process is the pane's own rather
       than one read off a row: every row here belongs to the same process by construction
-- [ ] Search remote endpoint
+- [x] Search remote endpoint — the far end's address, without its port, handed to the session's
+      browser. The engine is named in the item's own label rather than only in the code: this is the
+      one thing in the program that reaches the network, §97's promise is that nothing goes out
+      unasked, and an item reading only "search online" would be collecting consent without saying to
+      what. The port is left off because it is noise in a search — the question is who the address
+      belongs to, and `:443` only narrows it to pages that mention the port too.
+
+      The term comes off the drawn cell rather than out of the record, for the same reason Copy
+      endpoint's does, so `Humanize` reads back what `Humanize` wrote and one test holds the pair
+      together. On a row with no far end — a listener, a Unix socket — the item is greyed rather than
+      shown and then apologising (§32)
 
 - [x] **Hostname resolution is asynchronous and globally disableable** — a blocking DNS lookup in a
       table that refreshes every second is a hang waiting to happen, and on some networks it is also
@@ -2485,7 +2569,8 @@ Actions:
 # 41. Services view
 
 Read on Linux; unbuilt on Windows and macOS. Control is written for systemd and reachable from the
-command line; neither front-end offers it as a menu item yet.
+command line; neither front-end offers it as a menu item yet. One process's own unit is a page of the
+properties window (§26), which is the first of this that either front-end shows.
 
 Shared columns:
 
@@ -2516,6 +2601,11 @@ Actions:
       thing systemd offers
 - [ ] Open configuration · reveal executable · go to process · properties · copy ·
       inspect dependencies
+
+**A template instance shows its template's description**, `%i` and all: `user@1000.service` reads
+"User Manager for UID %i". The specifiers are systemd's own and expanding them needs the same
+substitution table `systemd.unit(5)` documents — a small piece of work that nobody has done, and the
+raw string is at least visibly a template rather than a wrong name.
 - [ ] Creating and editing services — deferred to a later release
 
 **Read without D-Bus and without spawning `systemctl`.** Everything the columns need is on disk: the
@@ -3676,8 +3766,8 @@ Status vocabulary — exactly these, no synonyms:
 - [x] Verified — the image still matches the digest its package recorded
 - [ ] Valid but untrusted chain — a package database records that something signed, not who, so
       this needs a real chain and Linux packaging does not offer one
-- [ ] Unsigned
-- [ ] Invalid signature
+- [x] Unsigned — nothing signed for the package, which is most of a machine that builds its own
+- [x] Invalid signature — the image no longer matches the digest its package recorded
 - [ ] Revoked — needs a revocation list, which no package database keeps
 - [ ] Expired — needs a certificate with a validity period, which a package signature is not
 - [x] Verification error — the databases could not be read

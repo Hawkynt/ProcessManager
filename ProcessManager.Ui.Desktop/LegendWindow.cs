@@ -26,9 +26,94 @@ namespace Hawkynt.ProcessManager.Ui.Desktop;
 public sealed class LegendWindow : Form {
 
   private const int _Margin = 14;
-  private const int _RowHeight = 26;
+
+  /// <summary>
+  /// How far apart the swatch rows sit.
+  /// </summary>
+  /// <remarks>
+  /// Twenty-four rather than twenty-six, and that is a screen-size decision rather than a taste one.
+  /// This window may not be shrunk below what it holds — the whole point of computing its height —
+  /// so the height it computes has to fit the smallest display anybody runs a desktop on. Twelve
+  /// swatches and a three-paragraph note at twenty-six came to 776 pixels, which does not fit a
+  /// 1366×768 laptop once a title bar is on it, and the buttons would have been off the bottom of
+  /// the screen with no way to drag them back.
+  /// </remarks>
+  private const int _RowHeight = 24;
+
   private const int _SwatchWidth = 28;
   private const int _TextLeft = 52;
+
+  /// <summary>
+  /// How tall one line of the closing note is drawn, and how wide the window is.
+  /// </summary>
+  /// <remarks>
+  /// Both were guesses, and both were wrong in the way only a photograph shows. The note was sized at
+  /// sixteen pixels a line against a toolkit that draws them nineteen apart, so its last two lines
+  /// were underneath the buttons; and every sentence past sixty-odd characters — which is both of the
+  /// band descriptions and half the note — was drawn with an ellipsis on the end, in a box 460 pixels
+  /// wide inside a window 520 wide. A legend whose sentences stop mid-word is the thing this window
+  /// exists to prevent, one level up (PRD §9.6, §45.9).
+  /// </remarks>
+  private const int _NoteLineHeight = 20;
+
+  private const int _Width = 760;
+
+  /// <summary>What is left for a sentence that starts beside a swatch.</summary>
+  private const int _TextWidth = _Width - _TextLeft - _Margin;
+
+  /// <summary>
+  /// Every row colour the list can paint, in the order the window explains them.
+  /// </summary>
+  /// <remarks>
+  /// The transient ones first, then the permanent, then the two that only appear when an opt-in field
+  /// is switched on, then the fallback. A test walks <see cref="ProcessCategory"/> against
+  /// <see cref="RowPalette.BackColorOf"/> and fails if the table can paint something this list has
+  /// not got — which is the check the file's opening paragraph asks for, made mechanical.
+  /// </remarks>
+  private static readonly ProcessCategory[] _Categories = [
+    ProcessCategory.New,
+    ProcessCategory.Exited,
+    ProcessCategory.Own,
+    ProcessCategory.System,
+    ProcessCategory.Elevated,
+    ProcessCategory.Service,
+    ProcessCategory.Suspended,
+    ProcessCategory.Zombie,
+    ProcessCategory.ImageReplaced,
+    ProcessCategory.Packaged,
+    ProcessCategory.ManagedRuntime,
+    ProcessCategory.Other,
+  ];
+
+  /// <summary>
+  /// The closing note, one array entry per drawn line.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Wrapped by hand because the label draws what it is given; as an array rather than one string with
+  /// newlines in it so that the window can count the lines and give itself room for them. Written out
+  /// as a paragraph it was eight lines in a box ninety-two pixels tall, and the ninth would have gone
+  /// under the buttons without anything failing.
+  /// </para>
+  /// <para>
+  /// The last two paragraphs are the ones that have to stay true. Naming what the program refuses to
+  /// distinguish is what makes an absent colour a decision rather than an oversight, and the list
+  /// shortens as categories become provable — packaged and managed-runtime were on it until the
+  /// package and runtime readings existed to prove them (PRD §23).
+  /// </para>
+  /// </remarks>
+  private static readonly string[] _Note = [
+    "The mark goes on the cell, not the row: the row already says what kind of process this is, and one",
+    "wash for both would mean one of those facts quietly winning. The number stays legible under either",
+    "mark, so the table reads with no colour at all.",
+    "",
+    "Packaged and managed-runtime rows appear only once the package or runtime field is switched on.",
+    "Both cost a read, and nothing is claimed about a process nobody asked about.",
+    "",
+    "Not distinguished: packed, unsigned, invalid-signature and suspicious processes. A Linux binary",
+    "carries no signature to check, and the columns that come nearest each answer a different",
+    "question — which a row colour has no heading to say. A colour sometimes right is worse than none.",
+  ];
 
   private readonly Button _thresholds = new() { Text = "Thresholds…" };
   private readonly Button _close = new() { Text = "Close" };
@@ -53,22 +138,12 @@ public sealed class LegendWindow : Form {
     var y = _Margin;
     y = this.AddHeading("Row colour — what kind of process this is", y);
 
-    foreach (var category in (ReadOnlySpan<ProcessCategory>)[
-      ProcessCategory.New,
-      ProcessCategory.Exited,
-      ProcessCategory.Own,
-      ProcessCategory.System,
-      ProcessCategory.Elevated,
-      ProcessCategory.Service,
-      ProcessCategory.Suspended,
-      ProcessCategory.Zombie,
-      ProcessCategory.Other,
-    ]) {
+    foreach (var category in _Categories) {
       var swatch = new CategorySwatch(category) { Bounds = new(_Margin, y, _SwatchWidth, 18) };
       this.Controls.Add(swatch);
       this.Controls.Add(new Label {
         Text = ProcessCategories.Describe(category),
-        Bounds = new(_TextLeft, y, 420, 18),
+        Bounds = new(_TextLeft, y, _TextWidth, 18),
       });
 
       y += _RowHeight;
@@ -78,25 +153,19 @@ public sealed class LegendWindow : Form {
     y = this.AddHeading("Cell mark — how hard it is leaning on one resource", y);
 
     this.Controls.Add(new HeatSwatch(UsageHeat.Warm) { Bounds = new(_Margin, y, _SwatchWidth, 18) });
-    this._warmText.Bounds = new(_TextLeft, y, 420, 18);
+    this._warmText.Bounds = new(_TextLeft, y, _TextWidth, 18);
     this.Controls.Add(this._warmText);
     y += _RowHeight;
 
     this.Controls.Add(new HeatSwatch(UsageHeat.Hot) { Bounds = new(_Margin, y, _SwatchWidth, 18) });
-    this._hotText.Bounds = new(_TextLeft, y, 420, 18);
+    this._hotText.Bounds = new(_TextLeft, y, _TextWidth, 18);
     this.Controls.Add(this._hotText);
     y += _RowHeight;
 
+    var noteHeight = _Note.Length * _NoteLineHeight;
     this.Controls.Add(new Label {
-      Bounds = new(_Margin, y + 4, 460, 92),
-      Text = "The mark goes on the cell, not the row: the row already says what kind of\n"
-           + "process this is, and one wash for both would mean one of the two facts\n"
-           + "quietly winning. The number stays legible under either mark, so the table\n"
-           + "reads with no colour at all.\n"
-           + "\n"
-           + "Not distinguished: packaged, managed-runtime and unsigned processes. Telling\n"
-           + "those apart needs information neither probe collects, and a colour that is\n"
-           + "sometimes right is worse than none.",
+      Bounds = new(_Margin, y + 4, _Width - (_Margin * 2), noteHeight),
+      Text = string.Join('\n', _Note),
     });
 
     this._thresholds.Click += (_, _) => this.EditThresholds();
@@ -107,10 +176,11 @@ public sealed class LegendWindow : Form {
     this.Describe();
 
     // Sized to what it holds. A fixed height is what leaves a box with a band of nothing across the
-    // middle of it the moment a row is added, and what clips the last one when two are.
-    var height = y + 92 + 16 + 28 + _Margin + 24;
-    this.Bounds = new(0, 0, 520, height);
-    this.MinimumSize = new(460, height);
+    // middle of it the moment a row is added, and what clips the last one when two are — which is why
+    // the closing note's height is counted off its own lines rather than written out as a number.
+    var height = y + noteHeight + 16 + 28 + _Margin + 24;
+    this.Bounds = new(0, 0, _Width, height);
+    this.MinimumSize = new(_Width, height);
     this.Resize += (_, _) => this.ApplyLayout();
     this.ApplyLayout();
   }
@@ -129,6 +199,12 @@ public sealed class LegendWindow : Form {
 
   /// <summary>Every line the window shows, for a test with no display to read it off.</summary>
   public string Description => $"{this._warmText.Text}\n{this._hotText.Text}";
+
+  /// <summary>Which row colours this window explains — the list a test holds the palette to.</summary>
+  public static IReadOnlyList<ProcessCategory> Categories => _Categories;
+
+  /// <summary>The closing note, for the same reason: a refusal nobody can read is not one.</summary>
+  public static string Note => string.Join('\n', _Note);
 
   private void EditThresholds() {
     var dialog = new HighlightThresholdsDialog(this.Heat);
@@ -170,14 +246,19 @@ public sealed class LegendWindow : Form {
   }
 
   private int AddHeading(string text, int y) {
-    this.Controls.Add(new Label { Text = text, Bounds = new(_Margin, y, 460, 18) });
+    this.Controls.Add(new Label { Text = text, Bounds = new(_Margin, y, _Width - (_Margin * 2), 18) });
     return y + 24;
   }
 
+  /// <remarks>
+  /// The wider button is not a preference. At 120 it drew as "Threshold..." — a button whose label is
+  /// truncated to a different word than the one it was given, which the photograph caught and no
+  /// assertion could.
+  /// </remarks>
   public void ApplyLayout() {
     var buttons = Math.Max(_Margin + 40, this.Height - _Margin - 28);
     this._close.Bounds = new(this.Width - _Margin - 84, buttons, 84, 28);
-    this._thresholds.Bounds = new(this._close.Bounds.X - 130, buttons, 120, 28);
+    this._thresholds.Bounds = new(this._close.Bounds.X - 150, buttons, 140, 28);
   }
 
   /// <summary>A colour chip. Its own control because a Label has no background of its own.</summary>

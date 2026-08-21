@@ -1257,6 +1257,18 @@ public sealed class DetailPane : IDisposable {
 
     menu.Items.Add(copy);
 
+    // The engine is in the item's own label rather than only in the code. This is the one thing in
+    // the program that reaches the network, and §97's promise is that nothing goes out unasked — an
+    // item that said only "search online" would be asking for consent without saying to what
+    // (PRD §40, §70, §97).
+    this._searchRemote.Click += (_, _) => this.SearchRemoteEndpoint();
+    menu.Items.Add(this._searchRemote);
+
+    // Greyed on a row with no far end rather than shown and then refusing: a listening socket and a
+    // Unix socket both have nothing to search for, and an item that could only apologise is the thing
+    // §32 objects to. Settled as the menu opens, because that is when the selected row is known.
+    menu.Opening += (_, _) => this.RefreshNetworkMenu();
+
     // Checkable rather than a one-shot "resolve this row": the disclosure is the same either way —
     // asking a resolver tells whoever runs it which addresses this machine is talking to — so it is
     // one deliberate act with a visible state rather than a per-row habit (PRD §40).
@@ -1275,6 +1287,19 @@ public sealed class DetailPane : IDisposable {
 
   private readonly ToolStripMenuItem _resolveNames = new("Resolve hostnames");
 
+  private readonly ToolStripMenuItem _searchRemote =
+    new($"Search remote address on {DesktopOpen.SearchEngine}…");
+
+  /// <summary>
+  /// Settles which items on the network menu apply to the row that is selected (PRD §40).
+  /// </summary>
+  /// <remarks>
+  /// Called as the menu opens, which is when the selection is known. Public so that a test with no
+  /// display can put the menu into the state a right-click would and then work the item — the toolkit
+  /// will not open a menu without a backend to open it on.
+  /// </remarks>
+  public void RefreshNetworkMenu() => this._searchRemote.Enabled = this.SelectedRemoteHost is not null;
+
   /// <summary>
   /// The local and remote endpoint of the selected row, as one line worth pasting into a search.
   /// </summary>
@@ -1292,6 +1317,56 @@ public sealed class DetailPane : IDisposable {
       var remote = cells[3];
       return remote is "—" or "" ? local : $"{local} → {remote}";
     }
+  }
+
+  /// <summary>
+  /// The address at the far end of the selected row, without its port — the term worth searching for.
+  /// </summary>
+  /// <remarks>
+  /// Taken off the drawn cell for the same reason "copy endpoint" is: the table is a moment old, a
+  /// connection can close between a right-click and a menu choice, and re-reading the kernel would
+  /// sometimes hand back a different socket. The port is dropped because it is noise in a search —
+  /// what somebody wants to know is who <c>140.82.121.4</c> belongs to, and adding <c>:443</c> to the
+  /// query only narrows it to pages that happen to mention the port too.
+  /// </remarks>
+  private string? SelectedRemoteHost
+    => this._network.SelectedNode?.Tag is string[] cells && cells.Length > 3
+      ? Humanize.EndpointHost(cells[3])
+      : null;
+
+  /// <summary>
+  /// Opens a search for the far end of the selected connection (PRD §40).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The only thing in this program that reaches the network, and it happens because somebody clicked
+  /// an item that names where it is going. Nothing about the process is sent — the query is the
+  /// address, which is the one fact a reader is trying to put a name to.
+  /// </para>
+  /// <para>
+  /// Through <see cref="Abstractions.IProcessActions.Launch"/>, like every other program this starts:
+  /// one code path, one set of refusals, one place a test can watch.
+  /// </para>
+  /// </remarks>
+  private void SearchRemoteEndpoint() {
+    // Unreachable from the menu, which greys the item on such a row. Kept because "no far end" must
+    // never become a search for the em dash the cell shows.
+    if (this.SelectedRemoteHost is not { } host)
+      return;
+
+    if (this.Actions is null) {
+      MessageBox.Show("This build has no actions for this platform.", "Process Manager");
+      return;
+    }
+
+    if (DesktopOpen.Search(host) is not { } request) {
+      MessageBox.Show("This platform has no desktop opener to hand the search to.", "Process Manager");
+      return;
+    }
+
+    var result = this.Actions.Launch(request);
+    if (!result.Outcome.Succeeded)
+      MessageBox.Show(result.Outcome.Detail ?? result.Outcome.Outcome.ToString(), "Process Manager");
   }
 
   /// <summary>
