@@ -43,9 +43,11 @@ internal static class WindowsHostReader {
 
       // SMBIOS is reachable through GetSystemFirmwareTable, and parsing a type-17 record is a job of
       // its own. Said plainly rather than left blank (PRD §7).
+      InstalledMemoryBytes = Counter.Unknown(UnknownReason.NotImplementedHere),
       MemoryTransfersPerSecond = Counter.Unknown(UnknownReason.NotImplementedHere),
       MemorySlotsUsed = Counter.Unknown(UnknownReason.NotImplementedHere),
       MemorySlotsTotal = Counter.Unknown(UnknownReason.NotImplementedHere),
+      MemoryChannels = Counter.Unknown(UnknownReason.NotImplementedHere),
     };
   }
 

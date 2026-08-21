@@ -177,16 +177,31 @@ public sealed class LinuxProbe : ISystemProbe {
 
   private static ulong Scale(ulong ticks, double nanosecondsPerTick) => (ulong)(ticks * nanosecondsPerTick);
 
+  /// <summary>
+  /// Everything <c>/proc/meminfo</c> will say (PRD §47).
+  /// </summary>
+  /// <remarks>
+  /// A line this kernel does not publish leaves its counter reading "this kernel has no such thing"
+  /// rather than zero — <c>Zswap</c> on a machine built without it, <c>Percpu</c> before 4.14, the
+  /// huge-page lines on a kernel without <c>CONFIG_HUGETLB_PAGE</c>. Every one of those is a real
+  /// configuration, and a zero would describe each of them as a machine that has the feature and is
+  /// not using it (PRD §5.3).
+  /// </remarks>
   private void ReadMemInfo(ref SystemCounters system) {
+    // Before the read rather than after it: a machine with no /proc/meminfo at all — a container
+    // with a lockdown mount, a fixture recorded without it — must not report a machine with no
+    // memory either.
+    MarkMemoryUnsupported(ref system);
+
     Span<byte> pathBuffer = stackalloc byte[ProcPath.MaxLength];
     if (!this._reader.TryRead(ProcPath.Build(pathBuffer, this._procRootUtf8, "meminfo"u8), out var content, out _))
       return;
 
     // Dirty and Writeback are two stages of one thing — changed and not yet on disk, and changed
-    // and on its way — and a reader cares about the sum. Accumulated in a local rather than into the
-    // counter, so this stays right whether or not the caller zeroed the snapshot first.
-    var dirty = 0ul;
-    var writeback = 0ul;
+    // and on its way — and the composition bar cares about the sum. Kept as counters rather than as
+    // numbers so that the sum of two figures, one of which was never reported, is not a figure.
+    var dirty = Counter.NotSupported;
+    var writeback = Counter.NotSupported;
 
     var scanner = new AsciiScanner(content);
     while (!scanner.IsEmpty) {
@@ -194,7 +209,8 @@ public sealed class LinuxProbe : ISystemProbe {
       if (line.IsEmpty)
         continue;
 
-      // Every value in meminfo is in kB, whatever the unit column says.
+      // Every value in meminfo is in kB, whatever the unit column says — except the four
+      // HugePages_* lines, which are counts of pages and carry no unit at all.
       if (TryValue(line, "MemTotal:"u8, out var value))
         system.TotalMemoryBytes = Counter.Of(value * 1024);
       else if (TryValue(line, "MemAvailable:"u8, out value))
@@ -206,9 +222,55 @@ public sealed class LinuxProbe : ISystemProbe {
       else if (TryValue(line, "Buffers:"u8, out value))
         system.BufferMemoryBytes = Counter.Of(value * 1024);
       else if (TryValue(line, "Dirty:"u8, out value))
-        dirty = value * 1024;
+        system.DirtyBytes = dirty = Counter.Of(value * 1024);
       else if (TryValue(line, "Writeback:"u8, out value))
-        writeback = value * 1024;
+        system.WritebackBytes = writeback = Counter.Of(value * 1024);
+      else if (TryValue(line, "AnonPages:"u8, out value))
+        system.AnonymousBytes = Counter.Of(value * 1024);
+      else if (TryValue(line, "Mapped:"u8, out value))
+        system.MappedBytes = Counter.Of(value * 1024);
+      else if (TryValue(line, "SwapCached:"u8, out value))
+        system.SwapCachedBytes = Counter.Of(value * 1024);
+      else if (TryValue(line, "Zswap:"u8, out value))
+        system.CompressedBytes = Counter.Of(value * 1024);
+      else if (TryValue(line, "Zswapped:"u8, out value))
+        system.CompressedOriginalBytes = Counter.Of(value * 1024);
+      else if (TryValue(line, "Slab:"u8, out value))
+        system.SlabBytes = Counter.Of(value * 1024);
+      else if (TryValue(line, "Unevictable:"u8, out value))
+        system.UnevictableBytes = Counter.Of(value * 1024);
+      else if (TryValue(line, "Mlocked:"u8, out value))
+        system.LockedBytes = Counter.Of(value * 1024);
+      else if (TryValue(line, "VmallocUsed:"u8, out value))
+        system.VmallocUsedBytes = Counter.Of(value * 1024);
+      else if (TryValue(line, "Percpu:"u8, out value))
+        system.PerCpuBytes = Counter.Of(value * 1024);
+      else if (TryValue(line, "HardwareCorrupted:"u8, out value))
+        system.HardwareCorruptedBytes = Counter.Of(value * 1024);
+      else if (TryValue(line, "Hugepagesize:"u8, out value))
+        system.HugePageSizeBytes = Counter.Of(value * 1024);
+      else if (TryValue(line, "HugePages_Total:"u8, out value))
+        system.HugePagesTotal = Counter.Of(value);
+      else if (TryValue(line, "HugePages_Free:"u8, out value))
+        system.HugePagesFree = Counter.Of(value);
+      else if (TryValue(line, "HugePages_Rsvd:"u8, out value))
+        system.HugePagesReserved = Counter.Of(value);
+      else if (TryValue(line, "Hugetlb:"u8, out value))
+        system.HugeTlbBytes = Counter.Of(value * 1024);
+      else if (TryValue(line, "AnonHugePages:"u8, out value))
+        system.AnonymousHugePagesBytes = Counter.Of(value * 1024);
+      else if (TryValue(line, "ShmemHugePages:"u8, out value))
+        system.SharedHugePagesBytes = Counter.Of(value * 1024);
+      else if (TryValue(line, "FileHugePages:"u8, out value))
+        system.FileHugePagesBytes = Counter.Of(value * 1024);
+      else if (TryValue(line, "Active(anon):"u8, out value))
+        system.ActiveAnonymousBytes = Counter.Of(value * 1024);
+      else if (TryValue(line, "Inactive(anon):"u8, out value))
+        system.InactiveAnonymousBytes = Counter.Of(value * 1024);
+      else if (TryValue(line, "Active(file):"u8, out value))
+        system.ActiveFileBytes = Counter.Of(value * 1024);
+      else if (TryValue(line, "Inactive(file):"u8, out value))
+        system.InactiveFileBytes = Counter.Of(value * 1024);
       else if (TryValue(line, "Committed_AS:"u8, out value))
         system.CommittedBytes = Counter.Of(value * 1024);
       else if (TryValue(line, "CommitLimit:"u8, out value))
@@ -232,7 +294,60 @@ public sealed class LinuxProbe : ISystemProbe {
       }
     }
 
-    system.ModifiedMemoryBytes = Counter.Of(dirty + writeback);
+    system.ModifiedMemoryBytes = dirty.HasValue && writeback.HasValue
+      ? Counter.Of(dirty.Value + writeback.Value)
+      : Counter.NotSupported;
+  }
+
+  /// <summary>
+  /// Every memory counter set to "this kernel does not publish it", before anything is parsed.
+  /// </summary>
+  /// <remarks>
+  /// The snapshot arrives saying nobody has sampled yet, which is true of a machine before its first
+  /// tick and untrue of a line that is simply not in this kernel's <c>meminfo</c>. Telling a reader
+  /// to wait a second for a figure that will never arrive is the wrong sentence (PRD §45.6).
+  /// </remarks>
+  private static void MarkMemoryUnsupported(ref SystemCounters system) {
+    system.TotalMemoryBytes = Counter.NotSupported;
+    system.AvailableMemoryBytes = Counter.NotSupported;
+    system.CachedMemoryBytes = Counter.NotSupported;
+    system.FreeMemoryBytes = Counter.NotSupported;
+    system.BufferMemoryBytes = Counter.NotSupported;
+    system.ModifiedMemoryBytes = Counter.NotSupported;
+    system.DirtyBytes = Counter.NotSupported;
+    system.WritebackBytes = Counter.NotSupported;
+    system.AnonymousBytes = Counter.NotSupported;
+    system.MappedBytes = Counter.NotSupported;
+    system.SwapCachedBytes = Counter.NotSupported;
+    system.CompressedBytes = Counter.NotSupported;
+    system.CompressedOriginalBytes = Counter.NotSupported;
+    system.SlabBytes = Counter.NotSupported;
+    system.UnevictableBytes = Counter.NotSupported;
+    system.LockedBytes = Counter.NotSupported;
+    system.VmallocUsedBytes = Counter.NotSupported;
+    system.PerCpuBytes = Counter.NotSupported;
+    system.HardwareCorruptedBytes = Counter.NotSupported;
+    system.HugePageSizeBytes = Counter.NotSupported;
+    system.HugePagesTotal = Counter.NotSupported;
+    system.HugePagesFree = Counter.NotSupported;
+    system.HugePagesReserved = Counter.NotSupported;
+    system.HugeTlbBytes = Counter.NotSupported;
+    system.AnonymousHugePagesBytes = Counter.NotSupported;
+    system.SharedHugePagesBytes = Counter.NotSupported;
+    system.FileHugePagesBytes = Counter.NotSupported;
+    system.ActiveAnonymousBytes = Counter.NotSupported;
+    system.InactiveAnonymousBytes = Counter.NotSupported;
+    system.ActiveFileBytes = Counter.NotSupported;
+    system.InactiveFileBytes = Counter.NotSupported;
+    system.CommittedBytes = Counter.NotSupported;
+    system.CommitLimitBytes = Counter.NotSupported;
+    system.ReclaimableKernelBytes = Counter.NotSupported;
+    system.UnreclaimableKernelBytes = Counter.NotSupported;
+    system.PageTableBytes = Counter.NotSupported;
+    system.KernelStackBytes = Counter.NotSupported;
+    system.SharedMemoryBytes = Counter.NotSupported;
+    system.TotalSwapBytes = Counter.NotSupported;
+    system.UsedSwapBytes = Counter.NotSupported;
   }
 
   private static bool TryValue(ReadOnlySpan<byte> line, ReadOnlySpan<byte> key, out ulong value) {
