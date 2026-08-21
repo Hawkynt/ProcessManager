@@ -55,6 +55,9 @@ public sealed class Sampler : IDisposable {
     var startedAt = Stopwatch.GetTimestamp();
     this._current.TimestampTicks = startedAt;
     this._probe.Sample(this._current);
+    // After the probe, before the delta: a row's parent name is a fact about the table as a whole,
+    // and no probe can know it while it is still filling the table in.
+    this._current.ResolveParentNames();
     this.LastSampleDuration = Stopwatch.GetElapsedTime(startedAt);
 
     this.Delta.Update(this._hasPrevious ? this._previous : null, this._current, this.CpuPercentMode);

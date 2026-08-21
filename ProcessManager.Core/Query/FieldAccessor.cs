@@ -29,6 +29,9 @@ public static class FieldAccessor {
       case ProcessField.PidHex: return "0x" + process.Pid.ToString("X", CultureInfo.InvariantCulture);
       case ProcessField.ParentPid:
         return process.ParentPid > 0 ? process.ParentPid.ToString(CultureInfo.InvariantCulture) : "—";
+      // Not "unknown": a parent that is not in this sample has exited and the process has been
+      // reparented, which is a fact about the tree rather than a gap in what could be read.
+      case ProcessField.ParentName: return process.ParentName ?? "—";
       case ProcessField.UserName:
         return process.UserName ?? Humanize.Placeholder(UnknownReason.NotPermitted);
       case ProcessField.State: return Humanize.State(process.State);
@@ -290,6 +293,7 @@ public static class FieldAccessor {
     int index = 0
   ) => field switch {
     ProcessField.Name => process.Name,
+    ProcessField.ParentName => process.ParentName,
     ProcessField.UserName => process.UserName,
     ProcessField.ImagePath => process.ImagePath,
     ProcessField.CommandLine => process.CommandLine,
@@ -349,6 +353,8 @@ public static class FieldAccessor {
     switch (field) {
       case ProcessField.Name:
         return string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase);
+      case ProcessField.ParentName:
+        return string.Compare(a.ParentName, b.ParentName, StringComparison.OrdinalIgnoreCase);
       case ProcessField.UserName:
         return string.Compare(a.UserName, b.UserName, StringComparison.OrdinalIgnoreCase);
       case ProcessField.EffectiveUserName:

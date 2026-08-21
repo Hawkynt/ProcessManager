@@ -19,6 +19,7 @@ public enum ProcessField : byte {
   Pid,
   PidHex,
   ParentPid,
+  ParentName,
   UserName,
   State,
 

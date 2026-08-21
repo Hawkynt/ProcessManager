@@ -575,7 +575,7 @@ term all use it, and it never changes even when the display name differs per pla
 - [x] `pid` — process identifier
 - [x] `ppid` — parent process identifier
 - [x] `instance.id` — PID plus creation-time-safe unique identity (`ProcessKey`)
-- [ ] 🟡 `parent.name` — parent executable/application; resolvable from the tree, not a field
+- [x] `parent.name` — the parent's name, resolved once per sample over the whole table
 - [x] `tree.depth` — hierarchical depth
 - [x] `status` — running, sleeping, suspended, zombie, terminated
 - [ ] `responding` — GUI responsiveness; `IsHungAppWindow` on Windows, `n/a` on Linux
