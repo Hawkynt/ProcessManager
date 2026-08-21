@@ -301,6 +301,51 @@ public static class FieldRegistry {
     new(ProcessField.Integrity, "integrity", "Integrity", "Integ",
       "The Windows mandatory integrity level: untrusted, low, medium, high or system.",
       FieldKind.State, FieldUnit.None, _WINDOWS, FieldCost.Free, 90, 7, false, true),
+    // PRD §21. What the token and the process handle say about how much the kernel is holding this
+    // process apart from the rest of the machine. All three are Windows-only, all three are constant
+    // for a process's life, and all three come off a handle the owner lookup already opens — so they
+    // cost nothing that was not already being paid (PRD §5.4).
+    new(ProcessField.Protected, "protected", "Protected", "Prot",
+      "Whether the kernel is keeping other processes out of this one. A protected process cannot be opened for reading, injected into or debugged even by an administrator, which is why a debugger that will not attach to it is not a fault.",
+      FieldKind.State, FieldUnit.None, _WINDOWS, FieldCost.Free, 90, 5, false, true,
+      Aliases: "pp ppl"),
+    new(ProcessField.ProtectionLevel, "protection.level", "Protection level", "ProtLvl",
+      "Which protection the process holds, by the signer class that granted it: the Windows trusted computing base, an antimalware service, the store, or an Authenticode publisher. \"none\" is a real answer and the answer for nearly every process on a machine.",
+      FieldKind.State, FieldUnit.None, _WINDOWS, FieldCost.Free, 160, 12, false, true,
+      Aliases: "protlevel"),
+    new(ProcessField.AppContainer, "appcontainer", "AppContainer", "AppCtr",
+      "Whether the process runs inside an AppContainer — the sandbox a packaged application and a browser renderer are put in, which decides what the process may reach rather than who it runs as.",
+      FieldKind.State, FieldUnit.None, _WINDOWS, FieldCost.Free, 120, 6, false, true,
+      Aliases: "sandbox"),
+
+    // PRD §21. The six per-process mitigation policies, which are Windows' own idea and not a
+    // spelling of anything Linux has: they are what was *asked for* on behalf of the process, where
+    // what Linux publishes is what is switched on for a task — spec.ssb, spec.ib and shadow.stack
+    // above (PRD §5.3). High and asked for, because unlike the token fields these need a handle
+    // opened with PROCESS_QUERY_INFORMATION, which is a stronger right than the owner lookup takes
+    // and a separate open for every process (PRD §5.4).
+    new(ProcessField.DataExecutionPrevention, "dep", "DEP", "DEP",
+      "Whether the process may execute data pages, and whether that can still be changed. Permanent is the interesting half: a process that has locked DEP on cannot be talked out of it later, which is a stronger statement than merely having it enabled.",
+      FieldKind.State, FieldUnit.None, _WINDOWS, FieldCost.High, 110, 12, false, true),
+    new(ProcessField.AddressSpaceRandomisation, "aslr", "ASLR", "ASLR",
+      "Which parts of address-space randomisation the process asked for: bottom-up allocations, forced relocation of images that would rather not move, and high entropy. \"off\" here is a finding about a program rather than about the machine.",
+      FieldKind.State, FieldUnit.None, _WINDOWS, FieldCost.High, 170, 22, false, true),
+    new(ProcessField.ControlFlowGuard, "cfg", "Control flow guard", "CFG",
+      "Whether indirect calls in this process are checked against the set of functions the compiler said were callable. Strict mode is the stronger form: every image loaded must have it too, or it does not load.",
+      FieldKind.State, FieldUnit.None, _WINDOWS, FieldCost.High, 160, 14, false, true),
+    new(ProcessField.ShadowStackPolicy, "cet", "Shadow stack policy", "CET",
+      "Whether hardware-enforced stack protection was asked for on this process, and how hard. A request rather than a reading: what a process asked for and what the CPU underneath it can actually do are two questions, and the machine's own support for the feature is in the CPU page.",
+      FieldKind.State, FieldUnit.None, _WINDOWS, FieldCost.High, 170, 14, false, true,
+      Aliases: "cet.policy shadowstack.policy"),
+    new(ProcessField.ArbitraryCodeGuard, "acg", "Dynamic code", "ACG",
+      "Whether the process is forbidden to generate code at runtime or to make existing code writable. A just-in-time compiler cannot run under it, which is why a browser enables it in the processes that have no need to.",
+      FieldKind.State, FieldUnit.None, _WINDOWS, FieldCost.High, 130, 12, false, true,
+      Aliases: "dynamiccode"),
+    new(ProcessField.CodeIntegrityGuard, "cig", "Code integrity", "CIG",
+      "Which signatures an image must carry before this process will load it: Microsoft's, the store's, or Microsoft's plus the hardware labs'. It restricts what may be loaded into the process and says nothing about whether what is already loaded was signed, which is the signature columns' question.",
+      FieldKind.State, FieldUnit.None, _WINDOWS, FieldCost.High, 140, 14, false, true,
+      Aliases: "signaturepolicy"),
+
     new(ProcessField.Seccomp, "seccomp", "Seccomp", "Sec",
       "Whether a seccomp filter restricts which system calls the process may make.",
       FieldKind.State, FieldUnit.None, _LINUX, FieldCost.Free, 84, 6, false, true),
@@ -473,6 +518,44 @@ public static class FieldRegistry {
       FieldKind.Instant, FieldUnit.Timestamp, _LINUX, FieldCost.High, 150, 19, false, true,
       Aliases: "created birth"),
 
+    // PRD §14. The five strings a PE keeps in its own version resource, plus the subsystem out of
+    // the same file's optional header. Windows-only because the resource is: an ELF has no such
+    // section and never did, and the nearest Linux facts are the package's — which are a different
+    // question with a different answer and are the `package` and `app.name` columns above (PRD §5.3).
+    // All six are High and for one reason: filling them means opening and reading the image. Once
+    // per image rather than once per process, because three hundred processes of one runtime share
+    // one binary (PRD §5.4).
+    new(ProcessField.ImageDescription, "description", "Description", "Descr",
+      "What the publisher calls the program, out of the image's version resource. Not the process's name, which is whatever the program decided to call itself, and routinely the only cell on the row that says what a service actually is.",
+      FieldKind.Text, FieldUnit.None, _WINDOWS, FieldCost.High, 260, 24, false, false,
+      Aliases: "file.description"),
+    new(ProcessField.ImageCompany, "company", "Company", "Company",
+      "Who publishes the image, as its version resource claims. A claim and not a verification: anybody may write anything here, and whether somebody this machine trusts signed for it is the signature columns' question, not this one.",
+      FieldKind.Text, FieldUnit.None, _WINDOWS, FieldCost.High, 180, 20, false, false,
+      Aliases: "publisher company.name"),
+    new(ProcessField.ImageProduct, "product", "Product", "Product",
+      "Which product the image belongs to, as its version resource claims. Several files of one suite share it, which is what makes it worth a column beside the file's own description.",
+      FieldKind.Text, FieldUnit.None, _WINDOWS, FieldCost.High, 180, 20, false, false,
+      Aliases: "product.name"),
+    new(ProcessField.ImageProductVersion, "product.version", "Product version", "ProdVer",
+      "The version of the product the image belongs to, as the publisher wrote it. A string rather than a number: \"10.0.19041.1 (WinBuild.160101.0800)\" is a real value of this field.",
+      FieldKind.Text, FieldUnit.None, _WINDOWS, FieldCost.High, 150, 14, false, false,
+      Aliases: "prodver"),
+    new(ProcessField.ImageFileVersion, "file.version", "File version", "FileVer",
+      "The version of this file, as the publisher wrote it. Routinely not the same as the product version and routinely not the same as the four numbers the installer compares, which is why it is its own column and is kept as the string it is.",
+      FieldKind.Text, FieldUnit.None, _WINDOWS, FieldCost.High, 150, 14, false, false,
+      Aliases: "fileversion ver"),
+    new(ProcessField.Subsystem, "subsystem", "Subsystem", "Subsys",
+      "What the loader is expected to give the program: a window, a console, or nothing at all. Read from the image's own header, so a console program started without one still reads as a console program. PE only — an ELF declares no subsystem, and that is not the unknown subsystem.",
+      FieldKind.State, FieldUnit.None, _WINDOWS, FieldCost.High, 120, 10, false, false),
+    // PRD §14. One extra call on a handle the identity read already has open, and constant for a
+    // process's life, so it is free in the sense that matters: nothing on the sampling path pays for
+    // it twice.
+    new(ProcessField.Emulation, "emulation", "Emulation", "Emul",
+      "Which instruction set the process is being translated from, or none. An x86 program on an x64 machine and an x64 program on an ARM64 one are both this column's business; a program running on the machine's own instruction set is \"native\", which is an answer rather than an empty cell.",
+      FieldKind.State, FieldUnit.None, _WINDOWS, FieldCost.Free, 130, 10, false, true,
+      Aliases: "wow64 translation"),
+
     new(ProcessField.ThreadCount, "threads", "Threads", "Thr",
       "How many threads the process currently has.",
       FieldKind.Instant, FieldUnit.Count, _ALL, FieldCost.Free, 64, 4, true, true),
@@ -496,6 +579,47 @@ public static class FieldRegistry {
       "How many descriptors are pipes. Both ends of one pipe are a descriptor each, so a shell pipeline holds two of them per process.",
       FieldKind.Instant, FieldUnit.Count, _LINUX, FieldCost.High, 96, 6, true, true,
       Aliases: "pipes"),
+    // PRD §20. The kernel object types Windows has and Unix does not, tallied out of the machine's
+    // own handle table. Windows-only because the objects are: an eventfd is a descriptor and is
+    // counted as one above, a futex has no kernel object to count, a POSIX semaphore is a mapped
+    // file, a section's Linux equivalent is a mapping and belongs to the memory map, and there is no
+    // registry (PRD §5.3). All five come out of one pass over one table, so naming any of them buys
+    // all five — and nothing names them but a column or a filter, because the table is the whole
+    // machine's (PRD §5.4).
+    new(ProcessField.EventObjectCount, "event.count", "Events", "Evt",
+      "How many event objects the process holds a handle on. A thread pool that leaks them shows it here long before anything else on the row moves.",
+      FieldKind.Instant, FieldUnit.Count, _WINDOWS, FieldCost.High, 90, 6, true, true,
+      Aliases: "events"),
+    new(ProcessField.SemaphoreObjectCount, "semaphore.count", "Semaphores", "Sem",
+      "How many semaphore objects the process holds a handle on.",
+      FieldKind.Instant, FieldUnit.Count, _WINDOWS, FieldCost.High, 110, 6, true, true,
+      Aliases: "semaphores"),
+    new(ProcessField.MutexObjectCount, "mutex.count", "Mutexes", "Mtx",
+      "How many mutex objects — mutants, in the kernel's own vocabulary — the process holds a handle on.",
+      FieldKind.Instant, FieldUnit.Count, _WINDOWS, FieldCost.High, 96, 6, true, true,
+      Aliases: "mutexes mutants"),
+    new(ProcessField.SectionObjectCount, "section.count", "Sections", "Sect",
+      "How many section objects the process holds a handle on. A section is what Windows maps memory through — a file mapping, a shared segment — so a process holding many is one sharing memory with many others.",
+      FieldKind.Instant, FieldUnit.Count, _WINDOWS, FieldCost.High, 100, 6, true, true,
+      Aliases: "sections"),
+    new(ProcessField.RegistryKeyCount, "regkey.count", "Registry keys", "Keys",
+      "How many registry keys the process holds open. Keys left open are the classic reason a configuration change does not take effect until something is restarted.",
+      FieldKind.Instant, FieldUnit.Count, _WINDOWS, FieldCost.High, 130, 6, true, true,
+      Aliases: "regkeys keys"),
+
+    // PRD §20, §39. Not handles and not in that table: the desktop's own quotas, which a program can
+    // exhaust while every other counter on its row still looks healthy. They move constantly, so
+    // unlike the tallies above they cannot be cached for a process's life and cost a call each per
+    // process per sample — which is why they are asked for rather than sampled (PRD §5.4).
+    new(ProcessField.UserObjectCount, "user.objects", "USER objects", "USER",
+      "How many window-manager objects the process holds — windows, menus, cursors, hooks. There is a per-process quota of ten thousand by default, and a program that reaches it stops being able to make windows while looking otherwise healthy.",
+      FieldKind.Instant, FieldUnit.Count, _WINDOWS, FieldCost.High, 120, 6, true, true,
+      Aliases: "userobjects"),
+    new(ProcessField.GdiObjectCount, "gdi.objects", "GDI objects", "GDI",
+      "How many graphics objects the process holds — device contexts, brushes, pens, bitmaps, fonts. The same ten-thousand quota and the same failure: drawing simply stops working.",
+      FieldKind.Instant, FieldUnit.Count, _WINDOWS, FieldCost.High, 116, 6, true, true,
+      Aliases: "gdiobjects"),
+
     // PRD §20. Far cheaper than the three above it — the number is a line of the status the sampler
     // already reads rather than a walk of the descriptor table — but opt-in all the same, and with
     // the mitigation columns, because it is recognised in the same pass and by the same switch. It
