@@ -16,6 +16,9 @@ namespace Hawkynt.ProcessManager.Ui.Desktop;
 /// </remarks>
 public static class DesktopApp {
 
+  /// <summary>The one properties page the capture counts and does not photograph — see below.</summary>
+  private const string _ServicesPage = "Services";
+
   /// <summary>
   /// Runs the window. Returns null on a clean exit, or a sentence explaining why it could not start —
   /// which the caller shows before falling back to the terminal.
@@ -256,6 +259,14 @@ public static class DesktopApp {
             description += $"properties map: {properties.MemoryMapRows} mappings — {properties.MemoryMapHeading}\n";
             description += $"properties security: {properties.SecurityText.Split('\n').Length} rows\n";
             description += $"properties cgroup: {properties.CgroupText.Split('\n').Length} rows\n";
+            // The Services page is counted and not photographed, and that is the same refusal the
+            // rail's Services view gets. The capture's private pid namespace hides processes; it does
+            // not hide unit files or the cgroup tree, so what lands on this page is a fact about
+            // whoever took the picture rather than about the program. The count is the empty-page
+            // detector, which is what the picture was for; the layout it would have proved is the
+            // same two-column list the three pages above already prove (PRD §9, §97).
+            properties.ShowPage(_ServicesPage);
+            description += $"properties services: {properties.ServicesText.Split('\n').Length} rows\n";
           } else
             description += "properties:   no row was selected to open one for\n";
 

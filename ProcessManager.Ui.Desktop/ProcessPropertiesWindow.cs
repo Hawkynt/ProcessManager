@@ -51,6 +51,7 @@ public sealed class ProcessPropertiesWindow : Form {
   private const string _GpuTab = "GPU";
   private const string _MemoryMapTab = "Memory map";
   private const string _SecurityTab = "Security";
+  private const string _ServicesTab = "Services";
   // The kernel's own word for it. "Jobs" is a Windows object and "container" is a convention built on
   // top of this one; naming the tab after either would be the false equivalence §5.3 forbids.
   private const string _CgroupTab = "cgroup";
@@ -194,11 +195,22 @@ public sealed class ProcessPropertiesWindow : Form {
   /// </remarks>
   private readonly ProcessFactsPage _cgroup = new();
 
+  /// <summary>
+  /// The unit this process belongs to, and what its unit file says (PRD §41).
+  /// </summary>
+  /// <remarks>
+  /// No fields either, for the same reason the cgroup page has none: a restart policy and a unit file
+  /// path are facts about the <em>service</em>, and several processes share one. What belongs to the
+  /// process is which unit it is in, and that is a row on the General page.
+  /// </remarks>
+  private readonly ProcessFactsPage _services = new();
+
   private readonly ProcessMemoryMapPage _map;
 
   private TabPage? _gpuPage;
   private TabPage? _mapPage;
   private TabPage? _cgroupPage;
+  private TabPage? _servicesPage;
   private ImageInfo? _image;
   private FileFacts? _imageFacts;
   private bool _imageRead;
@@ -268,6 +280,7 @@ public sealed class ProcessPropertiesWindow : Form {
       this._mapPage = AddPage(this._tabs, _MemoryMapTab, this._map.Control);
       AddPage(this._tabs, _SecurityTab, this._security.Control);
       this._cgroupPage = AddPage(this._tabs, _CgroupTab, this._cgroup.Control);
+      this._servicesPage = AddPage(this._tabs, _ServicesTab, this._services.Control);
       this._tabs.SelectedTab = this.PageNamed(_GeneralTab);
       // The map is the one page whose cost is the size of the process, so it is filled when somebody
       // asks for it rather than when the window opens. The tick fills it too, for the same reason and
@@ -343,6 +356,9 @@ public sealed class ProcessPropertiesWindow : Form {
   /// <summary>What the cgroup page says (PRD §38).</summary>
   public string CgroupText => this._cgroup.Description;
 
+  /// <summary>What the Services page says (PRD §41).</summary>
+  public string ServicesText => this._services.Description;
+
   /// <summary>The sentence above the memory map, which is the half that explains an empty one.</summary>
   public string MemoryMapHeading => this._map.Heading;
 
@@ -417,6 +433,7 @@ public sealed class ProcessPropertiesWindow : Form {
     // Kept for the pages that are filled only when they are the one showing, which cannot ask the
     // sample for a row of their own.
     this._row = row;
+    this._containerPath = process.ContainerPath;
     // Once, on the first sample. The cgroup read is a dozen small files, which is cheap enough to
     // spend on knowing whether there is anything to put on the tab — so the hidden preference has
     // its answer before somebody clicks it rather than after, the way the graphics tab's does. Every
@@ -691,6 +708,161 @@ public sealed class ProcessPropertiesWindow : Form {
 
   #endregion
 
+  #region the Services page (PRD §41)
+
+  /// <summary>
+  /// Which service this process belongs to, and what that service's unit file says.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Read once, when the page is first asked for, and not again. The reading is a walk of every unit
+  /// file on the machine — 372 of them here — which is far too much to spend on a tick, and it does
+  /// not need spending twice: a process cannot move between units while it runs, and a unit that
+  /// stops takes its processes with it, so this window would say "ended" rather than showing a stale
+  /// service. What can change underneath it is somebody running <c>systemctl disable</c> in another
+  /// window, and that is a fair price for not walking a thousand files a second (PRD §5.4).
+  /// </para>
+  /// <para>
+  /// The unit comes from the cgroup, because a systemd unit <em>is</em> a cgroup — the same join
+  /// §40's owning-service column makes, through the same code, so the two cannot disagree. The
+  /// innermost one wins: a desktop application sits inside its own session manager, which is itself a
+  /// unit, and naming the outer one would report every program a user starts as belonging to the
+  /// manager that started it.
+  /// </para>
+  /// </remarks>
+  private void UpdateServices() {
+    if (this._servicesRead)
+      return;
+
+    this._servicesRead = true;
+    var services = this._probe.GetServices();
+    if (services.Count == 0) {
+      // No service manager this build can read — which is a fact about the machine, not about this
+      // process, and so is the one case the tab may be taken off the strip.
+      this.SettleServicesTab();
+      this._services.ShowUnavailable(
+        "Nothing on this machine publishes services in a form this build reads. Only systemd is read, "
+        + "from the unit files and the cgroup tree rather than over D-Bus."
+      );
+
+      return;
+    }
+
+    if (CgroupUnit.Of(this._containerPath) is not { } unit) {
+      // A finding rather than a hole, and the tab stays: most of a desktop is like this. A slice is
+      // deliberately not a unit for this purpose — it holds no processes of its own — so a cgroup
+      // with only slices in it answers nothing rather than the nearest thing that looks like one.
+      this._services.Update([
+        new("Service", "none — this process is under no systemd unit"),
+        new(
+          "Why",
+          this._containerPath is { Length: > 0 } path
+            ? $"its cgroup is {path}, and no segment of that is a service, a scope or a socket unit"
+            : "its cgroup could not be read, so there is nothing to look a unit up by"
+        ),
+        new("Units on this machine", services.Count.ToString(CultureInfo.InvariantCulture)),
+      ]);
+
+      return;
+    }
+
+    if (Find(services, unit) is not { } service) {
+      // The cgroup names a unit that the unit-file walk did not produce: a transient scope systemd
+      // made without a file on disk is the usual one. The name is still the truth about the process,
+      // so it is reported, and the absence is explained rather than shown as an empty page.
+      this._services.Update([
+        new("Service", unit),
+        new("Unit file", "none on disk — a transient unit, created at runtime and never written out"),
+        new("Read from", "the cgroup this process is in, which is what a systemd unit is"),
+      ]);
+
+      return;
+    }
+
+    this._services.Update([
+      new("Service", service.Name),
+      new("Description", service.Description is { Length: > 0 } text ? text : "—"),
+      new("State", service.State == ServiceState.Unknown ? "unknown" : service.State.ToString().ToLowerInvariant()),
+      new("Starts at boot", StartsAtBoot(service)),
+      // Its own row and not folded into the one above: masked units can never run whatever else is
+      // configured, and it is the setting people forget they made.
+      new("Masked", service.Masked ? "yes — it can never be started while this stands" : "no"),
+      new("Main process", MainProcess(service, this.Key.Pid)),
+      new("Restart policy", service.RestartPolicy is { Length: > 0 } policy ? policy : "—"),
+      new("Command", service.Command is { Length: > 0 } command ? command : "—"),
+      new("Unit file", service.Path),
+    ]);
+  }
+
+  /// <summary>The unit of that name, or null when the walk of the unit files did not produce one.</summary>
+  private static ServiceRecord? Find(IReadOnlyList<ServiceRecord> services, string unit) {
+    foreach (var service in services)
+      if (string.Equals(service.Name, unit, StringComparison.Ordinal))
+        return service;
+
+    return null;
+  }
+
+  /// <summary>
+  /// Whether the unit starts at boot.
+  /// </summary>
+  /// <remarks>
+  /// Three answers and not two. A unit started only by a socket or a timer is neither enabled nor
+  /// disabled in the sense the row means, and saying "no" about one would be wrong about a service
+  /// that starts perfectly reliably (PRD §41, §72.3).
+  /// </remarks>
+  private static string StartsAtBoot(ServiceRecord service) => service.Enabled switch {
+    true => "yes",
+    false => "no",
+    _ => "neither — nothing links it into a boot target, so something else starts it: a socket, a timer, or another unit",
+  };
+
+  /// <summary>
+  /// The unit's main process, and whether it is this one.
+  /// </summary>
+  /// <remarks>
+  /// The distinction the page is worth opening for. A service's main process is the one systemd
+  /// watches and restarts; everything else in the cgroup is a child it will take down with it, and
+  /// the two are not the same thing to be looking at.
+  /// </remarks>
+  private static string MainProcess(ServiceRecord service, int pid) {
+    if (service.MainPid <= 0)
+      return "none recorded — the unit's cgroup was empty when it was read";
+
+    var number = service.MainPid.ToString(CultureInfo.InvariantCulture);
+    return service.MainPid == pid
+      ? $"{number} — this process"
+      : $"{number} — this process is one of its children, not the one systemd watches";
+  }
+
+  /// <summary>
+  /// Takes the Services tab off the strip once, on a machine with no service manager to read.
+  /// </summary>
+  /// <remarks>
+  /// Only for that case. A process under no unit is a finding about the process and keeps its tab,
+  /// the same way a GPU tab stays on a machine whose driver simply says nothing about one process.
+  /// </remarks>
+  private void SettleServicesTab() {
+    if (this.Unavailable != UnavailableTabs.Hidden || this._servicesPage is not { } page || this._tabs is null)
+      return;
+
+    this._tabs.TabPages.Remove(page);
+    this._servicesPage = null;
+  }
+
+  private bool _servicesRead;
+
+  /// <summary>
+  /// The cgroup path from the last sample, which is what the unit is looked up by.
+  /// </summary>
+  /// <remarks>
+  /// Kept rather than read off the row's Container cell: that cell is formatted for a table, and
+  /// looking a unit up by our own formatting is how the two quietly stop agreeing.
+  /// </remarks>
+  private string? _containerPath;
+
+  #endregion
+
   #region the Memory map page (PRD §34)
 
   /// <summary>
@@ -725,8 +897,13 @@ public sealed class ProcessPropertiesWindow : Form {
       return;
     }
 
-    if (string.Equals(page.Text, _CgroupTab, StringComparison.Ordinal))
+    if (string.Equals(page.Text, _CgroupTab, StringComparison.Ordinal)) {
       this.UpdateCgroup();
+      return;
+    }
+
+    if (string.Equals(page.Text, _ServicesTab, StringComparison.Ordinal))
+      this.UpdateServices();
   }
 
   /// <summary>The last sample's row, for the pages that are filled only while they are showing.</summary>
@@ -768,6 +945,12 @@ public sealed class ProcessPropertiesWindow : Form {
     var extras = new List<KeyValuePair<string, string>> {
       new("Handles", Humanize.Count(descriptors)),
       new("Running for", Uptime(process.StartTimeUtcTicks)),
+      // The service association §27 named as the one thing on this page that could be answered and
+      // was not. It costs nothing: the cgroup is already in the sample, and a systemd unit is a
+      // cgroup — the same join §40's owning-service column makes, through the same code. What the
+      // unit itself says is a page of its own, because it is a fact about the service rather than
+      // about this process.
+      new("Service", CgroupUnit.Of(process.ContainerPath) ?? "none — this process is under no systemd unit"),
     };
 
     if (!this._imageRead) {
@@ -931,6 +1114,7 @@ public sealed class ProcessPropertiesWindow : Form {
       this._gpu,
       this._security,
       this._cgroup,
+      this._services,
     ])
       page.Stretch();
 

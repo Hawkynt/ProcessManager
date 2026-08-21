@@ -1672,7 +1672,13 @@ Tabs:
 - [x] **cgroup (§38)** — named for the thing rather than for the three things it is called on three
       platforms. A Windows job object and a container are not this and would not be described by it
 - [ ] Windows (§39)
-- [ ] Services (§41)
+- [x] **Services (§41)** — which unit this process belongs to and what that unit's file says: its
+      description, whether it starts at boot, whether it is masked, its restart policy, its command
+      and the file itself. The unit comes from the cgroup, because a systemd unit *is* a cgroup — the
+      same join §40's owning-service column makes, through the same code, so the two cannot disagree.
+      The row worth opening it for is whether this process is the unit's **main** process: that is the
+      one systemd watches and restarts, and everything else in the cgroup is a child it will take down
+      with it
 - [ ] Runtime (§80)
 - [ ] Strings (§35)
 - [ ] Timeline (§63)
@@ -1706,10 +1712,22 @@ buy its answer that cheaply — walking a browser's page table to decide whether
 asked for is exactly what §5.4 forbids — so its tab settles the first time it is opened instead. That
 is the trade showing through the preference, and it is the honest way round.
 
-The five still unticked, one line each: **Windows** has the list and none of the actions, and a page
-that shows a window and cannot close it is half a feature (§39); **Services** is a view that exists
-only in the CLI (§41); **Runtime** needs the managed and interpreted introspection of §80, none of
-which is written; **Strings** is two features under one heading — scanning the image on disk needs no
+**The Services page is the fourth that costs a read, and the only one read exactly once.** Its
+reading is a walk of every unit file on the machine — 372 of them here — which is far too much for a
+tick and does not need spending twice: a process cannot move between units while it runs, and a unit
+that stops takes its processes with it, so this window would say *ended* rather than show a stale
+service. What can change underneath it is somebody running `systemctl disable` in another window,
+and that is a fair price for not walking a thousand files a second (§5.4).
+
+Its tab may be hidden only when nothing on the machine publishes services at all. A process in no
+unit is a finding about the *process* — most of a desktop is like that — so it keeps its tab and says
+so, naming the cgroup it looked in. Collapsing the two would make "you are in no service" and "this
+build cannot tell you" the same answer, which is the distinction §5.3 exists for.
+
+The four still unticked, one line each: **Windows** has the list and none of the actions, and a page
+that shows a window and cannot close it is half a feature (§39); **Runtime** needs the managed and
+interpreted introspection of §80, none of which is written; **Strings** is two features under one
+heading — scanning the image on disk needs no
 permission and is honest work nobody has done, while scanning the process's memory is one of §25.5's
 readers wearing a different hat and is refused on the same ground, and shipping the first under a tab
 named for both would be promising the second; **Timeline** needs the event history of §63, which
@@ -1722,9 +1740,10 @@ nothing records yet.
 - [ ] 🟡 name ✔ · PID ✔ · PPID ✔ · parent process ✔ · start time ✔ · running duration ✔ · state ✔ ·
       session ✔ · user ✔ · effective user ✔ · architecture ✔ · executable path ✔ · command line ✔ ·
       current directory ✔ · file size ✔ · modification timestamp ✔ · creation timestamp ✔ · file
-      permissions ✔ · runtime ✔ · container/cgroup association ✔ (and a page of its own — §38) —
-      against **icon**, **application identity**, **package/bundle**, **version**, **company**,
-      **description**, **signer**, **signature status**, **file hashes** and **service associations**
+      permissions ✔ · runtime ✔ · container/cgroup association ✔ (and a page of its own — §38) ·
+      service associations ✔ (and a page of its own — §41) — against **icon**, **application
+      identity**, **package/bundle**, **version**, **company**, **description**, **signer**,
+      **signature status** and **file hashes**
 - [ ] 🟡 Buttons: Copy ✔ · Reveal executable ✔ · File properties ✔ — against **Verify** and
       **Inspect binary**
 
@@ -1744,9 +1763,12 @@ are rows now. The runtime is worth its own line because it comes from the module
 the name — a .NET application and a shell script that launches one are called the same thing and are
 not the same thing (§14, §80).
 
-**Service associations are the one left that could be answered and is not.** The units exist in the
-CLI (§41); joining a process to the one that owns it is a row on this page and a view that does not
-exist yet.
+**Service associations were the one left that could be answered and was not, and now are.** The row
+names the unit the process belongs to, or says outright that it belongs to none. It costs nothing:
+the cgroup is already in the sample and a systemd unit *is* a cgroup, so it is the same join §40's
+owning-service column makes, through the same code. What the unit itself says — its description, its
+restart policy, whether this process is the one systemd watches — is a page of its own (§26, §41),
+because those are facts about the service and several processes share one.
 
 **Icon** is not a Linux fact about a process. It is a desktop-entry lookup by executable path against
 `/usr/share/applications`, which answers for the third of processes that have a launcher and for
@@ -2542,7 +2564,8 @@ Actions:
 # 41. Services view
 
 Read on Linux; unbuilt on Windows and macOS. Control is written for systemd and reachable from the
-command line; neither front-end offers it as a menu item yet.
+command line; neither front-end offers it as a menu item yet. One process's own unit is a page of the
+properties window (§26), which is the first of this that either front-end shows.
 
 Shared columns:
 
@@ -2573,6 +2596,11 @@ Actions:
       thing systemd offers
 - [ ] Open configuration · reveal executable · go to process · properties · copy ·
       inspect dependencies
+
+**A template instance shows its template's description**, `%i` and all: `user@1000.service` reads
+"User Manager for UID %i". The specifiers are systemd's own and expanding them needs the same
+substitution table `systemd.unit(5)` documents — a small piece of work that nobody has done, and the
+raw string is at least visibly a template rather than a wrong name.
 - [ ] Creating and editing services — deferred to a later release
 
 **Read without D-Bus and without spawning `systemctl`.** Everything the columns need is on disk: the
