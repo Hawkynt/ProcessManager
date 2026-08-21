@@ -88,7 +88,11 @@ internal static partial class X11Windows {
   /// </remarks>
   [StructLayout(LayoutKind.Sequential)]
   private struct XClientMessageEvent {
-    public nint Type;
+    // int, then the padding the next field's alignment forces — not one 64-bit field. They occupy
+    // the same eight bytes on a little-endian machine and not on any other, and a 33 written into
+    // the high half of a word Xlib reads as an int is a message the server discards in silence.
+    public int Type;
+    private readonly int _typePadding;
     public nuint Serial;
     public int SendEventFlag;
     public nint Display;

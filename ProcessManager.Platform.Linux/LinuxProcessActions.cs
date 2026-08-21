@@ -105,6 +105,13 @@ public sealed class LinuxProcessActions(LinuxProbeOptions? options = null) : IPr
   /// copies of a program that guards a socket or a lock file is a worse outcome than a restart that
   /// says it did not happen.
   /// </para>
+  /// <para>
+  /// The replacement is a child of <em>this</em> program rather than of whatever started the
+  /// original, which nothing outside the kernel can change: a process can only be forked by its
+  /// parent. It survives this program exiting — it is reparented to init like any other orphan — but
+  /// a service manager that was watching the old one is not watching the new one, so restarting
+  /// something a supervisor owns is that supervisor's job and not this one's (PRD §41).
+  /// </para>
   /// </remarks>
   public LaunchResult Restart(ProcessKey key) {
     var check = this.Verify(key);
