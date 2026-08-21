@@ -30,6 +30,18 @@ public enum UnknownReason : byte {
   /// <summary>The process went away between two reads of its own files.</summary>
   ProcessExited,
 
+  /// <summary>
+  /// The thing being measured is no longer there to measure.
+  /// </summary>
+  /// <remarks>
+  /// Distinct from <see cref="NotPermitted"/>, which is the same empty cell for the opposite reason.
+  /// A process may keep an unlinked file mapped for as long as it likes — an upgraded library, a
+  /// deleted temporary file, a <c>memfd</c> that never had a name — and asking the file system how
+  /// big that file is has no answer at all. Saying "you may not look" would send the reader off to
+  /// start the elevated helper, which would not help.
+  /// </remarks>
+  SourceGone,
+
   /// <summary>A rate that needs two samples, asked for after the first one.</summary>
   NotSampledYet,
 

@@ -1,14 +1,21 @@
-namespace Hawkynt.ProcessManager.Platform.Linux;
+namespace Hawkynt.ProcessManager.Query;
 
 /// <summary>
 /// Field-at-a-time parsing over a <c>/proc</c> file's bytes.
 /// </summary>
 /// <remarks>
+/// <para>
 /// Everything under <c>/proc</c> is ASCII whitespace-separated text. Splitting it into strings first
 /// would allocate roughly forty strings per process per sample — the single easiest way to miss the
 /// allocation budget in §4 — so nothing here produces a string that is not going to be kept.
+/// </para>
+/// <para>
+/// In Core rather than in the Linux probe, and public rather than internal, because the parsers that
+/// use it are in Core: §9.2 wants every parser exercised on every CI leg, and a scanner that only
+/// exists inside the platform assembly forces its callers to live there too.
+/// </para>
 /// </remarks>
-internal ref struct AsciiScanner(ReadOnlySpan<byte> content) {
+public ref struct AsciiScanner(ReadOnlySpan<byte> content) {
 
   private ReadOnlySpan<byte> _rest = content;
 
@@ -54,6 +61,19 @@ internal ref struct AsciiScanner(ReadOnlySpan<byte> content) {
       this.NextField();
   }
 
+  /// <summary>
+  /// Everything left on the current line with the leading blanks removed, then positions after it.
+  /// </summary>
+  /// <remarks>
+  /// For the last field of a <c>maps</c> line, which is a path and may contain spaces. Taking it with
+  /// <see cref="NextField"/> truncated <c>/opt/My App/libfoo.so</c> at the space and reported a module
+  /// nobody has.
+  /// </remarks>
+  public ReadOnlySpan<byte> RestOfLine() {
+    this.SkipBlanks();
+    return this.NextLine();
+  }
+
   /// <summary>The rest of the current line, then positions after it.</summary>
   public ReadOnlySpan<byte> NextLine() {
     var newline = this._rest.IndexOf((byte)'\n');
@@ -76,6 +96,54 @@ internal ref struct AsciiScanner(ReadOnlySpan<byte> content) {
         break;
 
       value = value * 10 + digit;
+    }
+
+    return value;
+  }
+
+  /// <summary>
+  /// A hexadecimal field, stopping at the first byte that is not a hex digit.
+  /// </summary>
+  /// <remarks>
+  /// Addresses in <c>maps</c>, device numbers, and the capability masks in <c>status</c> are all
+  /// written in hex without an <c>0x</c>, so there is no prefix to skip.
+  /// </remarks>
+  public static ulong ParseHex(ReadOnlySpan<byte> field) {
+    ulong value = 0;
+    for (var i = 0; i < field.Length; ++i) {
+      var c = field[i];
+      var digit = c switch {
+        >= (byte)'0' and <= (byte)'9' => c - (byte)'0',
+        >= (byte)'a' and <= (byte)'f' => c - (byte)'a' + 10,
+        >= (byte)'A' and <= (byte)'F' => c - (byte)'A' + 10,
+        _ => -1,
+      };
+
+      if (digit < 0)
+        break;
+
+      value = value * 16 + (ulong)digit;
+    }
+
+    return value;
+  }
+
+  /// <summary>
+  /// An octal field, stopping at the first byte that is not an octal digit.
+  /// </summary>
+  /// <remarks>
+  /// <c>/proc/[pid]/fdinfo/[fd]</c> writes the open flags in octal with a leading zero, which is the
+  /// notation the <c>O_*</c> constants themselves are defined in. Reading <c>0100002</c> as decimal
+  /// produces a number that is not wrong so much as meaningless.
+  /// </remarks>
+  public static ulong ParseOctal(ReadOnlySpan<byte> field) {
+    ulong value = 0;
+    for (var i = 0; i < field.Length; ++i) {
+      var digit = (uint)(field[i] - (byte)'0');
+      if (digit > 7)
+        break;
+
+      value = value * 8 + digit;
     }
 
     return value;
