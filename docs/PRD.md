@@ -2771,6 +2771,10 @@ A layout somebody has changed by hand is never re-picked by a resize.
 - [x] Pin first column — and any number of them: `#` pins up to the column cursor
 - [ ] 🟡 Switch friendly / tree / flat mode — tree and flat only
 
+A column takes what it asks for, what is left, or what is left once the columns behind it have their
+share — whichever is smallest. The process name asks for 120 characters because the window has them,
+and a terminal that gave it all of them drew nothing at all of whatever was ordered after it.
+
 ## 57.3 Keyboard model
 
 - [x] `↑/↓` or `j/k` move
