@@ -339,6 +339,31 @@ public static class FieldRegistry {
       FieldKind.Text, FieldUnit.None, _LINUX, FieldCost.High, 300, 40, false, false,
       Aliases: "sha1"),
 
+    // PRD §14, §70. Which package a running image belongs to, and whether it is still the file that
+    // package shipped. Both are High and for the same reason: the first reads every installed
+    // package's file list once — thirty megabytes of text on an ordinary desktop — and the second
+    // hashes the image on top of it, so neither happens unless a column or a filter names it
+    // (PRD §5.4).
+    new(ProcessField.Package, "package", "Package", "Package",
+      "Which package the running image belongs to: the distribution's own, or the Flatpak, snap or AppImage it came in. \"not packaged\" is a finding rather than a hole — most of what a developer runs is not in any package.",
+      FieldKind.Text, FieldUnit.None, _LINUX, FieldCost.High, 220, 24, false, false,
+      Aliases: "pkg"),
+    new(ProcessField.ApplicationId, "app.id", "Application ID", "AppID",
+      "The platform application id — a Flatpak's org.gimp.GIMP, a snap's name. Native Linux programs have none, and this says so rather than repeating the package name into a column that means something else.",
+      FieldKind.Text, FieldUnit.None, _LINUX, FieldCost.High, 200, 24, false, false,
+      Aliases: "appid"),
+    new(ProcessField.PackageStatus, "package.status", "Package check", "PkgChk",
+      "Whether the running image still matches the digest its package recorded, and whether that package was itself signed. An ELF carries no signature to verify, so this is the honest local equivalent: what pacman -Qkk and dpkg --verify ask. It is not a hash, not a trust chain and not a reputation — those are separate questions and nothing here answers them.",
+      FieldKind.State, FieldUnit.None, _LINUX, FieldCost.High, 200, 25, false, false,
+      Aliases: "pkgcheck"),
+    new(ProcessField.Runtime, "runtime", "Runtime", "Runtime",
+      "What is executing inside the process: a managed runtime, or machine code. Read from the modules the process has mapped rather than from its name, because a process called java may be a shell script and a renamed one may be anything at all.",
+      FieldKind.State, FieldUnit.None, _LINUX, FieldCost.High, 110, 8, false, false),
+    new(ProcessField.ImageCreated, "exe.created", "Image created", "Created",
+      "When the image file was created, where the file system remembers one. Many do not — an ext4 built without crtime has no birth time at all — and there this is unknown rather than the epoch.",
+      FieldKind.Instant, FieldUnit.Timestamp, _LINUX, FieldCost.High, 150, 19, false, true,
+      Aliases: "created birth"),
+
     new(ProcessField.ThreadCount, "threads", "Threads", "Thr",
       "How many threads the process currently has.",
       FieldKind.Instant, FieldUnit.Count, _ALL, FieldCost.Free, 64, 4, true, true),

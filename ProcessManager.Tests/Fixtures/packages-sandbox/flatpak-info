@@ -1,0 +1,26 @@
+[Application]
+name=org.gnome.Calculator
+runtime=runtime/org.gnome.Platform/x86_64/45
+
+[Context]
+shared=network;ipc;
+sockets=x11;wayland;fallback-x11;
+filesystems=xdg-run/gvfsd;
+
+[Session Bus Policy]
+org.gtk.vfs.*=talk
+
+[Environment]
+LANG=en_GB.UTF-8
+
+[Instance]
+instance-id=1849275083
+app-path=/var/lib/flatpak/app/org.gnome.Calculator/x86_64/stable/8c1a5f9e2b6d4a3f7e0c9b8a7d6e5f4c3b2a1908/files
+runtime-path=/var/lib/flatpak/runtime/org.gnome.Platform/x86_64/45/active/files
+app-commit=8c1a5f9e2b6d4a3f7e0c9b8a7d6e5f4c3b2a1908
+runtime-commit=1f2e3d4c5b6a798877665544332211009988aabb
+arch=x86_64
+branch=stable
+flatpak-version=1.14.4
+session-bus-proxy=true
+system-bus-proxy=true

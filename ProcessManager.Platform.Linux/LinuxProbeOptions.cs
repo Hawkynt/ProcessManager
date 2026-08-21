@@ -149,6 +149,59 @@ public sealed record LinuxProbeOptions {
   public bool ReadImageHashes { get; init; }
 
   /// <summary>
+  /// Find out which package each running image belongs to (PRD §14).
+  /// </summary>
+  /// <remarks>
+  /// Off, and expensive once rather than expensive per process: answering it means reading every
+  /// installed package's file list — thirty megabytes of text across thirteen hundred packages on
+  /// the machine this was written on — to build the index that turns a path into an owner. After
+  /// that it is a dictionary lookup per image, and one file read per process for the sandboxed
+  /// ones, which say who they are in their own way rather than in the package database (PRD §5.4).
+  /// </remarks>
+  public bool ReadPackageIdentity { get; init; }
+
+  /// <summary>
+  /// Check each running image against the digest its package recorded (PRD §70).
+  /// </summary>
+  /// <remarks>
+  /// Off, and the dearest reading in this file: it is <see cref="ReadPackageIdentity"/> plus the
+  /// hash of every distinct image on the machine, because a comparison against a recorded digest
+  /// needs a digest to compare. The hash is taken from the same per-image cache the hash columns
+  /// use, so asking for both costs no more than asking for either (PRD §5.4).
+  /// </remarks>
+  public bool ReadPackageVerification { get; init; }
+
+  /// <summary>
+  /// Work out which runtime is executing inside each process, from its module list (PRD §14).
+  /// </summary>
+  /// <remarks>
+  /// Off: it reads <c>/proc/[pid]/maps</c>, which for a browser tab is tens of kilobytes the kernel
+  /// formats one page at a time. Read once per process rather than once per sample — a process does
+  /// not change what it is running — which is what makes it affordable when somebody does ask
+  /// (PRD §5.4).
+  /// </remarks>
+  public bool ReadRuntime { get; init; }
+
+  /// <summary>
+  /// Ask the file system when each image was created (PRD §14).
+  /// </summary>
+  /// <remarks>
+  /// Off: one <c>statx</c> per process, and unlike the rest of a <c>stat</c> it is not on any path
+  /// already being read. Once per process, for the same reason as the runtime.
+  /// </remarks>
+  public bool ReadImageCreationTime { get; init; }
+
+  /// <summary>
+  /// Where the packaging databases are. A fixture directory in tests.
+  /// </summary>
+  /// <remarks>
+  /// Its own root rather than derived from <see cref="ProcRoot"/>: a recorded <c>/proc</c> and a
+  /// recorded package database are two captures of two different parts of a machine, and a test that
+  /// wants one should not have to carry the other (PRD §9.1).
+  /// </remarks>
+  public string PackageDatabaseRoot { get; init; } = "/var/lib";
+
+  /// <summary>
   /// Account for what each process is doing to the graphics adapters (PRD §19).
   /// </summary>
   /// <remarks>

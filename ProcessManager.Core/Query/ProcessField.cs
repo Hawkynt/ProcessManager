@@ -111,6 +111,11 @@ public enum ProcessField : byte {
   SupplementaryGroups,
   ImageSha256,
   ImageSha1,
+  Package,
+  ApplicationId,
+  PackageStatus,
+  Runtime,
+  ImageCreated,
 
   ThreadCount,
   HandleCount,

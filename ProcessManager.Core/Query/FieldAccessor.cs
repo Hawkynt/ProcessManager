@@ -139,6 +139,39 @@ public static class FieldAccessor {
       case ProcessField.ImageSha1:
         return process.ImageSha1 ?? Humanize.Placeholder(process.ImageHashReason);
 
+      // "not packaged" is a finding and reads as one; the placeholder is kept for the cases where
+      // nobody looked or nobody was allowed to (PRD §72.3).
+      case ProcessField.Package:
+        return process.Package.Text ?? Humanize.Placeholder(process.Package.Reason);
+      case ProcessField.ApplicationId:
+        return process.Package.ApplicationId
+          ?? (process.Package.WasChecked ? "—" : Humanize.Placeholder(process.Package.Reason));
+      case ProcessField.PackageStatus:
+        // "Not checked" is not a verdict about the package, it is the absence of one — verification
+        // is opt-in and nobody asked. Spelling it out in the column reads as a finding, and it also
+        // put the column at odds with the export, which writes nothing for it: a field that shows a
+        // value and exports an empty cell is exactly what §103's invariant exists to catch, and it
+        // caught this.
+        return process.PackageStatus == SignatureStatus.NotChecked
+          ? Humanize.Placeholder(UnknownReason.NotSampledYet)
+          : process.PackageStatus.Text();
+      case ProcessField.Runtime:
+        return process.Runtime == ProcessRuntime.Unknown
+          ? Humanize.Placeholder(process.RuntimeReason)
+          : process.Runtime.Text();
+      case ProcessField.ImageCreated:
+        // Nought ticks is the absence of a time, not the first of January in the year one. The
+        // exporter already reads it that way and wrote an empty cell while the column was showing
+        // "0001-01-01", which is how the two came to disagree — and a filesystem without a birth
+        // time is the ordinary case rather than a rare one, so this is what most rows would show.
+        return process.ImageCreatedUtcTicks.TryGetValue(out var created) && created > 0
+          ? new DateTime((long)created, DateTimeKind.Utc).ToLocalTime()
+            .ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture)
+          : Humanize.Placeholder(
+              process.ImageCreatedUtcTicks.HasValue
+                ? UnknownReason.NotSupportedOnPlatform
+                : process.ImageCreatedUtcTicks.Reason);
+
       case ProcessField.PrivilegeChanged: return YesNo(PrivilegeChanged(in process));
       case ProcessField.EffectiveUserName:
         return process.EffectiveUserName ?? Humanize.Placeholder(UnknownReason.NotPermitted);
@@ -219,6 +252,14 @@ public static class FieldAccessor {
       case ProcessField.UniqueSet: return Number(process.UniqueBytes);
       case ProcessField.SessionId: return process.SessionId;
       case ProcessField.StartTime: return process.StartTimeUtcTicks;
+      case ProcessField.ImageCreated: return Number(process.ImageCreatedUtcTicks);
+      // The verdict as its own identity, so that sorting groups the rows that failed a check
+      // together. "Not checked" has no number at all, which keeps a filter from matching it as if
+      // it were an answer.
+      case ProcessField.PackageStatus:
+        return process.PackageStatus == SignatureStatus.NotChecked ? null : (byte)process.PackageStatus;
+      case ProcessField.Runtime:
+        return process.Runtime == ProcessRuntime.Unknown ? null : (byte)process.Runtime;
 
       case ProcessField.Elevated: return Number(process.IsElevated);
       case ProcessField.Integrity: return Number(process.IntegrityLevel);
@@ -350,6 +391,16 @@ public static class FieldAccessor {
     // The hex as it is, so a filter can be handed a digest from somewhere else and match on it.
     ProcessField.ImageSha256 => process.ImageSha256,
     ProcessField.ImageSha1 => process.ImageSha1,
+    // The package as it would be said: "package:coreutils" matches, and so does a filter for the
+    // version somebody read off a bug report.
+    ProcessField.Package => process.Package.Text,
+    ProcessField.ApplicationId => process.Package.ApplicationId,
+    // The vocabulary of §70 and no synonym of it, so "package.status:Unsigned" is the same word the
+    // column shows. Not checked has no text, so it matches neither that nor its negation.
+    ProcessField.PackageStatus => process.PackageStatus == SignatureStatus.NotChecked
+      ? null
+      : process.PackageStatus.Text(),
+    ProcessField.Runtime => process.Runtime == ProcessRuntime.Unknown ? null : process.Runtime.Text(),
     // The kernel's own spelling, which is what "sched.class:SCHED_FIFO" is written as and what chrt
     // prints. Unknown has no text, so it matches neither that nor its negation.
     ProcessField.SchedulingClass => process.SchedulingPolicy == SchedulingPolicy.Unknown
@@ -422,6 +473,12 @@ public static class FieldAccessor {
         return string.Compare(a.ImageSha256, b.ImageSha256, StringComparison.Ordinal);
       case ProcessField.ImageSha1:
         return string.Compare(a.ImageSha1, b.ImageSha1, StringComparison.Ordinal);
+      // By the text, which groups every process of one package together — the point of sorting a
+      // provenance column at all.
+      case ProcessField.Package:
+        return string.Compare(a.Package.Text, b.Package.Text, StringComparison.OrdinalIgnoreCase);
+      case ProcessField.ApplicationId:
+        return string.Compare(a.Package.ApplicationId, b.Package.ApplicationId, StringComparison.OrdinalIgnoreCase);
     }
 
     var left = Number(field, in a, delta, indexA);

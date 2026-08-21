@@ -398,6 +398,101 @@ internal static partial class Native {
     }
   }
 
+  /// <summary>
+  /// <c>statx</c>, for the one thing <c>stat</c> cannot answer: when a file was created (PRD §14).
+  /// </summary>
+  /// <remarks>
+  /// The buffer is passed as raw bytes rather than as a marshalled structure. <c>struct statx</c> has
+  /// grown three times since it was introduced — a subvolume id, direct-I/O alignments, atomic write
+  /// units — and a structure declared here would have to be right about a layout that keeps changing
+  /// at the end. Only two fields are read, both from the part that has never moved: <c>stx_mask</c>
+  /// at offset 0 and <c>stx_btime</c> at 0x50, checked against this machine's own
+  /// <c>linux/stat.h</c>.
+  /// </remarks>
+  [LibraryImport("libc", EntryPoint = "statx", SetLastError = true)]
+  private static partial int StatxCore(int directoryFd, ref byte path, int flags, uint mask, ref byte buffer);
+
+  private const int _AtFdCwd = -100;
+  private const uint _StatxBTime = 0x800;
+  private const int _StatxBTimeOffset = 0x50;
+  private const int _StatxSize = 256;
+
+  /// <summary>Set once a libc without <c>statx</c> has been found, so the miss is paid for once.</summary>
+  private static bool _statxMissing;
+
+  /// <summary>
+  /// When the file was created, or null where nothing remembers.
+  /// </summary>
+  /// <remarks>
+  /// Null is the common answer and an honest one. The kernel returns the birth time only where the
+  /// file system carries it: btrfs and xfs do, an ext4 formatted without <c>crtime</c> does not, and
+  /// most network file systems do not. <c>stx_mask</c> is what says which happened — the field is
+  /// left cleared otherwise — so it is checked rather than assumed, and a zero date is never
+  /// reported as 1970 (PRD §72.3).
+  /// </remarks>
+  /// <param name="errno">
+  /// 0 when the call itself succeeded, which includes the ordinary case of a file system that
+  /// carries no birth time: <c>statx</c> answers happily and leaves the bit clear. Anything else is
+  /// a failure to ask — <see cref="ENOENT"/> for an image replaced underneath a running process,
+  /// <see cref="EACCES"/> for one this user may not reach — and the caller says which (PRD §72.3).
+  /// </param>
+  public static bool TryCreationTimeUtc(string path, out DateTime when, out int errno) {
+    when = default;
+    errno = 0;
+    var created = CreationTimeUtc(path, ref errno);
+    if (created is not { } value)
+      return false;
+
+    when = value;
+    return true;
+  }
+
+  private static DateTime? CreationTimeUtc(string path, ref int errno) {
+    if (_statxMissing || !OperatingSystem.IsLinux() || string.IsNullOrEmpty(path))
+      return null;
+
+    var length = Encoding.UTF8.GetByteCount(path);
+    Span<byte> pathBytes = length < 512 ? stackalloc byte[length + 1] : new byte[length + 1];
+    Encoding.UTF8.GetBytes(path, pathBytes);
+    pathBytes[length] = 0;
+
+    Span<byte> buffer = stackalloc byte[_StatxSize];
+    buffer.Clear();
+
+    try {
+      if (StatxCore(
+            _AtFdCwd,
+            ref MemoryMarshal.GetReference(pathBytes),
+            0,
+            _StatxBTime,
+            ref MemoryMarshal.GetReference(buffer)
+          ) != 0) {
+        errno = LastError;
+        return null;
+      }
+    } catch (EntryPointNotFoundException) {
+      // Before glibc 2.28 there is no statx to call. Every column that depends on it is unknown from
+      // here on, which is the truth about this machine rather than a failure to report.
+      _statxMissing = true;
+      return null;
+    } catch (DllNotFoundException) {
+      _statxMissing = true;
+      return null;
+    }
+
+    // The mask says what was actually filled in. A file system with no birth time answers the call
+    // successfully and clears this bit, which is exactly the case that must not become a date.
+    if ((MemoryMarshal.Read<uint>(buffer) & _StatxBTime) == 0)
+      return null;
+
+    var seconds = MemoryMarshal.Read<long>(buffer[_StatxBTimeOffset..]);
+    var nanoseconds = MemoryMarshal.Read<uint>(buffer[(_StatxBTimeOffset + 8)..]);
+    if (seconds <= 0)
+      return null;
+
+    return DateTime.UnixEpoch.AddTicks(seconds * TimeSpan.TicksPerSecond + nanoseconds / 100);
+  }
+
   public static int LastError => Marshal.GetLastPInvokeError();
 
 }

@@ -1,0 +1,130 @@
+namespace Hawkynt.ProcessManager.Model;
+
+/// <summary>
+/// The verdict vocabulary of PRD §70 — exactly these words, and no synonyms.
+/// </summary>
+/// <remarks>
+/// <para>
+/// One vocabulary for every platform, so that "Verified" means the same thing in every window,
+/// every export and every filter. What was verified differs per platform and is never smuggled into
+/// the word: an Authenticode signature on Windows, and on Linux the packaging system's own record of
+/// the bytes it shipped. Which of the two answered is in <see cref="ImageTrust.Detail"/>, in a
+/// sentence, where it can be read rather than inferred.
+/// </para>
+/// <para>
+/// <see cref="NotChecked"/> is nought, because a record nobody filled has checked nothing. Anything
+/// else as the default would make an unfilled field an assertion (PRD §72.3).
+/// </para>
+/// </remarks>
+public enum SignatureStatus : byte {
+
+  /// <summary>Nobody asked. Verification is opt-in and costs a hash of the file (PRD §5.4).</summary>
+  NotChecked = 0,
+
+  /// <summary>The signature is good and its chain is trusted.</summary>
+  Verified,
+
+  /// <summary>
+  /// The signature itself is good; whoever made it is not somebody this machine trusts.
+  /// </summary>
+  ValidButUntrustedChain,
+
+  /// <summary>There is no signature at all. Not a failure — most of a Linux system is like this.</summary>
+  Unsigned,
+
+  /// <summary>There is a signature and it does not match the bytes.</summary>
+  InvalidSignature,
+
+  /// <summary>The signature was good and the key behind it has since been withdrawn.</summary>
+  Revoked,
+
+  /// <summary>The signature was good and the certificate behind it has run out.</summary>
+  Expired,
+
+  /// <summary>Checking was attempted and failed — unreadable file, unreadable database.</summary>
+  VerificationError,
+
+}
+
+/// <summary>The vocabulary as text. One place, so no front-end can invent a synonym (PRD §70).</summary>
+public static class SignatureStatusText {
+
+  public static string Text(this SignatureStatus status) => status switch {
+    SignatureStatus.Verified => "Verified",
+    SignatureStatus.ValidButUntrustedChain => "Valid but untrusted chain",
+    SignatureStatus.Unsigned => "Unsigned",
+    SignatureStatus.InvalidSignature => "Invalid signature",
+    SignatureStatus.Revoked => "Revoked",
+    SignatureStatus.Expired => "Expired",
+    SignatureStatus.VerificationError => "Verification error",
+    _ => "Not checked",
+  };
+
+}
+
+/// <summary>
+/// What is known about an image's provenance, with each of §70's five questions in its own slot.
+/// </summary>
+/// <remarks>
+/// <para>
+/// PRD §70's first requirement is that the program never conflates hash calculation, local
+/// signature verification, trust-chain verification, an online reputation query and file
+/// submission. They are separate fields here rather than one "status", because one status is
+/// exactly how they get conflated: a hash that matched becomes "verified", a package that shipped
+/// the file becomes "trusted", and a reader has no way left to tell which question was answered.
+/// </para>
+/// <para>
+/// <b>A hash is not a verdict.</b> <see cref="Sha256"/> says what the bytes are and nothing about
+/// whether anybody vouches for them.
+/// </para>
+/// </remarks>
+/// <param name="Sha256">
+/// Hash calculation, question one. Present only when somebody asked for it; it is the one reading
+/// here whose cost is the size of the file.
+/// </param>
+/// <param name="Package">Where the bytes came from, if anything claims them.</param>
+/// <param name="Signature">
+/// Local signature verification, question two: whether the bytes are the ones a signature covers.
+/// On Linux there is no signature inside an ELF to check, so this is the packaging system's
+/// answer — the file against the digest its package recorded, and whether that package was itself
+/// validated by signature when it was installed.
+/// </param>
+/// <param name="Detail">
+/// One sentence naming what was actually checked, so the word in <paramref name="Signature"/> is
+/// never the whole story.
+/// </param>
+/// <param name="TrustChain">
+/// Trust-chain verification, question three: whether the key behind the signature chains to
+/// something this machine trusts. Deliberately its own slot and never inferred from
+/// <paramref name="Signature"/> — a good signature by an unknown key is a different answer from a
+/// good signature by a known one.
+/// </param>
+/// <param name="Reputation">
+/// Online reputation, question four. Always <see cref="SignatureStatus.NotChecked"/> until somebody
+/// configures a provider: §3 promises this program transmits nothing about an executable without
+/// being asked, and there is no provider to ask (PRD §70, §97).
+/// </param>
+/// <param name="Submitted">
+/// File submission, question five — sending the bytes themselves somewhere. Never true: nothing in
+/// this program uploads a file, and the field exists so that "we hashed it" can never be read as
+/// "we sent it".
+/// </param>
+public sealed record ImageTrust(
+  string? Sha256,
+  PackageIdentity Package,
+  SignatureStatus Signature,
+  string? Detail,
+  SignatureStatus TrustChain = SignatureStatus.NotChecked,
+  SignatureStatus Reputation = SignatureStatus.NotChecked,
+  bool Submitted = false
+) {
+
+  /// <summary>Nothing has been asked of this image yet.</summary>
+  public static readonly ImageTrust NotChecked = new(
+    null,
+    PackageIdentity.NotChecked,
+    SignatureStatus.NotChecked,
+    null
+  );
+
+}
