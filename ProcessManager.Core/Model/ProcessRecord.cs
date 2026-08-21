@@ -33,6 +33,34 @@ public enum SchedulingPolicy : byte {
 }
 
 /// <summary>
+/// Which part of a graphics adapter a process was using.
+/// </summary>
+/// <remarks>
+/// A card is not one engine but several, and they run at once: a video call encodes on one while it
+/// decodes on another and draws on a third. Reporting a single "GPU %" without saying which engine
+/// produced it is the false equivalence §5.3 forbids — 80 % of the decoder and 80 % of the shaders
+/// are not the same finding. <see cref="Unknown"/> is zero so that a record nobody filled says so.
+/// </remarks>
+public enum GpuEngine : byte {
+  Unknown = 0,
+
+  /// <summary>Shaders and rasterisation: i915's <c>render</c>, amdgpu's <c>gfx</c>.</summary>
+  Graphics,
+
+  /// <summary>Compute dispatch, where the driver counts it apart from graphics.</summary>
+  Compute,
+
+  /// <summary>The copy / blit / DMA engines that move memory without the shaders.</summary>
+  Copy,
+
+  /// <summary>Fixed-function video encode.</summary>
+  Encode,
+
+  /// <summary>Fixed-function video decode.</summary>
+  Decode,
+}
+
+/// <summary>
 /// One process as one sample saw it: absolute readings only. Every rate, percentage and delta the UI
 /// shows is computed by <see cref="Sampling.SnapshotDelta"/> from two of these, so a probe that
 /// pre-divides anything has a bug (PRD §2).
@@ -237,7 +265,82 @@ public struct ProcessRecord {
   /// </remarks>
   public int TerminalDevice;
 
+  #region graphics (PRD §19)
 
+  /// <summary>
+  /// Time this process kept each engine of its adapter busy, cumulative nanoseconds since it opened
+  /// the device.
+  /// </summary>
+  /// <remarks>
+  /// DRM's own shape, straight out of <c>/proc/[pid]/fdinfo</c>'s <c>drm-engine-*</c> lines: a
+  /// monotonic counter per engine, exactly like <see cref="CpuTimeNs"/>, so
+  /// <see cref="Sampling.SnapshotDelta"/> turns it into a share of the interval and no probe divides
+  /// anything (PRD §2). Every engine carries its own reason, because which of them a driver counts
+  /// is the driver's business — i915 publishes no compute engine at all, and a nought there would
+  /// claim the card has one that nothing uses.
+  /// </remarks>
+  public Counter GpuGraphicsNs;
+  public Counter GpuComputeNs;
+  public Counter GpuCopyNs;
+  public Counter GpuEncodeNs;
+  public Counter GpuDecodeNs;
+
+  /// <summary>
+  /// The same use, as a percentage the driver sampled for itself rather than a counter to subtract.
+  /// </summary>
+  /// <remarks>
+  /// NVIDIA's is the stack that forces this. NVML has no per-process engine counter of any kind: its
+  /// per-process reading is <c>nvmlDeviceGetProcessUtilization</c>, which hands back the driver's own
+  /// sampled percentages over its own recent window and nothing that can be differenced. Keeping the
+  /// two shapes apart is the honest option — synthesising a counter by integrating a sampled
+  /// percentage would produce a "GPU time" figure that drifts and that nobody could reconcile against
+  /// <c>nvidia-smi</c>. A reader gets whichever of the two its hardware actually has.
+  /// <para>
+  /// <see cref="GpuBusyPercent"/> is NVML's <c>sm</c> figure, which covers graphics and compute
+  /// together: the driver does not split them per process, so neither do we.
+  /// </para>
+  /// </remarks>
+  public Counter GpuBusyPercent;
+  public Counter GpuEncodePercent;
+  public Counter GpuDecodePercent;
+
+  /// <summary>
+  /// Which engine <see cref="GpuBusyPercent"/> describes, where the driver says.
+  /// </summary>
+  /// <remarks>
+  /// NVML gives one figure for the shaders and names no engine, but it does say which of its two
+  /// lists a process is in — a CUDA client or a rendering one — and that is the split worth showing.
+  /// <see cref="GpuEngine.Unknown"/> where there is no such hint, which is every driver that reports
+  /// engine counters instead and needs none.
+  /// </remarks>
+  public GpuEngine GpuBusyEngine;
+
+  /// <summary>Adapter memory this process holds — VRAM on a discrete card.</summary>
+  public Counter GpuDedicatedBytes;
+
+  /// <summary>
+  /// System memory the adapter is using on this process's behalf: GTT on amdgpu, and on an
+  /// integrated part the whole of it, there being no dedicated memory to hold.
+  /// </summary>
+  public Counter GpuSharedBytes;
+
+  /// <summary>
+  /// Which adapter these readings belong to — the kernel's <c>cardN</c> — or <see langword="null"/>.
+  /// </summary>
+  /// <remarks>
+  /// A machine with two cards is the ordinary laptop, and a GPU figure that does not say which of
+  /// them it came from is unreadable on exactly the machines where it matters most.
+  /// </remarks>
+  public string? GpuAdapter;
+
+  /// <summary>
+  /// Why <see cref="GpuAdapter"/> is <see langword="null"/>: not asked for, no adapter this process
+  /// has open, or nothing on this machine that can answer. A string cannot carry its own reason the
+  /// way a <see cref="Counter"/> does, and "no answer" needs one just as much (PRD §72.3).
+  /// </summary>
+  public UnknownReason GpuAdapterReason;
+
+  #endregion
 
   /// <summary>Memory ceiling this process is subject to (cgroup limit), when there is one.</summary>
   public Counter MemoryLimitBytes;

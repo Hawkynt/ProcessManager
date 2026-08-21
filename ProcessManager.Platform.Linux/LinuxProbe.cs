@@ -59,7 +59,12 @@ public sealed class LinuxProbe : ISystemProbe {
     this._users = new(options.PasswdPath);
     this._nanosecondsPerTick = 1_000_000_000d / Math.Max(1, options.ClockTicksPerSecond);
     this._effectiveUserId = options.EffectiveUserId;
+    if (options.ReadGpuUsage)
+      this._gpu = new(options, this._reader, this._io, this._procRootUtf8);
   }
+
+  /// <summary>Per-process graphics accounting, or null when it was not asked for (PRD §5.4, §19).</summary>
+  private readonly LinuxGpuAccounting? _gpu;
 
   public string Description => $"linux:{this._procRoot}";
 
@@ -81,6 +86,9 @@ public sealed class LinuxProbe : ISystemProbe {
     ArgumentNullException.ThrowIfNull(snapshot);
 
     ++this._generation;
+    // Once for the whole sample, before the loop: NVML answers about all of a card's clients in one
+    // call, and asking it per process would put the same question six hundred times.
+    this._gpu?.BeginSample();
     this.ReadSystem(snapshot);
     this.ReadProcesses(snapshot);
     this.PruneCache();
@@ -345,7 +353,16 @@ public sealed class LinuxProbe : ISystemProbe {
 
     // Processes that exited between the listing and their own stat file leave a hole; the snapshot
     // is shortened rather than carrying a half-filled record.
-    snapshot.PrepareProcesses(written);
+    var kept = snapshot.PrepareProcesses(written);
+
+    // §19: an unsupported driver stack renders capability state and never a zero. A machine whose
+    // cards answer neither NVML nor the kernel's own client accounting has just had every process
+    // recorded as using none of the GPU, which would be a confident nought about a card that may
+    // well be at a hundred percent. It can only be known after the loop, because "no client
+    // anywhere" and "nothing published anywhere" look identical until somebody has looked.
+    if (this._gpu is { CanRead: false })
+      for (var i = 0; i < kept.Length; ++i)
+        LinuxGpuAccounting.NotCollected(ref kept[i], UnknownReason.NotImplementedHere);
 
     this.ReadDevices(snapshot);
 
@@ -589,6 +606,10 @@ public sealed class LinuxProbe : ISystemProbe {
     this.ReadStatus(cache, ref record);
     this.ReadIo(cache, ref record);
     this.ReadFileDescriptorCount(cache, ref record);
+    // After the key exists, and keyed on the pid only within this one sample: the GPU figures were
+    // gathered a moment ago from the same instant, and nothing is carried over between samples, so a
+    // pid that has been reused cannot inherit the readings of the process that had it before.
+    this._gpu?.Fill(record.Key, ref record);
     cache.EnsureStatics(this._reader, this._options, this._procRootUtf8, this._procRoot);
 
     record.CommandLine = cache.CommandLine;
@@ -703,6 +724,9 @@ public sealed class LinuxProbe : ISystemProbe {
     record.HandleCount = Counter.NotSupported;
     record.ContextSwitches = Counter.NotSupported;
     record.MemoryLimitBytes = Counter.NotSupported;
+    // Graphics is off unless asked for, so the default is "nobody looked" rather than "none" — and
+    // stated here, because a record that left them alone would claim every process uses no GPU.
+    LinuxGpuAccounting.NotCollected(ref record, UnknownReason.NotSampledYet);
     record.Name = string.Empty;
     return true;
   }
@@ -1089,8 +1113,10 @@ public sealed class LinuxProbe : ISystemProbe {
       if (cache.Generation != this._generation)
         this._stale.Add(key);
 
-    foreach (var key in this._stale)
+    foreach (var key in this._stale) {
       this._cache.Remove(key);
+      this._gpu?.Forget(key);
+    }
   }
 
   #endregion

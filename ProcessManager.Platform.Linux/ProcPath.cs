@@ -48,6 +48,26 @@ internal static class ProcPath {
     return buffer[..written];
   }
 
+  /// <summary>
+  /// Writes <c>&lt;directory&gt;/&lt;number&gt;\0</c> for the numbered files inside a directory.
+  /// </summary>
+  /// <remarks>
+  /// <paramref name="directory"/> is a path this class built, so it already ends in the NUL that the
+  /// number has to be written over. For <c>/proc/[pid]/fdinfo/[fd]</c>, where the directory is the
+  /// same for every descriptor of a process and only the last component moves.
+  /// </remarks>
+  public static Span<byte> Build(Span<byte> buffer, ReadOnlySpan<byte> directory, int number) {
+    if (!directory.IsEmpty && directory[^1] == 0)
+      directory = directory[..^1];
+
+    directory.CopyTo(buffer);
+    var written = directory.Length;
+    buffer[written++] = (byte)'/';
+    written += WriteInt32(buffer[written..], number);
+    buffer[written++] = 0;
+    return buffer[..written];
+  }
+
   private static int WriteInt32(Span<byte> buffer, int value) {
     if (value == 0) {
       buffer[0] = (byte)'0';

@@ -160,7 +160,7 @@ public static class Exporter {
     var descriptor = FieldRegistry.Get(field);
 
     if (descriptor.Kind is FieldKind.Text or FieldKind.State)
-      return FieldAccessor.RawText(field, in process);
+      return FieldAccessor.RawText(field, in process, delta, index);
 
     // A timestamp is a number internally and useless as one in a file. ISO 8601 sorts correctly as
     // text, which is what anybody importing this will do with it.
