@@ -580,11 +580,15 @@ term all use it, and it never changes even when the display name differs per pla
 - [x] `user.id` — SID / UID
 - [x] `session` — login/terminal session
 - [x] `session.id` — native session identifier
-- [ ] `arch` — x86, x64, ARM64; `IsWow64Process2` (W), ELF header (L)
+- [x] `arch` — from the ELF header, which is the program's answer rather than the machine's: an
+      x86-64 kernel runs 32-bit binaries every day, and reporting the machine's architecture for
+      every row describes the machine instead of the program. Byte order is in the header, so a
+      big-endian binary decodes on a little-endian machine — the case no laptop here can produce
+      and a test covers
 - [ ] `emulation` — WOW64, Rosetta, translation state
 - [x] `image.path` — full image path
 - [x] `cmdline` — complete command invocation
-- [ ] 🟡 `cwd` — current working directory; Linux readable, Windows needs a PEB read we do not do
+- [x] 🟡 `cwd` — Linux; Windows needs a PEB read we do not do
 - [ ] `description` — binary description (version resource)
 - [ ] `company` — publisher metadata
 - [ ] `product` — product metadata
@@ -597,17 +601,26 @@ term all use it, and it never changes even when the display name differs per pla
       hexadecimal id somewhere, so the id is looked for rather than the layout: there is always
       another layout. A run of hex has to be long enough to *be* an id, or a systemd slice and a
       terminal's UUID scope would both report as containers on an ordinary desktop
-- [ ] `namespace` — `/proc/pid/ns/*` readlink
+- [x] `namespace` — kind and inode. The inode is the identity: two processes sharing one share that
+      namespace, which is how a container's members are actually told apart, rather than by a cgroup
+      path anybody can write anything into
 - [ ] 🟡 `job.cgroup` — Linux cgroup path done; Windows job object not
 - [x] `terminal` — controlling TTY, decoded from `stat` field 7. The packing is the awkward part:
       minor is split across the low eight bits and bits 20–31 with major in between, so the obvious
       shift is right for small numbers and wrong for large ones. Zero is *no terminal* — the answer
       for every daemon, and so for most of a machine — rather than device 0:0
-- [ ] `exe.size`
-- [ ] `exe.modified`
+- [x] `exe.size` — of the resolved target, not of the `/proc` link. Asking the link its length gives
+      nought, which is how this first reported every program as being no bytes long
+- [x] `exe.modified`
 - [ ] `exe.created`
 - [ ] `subsystem` — GUI/console/native; PE only, `n/a` for ELF
-- [ ] `interpreter` — shebang / `PT_INTERP`
+- [x] `interpreter` — `PT_INTERP`, or the shebang's program for a script. A shebang is as real a way
+      to start a program on Linux as an ELF header, and reporting "not an executable" for every shell
+      script would be wrong about a large part of any machine.
+
+      **No interpreter and no permission to look are different answers.** The first means statically
+      linked; the second means nobody could check. Collapsing them made the report call every other
+      user's process statically linked — a confident claim made out of an absence (§5.3)
 - [ ] `runtime` — native/.NET/JVM/Python, from the module list
 
 # 15. Process table — CPU fields

@@ -34,6 +34,9 @@ internal static class LimitsReport {
     }
 
     if (probe.DescribeCgroup(key) is not { } cgroup) {
+      Console.WriteLine($"{name} ({pid.ToString(CultureInfo.InvariantCulture)})");
+      Image(probe, key);
+      Console.WriteLine();
       // Not an error. A machine on cgroup v1, or a process in no cgroup at all, is an ordinary
       // situation and the honest answer is that there are no limits to report (PRD §5.3).
       Console.WriteLine($"{name} ({pid.ToString(CultureInfo.InvariantCulture)}) is in no cgroup this build can read.");
@@ -42,6 +45,7 @@ internal static class LimitsReport {
     }
 
     Console.WriteLine($"{name} ({pid.ToString(CultureInfo.InvariantCulture)})");
+    Image(probe, key);
     Console.WriteLine($"  cgroup               {cgroup.Path}");
     Console.WriteLine($"  controllers          {(cgroup.Controllers.Count > 0 ? string.Join(", ", cgroup.Controllers) : "none enabled here")}");
 
@@ -57,6 +61,47 @@ internal static class LimitsReport {
     Console.WriteLine($"  stalled on memory    {Pressure(cgroup.MemoryPressure)}");
     Console.WriteLine($"  stalled on I/O       {Pressure(cgroup.IoPressure)}");
     return 0;
+  }
+
+  /// <summary>
+  /// What the running program actually is (PRD §14).
+  /// </summary>
+  /// <remarks>
+  /// The architecture especially: on a machine that runs more than one, the machine's answer is not
+  /// the program's, and a 32-bit process on a 64-bit kernel is worth seeing.
+  /// </remarks>
+  private static void Image(ISystemProbe probe, ProcessKey key) {
+    if (probe.DescribeImage(key) is not { } image)
+      return;
+
+    if (image.Path is { Length: > 0 } path)
+      Console.WriteLine($"  image                {path}");
+
+    if (image.Architecture is { Length: > 0 } architecture)
+      Console.WriteLine($"  built for            {architecture}{(image.Bits > 0 ? $", {image.Bits.ToString(CultureInfo.InvariantCulture)}-bit" : string.Empty)}{(image.IsPositionIndependent == true ? ", position independent" : string.Empty)}");
+
+    // "No interpreter" and "nobody could look" are different answers, and saying the first when the
+    // second is true claims a program is statically linked because we lacked permission to check.
+    if (image.HeaderRead)
+      Console.WriteLine($"  loaded by            {image.Interpreter ?? "nothing — statically linked"}");
+    else
+      Console.WriteLine($"  loaded by            {Humanize.Placeholder(UnknownReason.NotPermitted)}");
+
+    if (image.SizeBytes.HasValue)
+      Console.WriteLine($"  size                 {Humanize.Bytes(image.SizeBytes)}{(image.ModifiedUtc is { } when ? $", last written {when.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)}Z" : string.Empty)}");
+
+    if (image.WorkingDirectory is { Length: > 0 } directory)
+      Console.WriteLine($"  running in           {directory}");
+
+    if (image.Namespaces.Count > 0) {
+      var names = new List<string>();
+      foreach (var (kind, inode) in image.Namespaces)
+        names.Add($"{kind}:{inode}");
+
+      Console.WriteLine($"  namespaces           {string.Join("  ", names)}");
+    }
+
+    Console.WriteLine();
   }
 
   /// <summary>

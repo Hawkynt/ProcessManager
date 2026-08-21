@@ -124,6 +124,16 @@ public interface ISystemProbe : IDisposable {
   /// </remarks>
   CgroupInfo? DescribeCgroup(ProcessKey key) => null;
 
+  /// <summary>
+  /// What the running program actually is: its architecture, its loader, where it runs, and which
+  /// namespaces it can see (PRD §14).
+  /// </summary>
+  /// <remarks>
+  /// On demand. Opening and reading an executable's header for four hundred processes a second is
+  /// not defensible, and none of it changes while the process runs (PRD §5.4).
+  /// </remarks>
+  ImageInfo? DescribeImage(ProcessKey key) => null;
+
   /// <summary>The window under the pointer, for picking a process by pointing at it.</summary>
   WindowRecord? WindowUnderPointer() => null;
 
