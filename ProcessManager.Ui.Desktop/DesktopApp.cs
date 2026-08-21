@@ -127,6 +127,20 @@ public static class DesktopApp {
           description += expandedSize is { } expanded
             ? $"page expanded: {expanded.Width}x{expanded.Height} -> {expandedPng}\n"
             : $"page expanded: none — {expandedFailure}\n";
+
+          // And the file box of §25.3, which is laid out by arithmetic rather than by anchoring and
+          // is therefore exactly the kind that renders as an empty rectangle while every test around
+          // it passes. Shown rather than shown modally: a modal one would block this callback and
+          // the loop would never be told to exit.
+          if (window.OpenExecutableProperties() is { } file) {
+            description += $"file box:     {file.Text}\n";
+            var filePng = Path.Combine(directory, "file.png");
+            var fileSize = GtkCapture.Window(filePng, out var fileFailure, file.Text);
+            description += fileSize is { } shown
+              ? $"file capture: {shown.Width}x{shown.Height} -> {filePng}\n"
+              : $"file capture: none — {fileFailure}\n";
+          } else
+            description += "file box:     the selected process has no readable executable\n";
         } else
           description += "capture:      not implemented on this platform\n";
 

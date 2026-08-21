@@ -507,6 +507,8 @@ public sealed class MainWindow : Form {
     menu.Items.Add(this.SchedulingMenu());
     menu.Items.Add(Item("Set affinity…", this.ChooseAffinity));
     menu.Items.Add(new ToolStripSeparator());
+    menu.Items.Add(this.NavigationMenu());
+    menu.Items.Add(new ToolStripSeparator());
     menu.Items.Add(Item("Read handle count", this.FillHandleCounts));
     menu.Items.Add(Item("Properties…", this.ShowProperties));
     menu.Items.Add(Item("Refresh details", () => this._details.Invalidate()));
@@ -591,6 +593,212 @@ public sealed class MainWindow : Form {
     }
 
     return menu;
+  }
+
+  /// <summary>
+  /// Getting from a process to the things around it (PRD §25.3).
+  /// </summary>
+  /// <remarks>
+  /// Grouped rather than scattered through the menu, because they are all the same gesture — "take
+  /// me to the thing this row refers to" — and because none of them changes anything, which is what
+  /// keeps them away from the items that do (PRD §5.5).
+  /// </remarks>
+  private ToolStripMenuItem NavigationMenu() {
+    var menu = new ToolStripMenuItem("Go to");
+    menu.DropDownItems.Add(Item("Parent process", this.GoToParent));
+    menu.DropDownItems.Add(Item("Child processes", this.GoToChildren));
+    menu.DropDownItems.Add(new ToolStripSeparator());
+    menu.DropDownItems.Add(Item("Executable folder", this.RevealExecutable));
+    menu.DropDownItems.Add(Item("Executable properties…", this.ShowExecutableProperties));
+    menu.DropDownItems.Add(new ToolStripSeparator());
+    menu.DropDownItems.Add(Item("Search the web for this name…", this.SearchTheWeb));
+    return menu;
+  }
+
+  /// <summary>
+  /// Selects whatever started this process (PRD §25.3).
+  /// </summary>
+  /// <remarks>
+  /// A parent that is not in the list is the ordinary case rather than an error: a process whose
+  /// parent has exited was reparented to init, and one belonging to another user is filtered out of
+  /// the view. Both are worth saying, because "nothing happened" is what a broken menu item looks
+  /// like too.
+  /// </remarks>
+  private void GoToParent() {
+    if (this._binder.SelectedRow is not { } row)
+      return;
+
+    if (!this._sampler.Current.TryGetProcess(row.Key, out var process)) {
+      MessageBox.Show($"{row.Name} (PID {row.Pid}) has ended.", "Process Manager");
+      return;
+    }
+
+    if (process.ParentPid <= 0) {
+      MessageBox.Show($"{row.Name} (PID {row.Pid}) has no parent; it was started by the kernel.", "Process Manager");
+      return;
+    }
+
+    if (!this.SelectPid(process.ParentPid))
+      MessageBox.Show(
+        $"The parent of {row.Name} is PID {process.ParentPid}, which is not in the list — "
+        + "it has ended, or it belongs to a user the current filter hides.",
+        "Process Manager"
+      );
+  }
+
+  /// <summary>
+  /// Opens the row and moves to the first process it started (PRD §25.3).
+  /// </summary>
+  /// <remarks>
+  /// The tree is expanded rather than a list of children being offered: the children are already on
+  /// screen a row below, and a dialog listing what the window can show would be answering a question
+  /// the window itself answers better. Selecting the first is what makes the arrow keys carry on
+  /// from there.
+  /// </remarks>
+  private void GoToChildren() {
+    if (this._binder.SelectedRow is not { } row)
+      return;
+
+    var children = new List<int>();
+    foreach (var process in this._sampler.Current.Processes)
+      if (process.ParentPid == row.Pid && process.Pid != row.Pid)
+        children.Add(process.Pid);
+
+    if (children.Count == 0) {
+      MessageBox.Show($"Nothing is running under {row.Name} (PID {row.Pid}).", "Process Manager");
+      return;
+    }
+
+    if (!this._view.TreeMode) {
+      this._view.TreeMode = true;
+      this.Refresh();
+    }
+
+    this._binder.NodeFor(row.Key)?.Expand();
+    children.Sort();
+    if (!this.SelectPid(children[0]))
+      MessageBox.Show(
+        $"{row.Name} (PID {row.Pid}) has {children.Count} child process{(children.Count == 1 ? string.Empty : "es")}, "
+        + "none of which the current filter shows.",
+        "Process Manager"
+      );
+  }
+
+  /// <summary>The executable of the selected process, or null when there is none to be had.</summary>
+  /// <remarks>Silent: whether an absence is worth a dialog is the caller's to decide.</remarks>
+  private string? SelectedImagePath()
+    => this._binder.SelectedRow is { } row
+      && this._sampler.Current.TryGetProcess(row.Key, out var process)
+      && process.ImagePath is { Length: > 0 } path
+        ? path
+        : null;
+
+  /// <summary>Says why there is no executable to show, which is not always a fault.</summary>
+  private void ExplainMissingImage() {
+    if (this._binder.SelectedRow is not { } row)
+      return;
+
+    MessageBox.Show(
+      $"The executable of {row.Name} (PID {row.Pid}) could not be read. "
+      + "A kernel thread has none, and another user's is not readable without privilege.",
+      "Process Manager"
+    );
+  }
+
+  private void RevealExecutable() {
+    if (this.SelectedImagePath() is not { } path) {
+      this.ExplainMissingImage();
+      return;
+    }
+
+    if (this._actions is null) {
+      MessageBox.Show("This build has no actions for this platform.", "Process Manager");
+      return;
+    }
+
+    if (DesktopOpen.Reveal(path) is not { } request) {
+      MessageBox.Show("This platform has no desktop opener to hand the folder to.", "Process Manager");
+      return;
+    }
+
+    var result = this._actions.Launch(request);
+    if (!result.Outcome.Succeeded)
+      MessageBox.Show(result.Outcome.Detail ?? result.Outcome.Outcome.ToString(), "Process Manager");
+  }
+
+  private void ShowExecutableProperties() {
+    if (this.BuildExecutableProperties() is { } dialog)
+      dialog.ShowDialog();
+    else
+      this.ExplainMissingImage();
+  }
+
+  /// <summary>
+  /// The same box, shown without blocking, for the capture leg (PRD §9.6).
+  /// </summary>
+  /// <remarks>
+  /// A dialog nothing photographs is a dialog nobody has looked at since it was written. The
+  /// performance page is on this leg for the same reason, and this one joins it because a hand-laid
+  /// box is exactly the kind that renders as an empty rectangle while every test around it passes.
+  /// </remarks>
+  public FilePropertiesDialog? OpenExecutableProperties() {
+    var dialog = this.BuildExecutableProperties();
+    dialog?.Show();
+    return dialog;
+  }
+
+  private FilePropertiesDialog? BuildExecutableProperties() {
+    if (this.SelectedImagePath() is not { } path)
+      return null;
+
+    // What the probe already read about the image, so the box need not open the file again for an
+    // answer somebody has: the architecture and the interpreter come from its ELF header (PRD §14).
+    var extra = new List<KeyValuePair<string, string>>();
+    if (this._probe.DescribeImage(this._binder.SelectedRow!.Key) is { } image) {
+      extra.Add(new("architecture", image.Architecture ?? (image.HeaderRead ? "unknown" : "—")));
+      extra.Add(new("interpreter", image.Interpreter ?? (image.HeaderRead ? "statically linked" : "—")));
+      extra.Add(new("directory", image.WorkingDirectory ?? "—"));
+    }
+
+    return new(path, extra, this._actions);
+  }
+
+  /// <summary>
+  /// Looks a process's name up on the web (PRD §25.3).
+  /// </summary>
+  /// <remarks>
+  /// Confirmed, and the confirmation names where it is going. Every other item on this menu is
+  /// local; this one puts the name of something running on this machine onto somebody else's server,
+  /// and a menu item that did that without saying so would be a disclosure dressed as a convenience
+  /// (PRD §70).
+  /// </remarks>
+  private void SearchTheWeb() {
+    if (this._binder.SelectedRow is not { } row)
+      return;
+
+    if (this._actions is null) {
+      MessageBox.Show("This build has no actions for this platform.", "Process Manager");
+      return;
+    }
+
+    var answer = MessageBox.Show(
+      $"Search {DesktopOpen.SearchEngine} for \"{row.Name}\"?\n\n"
+      + "This sends the name of a program running on this machine over the network to a search engine.",
+      "Process Manager",
+      MessageBoxButtons.YesNo
+    );
+
+    if (answer != DialogResult.Yes)
+      return;
+
+    if (DesktopOpen.Search(row.Name) is not { } request) {
+      MessageBox.Show("This platform has no desktop opener to hand the page to.", "Process Manager");
+      return;
+    }
+
+    var result = this._actions.Launch(request);
+    if (!result.Outcome.Succeeded)
+      MessageBox.Show(result.Outcome.Detail ?? result.Outcome.Outcome.ToString(), "Process Manager");
   }
 
   /// <summary>

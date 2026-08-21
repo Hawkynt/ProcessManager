@@ -92,6 +92,41 @@ public sealed class ProcessMenuTests {
     }
   }
 
+  /// <summary>
+  /// The detail pane hangs one menu on the threads list and one on the modules list, so they are
+  /// told apart by what is in them rather than by the order the pane happened to build them.
+  /// </summary>
+  private static List<string> PaneMenuContaining(string label) {
+    var pane = new DetailPane(new StubProbe());
+    foreach (var control in Descendants(pane.Control))
+      if (control.ContextMenuStrip is { } menu) {
+        var labels = Labels(menu.Items);
+        if (labels.Contains(label))
+          return labels;
+      }
+
+    Assert.Fail($"no list in the detail pane has a menu with '{label}' on it");
+    return [];
+  }
+
+  [Test]
+  public void TheModuleActionsAreOnTheModulesList() {
+    var labels = PaneMenuContaining("Copy path");
+
+    Assert.Multiple(() => {
+      Assert.That(labels, Does.Contain("Copy path"));
+      Assert.That(labels, Does.Contain("Open folder"));
+      Assert.That(labels, Does.Contain("File properties…"));
+      Assert.That(labels, Does.Not.Contain("Unload module"), "there is no supported way to do it on Linux (PRD §32)");
+    });
+  }
+
+  [Test]
+  public void ThePerThreadActionsAreStillOnTheThreadsList() {
+    var labels = PaneMenuContaining("Set thread affinity…");
+    Assert.That(labels, Does.Contain("Thread priority"));
+  }
+
   [Test]
   public void TheLifecycleActionsAreOnTheContextMenu() {
     var labels = ContextMenuLabels(Window());
@@ -129,6 +164,59 @@ public sealed class ProcessMenuTests {
     Assert.That(labels, Does.Contain("Scheduling class"));
     foreach (var choice in SchedulingClasses.Offered)
       Assert.That(labels, Does.Contain(choice.Name), "a class in the catalogue and not in the menu is a class nobody can pick");
+  }
+
+  /// <summary>
+  /// Getting from a process to the things around it (PRD §25.3).
+  /// </summary>
+  /// <remarks>
+  /// Grouped under one item, and none of them changes anything — which is what keeps them apart from
+  /// the items that do (PRD §5.5).
+  /// </remarks>
+  [Test]
+  public void TheNavigationItemsAreThereAndAreTheirOwnGroup() {
+    var labels = ContextMenuLabels(Window());
+
+    Assert.Multiple(() => {
+      Assert.That(labels, Does.Contain("Go to"));
+      Assert.That(labels, Does.Contain("Parent process"));
+      Assert.That(labels, Does.Contain("Child processes"));
+      Assert.That(labels, Does.Contain("Executable folder"));
+      Assert.That(labels, Does.Contain("Executable properties…"));
+      Assert.That(labels, Does.Contain("Search the web for this name…"));
+    });
+  }
+
+  /// <summary>
+  /// The file box shows what it read and nothing it did not (PRD §25.3, §70).
+  /// </summary>
+  /// <remarks>
+  /// The hash is not computed on opening, and the box says so rather than leaving the row blank —
+  /// blank is what a hash of nothing would also look like. It is also the only place in this program
+  /// that reads a whole file, which is why it waits to be asked.
+  /// </remarks>
+  [Test]
+  [Platform("Linux")]
+  public void TheFileBoxReadsTheFactsAndLeavesTheHashUntilItIsAsked() {
+    var dialog = new FilePropertiesDialog("/usr/bin/env", [new("architecture", "x86-64")]);
+    var description = dialog.Description;
+
+    Assert.Multiple(() => {
+      Assert.That(description, Does.Contain("/usr/bin/env"));
+      Assert.That(description, Does.Contain("architecture"));
+      Assert.That(description, Does.Contain("x86-64"));
+      Assert.That(description, Does.Contain("sha-256"));
+      Assert.That(description, Does.Contain("not computed"), "reading a whole file waits to be asked");
+    });
+  }
+
+  [Test]
+  public void AFileThatIsNotThereGivesTheReasonRatherThanAnEmptyBox() {
+    var description = new FilePropertiesDialog("/no/such/program").Description;
+
+    Assert.That(description, Does.Contain("/no/such/program"));
+    Assert.That(description, Does.Contain("no such file"));
+    Assert.That(description, Does.Not.Contain("0 B"), "the reason, not a zero (PRD §72.3)");
   }
 
   [Test]
