@@ -588,8 +588,10 @@ shared header painter rather than guessing, and widening a column to hide it wou
 # 12. Update / refresh system
 
 - [x] Intervals 250 ms · 500 ms · **1 s** · 2 s · 5 s · 10 s · paused · manual — settable from the
-      CLI, persisted, and pickable in both front-ends: View ▸ Refresh in the window and `d` in the
-      terminal, over one list of rates the two share
+      CLI, persisted, and pickable in both front-ends: View ▸ Refresh in the window, the settings box
+      of §67, and `d` in the terminal, over one list of rates all three share. A file naming a rate
+      that is not on the list keeps it: the settings box shows the nearest offered one and a file
+      saying three seconds does not come back as one
 - [x] Default 1 second
 - [x] Pause while preserving selection
 
@@ -3075,10 +3077,22 @@ five, and telling somebody to run as root reads very differently from telling th
 - [x] Keyboard navigation reaches every graph control — the plots take focus, the arrow keys walk
       the cursor along the axis, and the span, the pause and the inspection view all have shortcuts
 - [x] 🟡 Screen-reader labels — every graph and every control in the strip names itself; the
-      statistic rows are plain text and announce as what they say
-- [ ] High-contrast support, and lines that stay distinguishable in it
-- [ ] Colour-blind-safe differentiation
-- [ ] 100–200 % UI scaling
+      statistic rows are plain text and announce as what they say. The main window's plots, meter
+      strip, list, rail and toolbar do too now (§74); what still announces as nothing is a table row
+- [x] High-contrast support, and lines that stay distinguishable in it — the plot keeps its black
+      ground under that scheme, and that is a decision rather than an oversight: an instrument has a
+      ground of its own, black under bright inks is the highest contrast there is, and a flat black
+      is not the blend of two colours the scheme exists to stop. What changed is what is drawn on
+      it — the graticule comes up to a readable green, the caption, axis and cursor inks all come up
+      to white, and the axis labels lose the drop shadow that was a second colour a pixel away
+- [ ] Colour-blind-safe differentiation — and the core heat map is where this bites hardest. It is
+      a green-through-amber-to-red ramp, which is the one ramp red-green colour blindness flattens
+      completely, and there is not a digit on it to fall back to. Its textual summary (§74) is the
+      first half of an answer and not the whole of one: what this box wants is a ramp that survives,
+      or a number in the cell
+- [ ] 100–200 % UI scaling — see §74's "scalable text". The blocker is not here: every painter,
+      including the toolkit's own header and cell painters, draws with `ITheme.DefaultFont`, and
+      `GtkBackend` pins `gtk-xft-dpi` to a 96-DPI baseline so the desktop's own factor never arrives
 
 ## 45.10 Cost
 
@@ -3913,6 +3927,33 @@ field keys. Two rules make that safe — a line that cannot be parsed leaves its
 rather than failing the file, and a key this build does not understand is written back out untouched
 so an older build cannot eat a newer one's settings.
 
+**Where it is, and how it moves.**
+
+- [x] **Somewhere else, on purpose** — `PROCMAN_SETTINGS` names the file outright and a
+      `procman.portable` marker beside the executable keeps the file beside the executable, in that
+      order under `--settings`, which beats both. The order is how deliberate each answer is, so a
+      variable in a shell profile never overrules a flag somebody just typed. A portable install is
+      also one that simply *has* a `settings.conf` next to the binary — the folder copied onto a
+      stick with the marker since deleted must not stop being read
+- [x] **`--settings-path`** — which file is in use and what put it there, which is the question
+      people actually ask, because a preference that did not take is nearly always a preference set
+      in the wrong file
+- [x] **`--export-settings` · `--import-settings` · `--reset-settings`** — a copy out, a copy in,
+      and a fresh start. The first two carry a key this build does not understand through untouched,
+      for the same reason every other path here does. The third does not, and says so in its own
+      output: it removes the file, which is what starting again means, and exporting first is one
+      argument away
+- [x] **Settable without a text editor** — View ▸ Settings…, or Ctrl+comma. The box hands back the
+      record it was given with the changes written over it, so a column set somebody wrote by hand
+      and a key a newer build wrote both come out of it exactly as they went in, and it writes the
+      moment it is accepted rather than waiting for the tick to notice
+
+**Nothing is in that box that does not do something.** It shows the groups below that have behaviour
+behind them and deliberately not the ones that have not. A control writing a key nothing reads is
+worse than no control: it tells the person who set it that they have changed something. Symbols,
+reputation, history retention, privacy and the advanced group are absent from it for exactly that
+reason, and each is unticked below rather than half-built.
+
 **It saves itself.** The window used to require `--save-settings` from a terminal, which meant every
 preference set through the window was gone by the next start. The saver runs from the sample tick
 rather than from each change, so a window being dragged is one write and not a hundred, and it
@@ -3921,11 +3962,16 @@ touches no disk at all. A write that fails is retried on the next tick and never
 diagnosing a machine whose disk is full is exactly the person who must not be interrupted by a dialog
 about a preferences file (§81).
 
-- [ ] **General** — launch behaviour · start minimised · start at login · default page ·
-      confirm destructive actions · auto-elevation behaviour
+- [ ] 🟡 **General** — `confirm.destructive` decides whether a single-process action asks first, and
+      the lower pane and the unavailable-tab behaviour are remembered. Launch behaviour, start
+      minimised, start at login, the default page and auto-elevation are not here, because none of
+      them is a thing this program does yet. **The bulk terminate asks whatever the setting says**:
+      "End 14 processes?" and "End Firefox?" are the same gesture and very different requests, and
+      the count is the whole of what that confirmation is for (§90)
 - [ ] 🟡 **Appearance** — every colour of §7.1's categories and of the plots is a `color.<name>` line,
-      and the window's size and splitter are remembered; theme, density, font, icon size and row
-      height are not
+      the window's size and splitter are remembered, and the performance page's density now is too;
+      theme, font, icon size and row height are not. Theme is not ours to keep — the window follows
+      the desktop's, which is what `ITheme` is for — and the other three wait on §74's scaling
 - [x] **Refresh** — the interval persists, and the window writes it back when it is changed
 - [x] **Processes** — tree-or-flat, the sort column and its direction all persist
 - [x] **Columns** — saved column sets, and the columns each front-end opens with
@@ -3933,7 +3979,11 @@ about a preferences file (§81).
 - [ ] **Reputation** — disabled by default · provider configuration · privacy disclosure
 - [ ] **History** — enable persistence · retention · storage size
 - [ ] **Privacy** — telemetry · crash reporting · recent commands · saved searches
-- [ ] **TUI** — key bindings · mouse · colours · Unicode/Braille graphs
+- [ ] 🟡 **TUI** — key bindings are a `keys.conf` beside the settings file (§57.3), the mouse is
+      `tui.mouse` and the block ramp is `blocks`. The colours are not settable at all, and the
+      braille style is per run rather than remembered: `GraphStyle` lives in the terminal assembly
+      and the settings record is in Core, so persisting it means moving the enum — worth doing and
+      not worth doing quietly inside an accessibility change
 - [ ] **Advanced** — expensive collectors · debugging functionality · plugins · experimental APIs
 
 ---
@@ -4111,21 +4161,57 @@ absolute address, or it dangles the moment the buffer moves.
 
 GUI:
 
-- [ ] 🟡 Full keyboard operation
-- [ ] Logical tab order
-- [ ] Screen-reader labels
-- [ ] Scalable text
-- [ ] High contrast
-- [ ] System text scaling
-- [x] Non-colour status indicators
-- [ ] Graphs expose textual summaries
+- [ ] 🟡 Full keyboard operation — every menu item, the sort, the columns, the filter and the
+      settings box all have keys; what has none is the row tick and the splitter
+- [x] Logical tab order — the reading order, which is *not* the order the children were added in:
+      the toolkit docks by walking its children backwards, so the strip added last is the one at the
+      top of the window and insertion order is very nearly the reverse of reading order. A test holds
+      the numbers to the reading
+- [ ] 🟡 Screen-reader labels — every container, graph, strip and field in the main window names
+      itself and says what it is. **The rows do not.** The toolkit has no per-item accessibility —
+      no object per row, no way to say "firefox, 4 % CPU" as the selection moves — so a reader lands
+      on the process list, is told it is a tree, and finds nothing inside it. That is a gap in
+      NativeForms rather than here, and this box stays open until it is closed there
+- [ ] Scalable text — **and this is a refusal rather than an omission.** Scaling only this program's
+      layout constants gives tall rows with small text: every painter in the window, and every one
+      inside the toolkit that draws a header or a cell, takes its font from `ITheme.DefaultFont`, and
+      that font is the desktop's rather than anything this program picks. `Control.LogicalToDevice`
+      exists and is called in exactly one place in the whole toolkit. Half of this belongs in
+      NativeForms, and a `ui.scale` here that moved the boxes and not the letters would look like
+      progress and photograph as a defect
+- [x] High contrast — `ITheme.IsHighContrast` is populated by all three backends and was read by
+      nothing here. Under that scheme no row wash and no cell mark is painted: each is a third colour
+      laid between a foreground and background the theme promised would be readable, and every state
+      they name is also a column. The match highlight is the exception, because a matched run has no
+      other carrier in the cell, and it comes from the theme's own selection colour. The graticule
+      comes up from a faint green to a visible one and the axis labels lose their drop shadow — a
+      second colour a pixel from the first is the same thing the scheme exists to stop
+- [ ] System text scaling — blocked upstream, and worth naming precisely: `GtkBackend` writes
+      `gtk-xft-dpi` back to a 96-DPI baseline on start-up, deliberately, so that native widgets match
+      owner-drawn text. That is the right call for a toolkit whose geometry is device pixels, and its
+      effect is that the desktop's text-scaling factor never reaches this program at all. Nothing
+      here can honour a number it is never told
+- [ ] 🟡 Non-colour status indicators — **downgraded from a tick, on the evidence.** Every *row*
+      colour is also a column: the category a wash names is in State, User, Elevated or Package, and
+      a marked cell keeps its number. The core heat map is not: sixty-four cells on a green-amber-red
+      ramp with not a digit anywhere on them, which is a reading available to nobody who cannot
+      separate those hues. It now has a textual summary a screen reader is given, and that is not the
+      same as a visible one — see §45.9's colour-blind row, which is the box this actually belongs to
+- [x] Graphs expose textual summaries — current, minimum, maximum and average over the drawn span,
+      refreshed on the sample tick. Visible on the performance page's inspection view; announced,
+      rather than drawn, for the two plots and the meter strip in the main window
 
 TUI:
 
 - [x] Works without colour
 - [x] Never conveys state solely by colour
-- [x] ASCII fallback
-- [ ] Conventional terminal screen readers
+- [x] ASCII fallback — and the way to check it is `--ascii`, not a hostile locale. `--capture-frame`
+      pins the block ramp on purpose, because a golden frame is compared byte for byte and may not
+      depend on the capturing machine's `LANG`; the interactive path is the one that reads the locale
+- [ ] Conventional terminal screen readers — untouched, and not something an accessible name can
+      reach: a full-screen alternate-buffer program that repaints a grid once a second is the shape
+      a terminal screen reader has the most trouble with, and the honest answer is a mode that gives
+      up the grid rather than a label on it. Named here so it is a decision
 
 # 75. Localisation
 

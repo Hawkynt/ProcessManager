@@ -129,6 +129,15 @@ public sealed class SettingsDialog : Form {
   /// </remarks>
   private UserSettings _carried;
 
+  /// <summary>
+  /// Which entry the interval picker was filled with, so an untouched picker writes nothing back.
+  /// </summary>
+  /// <remarks>
+  /// Six entries against a file that takes any number: without this, opening the box on a file that
+  /// says <c>interval=3</c> and pressing OK writes 2.
+  /// </remarks>
+  private int _filledInterval = -1;
+
   /// <param name="settings">The settings as they stand, including everything this box cannot show.</param>
   /// <param name="location">Which file is being edited, and what put it there.</param>
   public SettingsDialog(UserSettings settings, SettingsLocation location) {
@@ -280,9 +289,13 @@ public sealed class SettingsDialog : Form {
         ManualRefresh = manual,
       };
 
-      // The rate underneath is kept when the tick is off, so switching it back on returns to the
-      // rate somebody chose rather than to the default (PRD §12).
-      return manual || chosen < 0
+      // Kept when the tick is off, so switching it back on returns to the rate somebody chose rather
+      // than to the default (PRD §12) — and kept when the picker was not touched, which is the case
+      // that matters more. The file takes any number and this picker offers six, so a file saying
+      // three seconds opens showing "2 s", the nearest one it has; writing that selection back would
+      // silently round somebody's hand-written interval down every time they opened this box and
+      // pressed OK.
+      return manual || chosen < 0 || chosen == this._filledInterval
         ? settings
         : settings with { IntervalSeconds = UserSettings.OfferedIntervalSeconds[chosen] };
     }
@@ -331,6 +344,7 @@ public sealed class SettingsDialog : Form {
 
     if (settings.ManualRefresh) {
       this._interval.SelectedIndex = this._interval.Items.Count - 1;
+      this._filledInterval = this._interval.SelectedIndex;
       return;
     }
 
@@ -343,6 +357,7 @@ public sealed class SettingsDialog : Form {
         nearest = i;
 
     this._interval.SelectedIndex = nearest;
+    this._filledInterval = nearest;
   }
 
   private void EditThresholds() {

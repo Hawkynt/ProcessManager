@@ -126,6 +126,19 @@ public sealed class SettingsDialogTests {
     => Assert.That(Dialog(new() { IntervalSeconds = seconds }).Description, Does.Contain(expected));
 
   /// <summary>
+  /// …and showing the nearest is not the same as writing it. Opening this box on a hand-written
+  /// <c>interval=3</c> and pressing OK must leave three seconds alone; a picker of six entries that
+  /// rewrites the file every time it is looked at is a picker that quietly deletes a setting the file
+  /// was always allowed to hold (PRD §12, §67).
+  /// </summary>
+  [TestCase(3.0)]
+  [TestCase(0.3)]
+  [TestCase(9.0)]
+  [TestCase(45.0)]
+  public void ButAnUntouchedPickerWritesNothingBack(double seconds)
+    => Assert.That(Dialog(new() { IntervalSeconds = seconds }).Settings.IntervalSeconds, Is.EqualTo(seconds));
+
+  /// <summary>
   /// A pause is not written down and "by hand" is: they are two different statements, and the rate
   /// underneath survives either (PRD §12).
   /// </summary>
