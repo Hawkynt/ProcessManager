@@ -243,7 +243,16 @@ internal static class SystemProcessInformationReader {
             KernelTimeNs: Counter.Of((ulong)Math.Max(0, thread.KernelTime) * 100),
             ContextSwitches: Counter.Of(thread.ContextSwitches),
             LastCpu: -1,
-            WaitReason: MapWaitReason(thread.WaitReason)
+            WaitReason: MapWaitReason(thread.WaitReason),
+            // Windows counts switches but does not split them, and the bulk query carries neither an
+            // affinity nor a base priority. Each has to be stated: default(Counter) is a confident
+            // zero, and a thread that has never yielded voluntarily would be a remarkable claim to
+            // make about every thread on the machine (PRD §72.3).
+            VoluntaryContextSwitches: Counter.NotSupported,
+            InvoluntaryContextSwitches: Counter.NotSupported,
+            BasePriority: null,
+            Policy: SchedulingPolicy.Unknown,
+            Affinity: null
           ));
         }
 

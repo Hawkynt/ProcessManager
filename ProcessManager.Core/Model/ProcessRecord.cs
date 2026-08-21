@@ -13,6 +13,25 @@ public enum ProcessState : byte {
   Dead,
 }
 
+/// <summary>Which scheduler class a task runs under.</summary>
+/// <remarks>
+/// The classes are the kernel's, not an invention of ours: a thread under <c>SCHED_FIFO</c> is not a
+/// high-priority ordinary thread, it is a thread that ordinary threads cannot preempt at all, and
+/// flattening the two onto one priority number is exactly the false equivalence §5.3 forbids.
+/// <see cref="Unknown"/> is zero so that a record nobody filled says so rather than claiming the
+/// ordinary class.
+/// </remarks>
+public enum SchedulingPolicy : byte {
+  Unknown = 0,
+  Other,
+  Fifo,
+  RoundRobin,
+  Batch,
+  Idle,
+  Deadline,
+  Extensible,
+}
+
 /// <summary>
 /// One process as one sample saw it: absolute readings only. Every rate, percentage and delta the UI
 /// shows is computed by <see cref="Sampling.SnapshotDelta"/> from two of these, so a probe that
@@ -54,6 +73,12 @@ public struct ProcessRecord {
 
   /// <summary>Unix nice value; 0 elsewhere.</summary>
   public int Nice;
+
+  /// <summary>
+  /// The scheduler class, or <see cref="SchedulingPolicy.Unknown"/> where the platform has no such
+  /// notion — which is the default, so a probe that never sets it does not claim the ordinary class.
+  /// </summary>
+  public SchedulingPolicy SchedulingPolicy;
 
   /// <summary>
   /// The logical processor this last ran on, or -1 when the platform does not say.

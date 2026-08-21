@@ -1104,11 +1104,11 @@ The engine enumerates threads on both platforms; the table shows a subset.
 - [ ] Resolved start symbol
 - [ ] Current instruction / address
 - [x] Priority
-- [ ] Base priority
-- [ ] Scheduling policy
+- [x] Base priority
+- [x] Scheduling policy
 - [ ] Ideal processor
 - [x] Current / last CPU
-- [ ] Affinity
+- [x] Affinity
 - [x] Wait reason
 - [ ] Wait duration
 - [ ] Kernel/user indicator
@@ -1124,6 +1124,25 @@ question — without a stack walk. On Linux it is the kernel symbol from `wchan`
 (`futex_wait_queue_me`, `poll_schedule_timeout`); on Windows it is the thread's `KWAIT_REASON`, which
 the bulk query already carried and nothing read. The names come free from the same `stat` line the
 rest is parsed from, because Linux gives every thread its own `comm`.
+
+The context-switch count is shown split as well as summed, because the halves mean opposite things: a
+thread with millions of voluntary switches is waiting on something, while the same number of
+involuntary ones is a thread losing a contended processor, and the total cannot tell those apart.
+Linux writes the halves in the thread's `status`; Windows counts switches but does not split them, so
+that column reads `n/a` there rather than zero (§72.3).
+
+Base priority, scheduling policy and affinity are native readings, not translations (§5.3). On Linux
+base priority is the nice value — the priority the thread was *given*, against the effective priority
+in `Priority` that moves with the load — the policy is the `SCHED_*` class under the kernel's own
+name, and the affinity is `Cpus_allowed_list` kept in the kernel's list notation, which is what
+`taskset` both prints and accepts.
+
+Still unticked and why: **cycles**, **CPU %** and the two rate columns need a second sample or a
+`perf` counter rather than a second file; **start address**, **resolved module/symbol** and **current
+instruction** are zeroed in `stat` for anyone without `PTRACE_MODE_ATTACH`; **ideal processor** and
+**TEB / TLS** have no Linux equivalent. **Wait duration** is deliberately left: `schedstat` reports
+cumulative time queued for a processor, which is not how long the current wait has lasted, and
+labelling it as such would be exactly the false equivalence §5.3 forbids.
 
 Actions:
 

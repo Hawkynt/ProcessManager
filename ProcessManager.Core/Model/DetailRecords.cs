@@ -13,6 +13,24 @@ namespace Hawkynt.ProcessManager.Model;
 /// What the thread is blocked on. The answer to "why is this hanging" more often than any other
 /// field here (PRD §2), and the one that needs no stack walk to get.
 /// </param>
+/// <param name="VoluntaryContextSwitches">
+/// Switches the thread asked for by blocking. Split from the total because the two halves mean
+/// opposite things: a thread with millions of these is waiting on something, while the same number
+/// of involuntary ones is a thread being pushed off a contended processor.
+/// </param>
+/// <param name="InvoluntaryContextSwitches">Switches the scheduler imposed — see above.</param>
+/// <param name="BasePriority">
+/// The priority the thread was given rather than the one it is running at: the nice value on Linux,
+/// where the effective priority in <see cref="Priority"/> moves with it. <see langword="null"/> when
+/// the platform did not say, because every integer in the Unix range is a legal nice value and none
+/// of them can stand in for "unknown".
+/// </param>
+/// <param name="Policy">Which scheduler class runs it (PRD §5.3).</param>
+/// <param name="Affinity">
+/// The processors it is allowed on, in the kernel's own list notation (<c>0-7,16</c>), or
+/// <see langword="null"/> when unreadable. Kept as the kernel wrote it rather than expanded to a
+/// mask: on a 128-way machine the list is the readable form and the mask is not.
+/// </param>
 public readonly record struct ThreadRecord(
   int Tid,
   ProcessState State,
@@ -26,8 +44,49 @@ public readonly record struct ThreadRecord(
   Counter KernelTimeNs,
   Counter ContextSwitches,
   int LastCpu,
-  string? WaitReason
+  string? WaitReason,
+  Counter VoluntaryContextSwitches,
+  Counter InvoluntaryContextSwitches,
+  int? BasePriority,
+  SchedulingPolicy Policy,
+  string? Affinity
 );
+
+/// <summary>
+/// The per-thread half of <c>/proc/[pid]/task/[tid]/status</c> (PRD §29).
+/// </summary>
+/// <remarks>
+/// A record rather than a handful of out-parameters because the whole point is that the failure
+/// cases travel with the numbers: a status nobody could open has to reach the view as
+/// <see cref="UnknownReason.NotPermitted"/> and not as a thread that has never been switched off a
+/// processor in its life (PRD §72.3).
+/// </remarks>
+public readonly record struct ThreadStatus(
+  Counter VoluntaryContextSwitches,
+  Counter InvoluntaryContextSwitches,
+  string? Affinity
+) {
+
+  /// <summary>A status that could not be read, with the reason in every counter it would have had.</summary>
+  public static ThreadStatus Unreadable(UnknownReason reason)
+    => new(Counter.Unknown(reason), Counter.Unknown(reason), null);
+
+  /// <summary>
+  /// Both halves added up, or the reason one of them is missing.
+  /// </summary>
+  /// <remarks>
+  /// Adding a known half to an unknown one would produce a total that is quietly too small, so the
+  /// unknown wins — which is <see cref="Counter.Since"/>'s rule applied to a sum.
+  /// </remarks>
+  public Counter TotalContextSwitches
+    => this.VoluntaryContextSwitches.TryGetValue(out var voluntary)
+      && this.InvoluntaryContextSwitches.TryGetValue(out var involuntary)
+        ? Counter.Of(voluntary + involuntary)
+        : this.VoluntaryContextSwitches.HasValue
+          ? this.InvoluntaryContextSwitches
+          : this.VoluntaryContextSwitches;
+
+}
 
 /// <summary>A file mapped into a process: a shared library, the image itself, or a data mapping.</summary>
 public readonly record struct ModuleRecord(

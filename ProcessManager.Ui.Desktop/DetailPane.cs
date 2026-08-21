@@ -60,12 +60,20 @@ public sealed class DetailPane {
       ("TID", 80),
       ("Name", 150),
       ("State", 70),
+      ("Started", 140),
       ("CPU time", 100),
       ("User", 90),
       ("Kernel", 90),
       ("Ctx switches", 100),
+      // The split, next to the total it adds up to: voluntary switches are a thread waiting for
+      // something and involuntary ones are a thread being pushed off a contended processor, and the
+      // sum on its own cannot tell those apart (PRD §29).
+      ("Vol / invol", 110),
       ("CPU#", 60),
       ("Priority", 70),
+      ("Base", 60),
+      ("Policy", 120),
+      ("Affinity", 110),
       // Last, and widest: it is a kernel symbol or a wait reason, and it is the column that answers
       // "why is this hanging" (PRD §2, §29).
       ("Waiting on", 200)
@@ -207,12 +215,17 @@ public sealed class DetailPane {
       threads[i].Tid.ToString(CultureInfo.InvariantCulture),
       threads[i].Name ?? "—",
       Humanize.State(threads[i].State),
+      Humanize.Timestamp(threads[i].StartTimeUtcTicks),
       Humanize.Duration(threads[i].CpuTimeNs),
       Humanize.Duration(threads[i].UserTimeNs),
       Humanize.Duration(threads[i].KernelTimeNs),
       Humanize.Count(threads[i].ContextSwitches),
+      Humanize.Pair(threads[i].VoluntaryContextSwitches, threads[i].InvoluntaryContextSwitches),
       threads[i].LastCpu >= 0 ? threads[i].LastCpu.ToString(CultureInfo.InvariantCulture) : "—",
       threads[i].Priority.ToString(CultureInfo.InvariantCulture),
+      threads[i].BasePriority?.ToString(CultureInfo.InvariantCulture) ?? "—",
+      Humanize.SchedulingPolicy(threads[i].Policy),
+      threads[i].Affinity ?? "—",
       threads[i].WaitReason
         ?? threads[i].StartSymbol
         ?? (threads[i].StartAddress == 0 ? "—" : "0x" + threads[i].StartAddress.ToString("x", CultureInfo.InvariantCulture)),
@@ -260,10 +273,13 @@ public sealed class DetailPane {
     if (count == 0) {
       // An empty list and a list we were not allowed to read look identical, so the empty case says
       // which it is rather than leaving the reader to guess (PRD §1.5).
-      list.Nodes.Add(new TreeNode("nothing to show — the process may not permit this, or has none") {
-        Tag = new[] { "nothing to show — the process may not permit this, or has none", "", "", "", "" },
-      });
-
+      const string EMPTY = "nothing to show — the process may not permit this, or has none";
+      // One cell per column, counted from the list rather than written out: every column accessor
+      // indexes this array, so a fixed five cells threw the moment a list grew a sixth column.
+      var cells = new string[Math.Max(1, list.Columns.Count)];
+      Array.Fill(cells, string.Empty);
+      cells[0] = EMPTY;
+      list.Nodes.Add(new TreeNode(EMPTY) { Tag = cells });
       return;
     }
 

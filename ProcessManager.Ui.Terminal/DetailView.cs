@@ -72,20 +72,30 @@ public sealed class DetailView(ISystemProbe probe) {
         break;
 
       case DetailTab.Threads: {
-        this._headers = ["TID", "Name", "S", "CPU time", "User", "Kernel", "Ctx", "CPU#", "Pri", "Waiting on"];
-        this._widths = [8, 16, 6, 10, 9, 9, 9, 5, 4, 28];
+        // The same fields as the window's thread tab and in the same order, because a field that
+        // exists in one front-end and not the other is the thing §58 forbids.
+        this._headers = [
+          "TID", "Name", "S", "Started", "CPU time", "User", "Kernel", "Ctx", "Vol / invol",
+          "CPU#", "Pri", "Base", "Policy", "Affinity", "Waiting on",
+        ];
+        this._widths = [8, 16, 6, 20, 10, 9, 9, 9, 14, 5, 4, 5, 14, 12, 28];
         foreach (var thread in probe.GetThreads(this._key))
           this._rows.Add([
             thread.Tid.ToString(CultureInfo.InvariantCulture),
             thread.Name ?? "—",
             Humanize.State(thread.State),
+            Humanize.Timestamp(thread.StartTimeUtcTicks),
             Humanize.Duration(thread.CpuTimeNs),
             Humanize.Duration(thread.UserTimeNs),
             Humanize.Duration(thread.KernelTimeNs),
             Humanize.Count(thread.ContextSwitches),
+            Humanize.Pair(thread.VoluntaryContextSwitches, thread.InvoluntaryContextSwitches),
             thread.LastCpu >= 0 ? thread.LastCpu.ToString(CultureInfo.InvariantCulture) : "—",
             thread.Priority.ToString(CultureInfo.InvariantCulture),
-            // The wait reason first: it is what somebody opened this page to find out.
+            thread.BasePriority?.ToString(CultureInfo.InvariantCulture) ?? "—",
+            Humanize.SchedulingPolicy(thread.Policy),
+            thread.Affinity ?? "—",
+            // The wait reason last and widest: it is what somebody opened this page to find out.
             thread.WaitReason
               ?? (thread.StartAddress == 0 ? "—" : "0x" + thread.StartAddress.ToString("x", CultureInfo.InvariantCulture)),
           ]);
