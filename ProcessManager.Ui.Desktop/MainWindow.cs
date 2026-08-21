@@ -241,6 +241,9 @@ public sealed class MainWindow : Form {
       this.Bounds = new(this.Bounds.X, this.Bounds.Y, settings.WindowWidth, settings.WindowHeight);
 
     this.LowerPaneVisible = settings.LowerPaneVisible;
+    // After the settings are in place: until now the menu could only offer §94's presets, because
+    // the sets somebody wrote by hand arrive with the file.
+    this.RefreshColumnSets();
     this.RebuildColumns();
 
     this._autoSaver = new(this.DescribeSettings, save);
@@ -2397,16 +2400,48 @@ public sealed class MainWindow : Form {
   private const string _EndsWithoutAsking
     = "This stops it immediately without asking it to save anything, and unsaved work in it will be lost.";
 
+  /// <summary>
+  /// What a build with no action layer says, in one place because two of them said it separately and
+  /// a test that held them together would otherwise be holding two string literals together.
+  /// </summary>
+  private const string _NoActionsHere = "This build has no actions for this platform.";
+
   private const string _RestartEndsWithoutAsking
     = "It is asked to stop and then started again with the same arguments in the same directory. "
     + "Unsaved work in it may be lost, and it will be a different process with a different pid.";
+
+  #region asking, and saying (PRD §5.5, §90)
+
+  /// <summary>
+  /// How this window asks before doing something that cannot be undone.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A property rather than a direct call to the dialog, so that the wording and the refusal path
+  /// can be read by a test. They could not be: every prompt went straight to a static
+  /// <see cref="MessageBox"/>, which throws without a display — so the one thing §90 is about, the
+  /// sentence a person is answering, was the least tested text in the program.
+  /// </para>
+  /// <para>
+  /// The default is the dialog, so nothing about the shipped window changes. A caller that replaces
+  /// it is answering for the person at the keyboard, which is why it is not something the settings
+  /// file can reach.
+  /// </para>
+  /// </remarks>
+  public Func<string, bool> Confirm { get; set; } = question
+    => MessageBox.Show(question, "Process Manager", MessageBoxButtons.YesNo) == DialogResult.Yes;
+
+  /// <summary>The same seam for the messages that are told rather than asked.</summary>
+  public Action<string> Announce { get; set; } = message => MessageBox.Show(message, "Process Manager");
+
+  #endregion
 
   private void Act(string what, Func<ProcessKey, ActionResult> action, string? consequence = null) {
     if (this._binder.SelectedRow is not { } row)
       return;
 
     if (this._actions is null) {
-      MessageBox.Show("This build has no actions for this platform.", "Process Manager");
+      this.Announce(_NoActionsHere);
       return;
     }
 
@@ -2417,13 +2452,7 @@ public sealed class MainWindow : Form {
     // (PRD §67, §90).
     if (this._settings.ConfirmDestructiveActions) {
       var question = $"{char.ToUpper(what[0], CultureInfo.CurrentCulture)}{what[1..]} {row.Name} (PID {row.Pid})?";
-      var answer = MessageBox.Show(
-        consequence is null ? question : $"{question}\n\n{consequence}",
-        "Process Manager",
-        MessageBoxButtons.YesNo
-      );
-
-      if (answer != DialogResult.Yes)
+      if (!this.Confirm(consequence is null ? question : $"{question}\n\n{consequence}"))
         return;
     }
 
@@ -2443,9 +2472,9 @@ public sealed class MainWindow : Form {
   /// </remarks>
   private void Report(ActionResult result) {
     if (!result.Succeeded)
-      MessageBox.Show(result.Detail ?? result.Outcome.ToString(), "Process Manager");
+      this.Announce(result.Detail ?? result.Outcome.ToString());
     else if (result.Detail is { Length: > 0 } detail)
-      MessageBox.Show(detail, "Process Manager");
+      this.Announce(detail);
   }
 
   /// <summary>
@@ -2477,14 +2506,14 @@ public sealed class MainWindow : Form {
       return;
 
     if (this._actions is null) {
-      MessageBox.Show("This build has no actions for this platform.", "Process Manager");
+      this.Announce(_NoActionsHere);
       return;
     }
 
     // Deepest first — see Query.ProcessTree.DescendantsFirst for why the order is not incidental.
     var order = ProcessTree.DescendantsFirst(this._sampler.Current, row.Pid);
     if (order.Count == 0) {
-      MessageBox.Show($"{row.Name} (PID {row.Pid}) is no longer in the list.", "Process Manager");
+      this.Announce($"{row.Name} (PID {row.Pid}) is no longer in the list.");
       return;
     }
 
@@ -2493,7 +2522,7 @@ public sealed class MainWindow : Form {
       ? $"End {row.Name} (PID {row.Pid})? Nothing is running under it."
       : $"End {row.Name} (PID {row.Pid}) and the {descendants} process{(descendants == 1 ? string.Empty : "es")} running under it?";
 
-    if (MessageBox.Show($"{question}\n\n{_EndsWithoutAsking}", "Process Manager", MessageBoxButtons.YesNo) != DialogResult.Yes)
+    if (!this.Confirm($"{question}\n\n{_EndsWithoutAsking}"))
       return;
 
     this.Report(this._actions.TerminateTree(order));
@@ -2872,6 +2901,8 @@ public sealed class MainWindow : Form {
   private ToolStripMenuItem BuildColumnMenu() {
     var menu = new ToolStripMenuItem("Columns");
     menu.DropDownItems.Add(Item("Select columns…", this.ChooseColumns));
+    menu.DropDownItems.Add(this._columnSets);
+    this.RefreshColumnSets();
     menu.DropDownItems.Add(new ToolStripSeparator());
     menu.DropDownItems.Add(Shortcut("Previous column", Keys.Control | Keys.Left, () => this.StepColumn(-1)));
     menu.DropDownItems.Add(Shortcut("Next column", Keys.Control | Keys.Right, () => this.StepColumn(1)));
@@ -2888,6 +2919,54 @@ public sealed class MainWindow : Form {
     menu.DropDownItems.Add(Shortcut("Reset columns", Keys.Control | Keys.D0, this.ResetColumns));
     return menu;
   }
+
+  #region column sets (PRD §11, §58, §94)
+
+  /// <summary>
+  /// The named column sets, as a submenu of the column menu.
+  /// </summary>
+  /// <remarks>
+  /// §94's presets and anything the settings file names, in one list. The terminal has had this since
+  /// its column chooser was written and the window had nothing: the sets were parsed, saved, carried
+  /// through untouched and reachable from one front-end only, which is the disagreement §58 exists to
+  /// stop. Rebuilt when settings are applied rather than filled once, because the saved sets are not
+  /// known until then.
+  /// </remarks>
+  private readonly ToolStripMenuItem _columnSets = new("Column sets");
+
+  private void RefreshColumnSets() {
+    this._columnSets.DropDownItems.Clear();
+    foreach (var name in this._settings.ColumnSetNames()) {
+      var wanted = name;
+      this._columnSets.DropDownItems.Add(Item(name, () => this.ApplyColumnSet(wanted)));
+    }
+  }
+
+  /// <summary>Every set that can be asked for, saved ones and presets alike.</summary>
+  public IReadOnlyList<string> ColumnSetNames => this._settings.ColumnSetNames();
+
+  /// <summary>
+  /// Shows a named set, or says there is no such thing.
+  /// </summary>
+  /// <remarks>
+  /// The pinned run is kept and clamped rather than reset. A reader who pinned the name and the pid
+  /// pinned them because they want them there whatever else the table shows, and a set with fewer
+  /// columns than the pin counted into would otherwise hold the whole table still.
+  /// </remarks>
+  public bool ShowColumnSet(string name) {
+    if (!this._settings.TryGetColumnSet(name, out var fields)) {
+      this._status.Text = $"there is no column set called {name}";
+      return false;
+    }
+
+    this.ShowColumns(fields, Math.Min(this._columns.Frozen, fields.Length));
+    this._status.Text = $"columns are the {name} set now";
+    return true;
+  }
+
+  private void ApplyColumnSet(string name) => this.ShowColumnSet(name);
+
+  #endregion
 
   /// <summary>How much one keypress moves a column boundary. A pixel a press would be useless.</summary>
   private const int _ResizeStep = 12;

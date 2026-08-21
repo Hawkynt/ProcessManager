@@ -556,7 +556,13 @@ also reachable through the export key, which writes a file no terminal setting c
 Named **column sets**. Each stores its visible fields and their ordering; widths come from the
 registry, and sorting and grouping are not stored in a set. How many columns are pinned is kept per
 front-end rather than per set — the window and the terminal keep their own column orders, and five
-pinned columns in a wide list mean nothing at all in an eighty-column terminal.
+pinned columns in a wide list mean nothing at all in an eighty-column terminal. Applying a set
+therefore keeps whatever was pinned and clamps it to the new set's width rather than dropping it: a
+reader who pinned the name column pinned it because they want it there whatever else the table shows.
+
+Reachable from both front-ends — the terminal's column chooser and the window's **Column sets**
+submenu — and from `--columns @name`. A set the settings file names shadows a preset of the same
+name, which is what keeps a preset improvable instead of something to be worked around.
 
 - [x] Basic
 - [x] Performance — as `cpu`
@@ -4718,9 +4724,27 @@ Windows parsing on Linux.
 
 - [x] Sorting while data changes — three tests, added after the reordering bug in §12
 - [x] Tree expansion
-- [ ] Selected-process termination
-- [ ] Lower pane
-- [ ] 🟡 Column sets
+- [x] Selected-process termination — the menu item worked over the recorded machine, not the action
+      layer under it. What was untested was everything between: that the prompt names the process,
+      its pid and what is lost rather than asking "are you sure"; that answering **no** ends nothing,
+      a branch that had been written and never run; that **End task** asks the program and not the
+      user, because it is the reversible one; that ending a tree counts what goes with it; that a
+      refusal from the kernel is put in front of somebody rather than swallowed; and that with no row
+      selected nothing is asked and nothing happens. It needed a seam: every prompt went straight to
+      a static dialog that throws without a display, so `MainWindow.Confirm` and `Announce` are now
+      properties whose defaults are that dialog
+- [x] Lower pane — that it opens showing, that hiding and showing it again is a no-op, that whether
+      it was showing survives a save and a load, and that every one of its six tabs fills for the
+      selected process with every cell of every row drawn. The last is the one that matters: the
+      tabs read their cells out of a row's tag array by index, so a row shorter than the list has
+      columns throws while painting rather than while testing
+- [x] 🟡 Column sets — the sets were parsed, saved, carried through untouched and reachable from the
+      terminal alone, so the window had no way to apply one. It has a **Column sets** submenu now,
+      offering §94's presets and anything the file names, with a saved set shadowing a preset of the
+      same name. The pinned run is kept and clamped rather than dropped: somebody who pinned the name
+      column wants it pinned whatever else the table shows. Amber because there is still no way to
+      *save* the current columns as a set from either front-end — a set is written by hand into the
+      file
 - [x] Accessibility — a sweep of the real control tree of all three windows rather than a checklist
       written out by hand, so a control added tomorrow and left unnamed fails it. It found every
       table, every plot, the rail, the filter box and both strips unnamed (§74)
