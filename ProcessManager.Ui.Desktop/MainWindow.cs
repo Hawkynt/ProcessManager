@@ -37,6 +37,9 @@ public sealed class MainWindow : Form {
   private ShellView? _shown;
   private ToolStripButton? _lowerPaneButton;
   private ToolStripMenuItem? _lowerPaneItem;
+
+  /// <summary>Kept only so the tab order can put the menu bar first, where it is read.</summary>
+  private MenuStrip? _menu;
   private readonly NativeForms.Timer _timer = new();
   private readonly HistoryRing<Rate> _cpuHistory = new(600);
   private readonly HistoryRing<Rate> _memoryHistory = new(600);
@@ -94,6 +97,8 @@ public sealed class MainWindow : Form {
     this.BuildCommandBar();
     this.BuildMenu();
     this.BuildViews();
+    // After everything exists, because it names things rather than making them (PRD §74).
+    this.NameEverything();
 
     this._timer.Interval = 1000;
     this._timer.Tick += (_, _) => this.Refresh();
@@ -103,6 +108,89 @@ public sealed class MainWindow : Form {
     // the frame is the new one is exactly what "it does not resize" looks like.
     this.Resize += (_, _) => this.ApplyLayout();
   }
+
+  #region saying what everything is (PRD §74)
+
+  /// <summary>
+  /// Gives every part of the window a name a screen reader can say, and a tab order that follows the
+  /// way it is read (PRD §74).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Half of this window is owner-drawn, and an owner-drawn control is one rectangle as far as the
+  /// accessibility layer is concerned: it has no text of its own to fall back on, so a plot, a meter
+  /// strip and a status line all announced as nothing at all. Anything whose caption lives in a
+  /// separate label has the same problem — the filter box is beside a label reading "Filter" and had
+  /// no idea that label was about it.
+  /// </para>
+  /// <para>
+  /// <b>What this cannot do, and is not pretending to.</b> The process list announces as one tree.
+  /// The toolkit has no per-item accessibility — no object per row, no way to say "firefox, 4 % CPU"
+  /// as the selection moves — so a screen reader lands on the list, is told what it is, and finds
+  /// nothing inside it. That is a gap in NativeForms rather than here, and it is written down in
+  /// §74 instead of being papered over: naming the container while the rows stay silent is worth
+  /// doing, and is not the same as the requirement being met.
+  /// </para>
+  /// <para>
+  /// The tab order is the reading order — menu, commands, the plots along the top, the rail down the
+  /// side, the filter, then the list and its detail pane — rather than the order the children were
+  /// added in, which is the reverse of the docking order and therefore very nearly backwards. The
+  /// toolkit sorts siblings by <c>TabIndex</c> and walks each subtree depth-first, so only the
+  /// window's own children need numbering; everything inside each strip was already added in the
+  /// order it is read.
+  /// </para>
+  /// </remarks>
+  private void NameEverything() {
+    Announce(this._tree, "Processes", AccessibleRole.Tree);
+    Announce(this._filterBox, "Filter", AccessibleRole.Text);
+    Announce(this._filterNote, "What the filter made of what you typed", AccessibleRole.StaticText);
+    Announce(this._status, "Status", AccessibleRole.StaticText);
+    Announce(this._rail, "Views", AccessibleRole.List);
+    Announce(this._commands, "Commands", AccessibleRole.ToolBar);
+    Announce(this._plots, "System totals", AccessibleRole.Grouping);
+    Announce(this._filterBar, "Filter bar", AccessibleRole.Grouping);
+    Announce(this._details.Control, "Details for the selected process", AccessibleRole.PageTabList);
+    Announce(this._cpuPlot, "Processor history", AccessibleRole.Graphic);
+    Announce(this._memoryPlot, "Memory history", AccessibleRole.Graphic);
+    Announce(this._cores, "Logical processors", AccessibleRole.Graphic);
+
+    // The reading order, which is not the order these were added in: the toolkit docks by walking
+    // its children backwards, so the strip added last is the one at the top of the window.
+    var order = 0;
+    foreach (var control in (ReadOnlySpan<Control?>)[
+      this._menu, this._commands, this._plots, this._rail, this._filterBar, this._content, this._status,
+    ])
+      if (control is not null)
+        control.TabIndex = order++;
+
+    this.DescribeForScreenReaders();
+  }
+
+  /// <summary>
+  /// Refreshes the descriptions that follow what is on screen (PRD §74, §45.9).
+  /// </summary>
+  /// <remarks>
+  /// The names above never change; these do. A plot's description is the same current, minimum,
+  /// maximum and average the inspection view shows, which is what §74's "graphs expose textual
+  /// summaries" is asking for — a graph whose only content is a picture is a graph that says nothing
+  /// to somebody who cannot see it. The list's is the shape of the table rather than its contents,
+  /// because the contents are nine hundred rows and the shape is what a reader needs before deciding
+  /// to walk them.
+  /// </remarks>
+  private void DescribeForScreenReaders() {
+    this._cpuPlot.AccessibleDescription = this._cpuPlot.Statistics();
+    this._memoryPlot.AccessibleDescription = this._memoryPlot.Statistics();
+    this._cores.AccessibleDescription = this._cores.Statistics();
+    this._tree.AccessibleDescription =
+      $"{this._view.MatchCount} processes, {this._columns.Count} columns, sorted by {this.DescribeSort()}";
+  }
+
+  private static void Announce(Control control, string name, AccessibleRole role) {
+    control.AccessibleName = name;
+    control.AccessibleRole = role;
+  }
+
+  #endregion
 
   #region what survives a restart (PRD §11)
 
@@ -862,7 +950,7 @@ public sealed class MainWindow : Form {
       _ => RowPalette.Io,
     };
 
-    Sparkline.Draw(e.Graphics, e.Bounds, this._rowHistory.Get(row.Key, series), this._rowHistory.ScaleOf(series), colour);
+    Sparkline.Draw(e.Graphics, e.Bounds, this._rowHistory.Get(row.Key, series), this._rowHistory.ScaleOf(series), colour, e.Theme);
     // Handled: the cell has no text, and letting the control draw an empty string over the plot
     // would only cost a measure.
     e.Handled = true;
@@ -2005,6 +2093,7 @@ public sealed class MainWindow : Form {
     // its bounds by hand — so docking it Top without a height produces a menu that is present,
     // mapped and nought pixels tall, which photographs exactly like a menu that was never added.
     var menu = new MenuStrip { Dock = DockStyle.Top, Height = 26 };
+    this._menu = menu;
 
     var view = new ToolStripMenuItem("View");
     view.DropDownItems.Add(this.BuildGroupingMenu());
@@ -2176,6 +2265,9 @@ public sealed class MainWindow : Form {
 
     this.UpdateStatus(snapshot, delta);
     this.UpdateDetails();
+    // Once the readings are current, so what a screen reader is told about the plots is the same
+    // sample the plots are drawing (PRD §74).
+    this.DescribeForScreenReaders();
   }
 
   /// <summary>

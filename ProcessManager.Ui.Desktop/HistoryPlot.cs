@@ -299,10 +299,10 @@ public sealed class HistoryPlot : OwnerDrawnControl {
     // horizontal movement against, which is most of what a scrolling plot is for.
     const int Cell = 16;
     for (var y = Cell; y < this.Height; y += Cell)
-      g.DrawLine(RowPalette.PlotGrid, 0, y, this.Width, y);
+      g.DrawLine(RowPalette.PlotGrid(theme), 0, y, this.Width, y);
 
     for (var x = this.Width % Cell; x < this.Width; x += Cell)
-      g.DrawLine(RowPalette.PlotGrid, x, 0, x, this.Height);
+      g.DrawLine(RowPalette.PlotGrid(theme), x, 0, x, this.Height);
 
     foreach (var series in this._series)
       SeriesPainter.Draw(
@@ -326,7 +326,7 @@ public sealed class HistoryPlot : OwnerDrawnControl {
       : this.Caption + this.Value;
 
     if (caption.Length > 0)
-      g.DrawText(caption, theme.DefaultFont, _CaptionColor, new(4, 2, this.Width - 8, 16), ContentAlignment.TopLeft);
+      g.DrawText(caption, theme.DefaultFont, RowPalette.PlotInk(theme, PlotInkKind.Caption), new(4, 2, this.Width - 8, 16), ContentAlignment.TopLeft);
 
     if (this.ScaleLabel.Length > 0)
       Shadowed(g, this.ScaleLabel, theme, new(4, 2, this.Width - 8, 16), ContentAlignment.TopRight);
@@ -366,19 +366,12 @@ public sealed class HistoryPlot : OwnerDrawnControl {
     if (this._hoverX < 0 || this.HoverText.Length == 0)
       return;
 
-    g.DrawLine(_CursorColor, this._hoverX, 0, this._hoverX, this.Height);
+    var theme = this.Theme;
+    g.DrawLine(RowPalette.PlotInk(theme, PlotInkKind.Cursor), this._hoverX, 0, this._hoverX, this.Height);
     var wide = this._hoverX > this.Width / 2;
     var box = new Rectangle(wide ? 4 : this.Width / 2, 18, (this.Width / 2) - 8, 14);
-    g.DrawText(this.HoverText, this.Theme.DefaultFont, _CaptionColor, box, wide ? ContentAlignment.TopLeft : ContentAlignment.TopRight);
+    g.DrawText(this.HoverText, theme.DefaultFont, RowPalette.PlotInk(theme, PlotInkKind.Caption), box, wide ? ContentAlignment.TopLeft : ContentAlignment.TopRight);
   }
-
-  private static readonly Color _CaptionColor = Color.FromArgb(0xFF, 0x9C, 0xE8, 0x9C);
-
-  private static readonly Color _AxisColor = Color.FromArgb(0xFF, 0x6E, 0xA8, 0x6E);
-
-  private static readonly Color _CursorColor = Color.FromArgb(0xFF, 0xC8, 0xE8, 0xC8);
-
-  private static readonly Color _AxisShadow = Color.FromArgb(0xFF, 0x08, 0x18, 0x08);
 
   /// <summary>
   /// Axis text with a dark letter behind it.
@@ -389,8 +382,12 @@ public sealed class HistoryPlot : OwnerDrawnControl {
   /// is when the graph is full (PRD §45.9).
   /// </remarks>
   private static void Shadowed(IGraphics g, string text, ITheme theme, Rectangle bounds, ContentAlignment alignment) {
-    g.DrawText(text, theme.DefaultFont, _AxisShadow, bounds with { X = bounds.X + 1, Y = bounds.Y + 1 }, alignment);
-    g.DrawText(text, theme.DefaultFont, _AxisColor, bounds, alignment);
+    // No shadow under a high-contrast scheme: a second colour one pixel from the first is the one
+    // thing that scheme exists to stop, and a white label needs no help (PRD §45.9).
+    if (RowPalette.PlotInkShadow(theme) is { } shadow)
+      g.DrawText(text, theme.DefaultFont, shadow, bounds with { X = bounds.X + 1, Y = bounds.Y + 1 }, alignment);
+
+    g.DrawText(text, theme.DefaultFont, RowPalette.PlotInk(theme, PlotInkKind.Axis), bounds, alignment);
   }
 
 }

@@ -205,7 +205,23 @@ public sealed class SettingsDialog : Form {
     this.Row(this._blocks);
     this.Row(this._mouse);
 
+    // A picker's caption is a separate label, so the picker itself has no text to be announced by
+    // and reads as an unlabelled combo box (PRD §74). The checkboxes above need none: their caption
+    // is their own text.
+    foreach (var (picker, caption) in (ReadOnlySpan<(ComboBox Picker, Label Caption)>)[
+      (this._interval, this._intervalCaption),
+      (this._cpuMode, this._cpuCaption),
+      (this._grouping, this._groupingCaption),
+    ]) {
+      picker.AccessibleName = caption.Text;
+      caption.AccessibleRole = AccessibleRole.StaticText;
+    }
+
     this._file.Text = "Settings file: " + location.Explain();
+    this._file.AccessibleRole = AccessibleRole.StaticText;
+    this._import.AccessibleDescription = "Replaces every setting with another file's. Nothing is written until OK.";
+    this._export.AccessibleDescription = "Writes what is on screen to another file, keys this build does not understand included.";
+    this._defaults.AccessibleDescription = "Puts the settings above back to their built-in values. Column sets and colours are left alone.";
     this.Controls.Add(this._file);
     this.Controls.Add(this._import);
     this.Controls.Add(this._export);
