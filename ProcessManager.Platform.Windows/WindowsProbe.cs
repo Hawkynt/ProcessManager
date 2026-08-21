@@ -443,16 +443,37 @@ public sealed class WindowsProbe : ISystemProbe {
   /// against — the whole machine's table comes back and is filtered. Both address families are asked
   /// for separately, because the call takes one at a time.
   /// </remarks>
-  public IReadOnlyList<ConnectionRecord> GetConnections(ProcessKey key) {
+  public IReadOnlyList<ConnectionRecord> GetConnections(ProcessKey key) => Connections(key.Pid);
+
+  /// <summary>
+  /// Every socket on the machine (PRD §40).
+  /// </summary>
+  /// <remarks>
+  /// The same four tables with the owner filter taken off, because they always did arrive whole —
+  /// the per-process call reads the machine's table and throws most of it away.
+  /// </remarks>
+  public IReadOnlyList<ConnectionRecord> GetConnections() => Connections(null);
+
+  private static List<ConnectionRecord> Connections(int? pid) {
     var result = new List<ConnectionRecord>();
-    ReadTcp(key.Pid, Native.AF_INET, ConnectionProtocol.Tcp, result);
-    ReadTcp(key.Pid, Native.AF_INET6, ConnectionProtocol.Tcp6, result);
-    ReadUdp(key.Pid, Native.AF_INET, ConnectionProtocol.Udp, result);
-    ReadUdp(key.Pid, Native.AF_INET6, ConnectionProtocol.Udp6, result);
+    ReadTcp(pid, Native.AF_INET, ConnectionProtocol.Tcp, result);
+    ReadTcp(pid, Native.AF_INET6, ConnectionProtocol.Tcp6, result);
+    ReadUdp(pid, Native.AF_INET, ConnectionProtocol.Udp, result);
+    ReadUdp(pid, Native.AF_INET6, ConnectionProtocol.Udp6, result);
     return result;
   }
 
-  private static void ReadTcp(int pid, uint family, ConnectionProtocol protocol, List<ConnectionRecord> result) {
+  /// <summary>
+  /// What the owner table does not carry.
+  /// </summary>
+  /// <remarks>
+  /// Not <see cref="Counter.NotSupported"/>: Windows can answer all three through
+  /// <c>GetPerTcpConnectionEStats</c>, and saying "this platform has no such counter" would tell the
+  /// reader the machine cannot do something it can. This is a gap in this program (PRD §7).
+  /// </remarks>
+  private static readonly Counter _NotYetOnWindows = Counter.Unknown(UnknownReason.NotImplementedHere);
+
+  private static void ReadTcp(int? pid, uint family, ConnectionProtocol protocol, List<ConnectionRecord> result) {
     // MIB_TCPROW_OWNER_PID for IPv4 is state, local addr, local port, remote addr, remote port,
     // owning pid — six 32-bit fields. The IPv6 row carries 16-byte addresses and scope ids instead.
     var rowSize = family == Native.AF_INET ? 24 : 56;
@@ -462,54 +483,81 @@ public sealed class WindowsProbe : ISystemProbe {
       (row, entry) => {
         if (family == Native.AF_INET) {
           var owner = Marshal.ReadInt32(entry, 20);
-          if (owner != pid)
+          if (pid is { } wanted && owner != wanted)
             return;
 
           result.Add(new(
             protocol,
+            SocketKind.Stream,
             FormatIPv4((uint)Marshal.ReadInt32(entry, 4)),
             NetworkPort(Marshal.ReadInt32(entry, 8)),
             FormatIPv4((uint)Marshal.ReadInt32(entry, 12)),
             NetworkPort(Marshal.ReadInt32(entry, 16)),
             TcpStateName(Marshal.ReadInt32(entry, 0)),
-            0
+            0,
+            owner,
+            -1,
+            null,
+            null,
+            _NotYetOnWindows,
+            _NotYetOnWindows,
+            _NotYetOnWindows
           ));
         } else {
           var owner = Marshal.ReadInt32(entry, 52);
-          if (owner != pid)
+          if (pid is { } wanted && owner != wanted)
             return;
 
           result.Add(new(
             protocol,
+            SocketKind.Stream,
             FormatIPv6(entry, 0),
             NetworkPort(Marshal.ReadInt32(entry, 20)),
             FormatIPv6(entry, 24),
             NetworkPort(Marshal.ReadInt32(entry, 44)),
             TcpStateName(Marshal.ReadInt32(entry, 48)),
-            0
+            0,
+            owner,
+            -1,
+            null,
+            null,
+            _NotYetOnWindows,
+            _NotYetOnWindows,
+            _NotYetOnWindows
           ));
         }
       }
     );
   }
 
-  private static void ReadUdp(int pid, uint family, ConnectionProtocol protocol, List<ConnectionRecord> result) {
+  private static void ReadUdp(int? pid, uint family, ConnectionProtocol protocol, List<ConnectionRecord> result) {
     var rowSize = family == Native.AF_INET ? 12 : 28;
     Walk(
       (nint table, ref uint size) => Native.GetExtendedUdpTable(table, ref size, false, family, Native.UDP_TABLE_OWNER_PID, 0),
       rowSize,
       (row, entry) => {
-        if (family == Native.AF_INET) {
-          if (Marshal.ReadInt32(entry, 8) != pid)
-            return;
+        var ownerOffset = family == Native.AF_INET ? 8 : 24;
+        var owner = Marshal.ReadInt32(entry, ownerOffset);
+        if (pid is { } wanted && owner != wanted)
+          return;
 
-          result.Add(new(protocol, FormatIPv4((uint)Marshal.ReadInt32(entry, 0)), NetworkPort(Marshal.ReadInt32(entry, 4)), "*", 0, "LISTEN", 0));
-        } else {
-          if (Marshal.ReadInt32(entry, 24) != pid)
-            return;
-
-          result.Add(new(protocol, FormatIPv6(entry, 0), NetworkPort(Marshal.ReadInt32(entry, 20)), "*", 0, "LISTEN", 0));
-        }
+        result.Add(new(
+          protocol,
+          SocketKind.Datagram,
+          family == Native.AF_INET ? FormatIPv4((uint)Marshal.ReadInt32(entry, 0)) : FormatIPv6(entry, 0),
+          NetworkPort(Marshal.ReadInt32(entry, family == Native.AF_INET ? 4 : 20)),
+          "*",
+          0,
+          "LISTEN",
+          0,
+          owner,
+          -1,
+          null,
+          null,
+          _NotYetOnWindows,
+          _NotYetOnWindows,
+          _NotYetOnWindows
+        ));
       }
     );
   }

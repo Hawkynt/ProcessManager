@@ -5,7 +5,18 @@ using Hawkynt.ProcessManager.Settings;
 namespace Hawkynt.ProcessManager.App;
 
 /// <summary>Which face of the program the arguments asked for.</summary>
-internal enum RunMode : byte { Desktop, Terminal, List, Find, Kill, SelfTest, HelperCheck, Help, HelpFields, Host, Startup, Users, Services, Version }
+internal enum RunMode : byte { Desktop, Terminal, List, Find, Kill, SelfTest, HelperCheck, Help, HelpFields, Host, Startup, Users, Services, Connections, Version }
+
+/// <summary>
+/// Which sockets <c>--connections</c> lists.
+/// </summary>
+/// <remarks>
+/// Internet sockets by default because a desktop holds several hundred Unix sockets and a dozen
+/// internet ones, and the dozen are what somebody asking "what is this machine talking to" means.
+/// The others are one word away rather than absent, because "which process is on the session bus"
+/// is a real question with no other answer here (PRD §5.2).
+/// </remarks>
+internal enum ConnectionScope : byte { Internet, Unix, All }
 
 /// <summary>
 /// The whole command line, parsed once into a value.
@@ -38,6 +49,9 @@ internal sealed record CommandLineOptions {
 
   /// <summary>A filter in the query language of PRD §56, applied to --list and the two UIs.</summary>
   public string? Filter { get; init; }
+
+  /// <summary>Which sockets --connections lists (PRD §40).</summary>
+  public ConnectionScope ConnectionScope { get; init; } = ConnectionScope.Internet;
 
   /// <summary>What --list writes: text, csv, tsv, json, jsonl or markdown (PRD §61).</summary>
   public ExportFormat Format { get; init; } = ExportFormat.Text;
@@ -391,6 +405,25 @@ internal sealed record CommandLineOptions {
           explicitMode = true;
           break;
 
+        case "--connections": {
+          // The value is only read inline. Taking the next argument instead would make a bare
+          // --connections at the end of the line an error and --connections --json swallow the
+          // switch after it.
+          var scope = inlineValue switch {
+            null or "inet" or "internet" => ConnectionScope.Internet,
+            "unix" or "local" => ConnectionScope.Unix,
+            "all" => ConnectionScope.All,
+            _ => (ConnectionScope?)null,
+          };
+
+          if (scope is not { } wanted)
+            return options with { Error = "--connections takes inet (the default), unix or all" };
+
+          options = options with { Mode = RunMode.Connections, ConnectionScope = wanted };
+          explicitMode = true;
+          break;
+        }
+
         case "--users":
           options = options with { Mode = RunMode.Users };
           explicitMode = true;
@@ -463,6 +496,7 @@ internal sealed record CommandLineOptions {
       procman --startup              what is configured to start when you log in
       procman --users                who is logged in, and what their processes cost
       procman --services             which services exist and which are running
+      procman --connections[=what]   every socket and who owns it: inet (default), unix or all
       procman --help-fields          every field that can be sorted, filtered or shown
       procman --kill <pid> [--tree]  end a process, optionally with its descendants
 

@@ -127,13 +127,67 @@ public readonly record struct HandleRecord(
 
 public enum ConnectionProtocol : byte { Tcp, Tcp6, Udp, Udp6, Unix }
 
-/// <summary>A socket owned by a process, with the state the kernel reports for it.</summary>
+/// <summary>
+/// What a socket delivers: a byte stream, individual messages, or messages with record boundaries.
+/// </summary>
+/// <remarks>
+/// Redundant for TCP and UDP, where the protocol already says it, and the whole point for a Unix
+/// socket — a stream socket and a datagram socket on the same path are different endpoints and only
+/// this tells them apart. Named <c>SocketKind</c> rather than <c>SocketType</c> so that a file with
+/// <c>using System.Net.Sockets</c> in it does not silently bind to the other one.
+/// </remarks>
+public enum SocketKind : byte { Unknown = 0, Stream, Datagram, SeqPacket }
+
+/// <summary>
+/// A socket, with the state the kernel reports for it (PRD §40).
+/// </summary>
+/// <param name="Inode">
+/// The socket's inode, which on Linux is the only thing joining it to a process: a descriptor points
+/// at <c>socket:[n]</c> and the network tables are keyed by the same <c>n</c>. Zero where the
+/// platform has no such number — Windows names the owning process in the table itself and needs no
+/// join.
+/// </param>
+/// <param name="Pid">
+/// The process holding a descriptor on it, or 0 when none was found. Zero is never a real owner —
+/// pid 0 is the kernel — so it reads as "nobody visible", which on Linux usually means the socket
+/// belongs to another user's process whose descriptors we may not list, and sometimes means nothing
+/// holds it at all: a <c>TIME_WAIT</c> socket outlives the process that closed it.
+/// </param>
+/// <param name="UserId">
+/// The uid the kernel charges the socket to, or -1 where the platform does not say. This is the
+/// socket's own owner and not the owning process's — they are the same in almost every case, and
+/// the exception is a socket passed between processes over a Unix socket, which keeps the uid of
+/// whoever created it.
+/// </param>
+/// <param name="Interface">
+/// Which interface the local address lives on, or null when nothing claims it. <c>*</c> means the
+/// socket is bound to the wildcard address and so is on all of them.
+/// </param>
+/// <param name="SendQueueBytes">
+/// Bytes written and not yet acknowledged by the peer, and bytes received and not yet read. A
+/// send queue that stays high is a peer that is not keeping up; a receive queue that stays high is
+/// this process not keeping up. On a listening TCP socket the kernel reuses the same two fields for
+/// the accept backlog instead, which is why <see cref="State"/> has to be read alongside them.
+/// </param>
+/// <param name="Retransmits">
+/// How often the segment currently awaiting acknowledgement has been sent again — not a total of
+/// everything ever retransmitted on this connection, which needs the netlink socket diagnostics.
+/// Non-zero here means this connection is losing packets <em>now</em>.
+/// </param>
 public readonly record struct ConnectionRecord(
   ConnectionProtocol Protocol,
+  SocketKind Kind,
   string LocalAddress,
   int LocalPort,
   string RemoteAddress,
   int RemotePort,
   string State,
-  ulong Inode
+  ulong Inode,
+  int Pid,
+  int UserId,
+  string? UserName,
+  string? Interface,
+  Counter SendQueueBytes,
+  Counter ReceiveQueueBytes,
+  Counter Retransmits
 );

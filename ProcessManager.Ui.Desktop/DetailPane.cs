@@ -81,7 +81,24 @@ public sealed class DetailPane {
     AddList("Modules", this._modules, ("Path", 520), ("Base", 140), ("Size", 100), ("Permissions", 100));
     AddList("Handles", this._handles, ("Type", 110), ("Handle", 90), ("Name", 640));
     AddList("Environment", this._environment, ("Variable", 220), ("Value", 700));
-    AddList("Network", this._network, ("Protocol", 80), ("Local", 200), ("Remote", 200), ("State", 120));
+    AddList(
+      "Network",
+      this._network,
+      ("Protocol", 70),
+      // Only a Unix socket needs this, and for a Unix socket it is the difference between two
+      // endpoints on the same path (PRD §40).
+      ("Type", 70),
+      ("Local", 200),
+      ("Remote", 200),
+      ("State", 110),
+      ("User", 90),
+      ("Interface", 80),
+      // Send and receive queue: what the peer has not acknowledged, and what this process has not
+      // read. The pair says which end of a stalled connection is the slow one.
+      ("Send-Q", 70),
+      ("Recv-Q", 70),
+      ("Retrans", 70)
+    );
 
     // Switching to a tab is the request to fill it; nothing is collected for a tab nobody looked at.
     this._tabs.SelectedIndexChanged += (_, _) => {
@@ -262,9 +279,15 @@ public sealed class DetailPane {
     var connections = this._probe.GetConnections(this._key);
     Fill(this._network, connections.Count, i => [
       connections[i].Protocol.ToString(),
-      $"{connections[i].LocalAddress}:{connections[i].LocalPort}",
-      connections[i].RemotePort == 0 ? "—" : $"{connections[i].RemoteAddress}:{connections[i].RemotePort}",
+      Humanize.SocketKindName(connections[i].Kind),
+      Humanize.LocalEndpoint(connections[i]),
+      Humanize.RemoteEndpoint(connections[i]),
       connections[i].State,
+      Humanize.SocketUser(connections[i]),
+      connections[i].Interface ?? "—",
+      Humanize.Bytes(connections[i].SendQueueBytes),
+      Humanize.Bytes(connections[i].ReceiveQueueBytes),
+      Humanize.Count(connections[i].Retransmits),
     ]);
   }
 

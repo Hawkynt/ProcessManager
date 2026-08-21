@@ -84,6 +84,52 @@ internal sealed class ProcFileReader(ProcIo? io = null) {
     return this.TryRead(ProcPath.FromString(buffer, path), out content, out errno);
   }
 
+  /// <summary>
+  /// Reads a file that is bigger than one page, for the machine-wide tables.
+  /// </summary>
+  /// <remarks>
+  /// <see cref="TryRead"/> treats a short read as end of file, which is what makes each per-process
+  /// file cost a single syscall. That holds for a file whose content is a few hundred bytes and is
+  /// wrong for a large one: a <c>seq_file</c> fills its own page-sized buffer per call, so a 16 KiB
+  /// read of a 142 kB <c>/proc/net/unix</c> hands back 4090 bytes and reports no error at all.
+  /// Reading one of those through <see cref="TryRead"/> loses everything past the first page in the
+  /// worst possible way — a truncated table is indistinguishable from a short one, so the answer is
+  /// wrong rather than missing.
+  /// <para>
+  /// It costs one extra syscall to see the zero-length read that really is the end, which is why
+  /// this is a separate method rather than a change to the one the sampler calls per process.
+  /// </para>
+  /// </remarks>
+  public bool TryReadWhole(string path, out ReadOnlySpan<byte> content, out int errno) {
+    content = default;
+    Span<byte> pathBuffer = stackalloc byte[ProcPath.MaxLength];
+    var fd = this._io.OpenReadOnly(ProcPath.FromString(pathBuffer, path), out errno);
+    if (fd < 0)
+      return false;
+
+    try {
+      var written = 0;
+      while (true) {
+        if (written == this._buffer.Length)
+          Array.Resize(ref this._buffer, this._buffer.Length * 2);
+
+        var read = this._io.Read(fd, this._buffer.AsSpan(written), out errno);
+        if (read < 0)
+          return false;
+        if (read == 0)
+          break;
+
+        written += read;
+      }
+
+      errno = 0;
+      content = this._buffer.AsSpan(0, written);
+      return true;
+    } finally {
+      this._io.Close(fd);
+    }
+  }
+
   /// <summary>Reads the target of a symlink, or null. Used for <c>exe</c>, <c>cwd</c> and each fd.</summary>
   public string? TryReadLink(string path) => this._io.ReadLink(path);
 
