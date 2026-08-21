@@ -266,6 +266,66 @@ public sealed partial class LinuxDetailTests {
         Assert.That(handle.Kind, Is.Not.EqualTo(HandleKind.Unknown), handle.Name);
   }
 
+  /// <summary>
+  /// §31's version, description, company and product, end to end against this machine's own
+  /// packaging database.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The parser tests replay a recorded database; this asks the live one about a file the process
+  /// running the test actually has mapped, which is the half that proves the path from a mapping to
+  /// a package exists at all. Skipped rather than failed where no packaging system this program can
+  /// read is installed — a machine managed by <c>rpm</c> is not a machine where this is broken.
+  /// </para>
+  /// <para>
+  /// The values themselves are not asserted: what <c>libc</c>'s package is called and who assembled
+  /// it differ between distributions, and pinning either would be a test of the machine rather than
+  /// of the lookup. What is asserted is that a package answered, and that the answer is the package's
+  /// and is marked as such.
+  /// </para>
+  /// </remarks>
+  [Test]
+  public void ThePackagingDatabaseAnswersForALibraryThisProcessHasMapped() {
+    using var probe = Probe();
+    string? library = null;
+    foreach (var module in probe.GetModules(Self))
+      if (Path.GetFileName(module.Path).StartsWith("libc.so", StringComparison.Ordinal))
+        library = module.Path;
+
+    if (library is null) {
+      Assert.Ignore("This process has no libc mapping to ask about.");
+      return;
+    }
+
+    var trust = probe.DescribeImage(library);
+    if (!trust.Package.WasChecked) {
+      Assert.Ignore($"No packaging database this program reads is installed: {trust.Package.Reason}.");
+      return;
+    }
+
+    if (trust.Package.Source == PackageSource.None) {
+      Assert.Ignore($"Nothing on this machine claims {library}.");
+      return;
+    }
+
+    Assert.Multiple(() => {
+      // Product and version: the package's, and the cell says which system answered.
+      Assert.That(trust.Package.Name, Is.Not.Null.And.Not.Empty);
+      Assert.That(trust.Package.Version, Is.Not.Null.And.Not.Empty);
+      Assert.That(trust.Package.Text, Does.Contain(trust.Package.Name!));
+
+      // Description and company. Either may be absent from a given package, and absent is null
+      // rather than an empty string a properties box would render as a blank field (PRD §72.3).
+      Assert.That(trust.Summary, Is.Null.Or.Not.Empty);
+      Assert.That(trust.Publisher, Is.Null.Or.Not.Empty);
+
+      // Nothing was hashed, because nobody asked. The verdict is the one field that costs a read of
+      // the whole file, and this call did not request one (PRD §5.4).
+      Assert.That(trust.Sha256, Is.Null);
+      Assert.That(trust.Signature, Is.EqualTo(SignatureStatus.NotChecked));
+    });
+  }
+
   #region what the kernel says a descriptor points at (PRD §32 — file type, device)
 
   /// <summary>
