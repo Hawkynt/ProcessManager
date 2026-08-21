@@ -7,7 +7,16 @@ using Hawkynt.ProcessManager.Ui.Terminal;
 namespace Hawkynt.ProcessManager.App;
 
 /// <summary>Which face of the program the arguments asked for.</summary>
-internal enum RunMode : byte { Desktop, Terminal, List, Find, Kill, EndTask, Restart, Scheduling, Signal, ResourceLimit, OutOfMemory, Freezer, SelfTest, HelperCheck, Help, HelpFields, Host, Startup, Users, Services, ServiceControl, Connections, Limits, Run, Version }
+internal enum RunMode : byte { Desktop, Terminal, List, Find, Kill, EndTask, Restart, Scheduling, Signal, ResourceLimit, OutOfMemory, Freezer, SelfTest, HelperCheck, Help, HelpFields, Host, Startup, Users, Services, ServiceControl, Connections, Limits, Run, Version, Settings }
+
+/// <summary>
+/// What <see cref="RunMode.Settings"/> was asked to do to the settings file (PRD §67).
+/// </summary>
+/// <remarks>
+/// Four verbs on one mode rather than four modes, because they share everything that matters: each
+/// one resolves the same file, does one thing to it and exits without ever bringing a front-end up.
+/// </remarks>
+internal enum SettingsAction : byte { None, Show, Export, Import, Reset }
 
 /// <summary>
 /// Which sockets <c>--connections</c> lists.
@@ -604,6 +613,12 @@ internal sealed record CommandLineOptions {
   /// <summary>Write the options this run ended up with back to the settings file, then carry on.</summary>
   public bool SaveSettings { get; init; }
 
+  /// <summary>What is being done to the settings file itself, rather than with it (PRD §67).</summary>
+  public SettingsAction SettingsAction { get; init; }
+
+  /// <summary>The other file an export writes to or an import reads from.</summary>
+  public string? SettingsTransferPath { get; init; }
+
   /// <summary>Which CPU convention percentages are expressed in (PRD §3.2).</summary>
   public CpuPercentMode CpuMode { get; init; } = CpuPercentMode.Normalized;
 
@@ -624,6 +639,7 @@ internal sealed record CommandLineOptions {
       PinnedTerminalColumns = settings.PinnedTerminalColumns,
       ManualRefresh = settings.ManualRefresh,
       DesktopColumns = settings.DesktopColumns.Length > 0 ? settings.DesktopColumns : null,
+      UseMouse = settings.TerminalMouse,
     };
 
     return Parse(args, seeded, settings);
@@ -704,6 +720,34 @@ internal sealed record CommandLineOptions {
         case "--save-settings":
           options = options with { SaveSettings = true };
           break;
+
+        case "--settings-path":
+          return options with { Mode = RunMode.Settings, SettingsAction = SettingsAction.Show };
+
+        case "--export-settings": {
+          if (!TryValue(args, ref i, inlineValue, out var destination))
+            return options with { Error = "--export-settings needs a path to write to" };
+
+          return options with {
+            Mode = RunMode.Settings,
+            SettingsAction = SettingsAction.Export,
+            SettingsTransferPath = destination,
+          };
+        }
+
+        case "--import-settings": {
+          if (!TryValue(args, ref i, inlineValue, out var source))
+            return options with { Error = "--import-settings needs a path to read from" };
+
+          return options with {
+            Mode = RunMode.Settings,
+            SettingsAction = SettingsAction.Import,
+            SettingsTransferPath = source,
+          };
+        }
+
+        case "--reset-settings":
+          return options with { Mode = RunMode.Settings, SettingsAction = SettingsAction.Reset };
 
         case "--filter": {
           if (!TryValue(args, ref i, inlineValue, out var query))
@@ -1153,6 +1197,10 @@ internal sealed record CommandLineOptions {
       --columns @<name>  a saved or built-in column set: basic, expert, security, io, memory, cpu
       --settings <path>  read settings from here instead of the usual place
       --save-settings    write this run's options back to the settings file
+      --settings-path    print which settings file is in use, and what put it there
+      --export-settings <path>  copy the settings out to a file, then exit
+      --import-settings <path>  replace the settings with that file's, then exit
+      --reset-settings   remove the settings file, so the next start is a fresh one
       --tree             show the process tree (with --kill: the whole subtree)
       --flat             start with a flat list sorted by CPU rather than a tree
       --group <what>     group the rows: none, tree, user, session, service, executable,

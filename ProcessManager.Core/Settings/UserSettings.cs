@@ -159,6 +159,44 @@ public sealed record UserSettings {
   public bool HideUnavailableTabs { get; init; }
 
   /// <summary>
+  /// Whether a destructive action asks before it happens (PRD §67, §90).
+  /// </summary>
+  /// <remarks>
+  /// On by default, and the only setting in this file whose default is chosen for somebody who has
+  /// not read it: ending the wrong process is not undoable. Turned off, the prompt goes from every
+  /// single-process action — the ones whose target the row under the cursor already names.
+  /// <para>
+  /// A bulk action still asks, and that is deliberate rather than an oversight. "End 14 processes?"
+  /// and "End Firefox?" are the same gesture and very different requests, and the count is the whole
+  /// of what the confirmation is for; a setting that removed it would remove the only place the size
+  /// of the request is ever stated (PRD §11, §90).
+  /// </para>
+  /// </remarks>
+  public bool ConfirmDestructiveActions { get; init; } = true;
+
+  /// <summary>
+  /// Whether the performance page opens tightened up (PRD §45.7, §67).
+  /// </summary>
+  /// <remarks>
+  /// The one piece of §67's "Appearance" the program actually has: density is a real switch on the
+  /// performance page with a real effect, and it was reachable from that page's own View menu and
+  /// forgotten the moment the window closed. Theme, font and icon size are not here, because this
+  /// program has no such switches to remember — a key in a settings file that drives nothing is a
+  /// lie the file tells the person editing it.
+  /// </remarks>
+  public bool CompactPerformancePage { get; init; }
+
+  /// <summary>
+  /// Whether the terminal front-end reads the mouse (PRD §57.5, §67).
+  /// </summary>
+  /// <remarks>
+  /// The persistent form of <c>--no-mouse</c>. Worth remembering because the people who turn it off
+  /// are the people whose terminal or multiplexer wants the selection back, and that is a property of
+  /// their setup rather than of one run.
+  /// </remarks>
+  public bool TerminalMouse { get; init; } = true;
+
+  /// <summary>
   /// Whether the performance page opens on whatever is under the greatest load (PRD §45.3).
   /// </summary>
   /// <remarks>
@@ -489,6 +527,27 @@ public sealed record UserSettings {
 
           break;
 
+        case "performance.density":
+          settings = value.ToLowerInvariant() switch {
+            "compact" or "dense" => settings with { CompactPerformancePage = true },
+            "comfortable" or "normal" => settings with { CompactPerformancePage = false },
+            _ => settings,
+          };
+
+          break;
+
+        case "confirm.destructive":
+          if (TryParseBool(value, out var confirm))
+            settings = settings with { ConfirmDestructiveActions = confirm };
+
+          break;
+
+        case "tui.mouse":
+          if (TryParseBool(value, out var mouse))
+            settings = settings with { TerminalMouse = mouse };
+
+          break;
+
         case "window.split":
           if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var split) && split is >= 10 and <= 90)
             settings = settings with { SplitPercent = split };
@@ -571,6 +630,28 @@ public sealed record UserSettings {
       text.AppendLine("# The performance page opens on the processor rather than on whatever is");
       text.AppendLine("# under the greatest load.");
       text.AppendLine("performance.busiest=false");
+    }
+
+    // Only when it is off, and for a reason the two above do not have: this one is a safety net, and
+    // a file that says nothing about it must leave it up rather than have somebody's default depend
+    // on which build wrote the file last.
+    if (!this.ConfirmDestructiveActions) {
+      text.AppendLine();
+      text.AppendLine("# Single-process actions happen without asking first. A bulk action still");
+      text.AppendLine("# asks, because the count is the whole of what that confirmation is for.");
+      text.AppendLine("confirm.destructive=false");
+    }
+
+    if (this.CompactPerformancePage) {
+      text.AppendLine();
+      text.AppendLine("# The performance page opens tightened up, with its diagnostics block open.");
+      text.AppendLine("performance.density=compact");
+    }
+
+    if (!this.TerminalMouse) {
+      text.AppendLine();
+      text.AppendLine("# The terminal front-end leaves the mouse to the terminal, as --no-mouse does.");
+      text.AppendLine("tui.mouse=false");
     }
 
     if (this.HideUnavailableTabs) {

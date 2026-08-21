@@ -2,6 +2,7 @@ using System.Drawing;
 using Hawkynt.NativeForms;
 using Hawkynt.NativeForms.Drawing;
 using Hawkynt.ProcessManager.Model;
+using Hawkynt.ProcessManager.Query;
 using Hawkynt.ProcessManager.Sampling;
 
 namespace Hawkynt.ProcessManager.Ui.Desktop;
@@ -106,6 +107,71 @@ public sealed class CoreHeatmap : OwnerDrawnControl {
     _ => '?',
   };
 
+  /// <summary>
+  /// What the map says, in words (PRD §45.9, §74).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// This control is the one place in the window where a reading exists <em>only</em> as a colour:
+  /// every cell is a core's load and there is not a digit anywhere on it. The plots beside it print
+  /// their current value in the corner and the table prints numbers in its cells; sixty-four cells of
+  /// green and amber print nothing, so somebody who cannot separate the two hues, or cannot see the
+  /// strip at all, gets no reading out of it whatsoever.
+  /// </para>
+  /// <para>
+  /// The shape rather than sixty-four numbers, because the shape is what the map is for: how many
+  /// cores there are, what the busiest and idlest of them are doing, and what the average is. A
+  /// hybrid part is broken out per group for the same reason it is drawn that way — "the fast half is
+  /// idle while the slow half is saturated" is the reading, and one average across both hides it.
+  /// </para>
+  /// </remarks>
+  public string Statistics() {
+    var delta = this._delta;
+    var cores = delta?.PerCoreCount ?? 0;
+    if (cores == 0)
+      return Humanize.Placeholder(UnknownReason.NotSampledYet);
+
+    var text = new System.Text.StringBuilder();
+    foreach (var group in this.Groups(cores)) {
+      var lowest = double.PositiveInfinity;
+      var highest = double.NegativeInfinity;
+      var total = 0d;
+      var seen = 0;
+      foreach (var core in group.Cores) {
+        var value = delta!.PerCoreBusyPercent(core);
+        if (!value.HasValue)
+          continue;
+
+        lowest = Math.Min(lowest, value.Value);
+        highest = Math.Max(highest, value.Value);
+        total += value.Value;
+        ++seen;
+      }
+
+      if (text.Length > 0)
+        text.Append('\n');
+
+      if (group.Label.Length > 0)
+        text.Append(group.Label).Append(": ");
+
+      if (seen == 0) {
+        text.Append(group.Cores.Count).Append(" logical processors, ")
+          .Append(Humanize.Placeholder(UnknownReason.NotSampledYet));
+        continue;
+      }
+
+      text.Append(seen).Append(seen == 1 ? " logical processor, " : " logical processors, ")
+        .Append("busiest ").Append(Percent(highest))
+        .Append(", idlest ").Append(Percent(lowest))
+        .Append(", average ").Append(Percent(total / seen));
+    }
+
+    return text.ToString();
+  }
+
+  private static string Percent(double value)
+    => value.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture) + " %";
+
   protected override void OnPaint(PaintEventArgs e) {
     var g = e.Graphics;
     var theme = this.Theme;
@@ -139,7 +205,7 @@ public sealed class CoreHeatmap : OwnerDrawnControl {
     foreach (var group in groups) {
       var groupHeight = (bands * cellHeight) + ((bands - 1) * _Gap);
       if (labelled && group.Label.Length > 0)
-        g.DrawText(group.Label, theme.DefaultFont, _LabelInk,
+        g.DrawText(group.Label, theme.DefaultFont, RowPalette.PlotInk(theme, PlotInkKind.Caption),
           new(0, y, _LabelWidth - 2, groupHeight), ContentAlignment.MiddleCenter);
 
       for (var i = 0; i < group.Cores.Count; ++i) {
@@ -155,7 +221,7 @@ public sealed class CoreHeatmap : OwnerDrawnControl {
 
         var value = delta!.PerCoreBusyPercent(group.Cores[i]);
         g.FillRectangle(value.HasValue ? Heat(value.Value) : RowPalette.PlotBackground, cell);
-        g.DrawRectangle(RowPalette.PlotGrid, cell);
+        g.DrawRectangle(RowPalette.PlotGrid(theme), cell);
       }
 
       y += groupHeight + _Gap;
@@ -198,8 +264,6 @@ public sealed class CoreHeatmap : OwnerDrawnControl {
 
     return best;
   }
-
-  private static readonly Color _LabelInk = Color.FromArgb(0xFF, 0x9C, 0xE8, 0x9C);
 
   /// <summary>
   /// Idle to saturated, as one ramp.

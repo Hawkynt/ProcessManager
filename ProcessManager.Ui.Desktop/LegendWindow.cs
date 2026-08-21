@@ -120,14 +120,34 @@ public sealed class LegendWindow : Form {
   private readonly Label _warmText = new();
   private readonly Label _hotText = new();
 
+  /// <summary>
+  /// Says so when none of the above is being painted (PRD §45.9, §74).
+  /// </summary>
+  /// <remarks>
+  /// A high-contrast desktop turns the row washes and the cell marks off, because a colour laid
+  /// between the theme's own foreground and background is exactly what that scheme exists to stop.
+  /// Which leaves this window explaining twelve colours nobody is looking at — so it admits it. A
+  /// legend that describes a table it no longer matches is worse than no legend: it is one that has
+  /// quietly become wrong.
+  /// </remarks>
+  private readonly Label _contrast = new();
+
   private UsageThresholds _heat;
 
   /// <param name="heat">
   /// The bands as they currently stand, so the sentences beside the two washes are the numbers this
   /// window is actually judging by rather than the ones it shipped with.
   /// </param>
-  public LegendWindow(UsageThresholds heat) {
+  public LegendWindow(UsageThresholds heat) : this(heat, DesktopTheme.Current.IsHighContrast) { }
+
+  /// <param name="highContrast">
+  /// Whether the desktop runs a high-contrast scheme, in which case the washes this window explains
+  /// are not being painted and it says so. A parameter as well as a reading, so a test can put the
+  /// window in the state a machine here has no way to be in.
+  /// </param>
+  public LegendWindow(UsageThresholds heat, bool highContrast) {
     this._heat = heat;
+    this.HighContrast = highContrast;
 
     this.Text = "Colour legend";
     // A secondary window closing must not take the program with it. Form.QuitsOnClose defaults to
@@ -139,7 +159,15 @@ public sealed class LegendWindow : Form {
     y = this.AddHeading("Row colour — what kind of process this is", y);
 
     foreach (var category in _Categories) {
-      var swatch = new CategorySwatch(category) { Bounds = new(_Margin, y, _SwatchWidth, 18) };
+      var swatch = new CategorySwatch(category) {
+        Bounds = new(_Margin, y, _SwatchWidth, 18),
+        // A chip of colour with no text has nothing to announce itself with, and this window is
+        // nothing but chips of colour: unnamed, it reads to a screen reader as a dozen blank
+        // rectangles beside a dozen sentences (PRD §74).
+        AccessibleName = ProcessCategories.Describe(category) + " — colour sample",
+        AccessibleRole = AccessibleRole.Graphic,
+      };
+
       this.Controls.Add(swatch);
       this.Controls.Add(new Label {
         Text = ProcessCategories.Describe(category),
@@ -152,15 +180,35 @@ public sealed class LegendWindow : Form {
     y += 8;
     y = this.AddHeading("Cell mark — how hard it is leaning on one resource", y);
 
-    this.Controls.Add(new HeatSwatch(UsageHeat.Warm) { Bounds = new(_Margin, y, _SwatchWidth, 18) });
+    this.Controls.Add(new HeatSwatch(UsageHeat.Warm) {
+      Bounds = new(_Margin, y, _SwatchWidth, 18),
+      AccessibleName = "Warm — colour sample, with a number on it",
+      AccessibleRole = AccessibleRole.Graphic,
+    });
+
     this._warmText.Bounds = new(_TextLeft, y, _TextWidth, 18);
     this.Controls.Add(this._warmText);
     y += _RowHeight;
 
-    this.Controls.Add(new HeatSwatch(UsageHeat.Hot) { Bounds = new(_Margin, y, _SwatchWidth, 18) });
+    this.Controls.Add(new HeatSwatch(UsageHeat.Hot) {
+      Bounds = new(_Margin, y, _SwatchWidth, 18),
+      AccessibleName = "Hot — colour sample, with a number on it",
+      AccessibleRole = AccessibleRole.Graphic,
+    });
+
     this._hotText.Bounds = new(_TextLeft, y, _TextWidth, 18);
     this.Controls.Add(this._hotText);
     y += _RowHeight;
+
+    this._contrast.Text = highContrast
+      ? "This desktop is high-contrast: these colours are not painted. Each state is also a column."
+      : "Under a high-contrast desktop these colours are not painted; each state is also a column.";
+
+    // Set off from the two swatch rows above it. Butted straight against "Hot" it reads as a third
+    // sentence about the hot band rather than as a statement about the whole window.
+    this._contrast.Bounds = new(_Margin, y + 6, _Width - (_Margin * 2), 18);
+    this.Controls.Add(this._contrast);
+    y += _RowHeight + 6;
 
     var noteHeight = _Note.Length * _NoteLineHeight;
     this.Controls.Add(new Label {
@@ -197,8 +245,11 @@ public sealed class LegendWindow : Form {
   /// <summary>Raised when somebody changed the bands from here, with what they changed them to.</summary>
   public event EventHandler<UsageThresholds>? ThresholdsChanged;
 
+  /// <summary>Whether this window was built for a desktop that is not painting the colours.</summary>
+  public bool HighContrast { get; }
+
   /// <summary>Every line the window shows, for a test with no display to read it off.</summary>
-  public string Description => $"{this._warmText.Text}\n{this._hotText.Text}";
+  public string Description => $"{this._warmText.Text}\n{this._hotText.Text}\n{this._contrast.Text}";
 
   /// <summary>Which row colours this window explains — the list a test holds the palette to.</summary>
   public static IReadOnlyList<ProcessCategory> Categories => _Categories;

@@ -43,6 +43,11 @@ internal static class Program {
       case RunMode.Version:
         Console.WriteLine($"procman {typeof(Program).Assembly.GetName().Version}");
         return _ExitOk;
+      // Before the probe is built, because none of these ever look at a process: asking where the
+      // settings file is must not need a /proc tree, and it must work on a machine where the probe
+      // cannot start at all (PRD §81).
+      case RunMode.Settings:
+        return SettingsCommand.Run(options.SettingsAction, options.SettingsTransferPath, settingsPath ?? options.SettingsPath);
     }
 
     var probe = ProbeFactory.Create(
@@ -568,6 +573,7 @@ internal static class Program {
       Grouping = options.Grouping,
       CpuMode = options.CpuMode,
       BlockCharacters = !options.AsciiOnly,
+      TerminalMouse = options.UseMouse,
     };
 
     if (options.Fields is { Length: > 0 } fields)

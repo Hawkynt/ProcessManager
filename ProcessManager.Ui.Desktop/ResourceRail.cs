@@ -125,7 +125,7 @@ public sealed class ResourceRail : ListBox {
     // pretending to be a graph.
     var spark = new Rectangle(left, bounds.Y + 22, width, this.SparkHeight);
     if (row.History is not null)
-      Sparkline.Draw(g, spark, row.History, row.Maximum, row.Accent, this.Samples, this.SkipNewest);
+      Sparkline.Draw(g, spark, row.History, row.Maximum, row.Accent, theme, this.Samples, this.SkipNewest);
 
     var readings = new Rectangle(left, bounds.Bottom - 18, width, 16);
     g.DrawText(row.Primary, theme.DefaultFont, text, readings, ContentAlignment.TopLeft);

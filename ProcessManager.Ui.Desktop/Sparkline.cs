@@ -21,20 +21,26 @@ internal static class Sparkline {
   /// which is what §45.1 asks for: a row's sparkline is "over the same history the main graph uses",
   /// and a sparkline drawing a pixel per sample would show four minutes beside a graph showing one.
   /// </param>
+  /// <param name="theme">
+  /// The desktop's, so the rule at the half can come up to something visible under a high-contrast
+  /// scheme rather than staying the faint graticule it is meant to be everywhere else (PRD §45.9).
+  /// </param>
   public static void Draw(
     IGraphics g,
     Rectangle bounds,
     HistoryRing<Rate>? history,
     double scale,
     Color color,
+    ITheme theme,
     int samples = 60,
     int skipNewest = 0
   ) {
+    ArgumentNullException.ThrowIfNull(theme);
     var plot = new Rectangle(bounds.X + 2, bounds.Y + 2, Math.Max(4, bounds.Width - 4), Math.Max(4, bounds.Height - 4));
     g.FillRectangle(RowPalette.PlotBackground, plot);
 
     // One horizontal rule at the half, so a reader can tell a busy plot from a full one.
-    g.DrawLine(RowPalette.PlotGrid, plot.Left, plot.Top + plot.Height / 2, plot.Right - 1, plot.Top + plot.Height / 2);
+    g.DrawLine(RowPalette.PlotGrid(theme), plot.Left, plot.Top + plot.Height / 2, plot.Right - 1, plot.Top + plot.Height / 2);
 
     if (history is null || history.Count == 0 || scale <= 0)
       return;

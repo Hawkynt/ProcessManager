@@ -131,6 +131,10 @@ procman --help-fields         # every field, its aliases, and the filter grammar
 procman --gpu                 # account for what each process does to the graphics adapters
 procman --flat                # start as a sorted list rather than a tree
 procman --save-settings       # keep this run's columns, sort and interval
+procman --settings-path       # which settings file is in use, and what put it there
+procman --export-settings ~/procman.conf   # a copy out, unknown keys included
+procman --import-settings ~/procman.conf   # a copy in, replacing what is there
+procman --reset-settings      # remove the file; the next start is a fresh one
 procman --self-test           # ask the probe about itself; the runtime checks its answer
 procman --helper-check        # talk to the privileged helper over its pipe, unelevated
 procman --no-helper           # never start the helper, even for an action that needs it
@@ -142,6 +146,13 @@ behind all four, so a field added to it becomes sortable, filterable and exporta
 
 Named column sets come built in: `basic`, `expert`, `security`, `io`, `memory`, `cpu`, `minimal`.
 Write your own into the settings file and it replaces the preset of that name.
+
+The settings file is `key=value` lines at `$XDG_CONFIG_HOME/procman/settings.conf`, or `%APPDATA%`
+on Windows, and it is meant to be edited by hand — but it does not have to be: View ▸ Settings, or
+Ctrl+comma, opens the same keys in a box. `PROCMAN_SETTINGS` names the file outright, and dropping an
+empty `procman.portable` beside the executable keeps the file beside the executable, which is what a
+copy on a memory stick wants. A key this build does not understand is written back out untouched, so
+an older build cannot eat a newer one's settings — and neither can an export or an import.
 
 The terminal UI keeps the keys htop users already have in their fingers — `F5` tree, `F6` sort,
 `F9` kill, `F10` quit, `/` search, `\` filter, `u` filter by user — plus `Enter` for a process's
