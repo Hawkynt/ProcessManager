@@ -51,6 +51,22 @@ public interface ISystemProbe : IDisposable {
   /// <summary>Threads of one process, for the detail view. Empty when they cannot be read.</summary>
   IReadOnlyList<ThreadRecord> GetThreads(ProcessKey key);
 
+  /// <summary>
+  /// One thread's stack, as far as the operating system will describe it (PRD §30).
+  /// </summary>
+  /// <param name="resolveSymbols">
+  /// Whether to open the images the frames fall in and look their addresses up in the symbol tables.
+  /// Off by default because it is the expensive half — opening files and walking symbol tables, which
+  /// §30 requires never happen on the thread that is drawing (PRD §5.4).
+  /// </param>
+  /// <remarks>
+  /// The default is a refusal rather than an empty list. A platform that cannot take a stack and a
+  /// thread that has none look identical otherwise, and only one of those two is a thing that
+  /// happens (PRD §3.4).
+  /// </remarks>
+  ThreadStack GetThreadStack(ProcessKey key, int threadId, bool resolveSymbols = false)
+    => ThreadStack.None(threadId, UnknownReason.NotImplementedHere);
+
   /// <summary>Mapped files of one process.</summary>
   IReadOnlyList<ModuleRecord> GetModules(ProcessKey key);
 

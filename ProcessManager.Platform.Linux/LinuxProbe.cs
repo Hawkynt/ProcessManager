@@ -30,6 +30,29 @@ public sealed class LinuxProbe : ISystemProbe {
   // Kept on the probe rather than made per call, because its whole value is that the second process
   // somebody inspects does not re-read the ELF header of the libc both of them map.
   private readonly ModuleImageReader _images = new();
+  // The same argument, for the symbol side of the same files (PRD §30).
+  private readonly ImageSymbolReader _symbols = new();
+
+  /// <summary>
+  /// Where the first thread of each inspected process began (PRD §29).
+  /// </summary>
+  /// <remarks>
+  /// Remembered because it cannot change: an executable's entry point is fixed at link time and the
+  /// address it was loaded at is fixed at exec. Recomputing it would mean reading <c>maps</c> and an
+  /// ELF header every time somebody looked at the thread tab, which is once a second while it is
+  /// open (PRD §5.4).
+  /// </remarks>
+  private readonly Dictionary<ProcessKey, ThreadStart> _threadStarts = [];
+
+  /// <summary>Emptied wholesale past this, like the image cache: nobody inspects this many processes.</summary>
+  private const int _MaxRememberedStarts = 256;
+
+  /// <summary>Where a thread began, and what is there.</summary>
+  private readonly record struct ThreadStart(Counter Address, string? Module, string? Symbol) {
+
+    public static ThreadStart Unknown(UnknownReason reason) => new(Counter.Unknown(reason), null, null);
+
+  }
   private readonly Dictionary<ProcessKey, ProcessCache> _cache = [];
   private readonly List<ProcessKey> _stale = [];
   private readonly List<int> _pids = [];
@@ -1515,6 +1538,66 @@ public sealed class LinuxProbe : ISystemProbe {
   }
 
   /// <summary>
+  /// Turns an <c>errno</c> from a per-thread file into the reason a reader will act on.
+  /// </summary>
+  /// <remarks>
+  /// The three cases are three different pieces of advice. A refusal means the elevated helper could
+  /// answer; a thread that has gone means nothing ever will; and a file that is not there at all
+  /// means this kernel was not built with the option behind it. Collapsing them into one reason is
+  /// how a reader is sent looking for a privilege they already hold (PRD §72.3).
+  /// </remarks>
+  private static UnknownReason ReasonFor(int errno, string taskDirectory) => errno switch {
+    Native.EACCES or Native.EPERM => UnknownReason.NotPermitted,
+    Native.ESRCH => UnknownReason.ProcessExited,
+    // ENOENT is two answers wearing one number: a kernel built without the option behind this file,
+    // and a thread that ended between the directory listing and this read. One extra look at the
+    // directory tells them apart, and it is only ever paid on a path where something already failed.
+    Native.ENOENT => Directory.Exists(taskDirectory)
+      ? UnknownReason.NotSupportedOnPlatform
+      : UnknownReason.ProcessExited,
+    _ => UnknownReason.NotSupportedOnPlatform,
+  };
+
+  /// <summary>
+  /// How long a thread has been kept off a processor, from its own <c>schedstat</c> (PRD §29).
+  /// </summary>
+  /// <remarks>
+  /// The one scheduling file that answers about a thread the reader does not own — <c>stat</c> masks
+  /// its addresses, and <c>syscall</c> and <c>stack</c> refuse outright.
+  /// </remarks>
+  private ThreadSchedStat ReadThreadSchedStat(string taskDirectory)
+    => this._reader.TryRead(taskDirectory + "/schedstat", out var content, out var errno)
+      ? ThreadSchedStatParser.Parse(content)
+      : ThreadSchedStat.Unreadable(ReasonFor(errno, taskDirectory));
+
+  /// <summary>
+  /// What system call a thread is in, and the two registers that go with it (PRD §29, §30).
+  /// </summary>
+  /// <remarks>
+  /// This is the only file that names another thread's user-space program counter, and it is gated on
+  /// <c>PTRACE_MODE_ATTACH</c> — which owning the process does not grant under the default
+  /// <c>yama/ptrace_scope</c> of 1. So on an ordinary desktop this refuses for everything the user
+  /// did not start from a debugger, and the refusal is the answer rather than a failure.
+  /// </remarks>
+  private ThreadSyscall ReadThreadSyscall(string taskDirectory)
+    => this._reader.TryRead(taskDirectory + "/syscall", out var content, out var errno)
+      ? ThreadSyscallParser.Parse(content)
+      : ThreadSyscall.Unreadable(ReasonFor(errno, taskDirectory));
+
+  /// <summary>
+  /// Every mapping of a process, for turning a register into a place (PRD §30).
+  /// </summary>
+  /// <remarks>
+  /// <c>maps</c> and never <c>smaps</c>: the folded module list is not what an address lookup wants,
+  /// and the counter block that makes <c>smaps</c> useful costs a walk of the whole page table for
+  /// information nobody asked for here (PRD §5.4).
+  /// </remarks>
+  private AddressMap ReadAddressMap(int pid)
+    => this._reader.TryReadWhole($"{this._procRoot}/{pid}/maps", out var content, out _)
+      ? AddressMap.Parse(content)
+      : AddressMap.Empty;
+
+  /// <summary>
   /// systemd services, from the unit files and the cgroups (PRD §41).
   /// </summary>
   /// <remarks>
@@ -1574,6 +1657,7 @@ public sealed class LinuxProbe : ISystemProbe {
     if (!Directory.Exists(taskRoot))
       return result;
 
+    var wantsMap = false;
     foreach (var directory in Directory.EnumerateDirectories(taskRoot)) {
       var name = Path.GetFileName(directory);
       if (!int.TryParse(name, out var tid))
@@ -1594,13 +1678,19 @@ public sealed class LinuxProbe : ISystemProbe {
       // file each. Threads are enumerated for one process on demand, so it is affordable here in a
       // way it would not be in the sample loop (PRD §5.4).
       var status = this.ReadThreadStatus(directory);
+      var waitChannel = this.ReadWaitChannel(directory);
+      var sched = this.ReadThreadSchedStat(directory);
+      var syscall = this.ReadThreadSyscall(directory);
+      wantsMap |= syscall.InstructionPointer.HasValue || syscall.StackPointer.HasValue;
 
       result.Add(new(
         tid,
         record.State,
         record.CpuTimeNs,
         this._bootTimeUtcTicks + (long)(record.Key.StartTicks * this._nanosecondsPerTick / 100),
-        0,
+        // Filled below for the first thread of the process and for no other: Linux keeps no entry
+        // point for a thread that clone() made, so every other one says that rather than 0x0.
+        Counter.NotSupported,
         null,
         record.Priority,
         Name: threadName,
@@ -1608,7 +1698,7 @@ public sealed class LinuxProbe : ISystemProbe {
         KernelTimeNs: record.KernelTimeNs,
         ContextSwitches: status.TotalContextSwitches,
         LastCpu: record.LastCpu,
-        WaitReason: this.ReadWaitChannel(directory),
+        WaitReason: waitChannel,
         VoluntaryContextSwitches: status.VoluntaryContextSwitches,
         InvoluntaryContextSwitches: status.InvoluntaryContextSwitches,
         // Nice, which is the priority the thread was *given*: a thread reniced to 19 still shows an
@@ -1616,11 +1706,184 @@ public sealed class LinuxProbe : ISystemProbe {
         // busy thread is being polite or was simply never asked to be.
         BasePriority: record.Nice,
         Policy: record.SchedulingPolicy,
-        Affinity: status.Affinity
+        Affinity: status.Affinity,
+        StartModule: null,
+        InstructionPointer: syscall.InstructionPointer,
+        InstructionModule: null,
+        StackPointer: syscall.StackPointer,
+        // Needs the mapping the stack pointer is in, which is one file for the whole process rather
+        // than one per thread — so it is filled in the second pass below.
+        StackBytes: Counter.Unknown(
+          syscall.StackPointer.HasValue ? UnknownReason.NotSampledYet : syscall.StackPointer.Reason
+        ),
+        Mode: ModeOf(syscall, waitChannel),
+        SyscallNumber: syscall.Number,
+        QueuedNs: sched.QueuedNs
       ));
     }
 
+    this.Locate(key, result, wantsMap);
     return result;
+  }
+
+  /// <summary>
+  /// Which side of the user/kernel boundary a thread is on (PRD §29).
+  /// </summary>
+  /// <remarks>
+  /// <c>syscall</c> answers outright when the reader is allowed it. When it is not, a wait channel is
+  /// still an answer: a thread parked in a named kernel function is in the kernel, and that is the
+  /// state most threads on a machine are in. A thread with neither is left
+  /// <see cref="ThreadMode.Unknown"/> rather than assumed to be in user code — a runnable thread may
+  /// be either, and a coin toss rendered as a reading is worse than an empty cell (PRD §5.3).
+  /// </remarks>
+  private static ThreadMode ModeOf(in ThreadSyscall syscall, string? waitChannel)
+    => syscall.Mode != ThreadMode.Unknown ? syscall.Mode
+      : waitChannel is { Length: > 0 } ? ThreadMode.Kernel
+      : ThreadMode.Unknown;
+
+  /// <summary>
+  /// Turns the addresses the threads carry into places: which image, which function, how much stack.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// One <c>maps</c> read for the whole list rather than one per thread, and only when there is
+  /// something to look up. On an ordinary desktop <c>syscall</c> refuses for every thread, so nothing
+  /// but the first thread's start address needs an answer — and that one is the same for the life of
+  /// the process, so it is remembered and the file is never opened again (PRD §5.4).
+  /// </para>
+  /// <para>
+  /// The start address is the executable's ELF entry point and belongs to the first thread only. That
+  /// is not an approximation: the first thread of a process really does begin there, and no other
+  /// thread has an entry point Linux ever recorded.
+  /// </para>
+  /// </remarks>
+  private void Locate(ProcessKey key, List<ThreadRecord> threads, bool wantsMap) {
+    var known = this._threadStarts.TryGetValue(key, out var start);
+    if (!known || wantsMap) {
+      var map = this.ReadAddressMap(key.Pid);
+      if (!known) {
+        start = this.DescribeEntryPoint(key, map);
+        if (this._threadStarts.Count >= _MaxRememberedStarts)
+          this._threadStarts.Clear();
+
+        this._threadStarts[key] = start;
+      }
+
+      if (wantsMap)
+        for (var i = 0; i < threads.Count; ++i)
+          threads[i] = Place(threads[i], map);
+    }
+
+    for (var i = 0; i < threads.Count; ++i)
+      if (threads[i].Tid == key.Pid)
+        threads[i] = threads[i] with {
+          StartAddress = start.Address,
+          StartModule = start.Module,
+          StartSymbol = start.Symbol,
+        };
+
+    // Named rather than a lambda so the two-pass structure stays readable: the addresses come from
+    // one file per thread and the places they name come from one file for the process.
+    ThreadRecord Place(ThreadRecord thread, AddressMap map) {
+      var module = thread.InstructionPointer.TryGetValue(out var pc)
+        ? this._symbols.Describe(map, pc, resolveSymbols: false).Module
+        : null;
+
+      // Stacks grow down on every architecture this runs on, so what is in use is the distance from
+      // the pointer to the top of the mapping it is in. A pointer in no mapping at all is a thread
+      // that moved between the two reads, which is a hole and not a size of zero.
+      var stack = !thread.StackPointer.TryGetValue(out var sp)
+        ? Counter.Unknown(thread.StackPointer.Reason)
+        : map.TryFind(sp, out var region)
+          ? Counter.Of(region.End - sp)
+          : Counter.Unknown(UnknownReason.CounterInvalid);
+
+      return thread with { InstructionModule = module, StackBytes = stack };
+    }
+  }
+
+  /// <summary>
+  /// Where the first thread of a process began: the entry point of the image behind <c>exe</c>.
+  /// </summary>
+  /// <remarks>
+  /// The bias is the same rule the modules view uses. A position-independent executable — which is
+  /// nearly all of them now — states its entry relative to its own zero, and the loader's choice of
+  /// address has to be added back before the number means anything in this process (PRD §31).
+  /// </remarks>
+  private ThreadStart DescribeEntryPoint(ProcessKey key, AddressMap map) {
+    var path = TryLink($"{this._procRoot}/{key.Pid}/exe");
+    if (path is not { Length: > 0 })
+      return ThreadStart.Unknown(UnknownReason.NotPermitted);
+
+    if (!map.TryFindModuleBase(path, out var moduleBase))
+      return ThreadStart.Unknown(UnknownReason.NotPermitted);
+
+    var entry = this._images.Describe(new ModuleRecord(
+      Path: path,
+      BaseAddress: moduleBase,
+      Size: 0,
+      Permissions: string.Empty,
+      EndAddress: moduleBase,
+      ResidentBytes: Counter.NotSupported,
+      FileOffset: Counter.Of(0ul),
+      Inode: Counter.NotSupported,
+      Device: null,
+      IsDeleted: false,
+      MappingCount: 1,
+      FileSizeBytes: Counter.NotSampledYet,
+      FileModifiedUtcTicks: 0,
+      Type: ModuleType.Unknown,
+      Architecture: null,
+      EntryPoint: Counter.NotSampledYet,
+      Soname: null,
+      Interpreter: null
+    )).EntryPoint;
+
+    if (!entry.TryGetValue(out var address))
+      return ThreadStart.Unknown(entry.Reason);
+
+    var located = this._symbols.Describe(map, address, resolveSymbols: true);
+    return new(Counter.Of(address), located.Module ?? path, located.Symbol);
+  }
+
+  public ThreadStack GetThreadStack(ProcessKey key, int threadId, bool resolveSymbols = false) {
+    var directory = $"{this._procRoot}/{key.Pid}/task/{threadId.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+    if (!Directory.Exists(directory))
+      return ThreadStack.None(threadId, UnknownReason.ProcessExited);
+
+    // The kernel stack, which is the only stack Linux will hand over — and only to CAP_SYS_ADMIN.
+    // Everything the program itself was running is below the last of these frames and is not here,
+    // which is what UserReason says on every platform this program supports (PRD §4.1, §30).
+    var kernelReason = UnknownReason.None;
+    var frames = new List<StackFrame>();
+    if (this._reader.TryReadWhole(directory + "/stack", out var content, out var errno))
+      frames = KernelStackParser.Parse(content);
+    else
+      kernelReason = ReasonFor(errno, directory);
+
+    if (frames.Count == 0 && kernelReason == UnknownReason.None)
+      // Readable and empty: the thread is on a processor, so it has no parked kernel stack to print.
+      kernelReason = UnknownReason.NotSampledYet;
+
+    // The one user-space frame Linux does give up: the instruction the thread will resume at, from
+    // the same file that says which system call it is in. It is not an unwind and does not pretend to
+    // be — one frame, marked as one, below the kernel frames it sits under.
+    var syscall = this.ReadThreadSyscall(directory);
+    if (syscall.InstructionPointer.TryGetValue(out var pc)) {
+      var located = this._symbols.Describe(this.ReadAddressMap(key.Pid), pc, resolveSymbols);
+      frames.Add(new(
+        frames.Count,
+        FrameKind.User,
+        Counter.Of(pc),
+        located.Symbol,
+        located.Displacement,
+        located.Module,
+        SourceFile: null,
+        SourceLine: 0
+      ));
+    }
+
+    return new(threadId, frames, kernelReason, UnknownReason.NotSupportedOnPlatform);
   }
 
   /// <summary>

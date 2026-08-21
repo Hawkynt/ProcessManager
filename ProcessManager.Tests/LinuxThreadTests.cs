@@ -223,6 +223,179 @@ public sealed class LinuxThreadTests(bool portable) {
     Assert.That(One(threads, 1007).Priority, Is.EqualTo(20));
   }
 
+  /// <summary>
+  /// <c>schedstat</c>'s middle number: how long other threads have kept this one off a processor
+  /// since it started. §29 declines to call it a wait duration, and it is not named as one — but it
+  /// is readable for threads whose registers are refused, which makes it the only scheduling delay
+  /// this program can report at all.
+  /// </summary>
+  [Test]
+  public void TheQueuedTimeComesFromSchedStat() {
+    var threads = this.Threads();
+
+    Assert.That(One(threads, 1001).QueuedNs.Value, Is.EqualTo(4_200_000_000ul));
+    Assert.That(One(threads, 1007).QueuedNs.Value, Is.EqualTo(120_000_000ul));
+  }
+
+  /// <summary>
+  /// A kernel booted with <c>schedstats=disable</c> writes a literal <c>0 0 0</c>. Believing it would
+  /// report a thread that has never been given a processor, which no thread with a file to read can
+  /// be (PRD §72.3).
+  /// </summary>
+  [Test]
+  public void SchedulerStatisticsSwitchedOffAreUnknownRatherThanZero() {
+    var thread = One(this.Threads(), 1017);
+
+    Assert.That(thread.QueuedNs.HasValue, Is.False);
+    Assert.That(thread.QueuedNs.Reason, Is.EqualTo(UnknownReason.NotSupportedOnPlatform));
+  }
+
+  /// <summary>
+  /// Linux gives no thread an entry point except the first one, which began where the executable
+  /// says it does. The old reading put a zero here, and zero is an address (PRD §29, §72.3).
+  /// </summary>
+  [Test]
+  public void OnlyTheFirstThreadHasAStartAddressAndTheRestSaySoRatherThanZero() {
+    var threads = this.Threads();
+
+    foreach (var tid in (int[])[1007, 1017, 1027]) {
+      var thread = One(threads, tid);
+      Assert.That(thread.StartAddress.HasValue, Is.False, $"tid {tid}");
+      Assert.That(thread.StartAddress.Reason, Is.EqualTo(UnknownReason.NotSupportedOnPlatform), $"tid {tid}");
+      Assert.That(thread.StartModule, Is.Null, $"tid {tid}");
+    }
+
+    // The fixture has no readable exe link, so the first thread's is a refusal — which is still not
+    // the address zero.
+    Assert.That(One(threads, 1001).StartAddress.HasValue, Is.False);
+    Assert.That(One(threads, 1001).StartAddress.Reason, Is.EqualTo(UnknownReason.NotPermitted));
+  }
+
+  /// <summary>
+  /// The kernel/user indicator (PRD §29). <c>syscall</c> answers outright where it is readable, and a
+  /// wait channel answers where it is not: a thread parked in a named kernel function is in the
+  /// kernel whatever the permissions say.
+  /// </summary>
+  [Test]
+  public void TheModeSaysWhichSideOfTheBoundaryAThreadIsOn() {
+    var threads = this.Threads();
+
+    Assert.That(One(threads, 1001).Mode, Is.EqualTo(ThreadMode.User), "syscall reads 'running'");
+    Assert.That(One(threads, 1007).Mode, Is.EqualTo(ThreadMode.Kernel));
+    Assert.That(One(threads, 1007).SyscallNumber.Value, Is.EqualTo(202ul));
+    // -1: in the kernel and not in a call. The number is a hole with a reason, never -1 widened.
+    Assert.That(One(threads, 1017).Mode, Is.EqualTo(ThreadMode.Kernel));
+    Assert.That(One(threads, 1017).SyscallNumber.HasValue, Is.False);
+  }
+
+  /// <summary>
+  /// A thread the kernel would not describe is <see cref="ThreadMode.Unknown"/> rather than assumed
+  /// to be in user code: a runnable thread may be on either side, and a coin toss rendered as a
+  /// reading is worse than an empty cell (PRD §5.3).
+  /// </summary>
+  [Test]
+  public void AThreadWithNoSyscallFileAndNoWaitChannelIsNotGuessedAtUser() {
+    var thread = One(this.Threads(), 1027);
+
+    Assert.That(thread.Mode, Is.EqualTo(ThreadMode.Unknown));
+    Assert.That(thread.SyscallNumber.HasValue, Is.False);
+    Assert.That(thread.InstructionPointer.HasValue, Is.False);
+  }
+
+  /// <summary>
+  /// The user-space program counter, from the only file that carries it. Not from <c>stat</c>, whose
+  /// <c>kstkeip</c> has read zero for every task that is not core-dumping since Linux 4.9.
+  /// </summary>
+  [Test]
+  public void TheInstructionPointerIsResolvedToTheImageItIsIn() {
+    var thread = One(this.Threads(), 1007);
+
+    Assert.That(thread.InstructionPointer.Value, Is.EqualTo(0x7f1000012345ul));
+    Assert.That(thread.InstructionModule, Is.EqualTo("/usr/lib/libc.so.6"));
+  }
+
+  /// <summary>
+  /// Stacks grow down, so what is in use is the distance from the stack pointer to the top of the
+  /// mapping it is in — which is why this needs the process's mappings and not only the thread's
+  /// registers (PRD §29).
+  /// </summary>
+  [Test]
+  public void StackUsageIsMeasuredFromTheTopOfTheMappingTheStackPointerIsIn() {
+    var threads = this.Threads();
+
+    // sp 0x7ffd0001f000 in a [stack] mapping ending at 0x7ffd00021000.
+    Assert.That(One(threads, 1007).StackPointer.Value, Is.EqualTo(0x7ffd0001f000ul));
+    Assert.That(One(threads, 1007).StackBytes.Value, Is.EqualTo(0x2000ul));
+    Assert.That(One(threads, 1017).StackBytes.Value, Is.EqualTo(0x3000ul), "sp 0x…1e000 under the same 0x…21000 top");
+  }
+
+  /// <summary>
+  /// A thread whose registers were refused has no stack usage either, and the reason travels: a zero
+  /// would say the thread is using none of its stack, which is not true of any thread.
+  /// </summary>
+  [Test]
+  public void AThreadWithNoReadableStackPointerReportsNoUsageRatherThanZero() {
+    var thread = One(this.Threads(), 1001);
+
+    Assert.That(thread.StackPointer.HasValue, Is.False, "a running thread has no register snapshot");
+    Assert.That(thread.StackBytes.HasValue, Is.False);
+    Assert.That(thread.StackBytes.Reason, Is.EqualTo(UnknownReason.NotSupportedOnPlatform));
+  }
+
+  #region the stack viewer (PRD §30)
+
+  [Test]
+  public void TheKernelStackIsReadWhereThePlatformPermitsIt() {
+    using var probe = this.Probe();
+    var stack = probe.GetThreadStack(new(1001, 100500), 1007);
+
+    Assert.That(stack.KernelReason, Is.EqualTo(UnknownReason.None));
+    Assert.That(stack.KernelFrameCount, Is.EqualTo(6));
+    Assert.That(stack.Frames[0].Symbol, Is.EqualTo("futex_wait_queue_me"));
+    Assert.That(stack.Frames[0].Kind, Is.EqualTo(FrameKind.Kernel));
+  }
+
+  /// <summary>
+  /// Below the kernel frames sits the one user-space frame Linux gives up: the instruction the thread
+  /// will resume at. It is marked as one frame and not as an unwind, because that is what it is
+  /// (PRD §4.1, §30).
+  /// </summary>
+  [Test]
+  public void TheOneUserFrameLinuxGivesUpIsMarkedAsSuch() {
+    using var probe = this.Probe();
+    var stack = probe.GetThreadStack(new(1001, 100500), 1007);
+
+    var last = stack.Frames[^1];
+    Assert.That(last.Kind, Is.EqualTo(FrameKind.User));
+    Assert.That(last.Address.Value, Is.EqualTo(0x7f1000012345ul));
+    Assert.That(last.Module, Is.EqualTo("/usr/lib/libc.so.6"), "module and offset without opening the image");
+    Assert.That(stack.UserReason, Is.EqualTo(UnknownReason.NotSupportedOnPlatform), "the rest is not unwound");
+  }
+
+  /// <summary>
+  /// A stack file that is not there is not a thread without a stack. Which of the two it is decides
+  /// whether the reader should go and start the elevated helper (PRD §3.4).
+  /// </summary>
+  [Test]
+  public void AThreadWhoseKernelStackCouldNotBeReadSaysWhy() {
+    using var probe = this.Probe();
+    var stack = probe.GetThreadStack(new(1001, 100500), 1001);
+
+    Assert.That(stack.KernelFrameCount, Is.EqualTo(0));
+    Assert.That(stack.KernelReason, Is.Not.EqualTo(UnknownReason.None));
+  }
+
+  [Test]
+  public void AskingAboutAThreadThatIsNotThereIsNotAnException() {
+    using var probe = this.Probe();
+    var stack = probe.GetThreadStack(new(1001, 100500), 999999);
+
+    Assert.That(stack.Frames, Is.Empty);
+    Assert.That(stack.KernelReason, Is.EqualTo(UnknownReason.ProcessExited));
+  }
+
+  #endregion
+
   [Test]
   public void AProcessWithNoTaskDirectoryReturnsNothingRatherThanThrowing() {
     using var probe = this.Probe();
