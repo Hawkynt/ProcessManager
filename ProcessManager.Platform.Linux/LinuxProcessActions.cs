@@ -22,9 +22,250 @@ public sealed class LinuxProcessActions(LinuxProbeOptions? options = null) : IPr
   /// <summary>How long a program started suspended is given to reach state <c>T</c>.</summary>
   private static readonly TimeSpan _SuspendGrace = TimeSpan.FromMilliseconds(2000);
 
+  /// <summary>How long a process is given to act on <c>SIGTERM</c> before a restart gives up.</summary>
+  /// <remarks>
+  /// Generous on purpose. A program asked to stop is often writing something out, and a restart that
+  /// hurried it would be the data loss the polite signal exists to avoid. What must not happen is a
+  /// second copy started beside a first that is still running, which is why the timeout refuses
+  /// rather than escalating to <c>SIGKILL</c>: escalating is a decision for whoever is watching.
+  /// </remarks>
+  private static readonly TimeSpan _RestartGrace = TimeSpan.FromSeconds(5);
+
   private const string _Shell = "/bin/sh";
 
   public ActionResult Terminate(ProcessKey key) => this.Signal(key, Native.SIGTERM);
+
+  /// <summary>
+  /// Asks the program to close, and only signals it if there is nothing to ask (PRD §25.1).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// On a desktop this is a <c>WM_DELETE_WINDOW</c> to each window the process owns — the same
+  /// message its close button sends, and the one its toolkit's handler is written for. It is what
+  /// makes an editor offer to save rather than disappear, and it is the whole difference between
+  /// this and <see cref="Terminate"/>.
+  /// </para>
+  /// <para>
+  /// A process with no window has nothing to ask, and then <c>SIGTERM</c> is the polite request: it
+  /// is what a daemon's own handler exists for. The two cases are reported distinctly, because
+  /// "nothing answered so it was signalled" and "it was asked and is thinking about it" lead to
+  /// different next actions.
+  /// </para>
+  /// </remarks>
+  public ActionResult EndTask(ProcessKey key) {
+    var check = this.Verify(key);
+    if (!check.Succeeded)
+      return check;
+
+    // Only against the machine's own processes. A fixture replay's pid 1000 is a recording, while
+    // the windows on this display belong to whatever this machine's pid 1000 happens to be, and
+    // asking those to close would act on a process nobody named (PRD §9.1).
+    var sessionAnswered = false;
+    if (this._options.ProcRoot == LinuxProbeOptions.LiveProcRoot) {
+      int asked;
+      (sessionAnswered, asked) = X11Windows.AskToClose(key.Pid);
+      if (asked > 0)
+        return new(
+          ActionOutcome.Succeeded,
+          asked == 1
+            ? "its window was asked to close; whether it does is the program's own decision"
+            : $"its {asked} windows were asked to close; whether they do is the program's own decision"
+        );
+    }
+
+    var signalled = this.Signal(key, Native.SIGTERM);
+    return signalled.Succeeded
+      ? new(
+        ActionOutcome.Succeeded,
+        sessionAnswered
+          ? "it has no window to ask, so SIGTERM was sent instead"
+          : "this session does not report windows, so SIGTERM was sent instead"
+      )
+      : signalled;
+  }
+
+  /// <summary>
+  /// Ends a process and starts it again as it was (PRD §25.1).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Everything needed to start it again is read <em>before</em> anything is sent, because none of
+  /// it is readable afterwards: <c>/proc/[pid]/exe</c>, <c>cwd</c> and <c>cmdline</c> all vanish
+  /// with the process.
+  /// </para>
+  /// <para>
+  /// The replacement inherits this program's environment rather than the old process's. That is a
+  /// deliberate limit and not an oversight: <c>/proc/[pid]/environ</c> is the block the kernel laid
+  /// down at <c>exec</c>, so for any process that has since called <c>setenv</c> it is stale, and
+  /// there is no way from outside to tell a stale block from a current one. Copying it would produce
+  /// a "restart" that quietly differs from the process it replaced (PRD §5.3).
+  /// </para>
+  /// <para>
+  /// If the process has not gone within <see cref="_RestartGrace"/>, no replacement is started. Two
+  /// copies of a program that guards a socket or a lock file is a worse outcome than a restart that
+  /// says it did not happen.
+  /// </para>
+  /// </remarks>
+  public LaunchResult Restart(ProcessKey key) {
+    var check = this.Verify(key);
+    if (!check.Succeeded)
+      return new(check, 0, default);
+
+    if (this.DescribeForRestart(key) is not { } request)
+      return new(
+        ActionResult.Fail(
+          ActionOutcome.NotPermitted,
+          $"what pid {key.Pid} was started with cannot be read, so it cannot be started again"
+        ),
+        0,
+        default
+      );
+
+    var ended = this.Signal(key, Native.SIGTERM);
+    if (!ended.Succeeded && ended.Outcome != ActionOutcome.ProcessExited)
+      return new(ended, 0, default);
+
+    if (!this.WaitForExit(key, _RestartGrace))
+      return new(
+        ActionResult.Fail(
+          ActionOutcome.Refused,
+          $"pid {key.Pid} was still running {_RestartGrace.TotalSeconds:0} s after being asked to stop, so no second copy was started"
+        ),
+        0,
+        default
+      );
+
+    return this.Launch(request);
+  }
+
+  /// <summary>
+  /// What a running process would have to be started with to be started again, or null when the
+  /// kernel will not say.
+  /// </summary>
+  /// <remarks>
+  /// The executable comes from the <c>exe</c> link rather than from <c>argv[0]</c>, which a program
+  /// may set to anything it likes. For a script that means the interpreter, and <c>argv[1]</c> is
+  /// then the script — which is exactly the pair needed to run it again.
+  /// </remarks>
+  private LaunchRequest? DescribeForRestart(ProcessKey key) {
+    var root = this._options.ProcRoot.TrimEnd('/');
+    var executable = this._reader.TryReadLink($"{root}/{key.Pid}/exe");
+    if (executable is null)
+      return null;
+
+    // The kernel marks a replaced or removed image this way. Starting the path again would start
+    // whatever now occupies it, which is not what was running.
+    if (executable.EndsWith(" (deleted)", StringComparison.Ordinal))
+      return null;
+
+    // NUL-separated with a trailing NUL. Split here rather than reusing the joined command line the
+    // sampler shows: that one is joined with spaces for a person to read, and re-splitting it would
+    // break every argument that contains one.
+    var arguments = new List<string>();
+    if (this._reader.TryRead($"{root}/{key.Pid}/cmdline", out var content, out _))
+      for (int start = 0, i = 0; i <= content.Length; ++i) {
+        if (i < content.Length && content[i] != 0)
+          continue;
+
+        if (i > start)
+          arguments.Add(System.Text.Encoding.UTF8.GetString(content[start..i]));
+
+        start = i + 1;
+      }
+
+    // argv[0] is the program's own name, not an argument to it, and is dropped rather than passed on.
+    if (arguments.Count > 0)
+      arguments.RemoveAt(0);
+
+    // Null rather than the current directory when it cannot be read: an unreadable cwd means the
+    // replacement inherits this program's, which is at least a directory that exists.
+    var directory = this._reader.TryReadLink($"{root}/{key.Pid}/cwd");
+    return new(executable, arguments, Directory.Exists(directory) ? directory : null);
+  }
+
+  /// <summary>
+  /// Which class the kernel runs the process under, and where it sits inside it (PRD §25.2).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Not the same control as nice, and not on the same scale. Nice orders processes <em>within</em>
+  /// <c>SCHED_OTHER</c>; this changes which rules order them at all. A task at <c>SCHED_IDLE</c> is
+  /// not merely last in the queue — it runs only when the machine has nothing else to run, which is
+  /// what makes a re-index invisible rather than merely quieter.
+  /// </para>
+  /// <para>
+  /// <b>Raising into a real-time class is deliberately not routed through the privileged helper</b>,
+  /// for the same reason the real-time I/O class is not (PRD §68): a <c>SCHED_FIFO</c> task that
+  /// spins never yields the processor it is on, and on a single-core machine that is the end of the
+  /// session. Somebody should take that decision at a root prompt, not from a menu.
+  /// </para>
+  /// </remarks>
+  public ActionResult SetSchedulingClass(ProcessKey key, SchedulingPolicy policy, int priority) {
+    if (PolicyNumber(policy) is not { } number)
+      return ActionResult.Fail(
+        ActionOutcome.NotSupportedOnPlatform,
+        policy switch {
+          // Both exist, and neither can be asked for through this call: a deadline task is described
+          // by a runtime, a period and a deadline that sched_setscheduler has nowhere to put, and the
+          // extensible class belongs to whichever BPF scheduler is loaded, if any.
+          SchedulingPolicy.Deadline => "SCHED_DEADLINE needs a runtime, a period and a deadline, which this call cannot carry",
+          SchedulingPolicy.Extensible => "SCHED_EXT is set by the loaded BPF scheduler, not from outside",
+          _ => $"{Query.Humanize.SchedulingPolicy(policy)} is not a class this kernel can be asked for",
+        }
+      );
+
+    if (Native.SchedulerPriorityRange(number) is not { } range)
+      return ActionResult.Fail(ActionOutcome.NotSupportedOnPlatform, $"this kernel does not know {Query.Humanize.SchedulingPolicy(policy)}");
+
+    if (priority < range.Min || priority > range.Max)
+      return ActionResult.Fail(
+        ActionOutcome.Refused,
+        range.Min == range.Max
+          ? $"{Query.Humanize.SchedulingPolicy(policy)} has no static priority; it takes {range.Min} and nothing else"
+          : $"{Query.Humanize.SchedulingPolicy(policy)} takes a static priority of {range.Min} to {range.Max}, not {priority}"
+      );
+
+    var check = this.Verify(key);
+    if (!check.Succeeded)
+      return check;
+
+    if (Native.SetScheduler(key.Pid, number, priority) == 0)
+      return ActionResult.Ok;
+
+    var errno = Native.LastError;
+    var what = $"could not move pid {key.Pid} to {Query.Humanize.SchedulingPolicy(policy)}";
+    if (errno is not (Native.EPERM or Native.EACCES))
+      return Translate(errno, what);
+
+    if (policy is SchedulingPolicy.Fifo or SchedulingPolicy.RoundRobin)
+      return ActionResult.Fail(
+        ActionOutcome.NotPermitted,
+        $"{what}: a real-time class needs CAP_SYS_NICE or an RLIMIT_RTPRIO that allows it"
+      );
+
+    // The surprise this message exists for. Dropping a process into SCHED_IDLE needs no privilege
+    // and taking it back out of one nearly always does: the kernel scores SCHED_IDLE as nice 20, so
+    // leaving it is a promotion, and it is permitted only where RLIMIT_NICE reaches that far — which
+    // at the default limit of 0 it never does. Without this the refusal reads as an ordinary
+    // permission problem and sends people looking for one that is not there.
+    if (this.TryReadStat(key, matchIdentity: true, out var current) && current.SchedulingPolicy == SchedulingPolicy.Idle)
+      return ActionResult.Fail(
+        ActionOutcome.NotPermitted,
+        $"{what}: the kernel counts SCHED_IDLE as nice 20, so leaving it is a promotion and needs CAP_SYS_NICE or an RLIMIT_NICE that reaches it"
+      );
+
+    return Translate(errno, what);
+  }
+
+  /// <summary>The kernel's own number for a class, or null for one that cannot be set this way.</summary>
+  private static int? PolicyNumber(SchedulingPolicy policy) => policy switch {
+    SchedulingPolicy.Other => 0,
+    SchedulingPolicy.Fifo => 1,
+    SchedulingPolicy.RoundRobin => 2,
+    SchedulingPolicy.Batch => 3,
+    SchedulingPolicy.Idle => 5,
+    _ => null,
+  };
 
   public ActionResult Suspend(ProcessKey key) => this.Signal(key, Native.SIGSTOP);
 
@@ -225,37 +466,6 @@ public sealed class LinuxProcessActions(LinuxProbeOptions? options = null) : IPr
     return null;
   }
 
-  /// <summary>Waits for a pid to reach a state, or gives up. Used to confirm a suspended start.</summary>
-  private bool WaitForState(int pid, ProcessState wanted, TimeSpan limit) {
-    var deadline = Environment.TickCount64 + (long)limit.TotalMilliseconds;
-    while (true) {
-      // No identity pair yet: this runs against a process this call has just started, so there is
-      // nothing that could have recycled the pid in between and nothing to compare it against.
-      if (this.ReadState(new(pid, 0), matchIdentity: false) == wanted)
-        return true;
-
-      if (Environment.TickCount64 >= deadline)
-        return false;
-
-      Thread.Sleep(1);
-    }
-  }
-
-  /// <summary>
-  /// The process's state right now, or null when it is gone or is no longer the one the key names.
-  /// </summary>
-  private ProcessState? ReadState(ProcessKey key, bool matchIdentity = true) {
-    var path = $"{this._options.ProcRoot.TrimEnd('/')}/{key.Pid}/stat";
-    if (!this._reader.TryRead(path, out var content, out _))
-      return null;
-
-    var record = new ProcessRecord();
-    if (!LinuxProbe.ParseStat(content, 1, this._options.PageSize, ref record))
-      return null;
-
-    return matchIdentity && record.Key.StartTicks != key.StartTicks ? null : record.State;
-  }
-
   /// <summary>The identity pair of a process that has just been started, or default if it is gone.</summary>
   private ProcessKey KeyOf(int pid) {
     Span<byte> pathBuffer = stackalloc byte[ProcPath.MaxLength];
@@ -400,6 +610,64 @@ public sealed class LinuxProcessActions(LinuxProbeOptions? options = null) : IPr
       ElevatedStatus.NotPermitted => ActionResult.Fail(ActionOutcome.NotPermitted, $"{what}: the helper refused it too"),
       _ => ActionResult.Fail(ActionOutcome.Failed, $"{what}: the helper answered {status}"),
     };
+  }
+
+  /// <summary>
+  /// Waits until the process the key names is no longer running, or the time is up.
+  /// </summary>
+  /// <remarks>
+  /// A zombie counts as gone. It has exited; what is left is a row in the process table nobody has
+  /// reaped, and it will never run again — which is the question being asked. This program is rarely
+  /// the parent, so it usually does not arise, but a process this program started itself becomes one
+  /// and would otherwise look alive for as long as nobody called <c>wait</c>.
+  /// </remarks>
+  private bool WaitForExit(ProcessKey key, TimeSpan limit) {
+    var deadline = Environment.TickCount64 + (long)limit.TotalMilliseconds;
+    while (true) {
+      var state = this.ReadState(key);
+      if (state is null or ProcessState.Zombie or ProcessState.Dead)
+        return true;
+
+      if (Environment.TickCount64 >= deadline)
+        return false;
+
+      Thread.Sleep(10);
+    }
+  }
+
+  /// <summary>Waits for a pid to reach a state, or gives up. Used to confirm a suspended start.</summary>
+  private bool WaitForState(int pid, ProcessState wanted, TimeSpan limit) {
+    var deadline = Environment.TickCount64 + (long)limit.TotalMilliseconds;
+    while (true) {
+      // No identity pair yet: this runs against a process this call has just started, so there is
+      // nothing that could have recycled the pid in between and nothing to compare it against.
+      if (this.ReadState(new(pid, 0), matchIdentity: false) == wanted)
+        return true;
+
+      if (Environment.TickCount64 >= deadline)
+        return false;
+
+      Thread.Sleep(1);
+    }
+  }
+
+  /// <summary>
+  /// The process's state right now, or null when it is gone or is no longer the one the key names.
+  /// </summary>
+  private ProcessState? ReadState(ProcessKey key, bool matchIdentity = true)
+    => this.TryReadStat(key, matchIdentity, out var record) ? record.State : null;
+
+  /// <summary>The process's own <c>stat</c> line, parsed, if it is still the one the key names.</summary>
+  private bool TryReadStat(ProcessKey key, bool matchIdentity, out ProcessRecord record) {
+    record = new();
+    var path = $"{this._options.ProcRoot.TrimEnd('/')}/{key.Pid}/stat";
+    if (!this._reader.TryRead(path, out var content, out _))
+      return false;
+
+    if (!LinuxProbe.ParseStat(content, 1, this._options.PageSize, ref record))
+      return false;
+
+    return !matchIdentity || record.Key.StartTicks == key.StartTicks;
   }
 
   /// <summary>Confirms that the pid is still the process the caller meant.</summary>

@@ -26,8 +26,11 @@ public sealed record LinuxProbeOptions {
   /// </remarks>
   public bool ReadSupplementaryGroups { get; init; }
 
+  /// <summary>Where the running kernel publishes its own processes.</summary>
+  public const string LiveProcRoot = "/proc";
+
   /// <summary>Where <c>/proc</c> is. A fixture directory in tests.</summary>
-  public string ProcRoot { get; init; } = "/proc";
+  public string ProcRoot { get; init; } = LiveProcRoot;
 
   /// <summary>
   /// Where <c>/sys</c> is. Separate from <see cref="ProcRoot"/> so a recorded machine can carry both

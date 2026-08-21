@@ -69,6 +69,9 @@ internal static class Program {
         RunMode.List => RunList(sampler, options),
         RunMode.Find => RunFind(sampler, probe, options),
         RunMode.Kill => RunKill(sampler, actions, options),
+        RunMode.EndTask => RunEndTask(sampler, actions, options),
+        RunMode.Restart => RunRestart(sampler, actions, options),
+        RunMode.Scheduling => RunScheduling(sampler, actions, options),
         RunMode.Host => HostReport.Run(sampler, probe),
         RunMode.Limits => LimitsReport.Run(sampler, probe, options.TargetPid),
         RunMode.Run => LaunchCommand.Run(actions, options),
@@ -266,6 +269,89 @@ internal static class Program {
     }
 
     return failed == 0 ? _ExitOk : _ExitError;
+  }
+
+  /// <summary>
+  /// <c>--end-task</c>: asks the program to close rather than telling it to (PRD §25.1).
+  /// </summary>
+  /// <remarks>
+  /// The detail is printed on success as well as on failure, because here it carries the whole
+  /// answer: "its window was asked" and "it has no window, so SIGTERM was sent" are different things
+  /// to have happened, and only one of them can still be refused by the program itself.
+  /// </remarks>
+  private static int RunEndTask(Sampler sampler, IProcessActions? actions, CommandLineOptions options) {
+    if (!TryResolve(sampler, actions, options.TargetPid, out var target, out var exit))
+      return exit;
+
+    var result = actions!.EndTask(target);
+    if (!result.Succeeded) {
+      Console.Error.WriteLine($"procman: {target.Pid}: {result.Detail ?? result.Outcome.ToString()}");
+      return _ExitError;
+    }
+
+    Console.WriteLine($"asked {target.Pid} to end: {result.Detail ?? "done"}");
+    return _ExitOk;
+  }
+
+  /// <summary>
+  /// <c>--restart</c>: the same program, the same arguments, the same directory, a new process.
+  /// </summary>
+  private static int RunRestart(Sampler sampler, IProcessActions? actions, CommandLineOptions options) {
+    if (!TryResolve(sampler, actions, options.TargetPid, out var target, out var exit))
+      return exit;
+
+    var result = actions!.Restart(target);
+    if (!result.Outcome.Succeeded) {
+      Console.Error.WriteLine($"procman: {target.Pid}: {result.Outcome.Detail ?? result.Outcome.Outcome.ToString()}");
+      return _ExitError;
+    }
+
+    Console.WriteLine($"restarted {target.Pid} as {result.Pid}");
+    return _ExitOk;
+  }
+
+  /// <summary>
+  /// <c>--scheduling</c>: which class the kernel runs the process under (PRD §25.2).
+  /// </summary>
+  private static int RunScheduling(Sampler sampler, IProcessActions? actions, CommandLineOptions options) {
+    if (!TryResolve(sampler, actions, options.TargetPid, out var target, out var exit))
+      return exit;
+
+    var result = actions!.SetSchedulingClass(target, options.SchedulingClass, options.SchedulingPriority);
+    if (!result.Succeeded) {
+      Console.Error.WriteLine($"procman: {target.Pid}: {result.Detail ?? result.Outcome.ToString()}");
+      return _ExitError;
+    }
+
+    Console.WriteLine($"{target.Pid} now runs under {Humanize.SchedulingPolicy(options.SchedulingClass)}");
+    return _ExitOk;
+  }
+
+  /// <summary>
+  /// Turns a pid from a command line into the identity pair every action needs (PRD §8.2).
+  /// </summary>
+  /// <remarks>
+  /// A pid is what somebody can type, and it is not an identity. Looking it up in a fresh snapshot is
+  /// what pairs it with the start time the action will re-check, so a number recycled between the
+  /// sample and the syscall is refused there rather than acted on here.
+  /// </remarks>
+  private static bool TryResolve(Sampler sampler, IProcessActions? actions, int pid, out ProcessKey key, out int exit) {
+    key = ProcessKey.None;
+    exit = _ExitOk;
+    if (actions is null) {
+      Console.Error.WriteLine("procman: this platform has no actions yet.");
+      exit = _ExitError;
+      return false;
+    }
+
+    sampler.Sample();
+    key = ProcessTree.Find(sampler.Current, pid);
+    if (!key.IsNone)
+      return true;
+
+    Console.Error.WriteLine($"procman: no process with pid {pid}");
+    exit = _ExitNoMatch;
+    return false;
   }
 
   #endregion

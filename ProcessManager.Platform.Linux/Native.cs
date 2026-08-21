@@ -52,11 +52,21 @@ internal static partial class Native {
   [LibraryImport("libc", EntryPoint = "sched_setaffinity", SetLastError = true)]
   private static partial int SchedSetAffinity(int pid, nuint cpuSetSize, ref ulong mask);
 
+  [LibraryImport("libc", EntryPoint = "sched_setscheduler", SetLastError = true)]
+  private static partial int SchedSetScheduler(int pid, int policy, ref int priority);
+
+  [LibraryImport("libc", EntryPoint = "sched_get_priority_min", SetLastError = true)]
+  private static partial int SchedGetPriorityMin(int policy);
+
+  [LibraryImport("libc", EntryPoint = "sched_get_priority_max", SetLastError = true)]
+  private static partial int SchedGetPriorityMax(int policy);
+
   public const int EPERM = 1;
   public const int ENOENT = 2;
   public const int ESRCH = 3;
   public const int EINTR = 4;
   public const int EACCES = 13;
+  public const int EINVAL = 22;
 
   public const int SIGKILL = 9;
   public const int SIGTERM = 15;
@@ -271,6 +281,34 @@ internal static partial class Native {
   public static int SetNice(int pid, int nice) => SetPriority(PRIO_PROCESS, (uint)pid, nice);
 
   public static int SetAffinityMask(int pid, ulong mask) => SchedSetAffinity(pid, sizeof(ulong), ref mask);
+
+  /// <summary>
+  /// <c>sched_setscheduler</c>: the class a process is run by, and its static priority inside it.
+  /// </summary>
+  /// <remarks>
+  /// <c>struct sched_param</c> is one <c>int</c> and nothing else, so it is passed as one rather
+  /// than wrapped — the layout is fixed by the ABI and has been since the call existed.
+  /// </remarks>
+  public static int SetScheduler(int pid, int policy, int priority) => SchedSetScheduler(pid, policy, ref priority);
+
+  /// <summary>
+  /// The static-priority range a class accepts, or <see langword="null"/> where the kernel does not
+  /// know the class at all.
+  /// </summary>
+  /// <remarks>
+  /// Asked rather than assumed. It is 1–99 for the real-time classes and 0–0 for the rest on every
+  /// Linux anyone runs, and it is still the kernel's answer to give — a class this kernel has never
+  /// heard of returns EINVAL here, which is a better refusal than a syscall that fails later with
+  /// nothing to say about why.
+  /// </remarks>
+  public static (int Min, int Max)? SchedulerPriorityRange(int policy) {
+    var min = SchedGetPriorityMin(policy);
+    if (min < 0)
+      return null;
+
+    var max = SchedGetPriorityMax(policy);
+    return max < 0 ? null : (min, max);
+  }
 
   /// <summary>
   /// <c>ioprio_get</c> and <c>ioprio_set</c>, which have no glibc wrappers and must be called as
