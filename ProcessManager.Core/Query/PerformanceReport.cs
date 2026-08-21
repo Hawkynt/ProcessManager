@@ -88,6 +88,15 @@ public enum PerformanceUnit {
   Celsius,
   Watts,
 
+  /// <summary>
+  /// A plain count of things: descriptors held, threads running.
+  /// </summary>
+  /// <remarks>
+  /// Added last on purpose. Without it a plot of thread count had to declare itself a percentage,
+  /// and its hover readings said "42 %" of nothing at all (PRD §28, §76).
+  /// </remarks>
+  Count,
+
 }
 
 /// <summary>

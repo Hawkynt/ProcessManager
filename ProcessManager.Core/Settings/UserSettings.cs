@@ -59,6 +59,26 @@ public sealed record UserSettings {
   public int SplitPercent { get; init; }
 
   /// <summary>
+  /// Whether the lower pane was showing (PRD §10).
+  /// </summary>
+  /// <remarks>
+  /// Kept, because it is a decision about how much of the screen the process list gets and nobody
+  /// wants to make it twice a day. On by default: the pane is what the window is shaped around.
+  /// </remarks>
+  public bool LowerPaneVisible { get; init; } = true;
+
+  /// <summary>
+  /// Whether a properties tab this machine cannot fill is removed rather than left saying so
+  /// (PRD §26).
+  /// </summary>
+  /// <remarks>
+  /// A preference and not a decision, because the two answer different questions: "can this machine
+  /// do it" wants the tab there, saying it cannot, and "get out of my way" wants it gone. Off by
+  /// default — a missing tab is indistinguishable from a feature nobody wrote.
+  /// </remarks>
+  public bool HideUnavailableTabs { get; init; }
+
+  /// <summary>
   /// Colours the file overrides, by the names <see cref="ColourNames"/> lists.
   /// </summary>
   /// <remarks>
@@ -298,6 +318,29 @@ public sealed record UserSettings {
           settings = settings with { Thresholds = settings.Thresholds with { HotBytesPerSecond = Number(value, settings.Thresholds.HotBytesPerSecond) } };
           break;
 
+        case "heat.gpu.warm":
+          settings = settings with { Thresholds = settings.Thresholds with { WarmGpuPercent = Number(value, settings.Thresholds.WarmGpuPercent) } };
+          break;
+
+        case "heat.gpu.hot":
+          settings = settings with { Thresholds = settings.Thresholds with { HotGpuPercent = Number(value, settings.Thresholds.HotGpuPercent) } };
+          break;
+
+        case "window.lowerpane":
+          if (TryParseBool(value, out var lowerPane))
+            settings = settings with { LowerPaneVisible = lowerPane };
+
+          break;
+
+        case "tabs.unavailable":
+          settings = value.ToLowerInvariant() switch {
+            "hidden" or "hide" => settings with { HideUnavailableTabs = true },
+            "disabled" or "disable" or "show" => settings with { HideUnavailableTabs = false },
+            _ => settings,
+          };
+
+          break;
+
         case "window.split":
           if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var split) && split is >= 10 and <= 90)
             settings = settings with { SplitPercent = split };
@@ -340,16 +383,31 @@ public sealed record UserSettings {
     if (this.SplitPercent > 0)
       text.Append("window.split=").AppendLine(this.SplitPercent.ToString(CultureInfo.InvariantCulture));
 
+    // Only when it is off. The pane is what the window is shaped around, so its being there is not
+    // a preference worth a line in everybody's file.
+    if (!this.LowerPaneVisible)
+      text.AppendLine("window.lowerpane=false");
+
+    if (this.HideUnavailableTabs) {
+      text.AppendLine();
+      text.AppendLine("# A properties tab this machine cannot fill: `disabled` leaves it in place");
+      text.AppendLine("# saying so, `hidden` takes it off the strip.");
+      text.AppendLine("tabs.unavailable=hidden");
+    }
+
     if (this.Thresholds != UsageThresholds.Default) {
       text.AppendLine();
       text.AppendLine("# When a cell is marked as busy. CPU and memory are percentages — CPU of one");
-      text.AppendLine("# core, memory of the machine — and the I/O pair are bytes per second.");
+      text.AppendLine("# core, memory of the machine, GPU of the whole adapter — and the I/O pair are");
+      text.AppendLine("# bytes per second.");
       text.Append("heat.cpu.warm=").AppendLine(this.Thresholds.WarmCpuPercent.ToString("0.###", CultureInfo.InvariantCulture));
       text.Append("heat.cpu.hot=").AppendLine(this.Thresholds.HotCpuPercent.ToString("0.###", CultureInfo.InvariantCulture));
       text.Append("heat.memory.warm=").AppendLine(this.Thresholds.WarmMemoryPercent.ToString("0.###", CultureInfo.InvariantCulture));
       text.Append("heat.memory.hot=").AppendLine(this.Thresholds.HotMemoryPercent.ToString("0.###", CultureInfo.InvariantCulture));
       text.Append("heat.io.warm=").AppendLine(this.Thresholds.WarmBytesPerSecond.ToString("0", CultureInfo.InvariantCulture));
       text.Append("heat.io.hot=").AppendLine(this.Thresholds.HotBytesPerSecond.ToString("0", CultureInfo.InvariantCulture));
+      text.Append("heat.gpu.warm=").AppendLine(this.Thresholds.WarmGpuPercent.ToString("0.###", CultureInfo.InvariantCulture));
+      text.Append("heat.gpu.hot=").AppendLine(this.Thresholds.HotGpuPercent.ToString("0.###", CultureInfo.InvariantCulture));
     }
 
     if (this.Colours.Count > 0) {

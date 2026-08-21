@@ -429,16 +429,26 @@ No field or action may be introduced inside a front-end. §103 lists the thirtee
 Primary navigation:
 
 - [x] Processes
-- [ ] 🟡 Performance — a system overview exists; the resource selector does not (§45)
+- [ ] 🟡 Performance — reachable from the rail, but as a window of its own rather than a page in the
+      content region: it is modeless, has its own timer and its own lifetime, and a second copy of it
+      in here would mean two of everything it samples (§45)
 - [ ] Applications / usage history (§44)
-- [ ] 🟡 Startup — `--startup` lists them; there is no view (§42)
-- [ ] 🟡 Users / sessions — `--users` lists them; there is no view (§43)
-- [ ] 🟡 Services — `--services` lists them; there is no view and no control verbs (§41)
-- [ ] 🟡 Network — connections are collected and shown per process, not as a view (§40)
+- [x] Startup (§42)
+- [x] Users / sessions (§43)
+- [ ] 🟡 Services — there is a view; there are still no start or stop verbs, and the view says so
+      rather than offering buttons that would only ever refuse (§41)
+- [x] Network — every socket on the machine, with the process holding it where this account may see
+      one; opening a row goes to that process (§40)
 - [ ] System activity (§51)
-- [ ] Search / find resources (§33)
+- [x] Search / find resources — from the rail, which opens §33's dialog
 - [ ] Logs / history (§63)
 - [ ] Settings (§67)
+
+The four table views are collected when they are chosen and when Refresh is asked for, and never on
+the sample tick: enumerating every unit on the machine once a second would cost more than the thing
+being measured (§5.4). Each says above its rows how many of what came back and when — a table that
+has silently stopped being true is worse than one that admits its age — and each says which of the
+two things "none" means (§72.3).
 
 Optional advanced views: drivers/kernel modules, file activity, disk activity, GPU activity,
 containers/cgroups, jobs, security, devices — all unbuilt.
@@ -447,21 +457,24 @@ containers/cgroups, jobs, security, devices — all unbuilt.
 
 # 10. Global window layout
 
-- [ ] Left navigation rail with the persistent primary views
-- [ ] 🟡 Top command bar with context-sensitive actions — a menu bar exists instead
+- [x] Left navigation rail with the persistent primary views — and it collapses to icons on its own
+      hamburger, so the content region gets the width back on a small screen
+- [x] Top command bar with context-sensitive actions — what a view cannot do is disabled rather than
+      offered and silently inert, which is the failure mode this program has already shipped once
 - [x] Primary content pane: table, tree table, graphs or dashboard
-- [ ] Optional lower pane, resizable, toggled by shortcut, toolbar button and menu
+- [x] Optional lower pane, resizable, toggled by shortcut, toolbar button and menu — Ctrl+D,
+      the strip and View ▸ Lower pane, all three, and whether it was showing survives a restart.
+      Collapsed rather than removed, so the splitter comes back where it was left
 
-Lower-pane modes (all unbuilt as a *pane*; the engine behind the ticked ones works and is reachable
-from the detail pane):
+Lower-pane modes:
 
-- [ ] Summary
-- [ ] Threads
-- [ ] Modules
-- [ ] Handles / descriptors
-- [ ] Network
+- [x] Summary
+- [x] Threads
+- [x] Modules
+- [x] Handles / descriptors
+- [x] Network
 - [ ] Memory mappings
-- [ ] Environment
+- [x] Environment
 - [ ] Windows
 - [ ] Services
 - [ ] Security
@@ -469,6 +482,12 @@ from the detail pane):
 
 The lower pane is the defining Process Explorer interaction and is the highest-value single item in
 this document.
+
+**The window stacks menu, command bar, plots, then the rail beside the content, with the status line
+along the foot.** The adds run the other way round, because the toolkit's layout pass walks its
+children backwards and the child added last claims its edge first. That is not a style note: the
+strip used to be added after the menu on the assumption that earlier meant outer, and the window
+shipped with its plots above its menu bar for exactly as long as nobody looked at a picture of it.
 
 ---
 
@@ -1013,7 +1032,11 @@ prevent.
 
 # 23. Process highlighting
 
-- [x] Highlight colours are configurable
+- [x] Highlight colours are configurable — the settings file names every one of them, and the
+      thresholds behind the two washes are settable from the window as well, under
+      View ▸ Highlighting thresholds and from the legend itself
+- [x] Every colour the table paints is explained by a dialog — the row categories and both cell
+      marks, with the numbers the marks are currently being judged by (§7.1)
 - [x] 🟡 Highlighting is never the only signal — the number is in the cell it washes, so the table
       reads without colour at all; an explicit high-contrast mode is not detected yet (§45.9)
 
@@ -1060,12 +1083,17 @@ setting alone — a threshold of nought is the most annoying possible response t
 A reading that does not exist is never marked, in either direction. `default(Rate)` is a confident
 zero, so an unread counter compares as cold; a counter that came back *not permitted* is not a
 measurement at all (§5.3).
-- [ ] High GPU
+- [x] High GPU — `heat.gpu.warm` and `heat.gpu.hot`, a third of the adapter and three quarters of it.
+      Deliberately not the CPU's numbers: a GPU percentage is already a share of the whole device
+      where a CPU percentage here is a share of one core out of many, so a band set at a hundred
+      could only ever fire on a benchmark. Each engine column is marked from its own reading and the
+      summary column from the busiest engine; the graphics-memory columns are bytes and are left
+      alone, because a percentage threshold has nothing to say about them.
 - [ ] Process with an active UI window — needs §39
 - [ ] Process with a changed executable — needs image mtime + hash watch
 - [ ] Process containing the selected search match — needs §56
 
-The seven that are ticked are the ones the program can *prove*. The rest stay off rather than
+The ones that are ticked are the ones the program can *prove*. The rest stay off rather than
 guessing: a colour claiming "unsigned" without having checked a signature is worse than no colour.
 
 ---
@@ -1273,24 +1301,33 @@ column nobody looked at (§5.4).
 
 - [x] Double-click or Properties opens a **persistent** inspector — one per process, and several at
       once, which is what makes comparing two of them possible
-- [ ] Tabs whose capability is unavailable are hidden **or** disabled by user preference — the
+- [x] Tabs whose capability is unavailable are hidden **or** disabled by user preference — the
       preference matters, because hidden and disabled answer different questions ("can this machine
-      do it" versus "get out of my way")
+      do it" versus "get out of my way"). `tabs.unavailable=disabled` leaves the tab in place saying
+      which of the two reasons applies; `hidden` takes it off the strip. Disabled is the default,
+      because a missing tab is indistinguishable from a feature nobody wrote
 
 Tabs:
 
-- [ ] 🟡 General (§27) — the overview tab carries identity, ownership, timing and the command line;
-      the version, signature and hash fields need §21
-- [ ] Performance (§28)
-- [ ] CPU
-- [ ] Memory
-- [ ] I/O
+- [ ] 🟡 General (§27) — a page of its own now: identity, ownership, timing, how long it has been
+      running, what the ELF header and the directory entry say about the image, and the command
+      line, with Copy, Open folder and File properties under it. Version, publisher, signer and
+      hashes need §21, and the page says outright that no signature was checked rather than leaving
+      a blank that reads like a clean bill of health
+- [x] Performance (§28) — six graphs over the four time windows, hover readings and a keyboard
+      cursor. There is no per-process network graph because there are no per-process byte counters
+      to draw one from (§18)
+- [x] CPU
+- [x] Memory
+- [x] I/O
 - [x] Threads (§29)
 - [x] Modules (§31)
 - [x] Handles / resources (§32)
 - [ ] Memory map (§34)
 - [x] Network (§40)
-- [ ] GPU (§19)
+- [x] GPU (§19) — and the tab that proves the preference above: a machine whose driver publishes no
+      per-process accounting has nothing to put on it, which is not the same as this build not
+      having one
 - [ ] Security (§36)
 - [x] Environment (§37)
 - [ ] Jobs / cgroups / containers (§38)
@@ -1300,8 +1337,15 @@ Tabs:
 - [ ] Strings (§35)
 - [ ] Timeline (§63)
 
-The window exists now, hosting the same pane the main window docks at its foot — pinned to one
-process rather than following the selection, which is what makes two of them comparable.
+The window hosts the same pane the main window docks at its foot — pinned to one process rather than
+following the selection, which is what makes two of them comparable — and adds the pages the pane
+has no room for: what the process *is*, an hour of what it has been *doing*, and the three resource
+sheets that would each be twenty columns in the table.
+
+Those pages go onto the pane's own tab strip, so the window has one row of tabs and not two. They
+land after the pane's because the toolkit's page collection has `Add` and `Remove` and no `Insert`;
+the window opens on General instead, and a test asserts every page is present so that an upstream
+change fails a build rather than shipping a properties window with no properties on it.
 
 When the process ends the window stays open, says so in its title and stops asking about the pid:
 a window that followed the number would quietly start describing whoever the kernel gave it to next
