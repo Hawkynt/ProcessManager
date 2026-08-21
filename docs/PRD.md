@@ -31,8 +31,8 @@ shorthand:
 it is not known*. An unticked box must never become a zero on screen. This is restated here because
 it is the single requirement most likely to be broken while filling the tables in.
 
-**Counting, as of the last update:** **866 of 1356 boxes are ticked** — 122 of 205 in the field
-registry (§14–22), 744 of 1151 across the capabilities. A further 109 are marked 🟡, meaning some of
+**Counting, as of the last update:** **876 of 1356 boxes are ticked** — 122 of 205 in the field
+registry (§14–22), 754 of 1151 across the capabilities. A further 102 are marked 🟡, meaning some of
 the work behind them is already done. §100 tracks the phases; §101 defines when this may be called
 finished.
 
@@ -4212,22 +4212,24 @@ Windows parsing on Linux.
 - [ ] macOS process enumeration
 - [x] Common CPU and memory fields
 - [x] Process tree
-- [ ] 🟡 Flat and grouped modes — flat yes, grouped no
+- [x] Flat and grouped modes — by user, session, service, executable, container, cgroup or package
 - [x] Terminate
 - [x] Suspend / resume
 - [x] Priority
 - [x] Affinity — from the window; there is no command-line switch for it
 - [x] Basic Performance page
-- [ ] Network view
-- [ ] Services read and control
+- [x] Network view — every socket with its owner, queues, round-trip time and retransmits
+- [ ] 🟡 Services read and control — read in a window view, controlled from `--service`; no menu item
 - [ ] 🟡 Startup
-- [ ] 🟡 Users / sessions — `--users`
+- [x] Users / sessions — a window view and `--users`
 - [x] GUI
 - [x] TUI
-- [ ] 🟡 CLI
-- [ ] 🟡 Column registry
-- [ ] 🟡 Filters and search
-- [ ] Exports
+- [x] CLI — list, find, kill, run, host, limits, startup, users, services, service control and
+      connections, with exit codes a script can branch on
+- [x] Column registry — 118 fields, each sortable, filterable and exportable by one key
+- [x] Filters and search — comparisons, booleans, regular expressions and unit-aware sizes over
+      every field, plus the search for what holds a file
+- [x] Exports — text, csv, tsv, json, jsonl and markdown, all six exercised
 
 ## Phase 2 — Process Explorer parity
 
@@ -4277,21 +4279,24 @@ v1 does not ship unless every one of these is true:
 - [x] The user can inspect process path and command line
 - [x] The user can inspect the process tree
 - [x] The user can inspect active network endpoints — the pane's network tab, and `--connections`
-- [ ] 🟡 The user can inspect services — starting and stopping them is not written
+- [ ] 🟡 The user can inspect services — and start and stop them from the command line, but not from
+      either front-end
 - [ ] The user can manage common startup items
-- [ ] 🟡 The user can inspect logged-in sessions — from the CLI; neither front-end has the view
+- [x] The user can inspect logged-in sessions — a window view and `--users`
 - [x] The user can view CPU, memory, disk and network performance — thirteen resource pages, each
       with its own graphs
 - [ ] 🟡 The user can create and restore column presets — restoring works from the file and from
       `--columns @name`; creating one means editing the file, not a dialog
 - [x] The user can search and filter by any registered field, visible or not
-- [ ] 🟡 Tables remain usable with thousands of changing rows
+- [x] Tables remain usable with thousands of changing rows — ten thousand nested and flat, half the
+      table replaced every sample, with the rebuild allocating nothing
 - [x] Privileged actions work through the privilege broker
 - [x] Lack of privileges does not crash or freeze views
 - [ ] 🟡 The GUI exposes no data unobtainable from TUI or CLI
 - [x] No external metadata is transmitted without opt-in
 - [x] Unavailable platform fields are distinguishable from zero-valued fields
-- [ ] 🟡 Destructive actions identify their exact target
+- [x] Destructive actions identify their exact target — the action, the name, the pid and the count
+      of what runs underneath it
 - [ ] Minimal recovery mode operates independently of expensive collectors and plugins
 
 ---
