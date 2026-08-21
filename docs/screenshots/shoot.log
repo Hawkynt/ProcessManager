@@ -11,7 +11,7 @@ command bar:  {X=0,Y=26,Width=1240,Height=30}, 7 items
 content:      {X=168,Y=160,Width=1072,Height=638} showing Processes
 plots:        cpu {X=6,Y=6,Width=392,Height=92}, memory {X=404,Y=6,Width=392,Height=92}, cores {X=802,Y=6,Width=432,Height=92}
 topology:     16 logical, 1 socket(s), hybrid False
-status:       20 of 20 processes  ·  CPU 99.9% (normalized)  ·  memory 125G total, 43.4G free  ·  sample 1.3 ms
+status:       20 of 20 processes  ·  CPU 99.9% (normalized)  ·  memory 125G total, 52.4G free  ·  sample 1.6 ms
 capture:      1240x820 -> docs/screenshots/desktop.png
 page rail:    22 resources, showing 'Memory'
 page header:  Memory / 125G
@@ -53,20 +53,27 @@ page expanded: 1180x780 -> docs/screenshots/performance-expanded.png
 shell views:
   Processes        20 row(s) — 20 rows
   Performance      (opens a window of its own)
-  Startup          23 row(s) — 23 entries, 13 of which will run.  As of 14:02:57.
-  Users            4 row(s) — 4 records, 1 of them somebody logged in.  As of 14:02:57.
-  Services         372 row(s) — 372 units, 1 running.  As of 14:02:58.  Starting and stopping them is not implemented yet.
-  Network          2714 row(s) — 2714 sockets, 10 of them traceable to a process from this account.  As of 14:02:58.
+  Startup          23 row(s) — 23 entries, 13 of which will run.  As of 14:23:51.
+  Users            4 row(s) — 4 records, 1 of them somebody logged in.  As of 14:23:51.
+  Services         372 row(s) — 372 units, 1 running.  As of 14:23:51.  Starting and stopping them is not implemented yet.
+  Network          1399 row(s) — 1399 sockets, 10 of them traceable to a process from this account.  As of 14:23:51.
   Find resources   (opens a window of its own)
 properties:   12 tabs, 26 facts on General
-properties general: 980x640 -> docs/screenshots/properties.png
-span:         60 s over 17 retained samples
-  CPU         {X=8,Y=40,Width=477,Height=169}  0.1 %
-  Memory      {X=493,Y=40,Width=477,Height=169}  17.9M
-  Disk        {X=8,Y=217,Width=477,Height=169}  0 B/s
-  GPU         {X=493,Y=217,Width=477,Height=169}  …
-  Descriptors {X=8,Y=394,Width=477,Height=169}  10
-  Threads     {X=493,Y=394,Width=477,Height=169}  1
-properties graphs: 980x640 -> docs/screenshots/properties-performance.png
+properties general: 1280x640 -> docs/screenshots/properties.png
+span:         60 s over 19 retained samples
+  CPU         {X=8,Y=40,Width=627,Height=169}  0.1 %
+  Memory      {X=643,Y=40,Width=627,Height=169}  16.8M
+  Disk        {X=8,Y=217,Width=627,Height=169}  0 B/s
+  GPU         {X=643,Y=217,Width=627,Height=169}  …
+  Descriptors {X=8,Y=394,Width=627,Height=169}  10
+  Threads     {X=643,Y=394,Width=627,Height=169}  1
+properties graphs: 1280x640 -> docs/screenshots/properties-performance.png
 file box:     8 lines
 file capture: 720x249 -> docs/screenshots/file.png
+detail window:procman (43), 1280x640
+detail tab:   Threads, 18 row(s), 21 columns
+thread shot:  1280x640 -> docs/screenshots/threads.png
+stack window: 1 row(s), 8 columns
+stack frames: 1 (0 kernel)
+stack kernel: NotPermitted
+stack shot:   980x520 -> docs/screenshots/stack.png
