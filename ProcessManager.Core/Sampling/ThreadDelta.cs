@@ -49,6 +49,17 @@ public sealed class ThreadDelta {
   /// <summary>False until the same process has been read twice; every rate is then unsampled.</summary>
   public bool HasPrevious { get; private set; }
 
+  /// <summary>
+  /// How many threads the history is holding a reading for.
+  /// </summary>
+  /// <remarks>
+  /// Internal, and here for one thing: a test that proves ended threads are dropped rather than
+  /// accumulated. Measuring that through the garbage collector instead reads the large-object heap's
+  /// refusal to compact as a leak, which is a false alarm on a class whose whole failure mode is a
+  /// dictionary that only ever grows.
+  /// </remarks>
+  internal int HistoryCount => this._previous.Count;
+
   /// <summary>What share of the machine this thread used between the last two readings.</summary>
   public Rate CpuPercent(int index) => (uint)index < (uint)this._count ? this._cpuPercent[index] : Rate.NotSampledYet;
 

@@ -4692,7 +4692,15 @@ Windows parsing on Linux.
 
 - [x] Sampling budget enforced as a build gate (§71.2)
 - [x] 10 000 processes
-- [ ] 100 000 threads
+- [x] 100 000 threads — as records and not as a recorded tree. The probe reads five files per thread,
+      so a fixture at this size would be half a million files in the repository and would measure the
+      filesystem the tests happen to run on. The layer that has to survive the size is the one above
+      it: §29 re-reads the thread tab on *every* tick while it is open, so `ThreadDelta` does a
+      hundred thousand keyed lookups a second on such a machine. Measured at 22 ms against 2.5 ms for
+      ten thousand — linear — allocating nothing per tick once its buffers are grown, and holding
+      exactly one generation of history after twelve rounds of a hundred thousand entirely new
+      threads. That last one is counted rather than weighed: asking the garbage collector reads the
+      large-object heap's refusal to compact discarded records as a leak
 - [x] 1 000 000 resource rows
 - [x] Rapid process churn
 - [x] 100 % CPU load — a sample taken while every core is saturated is still a whole sample

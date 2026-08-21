@@ -441,4 +441,181 @@ public sealed class ScaleTests {
 
   #endregion
 
+  #region a hundred thousand threads (PRD §29, §99)
+
+  /// <summary>
+  /// A hundred thousand threads, as records rather than as a recorded <c>/proc</c> tree.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Deliberately not a fixture. The Linux probe reads five files per thread, so a recorded tree at
+  /// this size would be half a million files checked into the repository and copied on every build,
+  /// and what it would measure is the filesystem the tests happen to run on. The layer that actually
+  /// has to survive the size is above the probe: §29 says the thread tab is re-read on <em>every</em>
+  /// tick while it is open, so <see cref="ThreadDelta"/> runs a hundred thousand dictionary
+  /// operations a second on a machine like this, and it is the one thing here whose complexity a
+  /// change could quietly ruin.
+  /// </para>
+  /// <para>
+  /// A hundred thousand is not hypothetical: the kernel's default <c>threads-max</c> on a machine
+  /// with this much memory is well above it, and a JVM or a Go runtime that has lost control of a
+  /// pool gets there.
+  /// </para>
+  /// </remarks>
+  private static ThreadRecord[] Threads(int count, ulong cpuNs, int firstTid = 1) {
+    var threads = new ThreadRecord[count];
+    for (var i = 0; i < count; ++i)
+      threads[i] = new(
+        firstTid + i,
+        ProcessState.Running,
+        Counter.Of(cpuNs + (ulong)i),
+        StartTimeUtcTicks: 1,
+        Counter.NotSupported,
+        null,
+        20,
+        "worker",
+        Counter.Of(cpuNs),
+        Counter.Of(0ul),
+        Counter.Of((ulong)i),
+        LastCpu: 0,
+        null,
+        Counter.NotSupported,
+        Counter.NotSupported,
+        BasePriority: 0,
+        SchedulingPolicy.Other,
+        null,
+        null,
+        Counter.NotSupported,
+        null,
+        Counter.NotSupported,
+        Counter.NotSupported,
+        ThreadMode.Unknown,
+        Counter.NotSupported,
+        Counter.NotSupported
+      );
+
+    return threads;
+  }
+
+  private static readonly ProcessKey _Swarm = new(4242, 99);
+
+  /// <summary>How long one update takes, after a warm one that is not counted.</summary>
+  private static TimeSpan TimeUpdate(ThreadDelta delta, IReadOnlyList<ThreadRecord> threads) {
+    delta.Update(_Swarm, threads, 16);
+
+    var clock = Stopwatch.StartNew();
+    delta.Update(_Swarm, threads, 16);
+    clock.Stop();
+    TestContext.Out.WriteLine($"{threads.Count} threads: {clock.Elapsed.TotalMilliseconds:0.0} ms");
+    return clock.Elapsed;
+  }
+
+  [Test]
+  public void AHundredThousandThreadsAreRatedInBudget() {
+    var delta = new ThreadDelta();
+    var threads = Threads(100_000, 1_000_000);
+
+    Assert.That(TimeUpdate(delta, threads), Is.LessThan(TimeSpan.FromSeconds(1)));
+
+    // And every one of them has a rate, from the first index to the last. An off-by-one in the
+    // buffer growth would leave the tail reading "not sampled yet" for ever, which looks exactly
+    // like a thread that has only just appeared.
+    Assert.That(delta.HasPrevious, Is.True);
+    Assert.That(delta.CpuPercent(0).HasValue, Is.True);
+    Assert.That(delta.CpuPercent(99_999).HasValue, Is.True);
+    Assert.That(delta.CpuPercent(100_000).HasValue, Is.False, "past the end is not a reading");
+  }
+
+  /// <summary>
+  /// Ten times the threads must not be a hundred times the work. The dictionary is keyed on the
+  /// thread's identity, and a key that hashed badly — or a lookup that became a scan — would show
+  /// up here and nowhere else.
+  /// </summary>
+  [Test]
+  public void TenTimesTheThreadsIsNotAHundredTimesTheCost() {
+    var small = TimeUpdate(new ThreadDelta(), Threads(10_000, 1_000_000)).TotalMilliseconds;
+    var large = TimeUpdate(new ThreadDelta(), Threads(100_000, 1_000_000)).TotalMilliseconds;
+
+    // Twenty-five times rather than ten, because the small figure is small enough that the timer's
+    // own resolution is a visible part of it. Quadratic growth is a hundredfold and clears this by
+    // a wide margin either way.
+    Assert.That(large, Is.LessThan(Math.Max(small * 25, 100)));
+  }
+
+  /// <summary>
+  /// The tab is re-read on every tick while it is open, so anything this allocates per update is
+  /// allocated once a second for as long as somebody is looking (PRD §5.4).
+  /// </summary>
+  [Test]
+  public void TheSteadyStateAllocatesNothingPerTick() {
+    var delta = new ThreadDelta();
+    var threads = Threads(100_000, 1_000_000);
+
+    // Three rounds to grow every buffer and fill the dictionary, so what is measured below is the
+    // steady state rather than the growth §71.3 permits once.
+    for (var round = 0; round < 3; ++round)
+      delta.Update(_Swarm, threads, 16);
+
+    var before = GC.GetAllocatedBytesForCurrentThread();
+    for (var round = 0; round < 10; ++round)
+      delta.Update(_Swarm, threads, 16);
+
+    var perRound = (GC.GetAllocatedBytesForCurrentThread() - before) / 10;
+    TestContext.Out.WriteLine($"{perRound} bytes a tick at 100 000 threads");
+    Assert.That(perRound, Is.LessThan(4_096));
+  }
+
+  /// <summary>
+  /// A pool that ends a worker and starts another gets the same thread id back, and the kernel
+  /// hands them out again quickly at this size. The history is keyed on the start time as well as
+  /// the id for exactly that reason, so the new thread must read as new rather than inheriting the
+  /// old one's CPU time — which would show a thread busy since before it existed.
+  /// </summary>
+  [Test]
+  public void AReusedThreadIdAtSizeIsNotTheSameThread() {
+    var delta = new ThreadDelta();
+    var first = Threads(100_000, 1_000_000);
+    delta.Update(_Swarm, first, 16);
+
+    // The same hundred thousand ids, started later and with the counters of a thread that has just
+    // begun. Every one of them is a different thread.
+    var second = new ThreadRecord[first.Length];
+    for (var i = 0; i < first.Length; ++i)
+      second[i] = first[i] with { StartTimeUtcTicks = 2, CpuTimeNs = Counter.Of(0ul) };
+
+    delta.Update(_Swarm, second, 16);
+
+    Assert.That(delta.CpuPercent(0).HasValue, Is.False, "a thread that has been read once has no rate");
+    Assert.That(delta.CpuPercent(99_999).HasValue, Is.False);
+  }
+
+  /// <summary>
+  /// Threads that ended are dropped rather than left to accumulate. A pool at this size churns
+  /// through ids all day, and a history that only ever grows is a leak with a slow fuse — the one
+  /// that would be measured in hundreds of megabytes here rather than in kilobytes.
+  /// </summary>
+  [Test]
+  public void ThreadsThatEndedAreForgottenAtSize() {
+    var delta = new ThreadDelta();
+
+    // Twelve rounds, each of a hundred thousand threads sharing no id with any round before it. If
+    // nothing were forgotten the history would hold one million two hundred thousand readings by
+    // the end.
+    for (var round = 0; round < 12; ++round) {
+      delta.Update(_Swarm, Threads(100_000, 1_000_000, firstTid: 1 + round * 100_000), 16);
+      Assert.That(delta.HistoryCount, Is.EqualTo(100_000), $"after round {round}");
+    }
+
+    // Counted rather than weighed. Asking the garbage collector how much is held reads the
+    // large-object heap's refusal to compact a hundred thousand discarded records as growth, which
+    // is a false alarm about the one thing this test exists to catch.
+    //
+    // And the readings that remain are the current ones: the last round has a history to divide by,
+    // which it would not if an earlier round's keys had been kept and this round's discarded.
+    delta.Update(_Swarm, Threads(100_000, 2_000_000, firstTid: 1 + 11 * 100_000), 16);
+    Assert.That(delta.CpuPercent(99_999).HasValue, Is.True);
+  }
+
+  #endregion
+
 }
