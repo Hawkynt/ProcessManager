@@ -47,8 +47,38 @@ internal static class CgroupReader {
       Throttled(ReadText(directory, "cpu.stat")),
       Pressure(directory, "cpu.pressure"),
       Pressure(directory, "memory.pressure"),
-      Pressure(directory, "io.pressure")
+      Pressure(directory, "io.pressure"),
+      Freezer(directory)
     );
+  }
+
+  /// <summary>
+  /// Whether this cgroup is frozen, and whether it can be (PRD §38).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The state comes from <c>cgroup.events</c> rather than from <c>cgroup.freeze</c>: the first is
+  /// what the cgroup <em>is</em> and the second is what it was <em>asked</em> to be. They differ
+  /// while a freeze is still catching processes that were in a syscall when it began, and the
+  /// question a caller is asking — "is it stopped" — is the first one.
+  /// </para>
+  /// <para>
+  /// A cgroup with no <c>cgroup.freeze</c> file at all is on a kernel before 5.2, and reports that
+  /// it cannot be frozen rather than that it is not frozen (PRD §5.3).
+  /// </para>
+  /// </remarks>
+  private static CgroupFreezer Freezer(string directory) {
+    var supported = File.Exists(Path.Combine(directory, "cgroup.freeze"));
+    if (!supported)
+      return new(false, false);
+
+    foreach (var line in (ReadText(directory, "cgroup.events") ?? string.Empty).Split('\n'))
+      if (line.StartsWith("frozen ", StringComparison.Ordinal))
+        return new(true, line.AsSpan("frozen ".Length).Trim() is "1");
+
+    // The file is there and says nothing about being frozen, which is what an older layout of
+    // cgroup.events looks like. What it was asked to be is then the best answer available.
+    return new(true, ReadText(directory, "cgroup.freeze") is "1");
   }
 
   /// <summary>

@@ -602,6 +602,13 @@ public sealed class LinuxProbe : ISystemProbe {
   }
 
   /// <summary>
+  /// The ceilings the process runs under, read fresh: a limit can be raised while it runs, and the
+  /// out-of-memory score moves with every page it touches (PRD §25.2).
+  /// </summary>
+  public ProcessLimits? DescribeResourceLimits(ProcessKey key)
+    => LinuxResourceLimits.Read(this._options.ProcRoot, key.Pid);
+
+  /// <summary>
   /// What the running program actually is (PRD §14).
   /// </summary>
   /// <remarks>

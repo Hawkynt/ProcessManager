@@ -283,7 +283,259 @@ public sealed class LinuxProcessActions(LinuxProbeOptions? options = null) : IPr
 
   public ActionResult Resume(ProcessKey key) => this.Signal(key, Native.SIGCONT);
 
-  public ActionResult SendSignal(ProcessKey key, int signal) => this.Signal(key, signal);
+  /// <summary>
+  /// Sends any signal the kernel has (PRD §25.1).
+  /// </summary>
+  /// <remarks>
+  /// The number is checked against what a signal number can be before it is sent, because
+  /// <c>kill</c> with a nought is not a refusal — it is the existence test, which succeeds silently
+  /// and does nothing, and a caller who mistyped a name would be told the action worked.
+  /// </remarks>
+  public ActionResult SendSignal(ProcessKey key, int signal) {
+    var check = this.Verify(key);
+    if (!check.Succeeded)
+      return check;
+
+    return Query.Signals.IsSendable(signal)
+      ? this.Signal(key, signal)
+      : ActionResult.Fail(ActionOutcome.Refused, $"{signal} is not a signal number this kernel has");
+  }
+
+  /// <summary>
+  /// How likely the out-of-memory killer is to choose this process (PRD §25.5).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// <b>Not a memory limit.</b> It changes nothing about what the process may allocate — it changes
+  /// who dies when the machine has run out and something has to. Lowering one process's score does
+  /// not save memory; it points the killer at whatever is next on the list, which is somebody else's
+  /// process (PRD §5.5).
+  /// </para>
+  /// <para>
+  /// Raising it is free and lowering it needs <c>CAP_SYS_RESOURCE</c>, which is the opposite way
+  /// round from most permissions and worth saying out loud: a process may always volunteer itself,
+  /// and may never excuse itself. <b>Deliberately not routed through the privileged helper</b>, for
+  /// the reason the real-time I/O class is not: making one process harder to kill makes every other
+  /// process on the machine likelier to be chosen, and that is a decision to take at a root prompt
+  /// rather than from a menu (PRD §68).
+  /// </para>
+  /// </remarks>
+  public ActionResult SetOomScoreAdjustment(ProcessKey key, int adjustment) {
+    var check = this.Verify(key);
+    if (!check.Succeeded)
+      return check;
+
+    if (adjustment < ProcessLimits.OomAdjustmentMinimum || adjustment > ProcessLimits.OomAdjustmentMaximum)
+      return ActionResult.Fail(
+        ActionOutcome.Refused,
+        $"the out-of-memory adjustment runs from {ProcessLimits.OomAdjustmentMinimum} to {ProcessLimits.OomAdjustmentMaximum}, not {adjustment}"
+      );
+
+    var path = $"{this._options.ProcRoot.TrimEnd('/')}/{key.Pid}/oom_score_adj";
+    if (WriteControlFile(path, adjustment.ToString(System.Globalization.CultureInfo.InvariantCulture), out var errno))
+      return ActionResult.Ok;
+
+    var what = $"could not set the out-of-memory adjustment of pid {key.Pid}";
+    return errno is Native.EPERM or Native.EACCES
+      ? this.ExplainOomRefusal(key, adjustment, what)
+      : Translate(errno, what);
+  }
+
+  /// <summary>
+  /// Says which of the two refusals this is, because they send somebody to different places.
+  /// </summary>
+  /// <remarks>
+  /// "Not permitted" on its own is the unhelpful answer here. Lowering the score is refused for
+  /// everybody without <c>CAP_SYS_RESOURCE</c> including the process's own owner, while another
+  /// user's process is refused whichever direction the change goes — and only one of those two is
+  /// fixed by being the right user.
+  /// </remarks>
+  private ActionResult ExplainOomRefusal(ProcessKey key, int adjustment, string what) {
+    var current = LinuxResourceLimits.Read(this._options.ProcRoot, key.Pid)?.OomScoreAdjustment;
+    return ActionResult.Fail(
+      ActionOutcome.NotPermitted,
+      current is { } was && adjustment < was
+        ? $"{what} from {was} to {adjustment}: a process may always volunteer itself for the "
+          + "out-of-memory killer and needs CAP_SYS_RESOURCE to excuse itself again"
+        : $"{what}: not permitted as this user"
+    );
+  }
+
+  /// <summary>
+  /// Writes a short value to a kernel control file, with the errno the kernel gave for refusing it.
+  /// </summary>
+  /// <remarks>
+  /// The errno is the point. These files accept the open and refuse the write, and "not permitted"
+  /// and "the process has gone" arrive as different numbers on the same exception type otherwise
+  /// (PRD §88).
+  /// </remarks>
+  private static bool WriteControlFile(string path, string value, out int errno) {
+    // Allocated rather than stack-composed. Every other path in this program is built into a stack
+    // buffer because the sampler builds thousands a second; this one is built once per click, and a
+    // cgroup path under a container runtime is long enough that a fixed buffer would be a length
+    // limit rather than an optimisation.
+    var encoded = new byte[System.Text.Encoding.UTF8.GetByteCount(path) + 1];
+    System.Text.Encoding.UTF8.GetBytes(path, encoded);
+    return Native.WriteControlFile(encoded, System.Text.Encoding.UTF8.GetBytes(value), out errno);
+  }
+
+  /// <summary>
+  /// One of the kernel's per-process ceilings (PRD §25.2).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Through <c>prlimit64</c> rather than by writing a file, because there is no file to write:
+  /// <c>/proc/[pid]/limits</c> is read-only and the syscall is the only way in. That is why the
+  /// reading half of this feature parses the text and the writing half does not (PRD §5.1).
+  /// </para>
+  /// <para>
+  /// <b>Lowering a hard limit cannot be undone</b> without <c>CAP_SYS_RESOURCE</c>. The kernel
+  /// permits it to anybody and permits nobody to raise it again, which makes it the one irreversible
+  /// thing in this sheet and the one a front-end has to say so about (PRD §5.5).
+  /// </para>
+  /// </remarks>
+  public ActionResult SetResourceLimit(ProcessKey key, ResourceLimitKind kind, ulong? soft, ulong? hard) {
+    // Identity first, before the architecture is looked at and before the values are checked against
+    // each other — every other order lets a request naming a process that no longer exists come back
+    // saying something about the arguments instead (PRD §8.2).
+    var check = this.Verify(key);
+    if (!check.Succeeded)
+      return check;
+
+    if (Query.ResourceLimits.Of(kind) is not { } definition)
+      return ActionResult.Fail(
+        ActionOutcome.NotSupportedOnPlatform,
+        Query.ResourceLimits.NumbersAreKnownHere
+          ? $"{kind} is not a limit this kernel has"
+          : Query.ResourceLimits.UnknownArchitecture
+      );
+
+    // Refused here rather than left to come back as EINVAL, which says nothing about which of the
+    // two values was the problem.
+    if (soft is { } wantedSoft && hard is { } wantedHard && wantedSoft > wantedHard)
+      return ActionResult.Fail(
+        ActionOutcome.Refused,
+        $"{definition.Name}: a soft limit of {wantedSoft} is above the hard limit of {wantedHard}, and the soft limit is the one the kernel enforces"
+      );
+
+    var pair = new Native.ResourceLimitPair {
+      Soft = soft ?? Native.ResourceLimitInfinity,
+      Hard = hard ?? Native.ResourceLimitInfinity,
+    };
+
+    if (Native.SetResourceLimit(key.Pid, definition.Number, in pair) == 0)
+      return ActionResult.Ok;
+
+    var errno = Native.LastError;
+    var what = $"could not set {definition.Name} on pid {key.Pid}";
+
+    // The refusal people run into and misread. Raising a hard limit needs CAP_SYS_RESOURCE whoever
+    // owns the process, and reaching into another user's process needs it as well — the second is
+    // fixed by being the right user and the first is not.
+    if (errno is Native.EPERM or Native.EACCES)
+      return ActionResult.Fail(
+        ActionOutcome.NotPermitted,
+        $"{what}: raising a hard limit needs CAP_SYS_RESOURCE, and so does setting a limit on a process belonging to another user"
+      );
+
+    return Translate(errno, what);
+  }
+
+  /// <summary>
+  /// Stops or restarts the whole cgroup the process is in (PRD §25.1, §38).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// <b>Not a suspend of the process.</b> <see cref="Suspend"/> sends one process <c>SIGSTOP</c> and
+  /// leaves everything it started running; this stops the unit — every process in the cgroup, every
+  /// cgroup below it, and anything either starts while it is frozen. On Linux that is what pausing a
+  /// container or a service means, and the two are offered as separate items because they are
+  /// separate things (PRD §5.3).
+  /// </para>
+  /// <para>
+  /// <b>A frozen process still reports itself as sleeping.</b> The kernel has no process state for
+  /// frozen — a task in a frozen cgroup shows <c>S</c> in <c>/proc/[pid]/stat</c> whether it was
+  /// running or sleeping when the freeze landed — so nothing in a process table distinguishes a
+  /// frozen program from an idle one, and the only honest place to read it is the cgroup's own
+  /// <c>cgroup.events</c>. That is why the result names the cgroup: it is the only thing that will
+  /// admit afterwards to what was done. Held against the kernel rather than assumed: the task's
+  /// CPU time stops advancing while its state still says <c>S</c>.
+  /// </para>
+  /// <para>
+  /// A fatal signal does still reach it. Unlike the cgroup v1 freezer, v2 breaks a frozen task out
+  /// for <c>SIGKILL</c> and for anything else that would end it, so a frozen process is not one
+  /// that has to be thawed before it can be stopped.
+  /// </para>
+  /// </remarks>
+  public ActionResult FreezeCgroup(ProcessKey key, bool frozen) {
+    var check = this.Verify(key);
+    if (!check.Succeeded)
+      return check;
+
+    if (this.CgroupPathOf(key.Pid) is not { } path)
+      return ActionResult.Fail(
+        ActionOutcome.NotSupportedOnPlatform,
+        $"pid {key.Pid} is in no cgroup this build can read; only the unified hierarchy (cgroup v2) has a freezer"
+      );
+
+    // The root cgroup holds every process on the machine, this program among them. The kernel does
+    // not publish cgroup.freeze there for that reason, and this refuses before finding out.
+    if (path is "/")
+      return ActionResult.Fail(ActionOutcome.Refused, "the root cgroup holds every process on this machine and cannot be frozen");
+
+    // Freezing the cgroup this program is in stops this program, which then cannot report what
+    // happened or thaw anything again. The one case where the honest answer is to refuse rather
+    // than to do what was asked.
+    if (frozen && this.CgroupPathOf(Environment.ProcessId) is { } ours && (ours == path || ours.StartsWith(path + "/", StringComparison.Ordinal)))
+      return ActionResult.Fail(
+        ActionOutcome.Refused,
+        $"{path} contains this program as well; freezing it would stop the window that is asking and leave nothing able to thaw it"
+      );
+
+    var file = Path.Combine(this._options.CgroupRoot, path.TrimStart('/'), "cgroup.freeze");
+    if (!File.Exists(file))
+      return ActionResult.Fail(
+        ActionOutcome.NotSupportedOnPlatform,
+        $"{path} has no cgroup.freeze; the freezer arrived in Linux 5.2 and needs the unified hierarchy"
+      );
+
+    if (!WriteControlFile(file, frozen ? "1" : "0", out var errno))
+      return errno is Native.EPERM or Native.EACCES
+        ? ActionResult.Fail(
+            ActionOutcome.NotPermitted,
+            $"{path} may not be frozen by this user: a cgroup is writable by whoever it was delegated to, "
+            + "which for a service or a container is root"
+          )
+        : Translate(errno, $"could not {(frozen ? "freeze" : "thaw")} {path}");
+
+    return new(
+      ActionOutcome.Succeeded,
+      frozen
+        ? $"{path} is frozen. Every process in it is stopped — and each still reports itself as sleeping, "
+          + "because the kernel has no process state for frozen."
+        : $"{path} is thawed."
+    );
+  }
+
+  /// <summary>
+  /// The unified hierarchy's path for a pid, or null where there is not one.
+  /// </summary>
+  /// <remarks>
+  /// The line beginning <c>0::</c> is the v2 one. A v1 machine has several lines and none of them
+  /// begins that way, which is how a v1 layout reports itself as unreadable rather than as half an
+  /// answer — the same rule <c>DescribeCgroup</c> follows.
+  /// </remarks>
+  private string? CgroupPathOf(int pid) {
+    var path = $"{this._options.ProcRoot.TrimEnd('/')}/{pid}/cgroup";
+    if (!this._reader.TryRead(path, out var content, out _))
+      return null;
+
+    foreach (var line in System.Text.Encoding.UTF8.GetString(content).Split('\n'))
+      if (line.StartsWith("0::", StringComparison.Ordinal))
+        return line[3..].Trim();
+
+    return null;
+  }
 
   public ActionResult SetPriority(ProcessKey key, int priority) {
     var check = this.Verify(key);

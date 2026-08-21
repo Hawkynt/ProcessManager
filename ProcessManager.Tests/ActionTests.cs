@@ -141,6 +141,9 @@ public sealed class LinuxProcessActionIdentityTests {
       Assert.That(actions.SendSignal(wrong, 15).Outcome, Is.EqualTo(ActionOutcome.IdentityMismatch));
       Assert.That(actions.SetSchedulingClass(wrong, SchedulingPolicy.Batch, 0).Outcome, Is.EqualTo(ActionOutcome.IdentityMismatch));
       Assert.That(actions.Restart(wrong).Outcome.Outcome, Is.EqualTo(ActionOutcome.IdentityMismatch));
+      Assert.That(actions.SetOomScoreAdjustment(wrong, 100).Outcome, Is.EqualTo(ActionOutcome.IdentityMismatch));
+      Assert.That(actions.SetResourceLimit(wrong, ResourceLimitKind.OpenFiles, 512, 1024).Outcome, Is.EqualTo(ActionOutcome.IdentityMismatch));
+      Assert.That(actions.FreezeCgroup(wrong, true).Outcome, Is.EqualTo(ActionOutcome.IdentityMismatch));
     });
   }
 
@@ -165,7 +168,78 @@ public sealed class LinuxProcessActionIdentityTests {
       Assert.That(actions.SetSchedulingClass(stale, SchedulingPolicy.Fifo, 500).Outcome, Is.EqualTo(ActionOutcome.IdentityMismatch));
       Assert.That(actions.SetSchedulingClass(stale, SchedulingPolicy.Deadline, 0).Outcome, Is.EqualTo(ActionOutcome.IdentityMismatch));
       Assert.That(actions.SetSchedulingClass(stale, SchedulingPolicy.Other, 9).Outcome, Is.EqualTo(ActionOutcome.IdentityMismatch));
+
+      // And the same for the three that arrived later: 5000 is outside the out-of-memory range,
+      // a soft limit above its hard limit is refused on its own terms, and 0 is not a signal.
+      Assert.That(actions.SetOomScoreAdjustment(stale, 5000).Outcome, Is.EqualTo(ActionOutcome.IdentityMismatch));
+      Assert.That(actions.SetResourceLimit(stale, ResourceLimitKind.OpenFiles, 4096, 16).Outcome, Is.EqualTo(ActionOutcome.IdentityMismatch));
+      Assert.That(actions.SendSignal(stale, 0).Outcome, Is.EqualTo(ActionOutcome.IdentityMismatch));
     });
+  }
+
+  /// <summary>
+  /// An out-of-memory adjustment the kernel does not accept is refused with its range, rather than
+  /// being written and failing with an errno that says nothing about which end was wrong.
+  /// </summary>
+  [Test]
+  public void AnOutOfMemoryAdjustmentOutsideTheRangeIsRefusedWithTheRange() {
+    var result = Actions().SetOomScoreAdjustment(new(1000, 100000), 5000);
+
+    Assert.That(result.Outcome, Is.EqualTo(ActionOutcome.Refused));
+    Assert.That(result.Detail, Does.Contain("-1000"));
+    Assert.That(result.Detail, Does.Contain("1000"));
+  }
+
+  /// <summary>
+  /// A soft limit above its own ceiling is refused before the syscall, because EINVAL does not say
+  /// which of the two values was the problem.
+  /// </summary>
+  [Test]
+  public void ASoftLimitAboveItsHardLimitIsRefusedBeforeAnythingIsAttempted() {
+    var result = Actions().SetResourceLimit(new(1000, 100000), ResourceLimitKind.OpenFiles, 4096, 16);
+
+    Assert.That(result.Outcome, Is.EqualTo(ActionOutcome.Refused));
+    Assert.That(result.Detail, Does.Contain("RLIMIT_NOFILE"));
+  }
+
+  /// <summary>
+  /// <c>kill</c> with a nought is the existence test: it succeeds and does nothing. A caller who
+  /// mistyped a signal name must not be told the action worked.
+  /// </summary>
+  [Test]
+  public void SignalNoughtIsRefusedRatherThanSentAsAnExistenceTest() {
+    var result = Actions().SendSignal(new(1000, 100000), 0);
+
+    Assert.That(result.Outcome, Is.EqualTo(ActionOutcome.Refused));
+    Assert.That(result.Detail, Does.Contain("not a signal number"));
+  }
+
+  /// <summary>
+  /// The ceilings and the out-of-memory standing come out of the recorded tree, which is what lets
+  /// the whole sheet be tested without a machine (PRD §9.1).
+  /// </summary>
+  [Test]
+  public void TheLimitsSheetIsReadableFromARecordedTree() {
+    using var probe = new LinuxProbe(new() { ProcRoot = FixtureRoot });
+    var limits = probe.DescribeResourceLimits(new(1000, 100000));
+
+    Assert.That(limits, Is.Not.Null);
+    Assert.That(limits!.Limits, Has.Count.EqualTo(16));
+    Assert.That(limits.Of(ResourceLimitKind.OpenFiles)?.Soft, Is.EqualTo(1024ul));
+    Assert.That(limits.Of(ResourceLimitKind.OpenFiles)?.Hard, Is.EqualTo(524288ul));
+    Assert.That(limits.Of(ResourceLimitKind.CpuTime)?.Soft, Is.Null, "unlimited is not a quantity");
+    Assert.That(limits.OomScoreAdjustment, Is.EqualTo(200));
+    Assert.That(limits.OomScore, Is.EqualTo(667));
+  }
+
+  /// <summary>
+  /// A process the recording has nothing to say about reports nothing, rather than a sheet of
+  /// zeroes that would read as "no limits at all".
+  /// </summary>
+  [Test]
+  public void AProcessWithNoLimitsRecordedIsNullRatherThanEmpty() {
+    using var probe = new LinuxProbe(new() { ProcRoot = FixtureRoot });
+    Assert.That(probe.DescribeResourceLimits(new(1001, 0)), Is.Null);
   }
 
   /// <summary>
@@ -475,6 +549,388 @@ public sealed class LiveProcessActionTests {
       Assert.That(StateOf(started.Pid), Is.Null.Or.EqualTo("Z"), "sleep does not catch SIGTERM");
     } finally {
       Stop(started.Pid);
+    }
+  }
+
+  /// <summary>
+  /// An adjustment is what <c>/proc/[pid]/oom_score_adj</c> then says, and the badness score the
+  /// kernel ranks by moves with it.
+  /// </summary>
+  [Test]
+  public void AnOutOfMemoryAdjustmentIsWhatProcThenReports() {
+    var actions = Actions();
+    var started = actions.Launch(new("/bin/sleep", ["120"]));
+
+    try {
+      Assert.That(started.Outcome.Succeeded, Is.True, started.Outcome.Detail);
+
+      var result = actions.SetOomScoreAdjustment(started.Key, 500);
+      Assert.That(result.Succeeded, Is.True, result.Detail);
+
+      // The kernel's own file. If ours ever disagrees with it, the kernel is right.
+      Assert.That(File.ReadAllText($"/proc/{started.Pid}/oom_score_adj").Trim(), Is.EqualTo("500"));
+
+      using var probe = new LinuxProbe(new());
+      var limits = probe.DescribeResourceLimits(started.Key);
+      Assert.That(limits?.OomScoreAdjustment, Is.EqualTo(500), "and the sheet reads it back");
+
+      // The adjustment and the score are different questions: one is what somebody asked for, the
+      // other is what the killer would actually do with it, and the second includes the first.
+      Assert.That(limits?.OomScore, Is.GreaterThanOrEqualTo(500));
+    } finally {
+      Stop(started.Pid);
+    }
+  }
+
+  /// <summary>
+  /// A process may always volunteer itself for the out-of-memory killer and needs privilege to
+  /// excuse itself again, which is the opposite way round from most permissions.
+  /// </summary>
+  [Test]
+  public void LoweringAnOutOfMemoryAdjustmentSaysWhichPrivilegeIsMissing() {
+    if (Environment.IsPrivilegedProcess)
+      Assert.Ignore("run as root, which holds CAP_SYS_RESOURCE and has nothing to refuse");
+
+    var actions = Actions();
+    var started = actions.Launch(new("/bin/sleep", ["120"]));
+
+    try {
+      Assert.That(actions.SetOomScoreAdjustment(started.Key, 500).Succeeded, Is.True, "raising it is free");
+
+      var back = actions.SetOomScoreAdjustment(started.Key, 0);
+      Assert.That(back.Outcome, Is.EqualTo(ActionOutcome.NotPermitted));
+      Assert.That(back.Detail, Does.Contain("CAP_SYS_RESOURCE"), back.Detail);
+      Assert.That(File.ReadAllText($"/proc/{started.Pid}/oom_score_adj").Trim(), Is.EqualTo("500"), "and nothing changed");
+    } finally {
+      Stop(started.Pid);
+    }
+  }
+
+  /// <summary>
+  /// A limit that was set is the one <c>prlimit</c> reports, and the one the kernel's own
+  /// <c>limits</c> file prints.
+  /// </summary>
+  [Test]
+  public void AResourceLimitIsWhatPrlimitThenReports() {
+    var actions = Actions();
+    var started = actions.Launch(new("/bin/sleep", ["120"]));
+
+    try {
+      Assert.That(started.Outcome.Succeeded, Is.True, started.Outcome.Detail);
+
+      var result = actions.SetResourceLimit(started.Key, ResourceLimitKind.OpenFiles, 512, 4096);
+      Assert.That(result.Succeeded, Is.True, result.Detail);
+
+      // Three answers to the same question, from three places: the tool, the kernel's text, and us.
+      Assert.That(Ask("/usr/bin/prlimit", "--pid", started.Pid.ToString(), "--nofile", "--noheadings", "--raw"),
+        Does.Contain("512").And.Contain("4096"));
+
+      using var probe = new LinuxProbe(new());
+      var read = probe.DescribeResourceLimits(started.Key)?.Of(ResourceLimitKind.OpenFiles);
+      Assert.That(read?.Soft, Is.EqualTo(512ul));
+      Assert.That(read?.Hard, Is.EqualTo(4096ul));
+    } finally {
+      Stop(started.Pid);
+    }
+  }
+
+  /// <summary>
+  /// Unlimited goes in and comes back out as unlimited rather than as the very large number the
+  /// kernel spells it with.
+  /// </summary>
+  [Test]
+  public void UnlimitedSurvivesTheRoundTripAsUnlimited() {
+    var actions = Actions();
+    var started = actions.Launch(new("/bin/sleep", ["120"]));
+
+    try {
+      var result = actions.SetResourceLimit(started.Key, ResourceLimitKind.CoreFileSize, null, null);
+      Assert.That(result.Succeeded, Is.True, result.Detail);
+
+      using var probe = new LinuxProbe(new());
+      var read = probe.DescribeResourceLimits(started.Key)?.Of(ResourceLimitKind.CoreFileSize);
+      Assert.That(read?.Soft, Is.Null);
+      Assert.That(File.ReadAllText($"/proc/{started.Pid}/limits"), Does.Contain("Max core file size        unlimited"));
+    } finally {
+      Stop(started.Pid);
+    }
+  }
+
+  /// <summary>
+  /// Raising a hard limit needs a capability, and the refusal names it rather than reporting a bare
+  /// "not permitted" that sends people looking for a file mode.
+  /// </summary>
+  [Test]
+  public void RaisingAHardLimitSaysWhichPrivilegeIsMissing() {
+    if (Environment.IsPrivilegedProcess)
+      Assert.Ignore("run as root, which holds CAP_SYS_RESOURCE and has nothing to refuse");
+
+    var actions = Actions();
+    var started = actions.Launch(new("/bin/sleep", ["120"]));
+
+    try {
+      // Lower it first, so that the raise is unambiguously a raise whatever this machine's own
+      // ceiling happens to be.
+      Assert.That(actions.SetResourceLimit(started.Key, ResourceLimitKind.OpenFiles, 256, 256).Succeeded, Is.True);
+
+      var raised = actions.SetResourceLimit(started.Key, ResourceLimitKind.OpenFiles, 256, 1024);
+      Assert.That(raised.Outcome, Is.EqualTo(ActionOutcome.NotPermitted));
+      Assert.That(raised.Detail, Does.Contain("CAP_SYS_RESOURCE"), raised.Detail);
+
+      using var probe = new LinuxProbe(new());
+      Assert.That(probe.DescribeResourceLimits(started.Key)?.Of(ResourceLimitKind.OpenFiles)?.Hard, Is.EqualTo(256ul),
+        "and nothing changed");
+    } finally {
+      Stop(started.Pid);
+    }
+  }
+
+  /// <summary>
+  /// The default action of most signals is to end the process, which is the part of "send SIGUSR1"
+  /// that surprises people.
+  /// </summary>
+  [Test]
+  public void AUserSignalEndsAProgramThatDoesNotHandleIt() {
+    var actions = Actions();
+    var started = actions.Launch(new("/bin/sleep", ["120"]));
+
+    try {
+      var result = actions.SendSignal(started.Key, Signals.ByName("SIGUSR1")!.Value.Number);
+      Assert.That(result.Succeeded, Is.True, result.Detail);
+
+      var deadline = Environment.TickCount64 + 5000;
+      while (StateOf(started.Pid) is not (null or "Z") && Environment.TickCount64 < deadline)
+        Thread.Sleep(10);
+
+      Assert.That(StateOf(started.Pid), Is.Null.Or.EqualTo("Z"), "sleep installs no handler for SIGUSR1");
+    } finally {
+      Stop(started.Pid);
+    }
+  }
+
+}
+
+/// <summary>
+/// The cgroup freezer, which is what stopping a whole unit means on Linux (PRD §25.1, §38).
+/// </summary>
+/// <remarks>
+/// <para>
+/// Against a cgroup this fixture creates under its own delegated subtree and removes again, never
+/// against one it found. Freezing something the machine is using is not a test, it is an outage.
+/// </para>
+/// <para>
+/// A machine with no delegated cgroup — a container without one, or a session that is not a systemd
+/// user session — cannot run this, and says so rather than failing: the feature is not broken there,
+/// it is unreachable there.
+/// </para>
+/// </remarks>
+[TestFixture]
+[Platform("Linux")]
+public sealed class CgroupFreezerTests {
+
+  private string? _scratch;
+  private string? _relative;
+
+  [SetUp]
+  public void CreateAScratchCgroup() {
+    this._scratch = null;
+    this._relative = null;
+
+    // A sibling of this process's own cgroup, so the parent is one this user was delegated. Creating
+    // it inside our own would put us in an ancestor of what is about to be frozen.
+    var own = OwnCgroupPath();
+    if (own is null or "/")
+      Assert.Ignore("this process is in no delegated cgroup v2, so there is nothing to create one beside");
+
+    var parent = own![..own.LastIndexOf('/')];
+    var name = $"procman-test-{Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+    var directory = Path.Combine("/sys/fs/cgroup", parent.TrimStart('/'), name);
+
+    try {
+      Directory.CreateDirectory(directory);
+    } catch (UnauthorizedAccessException) {
+      Assert.Ignore("this user may not create a cgroup here, so there is nothing to freeze");
+    } catch (IOException) {
+      Assert.Ignore("this user may not create a cgroup here, so there is nothing to freeze");
+    }
+
+    if (!File.Exists(Path.Combine(directory, "cgroup.freeze"))) {
+      Directory.Delete(directory);
+      Assert.Ignore("this kernel's cgroups have no freezer; it arrived in Linux 5.2");
+    }
+
+    this._scratch = directory;
+    this._relative = $"{parent}/{name}";
+  }
+
+  [TearDown]
+  public void RemoveTheScratchCgroup() {
+    if (this._scratch is not { } directory || !Directory.Exists(directory))
+      return;
+
+    // Thawed first, whatever the test did: a cgroup cannot be removed while it still holds a
+    // process, and a frozen one holds it for longer.
+    try {
+      File.WriteAllText(Path.Combine(directory, "cgroup.freeze"), "0");
+    } catch (IOException) {
+    } catch (UnauthorizedAccessException) {
+    }
+
+    foreach (var line in Members(directory))
+      Stop(line);
+
+    // The kernel removes the process from the cgroup when it is reaped, which is not instant.
+    var deadline = Environment.TickCount64 + 5000;
+    while (Environment.TickCount64 < deadline) {
+      try {
+        Directory.Delete(directory);
+        return;
+      } catch (IOException) {
+        Thread.Sleep(20);
+      } catch (UnauthorizedAccessException) {
+        return;
+      }
+    }
+  }
+
+  [Test]
+  public void FreezingStopsTheCgroupAndThawingStartsItAgain() {
+    var actions = new LinuxProcessActions(new());
+    var started = actions.Launch(new("/bin/sleep", ["120"]));
+
+    try {
+      Assert.That(started.Outcome.Succeeded, Is.True, started.Outcome.Detail);
+      File.WriteAllText(Path.Combine(this._scratch!, "cgroup.procs"), started.Pid.ToString(System.Globalization.CultureInfo.InvariantCulture));
+
+      var frozen = actions.FreezeCgroup(started.Key, true);
+      Assert.That(frozen.Succeeded, Is.True, frozen.Detail);
+      Assert.That(frozen.Detail, Does.Contain(this._relative!), "the result names the cgroup, which is the target");
+
+      // The kernel's own answer, and the only place it is published: there is no process state for
+      // frozen, and /proc/[pid]/stat still says the task is sleeping.
+      Assert.That(WaitForFrozen(this._scratch!, true), Is.True, "cgroup.events did not report it frozen");
+      Assert.That(StateOf(started.Pid), Is.EqualTo("S"), "a frozen task still reports itself as sleeping");
+
+      using var probe = new LinuxProbe(new());
+      Assert.That(probe.DescribeCgroup(started.Key)?.Freezer?.Frozen, Is.True, "and the cgroup sheet says so");
+
+      var thawed = actions.FreezeCgroup(started.Key, false);
+      Assert.That(thawed.Succeeded, Is.True, thawed.Detail);
+      Assert.That(WaitForFrozen(this._scratch!, false), Is.True);
+      Assert.That(probe.DescribeCgroup(started.Key)?.Freezer?.Frozen, Is.False);
+    } finally {
+      Stop(started.Pid);
+    }
+  }
+
+  /// <summary>
+  /// A frozen task is genuinely stopped, which is the claim worth checking against something other
+  /// than the flag that was just written.
+  /// </summary>
+  [Test]
+  public void AFrozenTaskStopsUsingTheProcessor() {
+    var actions = new LinuxProcessActions(new());
+    // A program that would otherwise keep a core busy, so that "it stopped" is measurable rather
+    // than inferred from a file that says so.
+    var started = actions.Launch(new("/bin/sh", ["-c", "while :; do :; done"]));
+
+    try {
+      Assert.That(started.Outcome.Succeeded, Is.True, started.Outcome.Detail);
+      File.WriteAllText(Path.Combine(this._scratch!, "cgroup.procs"), started.Pid.ToString(System.Globalization.CultureInfo.InvariantCulture));
+      Thread.Sleep(200);
+
+      Assert.That(actions.FreezeCgroup(started.Key, true).Succeeded, Is.True);
+      Assert.That(WaitForFrozen(this._scratch!, true), Is.True);
+
+      var before = UserTicks(started.Pid);
+      Thread.Sleep(400);
+      Assert.That(UserTicks(started.Pid), Is.EqualTo(before), "a frozen task uses no processor time");
+    } finally {
+      Stop(started.Pid);
+    }
+  }
+
+  /// <summary>
+  /// The one case where the honest answer is to refuse: freezing the cgroup this program is in
+  /// would stop the program that is asking, and nothing would be left to thaw it.
+  /// </summary>
+  [Test]
+  public void FreezingTheCgroupThisProgramIsInIsRefused() {
+    var actions = new LinuxProcessActions(new());
+    var self = new ProcessKey(Environment.ProcessId, StartTicksOf(Environment.ProcessId));
+
+    var result = actions.FreezeCgroup(self, true);
+
+    Assert.That(result.Outcome, Is.EqualTo(ActionOutcome.Refused));
+    Assert.That(result.Detail, Does.Contain("this program"));
+  }
+
+  private static string? OwnCgroupPath() {
+    foreach (var line in File.ReadAllLines("/proc/self/cgroup"))
+      if (line.StartsWith("0::", StringComparison.Ordinal))
+        return line[3..].Trim();
+
+    return null;
+  }
+
+  private static IEnumerable<int> Members(string directory) {
+    var members = new List<int>();
+    try {
+      foreach (var line in File.ReadAllLines(Path.Combine(directory, "cgroup.procs")))
+        if (int.TryParse(line, out var pid))
+          members.Add(pid);
+    } catch (IOException) {
+    } catch (UnauthorizedAccessException) {
+    }
+
+    return members;
+  }
+
+  private static bool WaitForFrozen(string directory, bool wanted) {
+    // A freeze is not instant: it has to catch processes that were inside a syscall when it began,
+    // which is why cgroup.events is the state and cgroup.freeze is only the request.
+    var deadline = Environment.TickCount64 + 5000;
+    while (Environment.TickCount64 < deadline) {
+      foreach (var line in File.ReadAllLines(Path.Combine(directory, "cgroup.events")))
+        if (line.StartsWith("frozen ", StringComparison.Ordinal) && line.EndsWith(wanted ? "1" : "0", StringComparison.Ordinal))
+          return true;
+
+      Thread.Sleep(20);
+    }
+
+    return false;
+  }
+
+  private static ulong StartTicksOf(int pid) {
+    var stat = File.ReadAllText($"/proc/{pid}/stat");
+    var fields = stat[(stat.LastIndexOf(')') + 2)..].Split(' ');
+    return ulong.Parse(fields[19], System.Globalization.CultureInfo.InvariantCulture);
+  }
+
+  private static ulong UserTicks(int pid) {
+    var stat = File.ReadAllText($"/proc/{pid}/stat");
+    var fields = stat[(stat.LastIndexOf(')') + 2)..].Split(' ');
+    return ulong.Parse(fields[11], System.Globalization.CultureInfo.InvariantCulture);
+  }
+
+  private static string? StateOf(int pid) {
+    try {
+      return File.ReadAllText($"/proc/{pid}/stat").Split(' ')[2];
+    } catch (IOException) {
+      return null;
+    } catch (UnauthorizedAccessException) {
+      return null;
+    }
+  }
+
+  private static void Stop(int pid) {
+    if (pid <= 0)
+      return;
+
+    try {
+      System.Diagnostics.Process.GetProcessById(pid).Kill();
+    } catch (ArgumentException) {
+    } catch (InvalidOperationException) {
     }
   }
 

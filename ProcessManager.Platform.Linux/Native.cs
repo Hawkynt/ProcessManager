@@ -19,6 +19,8 @@ internal static partial class Native {
   private const int _SC_PAGESIZE = 30;
 
   private const int O_RDONLY = 0;
+  private const int O_WRONLY = 1;
+  private const int O_TRUNC = 0x200;
   private const int O_CLOEXEC = 0x80000;
   private const int O_DIRECTORY = 0x10000;
 
@@ -30,6 +32,9 @@ internal static partial class Native {
 
   [LibraryImport("libc", EntryPoint = "read", SetLastError = true)]
   private static partial nint ReadCore(int fd, ref byte buffer, nuint count);
+
+  [LibraryImport("libc", EntryPoint = "write", SetLastError = true)]
+  private static partial nint WriteCore(int fd, ref byte buffer, nuint count);
 
   [LibraryImport("libc", EntryPoint = "close")]
   private static partial int CloseCore(int fd);
@@ -60,6 +65,33 @@ internal static partial class Native {
 
   [LibraryImport("libc", EntryPoint = "sched_get_priority_max", SetLastError = true)]
   private static partial int SchedGetPriorityMax(int policy);
+
+  /// <summary>
+  /// <c>struct rlimit64</c>: the soft limit and the ceiling on it, both unsigned 64-bit.
+  /// </summary>
+  /// <remarks>
+  /// Always the 64-bit form, on every architecture. <c>prlimit</c>'s <c>struct rlimit</c> carries a
+  /// 32-bit <c>rlim_t</c> on a 32-bit build unless the caller was compiled with
+  /// <c>_FILE_OFFSET_BITS=64</c> — a compile-time switch a P/Invoke has no way to have set — so a
+  /// file-size limit above 4 GiB would come back truncated on 32-bit ARM and nowhere else. glibc
+  /// exports <c>prlimit64</c> unconditionally and it takes this shape everywhere.
+  /// </remarks>
+  [StructLayout(LayoutKind.Sequential)]
+  public struct ResourceLimitPair {
+    public ulong Soft;
+    public ulong Hard;
+  }
+
+  /// <summary><c>RLIM64_INFINITY</c>: how the kernel spells "no limit".</summary>
+  public const ulong ResourceLimitInfinity = ulong.MaxValue;
+
+  /// <summary>Reads one limit. The new-limit pointer is null, which is how a read is asked for.</summary>
+  [LibraryImport("libc", EntryPoint = "prlimit64", SetLastError = true)]
+  private static partial int PrLimitRead(int pid, int resource, nint newLimit, out ResourceLimitPair oldLimit);
+
+  /// <summary>Sets one limit. The old-limit pointer is null, because the caller already has it.</summary>
+  [LibraryImport("libc", EntryPoint = "prlimit64", SetLastError = true)]
+  private static partial int PrLimitWrite(int pid, int resource, in ResourceLimitPair newLimit, nint oldLimit);
 
   public const int EPERM = 1;
   public const int ENOENT = 2;
@@ -147,6 +179,65 @@ internal static partial class Native {
   }
 
   public static void Close(int fd) => CloseCore(fd);
+
+  /// <summary>
+  /// Writes a short value to an existing control file — one in <c>/proc</c> or in
+  /// <c>/sys/fs/cgroup</c> — and reports the kernel's own <c>errno</c> when it will not have it.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Through <c>open</c> and <c>write</c> rather than <see cref="File.WriteAllText(string,string)"/>
+  /// because the <em>reason</em> is the whole answer here. These files accept the open and refuse
+  /// the write: lowering <c>oom_score_adj</c> without <c>CAP_SYS_RESOURCE</c> comes back as
+  /// <c>EACCES</c> from <c>write</c>, on a file whose mode says the owner may write it. The runtime
+  /// turns that into an exception whose type and message vary with the errno, and a caller that had
+  /// to read the message to tell "not permitted" from "the process has gone" would be parsing
+  /// English (PRD §88).
+  /// </para>
+  /// <para>
+  /// One <c>write</c>, never a loop. A control file takes its value as a single write or not at all,
+  /// and a short count on one is a refusal rather than something to continue.
+  /// </para>
+  /// <para>
+  /// No <c>O_CREAT</c>: every file this is used on already exists, and a path that does not is a
+  /// kernel that has no such control rather than an invitation to make one.
+  /// </para>
+  /// </remarks>
+  public static bool WriteControlFile(ReadOnlySpan<byte> nulTerminatedPath, ReadOnlySpan<byte> content, out int errno) {
+    errno = 0;
+    int fd;
+    do {
+      fd = OpenCore(ref MemoryMarshal.GetReference(nulTerminatedPath), O_WRONLY | O_TRUNC | O_CLOEXEC);
+      if (fd >= 0)
+        break;
+
+      errno = Marshal.GetLastPInvokeError();
+      if (errno != EINTR)
+        return false;
+    } while (true);
+
+    try {
+      while (true) {
+        var written = WriteCore(fd, ref MemoryMarshal.GetReference(content), (nuint)content.Length);
+        if (written == content.Length) {
+          errno = 0;
+          return true;
+        }
+
+        if (written >= 0) {
+          // A control file that took part of a value has been given something it cannot act on.
+          errno = EINVAL;
+          return false;
+        }
+
+        errno = Marshal.GetLastPInvokeError();
+        if (errno != EINTR)
+          return false;
+      }
+    } finally {
+      Close(fd);
+    }
+  }
 
   /// <summary>Resolves a symlink. Null when it does not exist or may not be read.</summary>
   public static string? ReadLink(string path) {
@@ -370,6 +461,26 @@ internal static partial class Native {
 
   /// <summary>Whether this architecture's I/O priority syscall numbers are known at all.</summary>
   public static bool SupportsIoPriority => IoPrioSyscalls is not null;
+
+  /// <summary>
+  /// Reads one of another process's resource limits, or -1 with errno set.
+  /// </summary>
+  /// <remarks>
+  /// Only the setting side of the program uses this, to read back what it just wrote; the reading
+  /// side parses <c>/proc/[pid]/limits</c>, which answers for a recorded tree as well as for a live
+  /// process (see <c>Query.ProcLimitsParser</c>).
+  /// </remarks>
+  public static int GetResourceLimit(int pid, int resource, out ResourceLimitPair limit) {
+    if (!OperatingSystem.IsLinux()) {
+      limit = default;
+      return -1;
+    }
+
+    return PrLimitRead(pid, resource, 0, out limit);
+  }
+
+  public static int SetResourceLimit(int pid, int resource, in ResourceLimitPair limit)
+    => OperatingSystem.IsLinux() ? PrLimitWrite(pid, resource, in limit, 0) : -1;
 
   /// <summary>AT_HWCAP and AT_HWCAP2 of the auxiliary vector, which is where ARM publishes its
   /// feature bits.</summary>
