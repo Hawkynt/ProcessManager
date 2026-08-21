@@ -4682,7 +4682,7 @@ a naive parser hands the attacker the parse.
 
 # 99. Testing strategy
 
-**1898 tests pass on every leg, under both a UTF-8 and a `C` locale.**
+**1943 tests pass on every leg, under both a UTF-8 and a `C` locale.**
 
 ## Unit tests
 

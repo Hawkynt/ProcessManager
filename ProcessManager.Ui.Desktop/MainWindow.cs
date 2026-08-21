@@ -2078,7 +2078,7 @@ public sealed class MainWindow : Form {
   private bool GoToSocketOwner() {
     var pid = this._shell.SelectedNetworkPid;
     if (pid <= 0) {
-      this.Announce(_SocketOwnerNotVisible);
+      this.Say(_SocketOwnerNotVisible);
       return false;
     }
 
@@ -2086,7 +2086,7 @@ public sealed class MainWindow : Form {
     if (this.SelectPid(pid))
       return true;
 
-    this.Announce($"The socket belongs to pid {pid}, which is not in the process list.");
+    this.Say($"The socket belongs to pid {pid}, which is not in the process list.");
     return false;
   }
 
@@ -2473,8 +2473,8 @@ public sealed class MainWindow : Form {
   public Func<string, bool> Confirm { get; set; } = question
     => MessageBox.Show(question, "Process Manager", MessageBoxButtons.YesNo) == DialogResult.Yes;
 
-  /// <summary>The same seam for the messages that are told rather than asked.</summary>
-  public Action<string> Announce { get; set; } = message => MessageBox.Show(message, "Process Manager");
+  /// <summary>The same seam for the messages that are told rather than asked. Not named Announce: that is already the helper that gives a control its screen-reader name, and one word for two unrelated things is a name that has to be read twice.</summary>
+  public Action<string> Say { get; set; } = message => MessageBox.Show(message, "Process Manager");
 
   #endregion
 
@@ -2483,7 +2483,7 @@ public sealed class MainWindow : Form {
       return;
 
     if (this._actions is null) {
-      this.Announce(_NoActionsHere);
+      this.Say(_NoActionsHere);
       return;
     }
 
@@ -2514,9 +2514,9 @@ public sealed class MainWindow : Form {
   /// </remarks>
   private void Report(ActionResult result) {
     if (!result.Succeeded)
-      this.Announce(result.Detail ?? result.Outcome.ToString());
+      this.Say(result.Detail ?? result.Outcome.ToString());
     else if (result.Detail is { Length: > 0 } detail)
-      this.Announce(detail);
+      this.Say(detail);
   }
 
   /// <summary>
@@ -2548,14 +2548,14 @@ public sealed class MainWindow : Form {
       return;
 
     if (this._actions is null) {
-      this.Announce(_NoActionsHere);
+      this.Say(_NoActionsHere);
       return;
     }
 
     // Deepest first — see Query.ProcessTree.DescendantsFirst for why the order is not incidental.
     var order = ProcessTree.DescendantsFirst(this._sampler.Current, row.Pid);
     if (order.Count == 0) {
-      this.Announce($"{row.Name} (PID {row.Pid}) is no longer in the list.");
+      this.Say($"{row.Name} (PID {row.Pid}) is no longer in the list.");
       return;
     }
 

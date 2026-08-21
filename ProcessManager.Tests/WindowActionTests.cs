@@ -73,7 +73,7 @@ public sealed class WindowActionTests {
     var asked = new List<string>();
     var said = new List<string>();
     window.Confirm = question => { asked.Add(question); return answer; };
-    window.Announce = said.Add;
+    window.Say = said.Add;
     window.ApplySettings(settings ?? new() { DesktopColumns = [ProcessField.Name, ProcessField.Pid] }, _ => true);
     window.Start();
     window.SelectFirstRow();

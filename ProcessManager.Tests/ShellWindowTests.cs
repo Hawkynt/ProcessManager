@@ -148,7 +148,7 @@ public sealed class ShellWindowTests {
 
     var window = Window(probe);
     var said = new List<string>();
-    window.Announce = said.Add;
+    window.Say = said.Add;
     Assert.That(window.ShowView("Network"), Is.True);
 
     foreach (var control in Descendants(window))
