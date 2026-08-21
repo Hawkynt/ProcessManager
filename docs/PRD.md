@@ -631,11 +631,17 @@ term all use it, and it never changes even when the display name differs per pla
 - [x] `parent.name` — the parent's name, resolved once per sample over the whole table
 - [x] `tree.depth` — hierarchical depth
 - [x] `status` — running, sleeping, suspended, zombie, terminated
-- [ ] `responding` — GUI responsiveness; `IsHungAppWindow` on Windows, `n/a` on Linux
+- [ ] `responding` — GUI responsiveness; `IsHungAppWindow` on Windows, `n/a` on Linux. **Windows
+      only, and unwritten**: it needs the window list joined to the process table, which is §39's
+      work and is not done on Windows either
 - [x] `start.time` — process creation timestamp
 - [x] `running.time` — elapsed lifetime
-- [ ] `exit.time` — requires retaining dead rows; ties to §87
-- [ ] `exit.code` — only for children we spawned or via job/wait; honest `—` otherwise
+- [ ] `exit.time` — requires retaining dead rows; ties to §87. **Every platform, and unwritten on all
+      of them**: nothing here keeps a row after the process behind it has gone, so there is nowhere
+      for the answer to live yet
+- [ ] `exit.code` — only for children we spawned or via job/wait; honest `—` otherwise. **Every
+      platform, and unwritten on all of them**, for the same reason and with a second one on top:
+      neither kernel will tell a bystander what a process it did not start exited with
 - [x] `user` — account owning the process
 - [x] `user.id` — SID / UID
 - [x] `session` — login/terminal session
@@ -645,20 +651,65 @@ term all use it, and it never changes even when the display name differs per pla
       every row describes the machine instead of the program. Byte order is in the header, so a
       big-endian binary decodes on a little-endian machine — the case no laptop here can produce
       and a test covers
-- [ ] `emulation` — WOW64, Rosetta, translation state
-- [x] `image.path` — full image path
+- [x] `emulation` — WOW64, Rosetta, translation state. **Windows**, from `IsWow64Process2`, which
+      names the machine the process is being translated *from* and reports
+      `IMAGE_FILE_MACHINE_UNKNOWN` for one that is not. So nought is an answer here and the ordinary
+      one — it renders "native" rather than leaving a cell that reads like a hole (§72.3). The guest
+      machine rather than the host's, because every row on a machine shares the host and what differs
+      between rows is the half worth a column: an x86 program on an x64 machine, an x64 program on an
+      ARM64 one. A Windows older than 1709 has no such call, which is a fact about the machine and is
+      reported once as unsupported rather than as every process running natively. Held against the
+      runtime's own two architectures, which say whether a process is being translated without asking
+      the same question of the same API. Rosetta is **macOS only** and the macOS probe is a stub
+      (§6.3), so that half is not answered
+- [x] `image.path` — full image path. On Windows this was empty until the six lines below needed it:
+      the bulk query carries the image's file *name* and nothing else, so the path comes from
+      `QueryFullProcessImageName` on the handle the owner lookup already opens — one more call, on a
+      right it already holds, cached for the process's life because a running program does not move.
+      `exe.name` fills in with it
 - [x] `cmdline` — complete command invocation
 - [x] 🟡 `cwd` — Linux; Windows needs a PEB read we do not do
-- [ ] `description` — binary description (version resource)
-- [ ] `company` — publisher metadata
-- [ ] `product` — product metadata
-- [ ] `product.version`
-- [ ] `file.version`
+- [x] `description` — binary description (version resource). **Windows only**: a PE keeps these five
+      strings inside the file and an ELF has no such section and never did, so the nearest Linux
+      facts are the package's and are `package` and `app.name` below — a different question with a
+      different answer, and a column showing one under the other's name would be stating something
+      false (§5.3). Routinely the only cell on the row that says what a service actually *is*, the
+      name being whatever the program decided to call itself.
+
+      Read once per **image** rather than once per process — three hundred processes of one runtime
+      share one binary — and again when that file is replaced underneath them. Opt-in, because the
+      cost is opening and reading a file (§5.4).
+
+      **How this is verified without a Windows machine.** The walk takes bytes and carries no
+      platform attribute, so it runs on every leg — and not against a buffer synthesised from its own
+      struct definitions, which is the weakness the §9.4 replay tests admit to. Every assembly this
+      repository builds *is* a PE image with a version resource in it, written by a compiler nobody
+      here controls, and the tests read those. A PE writes its file version twice, in two encodings
+      reached by two different paths through the resource tree, and a walk that lands in the wrong
+      place cannot make the two agree: held against **1617 real PE images**, of which 478 carry a
+      version resource and 472 agree exactly — the six that do not are publishers who wrote `8.00`
+      where the binary field says `8.0`. The header fields were separately checked against
+      `objdump -x`. On a Windows kernel the strings are compared against `FileVersionInfo`, which is
+      Microsoft's own reader of the same bytes out of the same file
+- [x] `company` — publisher metadata. As above, and a **claim rather than a verification**: anybody
+      may write anything in a version resource, and whether somebody this machine trusts signed for
+      the image is the signature fields of §21 and is not this
+- [x] `product` — product metadata. As above. Several files of one suite share it, which is what
+      makes it worth a column beside the file's own description
+- [x] `product.version` — as above, and kept as the **string the publisher wrote** rather than as a
+      number, because `10.0.19041.1 (WinBuild.160101.0800)` is a real value of this field
+- [x] `file.version` — as above. Routinely neither the product version nor the four numbers
+      `VS_FIXEDFILEINFO` carries, which is why it is its own column and stays a string
 - [ ] 🟡 `package` — the distribution's own database, Flatpak, snap and AppImage; MSIX and `.app`
-      are Windows and macOS
+      are Windows and macOS. **Linux is done; the Windows half is unwritten** — MSIX identity comes
+      from `GetPackageFullName` on the process, which is one call and nobody has made it. **macOS is
+      a stub (§6.3)**
 - [ ] 🟡 `app.id` — read for Flatpak and snap; neither could be verified live on the machine this
-      was written on, which has neither installed
-- [ ] `bundle.id` — macOS bundle identifier
+      was written on, which has neither installed. **Windows is unwritten** and would be the package
+      family name from the same call as the line above; **macOS is a stub**
+- [ ] `bundle.id` — macOS bundle identifier. **macOS only**, and the macOS probe is a stub (§6.3).
+      Windows and Linux have no such notion — the nearest are the two lines above, and both are
+      already their own field
 - [x] `container.id` — every runtime writes its own cgroup shape and they all bury a long
       hexadecimal id somewhere, so the id is looked for rather than the layout: there is always
       another layout. A run of hex has to be long enough to *be* an id, or a systemd slice and a
@@ -666,7 +717,11 @@ term all use it, and it never changes even when the display name differs per pla
 - [x] `namespace` — kind and inode. The inode is the identity: two processes sharing one share that
       namespace, which is how a container's members are actually told apart, rather than by a cgroup
       path anybody can write anything into
-- [ ] 🟡 `job.cgroup` — Linux cgroup path done; Windows job object not
+- [ ] 🟡 `job.cgroup` — Linux cgroup path done; Windows job object not. **The Windows half is
+      unwritten**: `IsProcessInJob` says whether there is one and `QueryInformationJobObject` says
+      what it limits, and neither is called. Not the same fact wearing one name, which is why the
+      line carries both — a cgroup is a path in a hierarchy and a job is an unnamed kernel object a
+      process cannot leave (§5.3)
 - [x] `terminal` — controlling TTY, decoded from `stat` field 7. The packing is the awkward part:
       minor is split across the low eight bits and bits 20–31 with major in between, so the obvious
       shift is right for small numbers and wrong for large ones. Zero is *no terminal* — the answer
@@ -675,8 +730,17 @@ term all use it, and it never changes even when the display name differs per pla
       nought, which is how this first reported every program as being no bytes long
 - [x] `exe.modified`
 - [ ] 🟡 `exe.created` — `statx` where the filesystem carries a birth time, and honestly unknown
-      where it does not, which is most of them
-- [ ] `subsystem` — GUI/console/native; PE only, `n/a` for ELF
+      where it does not, which is most of them. **Linux is done; the Windows half is unwritten** —
+      NTFS records a creation time for every file and always has, so this is the one line here where
+      Windows would answer more reliably than Linux does and nobody has asked it. **macOS is a stub**
+- [x] `subsystem` — GUI/console/native; PE only, `n/a` for ELF. **Windows only**, out of the optional
+      header of the same file the five strings above come from, so naming any of the six buys the one
+      read that answers all of them. What the loader is expected to give the program rather than what
+      it happens to have, so a console program started without a console still reads as a console
+      program. `IMAGE_SUBSYSTEM_UNKNOWN` is a value a PE header can actually carry, so it keeps its
+      own word and a file that is not a PE at all is *not* given it — those are different statements
+      (§72.3). A subsystem Microsoft adds later shows as its number rather than being flattened into
+      the nearest name this build knows
 - [x] `interpreter` — `PT_INTERP`, or the shebang's program for a script. A shebang is as real a way
       to start a program on Linux as an ELF header, and reporting "not an executable" for every shell
       script would be wrong about a large part of any machine.
@@ -963,50 +1027,124 @@ every eighth sample, staggered by pid, with its known graphics descriptors read 
       descriptor. A device, a `memfd` and an anonymous inode are each their own kind and none of
       them is a file
 - [x] `pipe.count` — as above. Both ends of one pipe are a descriptor each
-- [ ] `event.count` — Windows handle-type tally. **Windows only.** Linux's nearest equivalent is an
-      `eventfd`, which is a descriptor and is already counted as one
-- [ ] `semaphore.count` — **Windows only**; a POSIX semaphore is a mapped file and a System V one
-      belongs to no process at all, so neither is countable per process
-- [ ] `mutex.count` — **Windows only**; a futex has no kernel object to count
-- [ ] `section.count` — **Windows only**; the Linux equivalent is a mapping and lives in §34
-- [ ] `regkey.count` — **Windows only**; there is no registry
-- [ ] `user.objects` — `GetGuiResources(GR_USEROBJECTS)`. **Windows only**
-- [ ] `gdi.objects` — `GetGuiResources(GR_GDIOBJECTS)`. **Windows only**
-- [ ] `mach.ports` — **macOS only**
+- [x] `event.count` — Windows handle-type tally. **Windows only.** Linux's nearest equivalent is an
+      `eventfd`, which is a descriptor and is already counted as one.
+
+      One pass over the machine's whole handle table rather than a query per process, because Windows
+      has no per-process handle query at all — the table arrives whole and the owner is a field in
+      each row. That makes this cheaper here than the equivalent scan is on Linux and nowhere near
+      free, so §20's rule below stands: naming any of the five buys all five, and nothing else turns
+      the pass on (§5.4).
+
+      **The part that would have been silently wrong.** A handle's type is a sixteen-bit index into
+      the kernel's own table of object types, handed out in the order those types were created during
+      boot — so it depends on which drivers loaded and differs between machines and between boots of
+      one machine. A build that hard-coded the indices would report a plausible tally of entirely the
+      wrong objects, and no test on a Windows machine would catch it unless that machine happened to
+      boot differently. So the indices are discovered: one handle of each distinct index is duplicated
+      and asked what its type is called, which is a few dozen duplications against a table with a
+      million rows in it. A type is only discoverable while something on the machine holds a handle of
+      it, so the pass repeats across samples until all five are known — running it once left any type
+      absent from the first sample unknown for the life of the program, which is a thing that was
+      observed rather than imagined. An index nothing could name leaves that column **missing rather
+      than nought**, because a nought there would be a finding made out of an absence (§5.3).
+
+      The walk itself takes a span and carries no platform attribute, so it replays on every leg
+      against hand-built tables; the naming pass is the half that only runs on Windows
+- [x] `semaphore.count` — **Windows only**; a POSIX semaphore is a mapped file and a System V one
+      belongs to no process at all, so neither is countable per process. Out of the same pass
+- [x] `mutex.count` — **Windows only**; a futex has no kernel object to count. Out of the same pass,
+      and matched on the kernel's own word for the type: the object manager calls a mutex a
+      **Mutant**, and matching on "Mutex" would leave this column empty on every Windows there is
+- [x] `section.count` — **Windows only**; the Linux equivalent is a mapping and lives in §34. Out of
+      the same pass
+- [x] `regkey.count` — **Windows only**; there is no registry. Out of the same pass. Keys left open
+      are the classic reason a configuration change does not take effect until something is restarted
+- [x] `user.objects` — `GetGuiResources(GR_USEROBJECTS)`. **Windows only.** Not a handle and not in
+      that table: the desktop's own quota, ten thousand per process by default, which a program can
+      exhaust while every other counter on its row still looks healthy. Its own switch rather than
+      the tally's, because the cost has a different shape — a call per process per *sample*, and
+      uncacheable, the number moving being the whole point of the column.
+
+      The call returns nought both for a process holding no such objects and for a call that failed,
+      and says so in its own documentation. A console service really does hold none, and that is a
+      measurement; so the last error is cleared before the call and asked afterwards, and the two
+      cases are told apart rather than both reported as nought (§72.3)
+- [x] `gdi.objects` — `GetGuiResources(GR_GDIOBJECTS)`. **Windows only**, and the same quota, the
+      same switch and the same nought-is-not-a-failure reasoning as the line above
+- [ ] `mach.ports` — **macOS only**, and the macOS probe is a stub (§6.3). Neither Windows nor Linux
+      has anything of the kind to count
 - [ ] `ipc.count` — **not answerable per process on Linux.** System V queues, semaphores and shared
       memory belong to the kernel rather than to a process: `ipcs` lists them by creator, and a
       segment stays after everything that attached it has exited. Attached shared memory is visible
       in `maps` and belongs in §34, not in a count of things a process holds
 
 Everything still unticked here names the platform it belongs to, and between them they cover the
-whole of the remainder: seven are **Windows-only** object types with no Linux counterpart to count
-(`event.count`, `semaphore.count`, `mutex.count`, `section.count`, `regkey.count`, `user.objects`,
-`gdi.objects`), one is **macOS-only** (`mach.ports`), one is a high-water mark **no Linux interface
-publishes** (`handles.peak`), and one is **not a per-process quantity on any of them** — a System V
-object outlives every process that touched it, so `ipc.count` is a question about the kernel rather
-than about a row in this table. Nothing is left here that Linux could answer and does not.
+whole of the remainder. The seven **Windows-only** object types are now answered — `event.count`,
+`semaphore.count`, `mutex.count`, `section.count` and `regkey.count` out of one pass over the
+machine's handle table, `user.objects` and `gdi.objects` out of the desktop's own quotas — and what
+is left is three lines that no amount of writing would fill: one is **macOS-only** (`mach.ports`) and
+the macOS probe is a stub, one is a high-water mark **no Linux interface publishes**
+(`handles.peak`), and one is **not a per-process quantity on any of them** — a System V object
+outlives every process that touched it, so `ipc.count` is a question about the kernel rather than
+about a row in this table. Nothing is left here that Windows or Linux could answer and does not.
 
-The remaining per-type tallies are one pass over a handle table that already exists — but they must
-**not** move into the sample loop before that cost is measured against §71. The three that are
-ticked are how that is done rather than an exception to it: the pass costs a `readlink` per
-descriptor on top of the listing that was already the most expensive read in the sampler, so it
-happens only for a run that named one of the three columns, and the whole table is never scanned for
-a column nobody opened (§5.4).
+The per-type tallies are one pass over a handle table that already exists — and they do **not** sit
+in the sample loop for a run that did not ask. That rule is what the ticks above are built on rather
+than an exception to it. On Linux the pass costs a `readlink` per descriptor on top of the listing
+that was already the most expensive read in the sampler; on Windows it is one query for the whole
+machine, which is cheaper and is still megabytes of table per sample. Either way the whole table is
+never scanned for a column nobody opened, and the two desktop quotas — which are a call per process
+per sample and cannot be cached — have a switch of their own (§5.4).
 
 # 21. Process table — security fields
 
 - [x] `elevated` — the effective uid on Linux, `TokenElevation` on Windows
 - [x] `integrity` — the last sub-authority of the token's mandatory label: untrusted, low, medium,
       medium+, high or system, and the raw number for anything Microsoft adds later
-- [ ] `protected` — protected-process status. **Windows only**
-- [ ] `protection.level` — **Windows only**
+- [x] `protected` — protected-process status. **Windows only.** Whether the kernel is keeping other
+      processes out of this one: a protected process cannot be opened for reading, injected into or
+      debugged even by an administrator, which is why a debugger that will not attach to it is not a
+      fault. Derived from the level below rather than read separately — there is one reading and two
+      questions
+- [x] `protection.level` — **Windows only.** Which protection the process holds, by the signer class
+      that granted it: the Windows trusted computing base, an antimalware service, the store, or an
+      Authenticode publisher. "none" is a real answer and the answer for nearly every process on a
+      machine.
+
+      Read through `GetProcessInformation(ProcessProtectionLevelInfo)`, which is documented and needs
+      only `PROCESS_QUERY_LIMITED_INFORMATION` — the same right the owner lookup already holds, so it
+      is one more call on a handle that is already open and cached for the process's lifetime. The
+      undocumented `NtQueryInformationProcess(ProcessProtectionInformation)` answers the same question
+      through a structure Microsoft has never published, and this program does not read structures
+      nobody can check (§8.3).
+
+      **The two constants that would have been silently wrong.** `PROTECTION_LEVEL_NONE` is
+      `0xFFFFFFFE`, not the `-1` a sentinel usually is — `0xFFFFFFFF` is `PROTECTION_LEVEL_SAME`,
+      which is a *set*-side value that never comes back from this call. And **nought is a real
+      level**, `PROTECTION_LEVEL_WINTCB_LIGHT`, so a record nobody filled must not read as the most
+      protected process on the machine. Neither number appears on any Microsoft reference page: the
+      page for the structure prints the constant names against an empty value column, so they were
+      taken from `winbase.h`, and that is stated here because it is the weakest-sourced constant in
+      this section
 - [ ] `signature.status` — see §70's vocabulary. **Windows and macOS**: Linux binaries carry no
       embedded signature to verify. What signs a Linux program is its package, which is a different
-      question with a different answer and belongs to §42's provenance rather than to this column
-- [ ] `signer` — verified publisher. **Windows and macOS**
-- [ ] `cert.subject` — **Windows and macOS**
-- [ ] `cert.issuer` — **Windows and macOS**
-- [ ] `signature.timestamp` — **Windows and macOS**
+      question with a different answer and belongs to §42's provenance rather than to this column.
+      **The Windows half is unwritten and is deliberately not in this pass.** It is `WinVerifyTrust`
+      against the image's Authenticode signature, which is a verdict about trust rather than a
+      reading of a header — and a verifier nobody can run against the OS it describes is a plausible
+      implementation, which is worse than an empty one (§9.2). The version resource above was
+      buildable precisely because it is the opposite kind of thing: a documented on-disk layout that
+      real files can be held against here, and one that says nothing about whether anybody trusts
+      what it reads. **macOS is a stub (§6.3)**
+- [ ] `signer` — verified publisher. **Windows and macOS**, and unwritten on both for the reason
+      above: it is the subject of the certificate `WinVerifyTrust` chained to, so it exists only once
+      that verdict does
+- [ ] `cert.subject` — **Windows and macOS**, unwritten, as above
+- [ ] `cert.issuer` — **Windows and macOS**, unwritten, as above
+- [ ] `signature.timestamp` — **Windows and macOS**, unwritten, as above. Its own field because a
+      countersigned timestamp is what keeps a signature valid after the certificate behind it has
+      expired, which is the ordinary state of most signed software
 - [x] `hash.sha256` — on demand only, and on every platform that has a file to hash: the digest of
       the running image, which is neither a signature nor a verdict (§70). Hashed once per image
       rather than once per process — three hundred processes of one runtime share one binary — and
@@ -1017,24 +1155,75 @@ a column nobody opened (§5.4).
       because so many package manifests and threat feeds are still keyed by it, and collidable since
       2017: on its own it is evidence of nothing. Verified against `sha1sum`
 - [ ] `reputation` — opt-in, see §70. **Not implemented on any platform**; it is a network service
-      rather than an OS reading
-- [ ] `dep` — **Windows only.** Linux has NX on every mapping and no per-process policy to report
-- [ ] `aslr` — **Windows only** as a per-process mitigation policy. Linux's is the machine-wide
-      `kernel.randomize_va_space` plus whether the image is a PIE, which is §53's business
-- [ ] `cfg` — **Windows only**
-- [ ] `cet` — **Windows only** as a policy field, and the policy is the part Linux has no answer to:
+      rather than an OS reading, so there is no OS to write it against and no platform it is missing
+      from. The one line in this section that is unbuilt everywhere for a reason that is not about
+      any operating system
+- [x] `dep` — **Windows only.** Linux has NX on every mapping and no per-process policy to report.
+
+      All six mitigation lines are read the same way and share one switch, and the six are worth
+      keeping apart from what Linux publishes for a reason the `cet` line below spells out: these are
+      **requests**, not states. What was asked for on behalf of a process and what the hardware
+      underneath it is doing are two questions, and Windows is the platform that records the first.
+
+      Each is held as the raw flags word its `PROCESS_MITIGATION_*` structure is a union over, and
+      the bits are decoded where the column is rendered — which puts the part most likely to be
+      wrong, a bit position off by one, into portable code with a test case per bit rather than into
+      interop nobody here can run. A bit Microsoft adds later stays visible instead of being rounded
+      into whichever of this build's words is nearest.
+
+      Permanent is the interesting half of this one: DEP that cannot be turned off again is a
+      stronger statement than DEP that happens to be on at the moment somebody looked, and it is the
+      one field of the six structures that lives outside the flags word.
+
+      **Opt-in, unlike the token fields above.** `GetProcessMitigationPolicy` documents
+      `PROCESS_QUERY_INFORMATION` rather than the limited form, so this is a second open with a
+      stronger right and six calls on it. For another user's process it will usually fail, and each
+      policy says so on its own rather than six mitigations being reported as absent — a mitigation
+      reported off when nobody was allowed to look is the worst cell on this row (§72.3)
+- [x] `aslr` — **Windows only** as a per-process mitigation policy. Linux's is the machine-wide
+      `kernel.randomize_va_space` plus whether the image is a PIE, which is §53's business. Four
+      bits, named separately rather than folded into a yes: bottom-up allocations, forcing relocation
+      on images that would rather not move, high entropy, and refusing stripped images are four
+      different things to have asked for
+- [x] `cfg` — **Windows only.** Whether indirect calls are checked against the set of functions the
+      compiler said were callable. Everything after the enable bit qualifies it — export suppression
+      without CFG enabled is not weaker CFG, it is no CFG — so the first bit decides whether the cell
+      says anything at all
+- [x] `cet` — **Windows only** as a policy field, and the policy is the part Linux has no answer to:
       there is no per-process record of what was *asked* for. What Linux does publish is what is
       switched **on**, which is `shadow.stack` below — a reading rather than a policy, and a better
-      question. The CPU's own support for it is a machine capability and is already in §46
-- [ ] `acg` — **Windows only**
-- [ ] `cig` — **Windows only**
-- [ ] `sandbox` — **Windows (AppContainer) and macOS (Seatbelt).** Linux has no single sandbox flag:
+      question. The CPU's own support for it is a machine capability and is already in §46. Strict
+      mode upgrades the word rather than being listed beside it: "on, strict" would read as two
+      policies where there is one at two strengths. `ProcessUserShadowStackPolicy` arrived in Windows
+      10 2004, so an older Windows refuses this one of the six and says so
+- [x] `acg` — **Windows only.** Whether the process is forbidden to generate code at runtime or make
+      existing code writable — a just-in-time compiler cannot run under it, which is why a browser
+      enables it in the processes that have no need to. Audit is **its own state and not a weaker
+      "on"**: under it nothing is prevented, only watched, and reporting that as on would claim a
+      protection is in force while nothing is being stopped (§5.3)
+- [x] `cig` — **Windows only.** Which signatures an image must carry before this process will load
+      it. It restricts what may be *loaded into* the process and says nothing about whether what is
+      already loaded was signed, which is the signature fields above and is a different question
+      wearing similar words
+- [x] `sandbox` — **Windows (AppContainer) and macOS (Seatbelt).** Linux has no single sandbox flag:
       what confines a process here is the seccomp mode, the LSM label and the namespace set, and all
       three are already their own fields. One "sandboxed: yes" over them would answer less than any
-      of them does (§5.3)
-- [ ] `appcontainer` — **Windows only**
+      of them does (§5.3). On Windows the sandbox *is* the AppContainer, so this and the line below
+      are one question with one answer and `sandbox` is the other spelling of it rather than a second
+      column saying the same thing twice. **macOS is a stub (§6.3)**, so the Seatbelt half is
+      unanswered
+- [x] `appcontainer` — **Windows only.** `TokenIsAppContainer`, off the same token the owner and the
+      integrity level come from, so it costs nothing beyond them. The sandbox a packaged application
+      and a browser renderer are put in, which decides what a process may reach rather than who it
+      runs as
 - [ ] `capabilities` — the AppContainer capability list. **Windows only**; Linux capabilities are
-      `caps.linux` below and are a different thing wearing the same word
+      `caps.linux` below and are a different thing wearing the same word. **Unwritten**: the flag
+      above says a process is in an AppContainer and this would say what that container is allowed to
+      reach, which is `TokenCapabilities` — a variable-length list of capability SIDs, each needing a
+      name lookup, for a list that is empty on every process that is not a packaged application. It
+      is a per-row allocation of unbounded size on a path with a budget of zero (§4), so it wants the
+      on-demand treatment §36 gives the other expensive security readings rather than a column, and
+      that is not written
 - [x] `selinux.context` — `/proc/pid/attr/current`, opt-in
 - [x] `apparmor.profile` — same file, same field: the LSM label is one value whichever module wrote it
 - [x] `lsm.mode` — the part of that label which is not the label: AppArmor writes how hard it is
@@ -1097,7 +1286,8 @@ a column nobody opened (§5.4).
       free to read and costs one string per process per sample to keep (§5.4). Not resolved to
       names: that would need a second name service beside the passwd one
 - [ ] macOS: code-sign identity, entitlements, hardened runtime, sandbox. **macOS only**, and the
-      macOS probe is a stub (§6.3)
+      macOS probe is a stub (§6.3) — so this is not four unwritten readings but a whole unwritten
+      platform, and nothing here will move until §6.3 does
 
 - [ ] **Online reputation checking is opt-in, and the program states exactly what is transmitted
       before the first time it happens** — at the point of use, not buried in a settings page
@@ -1112,17 +1302,26 @@ slower in eleven pairs out of eleven. Moving the work out of the loop recovered 
 switch buys the rest, so a run that names none of these columns measures level with `main` — which
 is what §5.4 asks for and, on this evidence, is not a rule that only applies to expensive reads.
 
-Everything still unticked here is **Windows-only or macOS-only**, and each line above now says
-which. Protected-process status, the certificate and signature fields, the mitigation policies
-(`dep`, `aslr`, `cfg`, `cet`, `acg`, `cig`), AppContainer with its capability list, and the macOS
-line are not work that can be written honestly from a Linux machine: a signature verifier or a
-mitigation-policy reader that nobody can run against the OS it describes is a plausible
-implementation, which is worse than an empty one (§9.2). Reputation is the one exception to the
-pattern — it is a network service rather than an OS reading, and it is unbuilt everywhere.
+Everything still unticked here is **Windows-only or macOS-only**, and each line above now says which
+and why. What is left divides cleanly in three. The certificate and signature fields and the macOS
+line are **not work that can be written honestly from a Linux machine**: a signature verifier that
+nobody can run against the OS it describes is a plausible implementation, which is worse than an
+empty one (§9.2). The AppContainer capability list is **written off rather than unwritten** — it is a
+per-row allocation of unbounded size that belongs in §36's on-demand view rather than in a column,
+and that is a design decision rather than a gap. Reputation is the one exception to every pattern
+here: it is a network service rather than an OS reading, and it is unbuilt everywhere.
 
-The hashes were in that list until they were read properly: hashing a file is the same operation on
-every operating system, is verifiable here against `sha256sum`, and says nothing about signatures or
-trust — which is precisely why it could be built while the fields around it could not.
+The protected-process status and the six mitigation policies were in the first of those groups until
+the line was drawn in the right place. They are not verdicts about trust; they are a documented
+information class and a documented bitfield, and what could not be done here is the *call*, not the
+reading of what it returns. So the calls are gated on Windows and the six flags words are decoded in
+portable code with a test case per bit, which every CI leg runs — and the calls themselves are
+executed by `--self-test` on the `windows-latest` leg, which now names every one of these columns
+because §5.4's opt-in rule would otherwise mean the interop never ran anywhere at all.
+
+The hashes were in that list too, until they were read properly: hashing a file is the same operation
+on every operating system, is verifiable here against `sha256sum`, and says nothing about signatures
+or trust — which is precisely why it could be built while the fields around it could not.
 
 # 22. Process table — energy fields
 
