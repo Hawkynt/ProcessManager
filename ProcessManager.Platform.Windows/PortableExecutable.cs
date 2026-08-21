@@ -315,10 +315,19 @@ internal static class PortableExecutable {
   /// The entries of one resource directory, named and numbered together.
   /// </summary>
   /// <remarks>
+  /// <para>
   /// The header is Characteristics, TimeDateStamp, MajorVersion, MinorVersion, NumberOfNamedEntries
   /// and NumberOfIdEntries — sixteen bytes — followed by the named entries and then the numbered
   /// ones. Both are read: which of the two a version resource is filed under is the resource
   /// compiler's business and not a thing to depend on.
+  /// </para>
+  /// <para>
+  /// Which of the two an entry <em>is</em> comes from the counts and the ordering, because that is
+  /// the part the PE specification actually states. The high bit of the name field is the usual way
+  /// to ask, and every real image agrees with it, but the specification documents that convention
+  /// only for the <em>second</em> word of the pair and says nothing about it for the first — so it
+  /// is taken here as corroboration rather than as the rule.
+  /// </para>
   /// </remarks>
   private static List<DirectoryEntry> Entries(ReadOnlySpan<byte> file, int rootOffset, int directoryOffset) {
     var result = new List<DirectoryEntry>();
@@ -337,7 +346,7 @@ internal static class PortableExecutable {
       var name = BinaryPrimitives.ReadUInt32LittleEndian(entry);
       var data = BinaryPrimitives.ReadUInt32LittleEndian(entry[4..]);
       result.Add(new(
-        IsName: (name & 0x8000_0000) != 0,
+        IsName: i < named || (name & 0x8000_0000) != 0,
         Id: name & 0x7FFF_FFFF,
         IsDirectory: (data & 0x8000_0000) != 0,
         Offset: data & 0x7FFF_FFFF
