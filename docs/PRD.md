@@ -2665,7 +2665,9 @@ macOS:
 - [x] Displayed as name / value
 - [ ] Search
 - [ ] Copy name / copy value / copy row
-- [ ] Export
+- [x] Export — `--environment PID`, and `--format json` for a machine. The output is byte for byte
+      what `/proc/[pid]/environ` holds, checked against it. Deliberately *not* quoted for a shell:
+      dressing another process's block up as something to paste would invite somebody to paste it
 - [ ] Reveal full value
 
 - [x] **Values are collected only when requested.** An environment block routinely holds
@@ -5004,7 +5006,12 @@ ProcessManager may claim to replace the named applications only when all ten are
 - [ ] 🟡 Every unsupported platform-specific feature explicitly communicates why
 - [x] Common actions work without running the whole program elevated
 - [ ] 🟡 Recovery/minimal mode remains functional under significant load
-- [ ] Data can be copied, exported and scripted
+- [x] Data can be copied, exported and scripted — six formats over every field the registry holds
+      (text, CSV, TSV, JSON, JSON lines, Markdown), a filter language shared by all three front-ends,
+      a cell, a row and a column copyable from either of them, and three exit codes a script can
+      branch on: nought for a match, two for none, one for a query it could not parse. 155 of the
+      158 fields export; the three that refuse are drawn histories and say so by name rather than
+      exporting a picture as text
 - [ ] The product is stable enough that administrators trust it while diagnosing an already
       unstable machine
 
@@ -5035,7 +5042,12 @@ v1 does not ship unless every one of these is true:
       table replaced every sample, with the rebuild allocating nothing
 - [x] Privileged actions work through the privilege broker
 - [x] Lack of privileges does not crash or freeze views
-- [ ] 🟡 The GUI exposes no data unobtainable from TUI or CLI
+- [x] The GUI exposes no data unobtainable from TUI or CLI — audited rather than asserted. Every
+      view behind the rail has a verb: `--startup`, `--users`, `--services`, `--connections`,
+      `--find`. Every properties page has a field, a detail tab or a verb. The one gap the audit
+      found was the environment block, which the window had a page for and neither of the others
+      could reach at all; `--environment PID` closes it, and its output is byte-for-byte what
+      `/proc/[pid]/environ` holds
 - [x] No external metadata is transmitted without opt-in
 - [x] Unavailable platform fields are distinguishable from zero-valued fields
 - [x] Destructive actions identify their exact target — the action, the name, the pid and the count

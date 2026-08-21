@@ -132,6 +132,7 @@ internal static class Program {
         RunMode.Freezer => RunFreezer(sampler, actions, options),
         RunMode.Host => HostReport.Run(sampler, probe),
         RunMode.Limits => LimitsReport.Run(sampler, probe, options.TargetPid),
+        RunMode.Environment => EnvironmentReport.Run(sampler, probe, options.TargetPid, options.Format),
         RunMode.Run => LaunchCommand.Run(actions, options),
         RunMode.Startup => StartupReport.Run(probe, options),
         RunMode.Users => UsersReport.Run(sampler, probe),
