@@ -44,6 +44,7 @@ public static class DesktopApp {
       var window = new MainWindow(sampler, probe, actions);
 
       // Before FlatMode, so an explicit --flat still wins over what the file remembered.
+      window.SettingsFile = SettingsStore.Locate(settingsPath);
       window.ApplySettings(settings ?? new(), updated => SettingsStore.Save(updated, settingsPath));
       if (flat)
         window.FlatMode = true;
@@ -319,6 +320,24 @@ public static class DesktopApp {
             : $"legend capture: none — {legendFailure}\n";
 
           legend.Close();
+
+          // And the settings box, which has the same problem the legend has and one more: it lays
+          // itself out against a height counted off its own rows, and it is the one window here
+          // whose entire job is to show every setting at once. A control that has fallen under the
+          // buttons is invisible to every assertion and obvious in a photograph (PRD §67, §9.6).
+          // Handed the defaults rather than this machine's settings: the box shows the path of the
+          // file it is editing, and that path names whoever took the picture.
+          var settingsBox = new SettingsDialog(new(), new(Path.Combine("~", ".config", "procman", SettingsStore.FileName), SettingsPlacement.Profile));
+          settingsBox.Show();
+          settingsBox.ApplyLayout();
+          description += $"settings box: {settingsBox.RowCount} settings, {settingsBox.Height} tall\n";
+
+          var settingsPng = Path.Combine(directory, "settings.png");
+          description += GtkCapture.Window(settingsPng, out var settingsFailure, settingsBox.Text) is { } settingsShot
+            ? $"settings capture: {settingsShot.Width}x{settingsShot.Height} -> {settingsPng}\n"
+            : $"settings capture: none — {settingsFailure}\n";
+
+          settingsBox.Close();
 
           // And the thread tab of §29 with the stack viewer of §30 open on one of its rows. Neither
           // has ever been photographed: the detail pane opens on the overview, so a table with

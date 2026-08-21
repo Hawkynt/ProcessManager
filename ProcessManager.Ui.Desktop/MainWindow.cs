@@ -48,6 +48,15 @@ public sealed class MainWindow : Form {
   private UserSettings _settings = new();
   private SettingsAutoSaver? _autoSaver;
 
+  /// <summary>
+  /// How the settings reach the disk, kept so the settings box can write the moment it is accepted.
+  /// </summary>
+  /// <remarks>
+  /// The auto-saver cannot do that job on its own: it is primed with whatever was last applied, so
+  /// applying a change and then waiting for the saver to notice a difference would wait for ever.
+  /// </remarks>
+  private Func<UserSettings, bool>? _save;
+
   public MainWindow(Sampler sampler, ISystemProbe probe, IProcessActions? actions) {
     ArgumentNullException.ThrowIfNull(sampler);
     ArgumentNullException.ThrowIfNull(probe);
@@ -113,6 +122,7 @@ public sealed class MainWindow : Form {
     ArgumentNullException.ThrowIfNull(settings);
 
     this._settings = settings;
+    this._save = save;
     RowPalette.Apply(settings.Colours);
     ProcessRow.Thresholds = settings.Thresholds;
 
@@ -150,6 +160,38 @@ public sealed class MainWindow : Form {
   }
 
   /// <summary>
+  /// Which settings file this window is reading and writing (PRD §67).
+  /// </summary>
+  /// <remarks>
+  /// Told to the window rather than worked out by it, because only the launcher knows whether a
+  /// <c>--settings</c> was given. It exists so the settings box can say which file it is about: a
+  /// preference that did not take is nearly always a preference set in the wrong file.
+  /// </remarks>
+  public SettingsLocation SettingsFile { get; set; } = SettingsStore.Locate();
+
+  /// <summary>
+  /// Opens the settings box, and applies what comes back (PRD §67).
+  /// </summary>
+  /// <remarks>
+  /// Written the instant it is accepted rather than left to the next tick. Everything else in this
+  /// window is a gesture whose result is on screen, so a write a second later is invisible and
+  /// harmless; a preferences box that says OK and leaves the file alone for a second is one that
+  /// loses the change if the program is closed in that second.
+  /// </remarks>
+  public void EditSettings() {
+    var dialog = new SettingsDialog(this.DescribeSettings(), this.SettingsFile);
+    dialog.ShowDialog();
+    if (!dialog.Accepted)
+      return;
+
+    var chosen = dialog.Settings;
+    this.ApplySettings(chosen, this._save);
+    this._save?.Invoke(chosen);
+    this.Refresh();
+    this._status.Text = $"settings written to {this.SettingsFile.Path}";
+  }
+
+  /// <summary>
   /// The settings as the window currently stands, over whatever the file already held.
   /// </summary>
   /// <remarks>
@@ -173,6 +215,10 @@ public sealed class MainWindow : Form {
       WindowWidth = this.Width,
       WindowHeight = this.Height,
       LowerPaneVisible = this.LowerPaneVisible,
+      // Only while that window is open. A performance page that was closed cannot be asked how
+      // dense it is, and answering with "comfortable" would rewrite somebody's preference out of the
+      // file the moment they shut it (PRD §67).
+      CompactPerformancePage = this._performance?.IsCompact ?? this._settings.CompactPerformancePage,
     };
 
     return this._split.Height > 0
@@ -2039,6 +2085,9 @@ public sealed class MainWindow : Form {
     view.DropDownItems.Add(Item("Performance…", this.ShowPerformance));
     view.DropDownItems.Add(Item("Colour legend…", this.ShowLegend));
     view.DropDownItems.Add(Item("Highlighting thresholds…", this.EditThresholds));
+    // On the chord every program of this shape binds it to, so it is reachable without reading the
+    // menu — and on the menu, so it is findable without knowing the chord (PRD §67, §74).
+    view.DropDownItems.Add(Shortcut("Settings…", Keys.Control | Keys.Oemcomma, this.EditSettings));
     view.DropDownItems.Add(Item("Find handles or files…", this.FindResource));
     view.DropDownItems.Add(Item("Find window…", this.PickWindow));
 
@@ -2269,16 +2318,21 @@ public sealed class MainWindow : Form {
     }
 
     // Confirmed before it happens, and the target named unambiguously — a pid on its own is not a
-    // name, and the row under the pointer may have moved (PRD §6.4).
-    var question = $"{char.ToUpper(what[0], CultureInfo.CurrentCulture)}{what[1..]} {row.Name} (PID {row.Pid})?";
-    var answer = MessageBox.Show(
-      consequence is null ? question : $"{question}\n\n{consequence}",
-      "Process Manager",
-      MessageBoxButtons.YesNo
-    );
+    // name, and the row under the pointer may have moved (PRD §6.4). Skipped only when somebody has
+    // said in the settings that they do not want to be asked about one process at a time; the bulk
+    // terminate below never skips, because there the count is the whole of what the prompt is for
+    // (PRD §67, §90).
+    if (this._settings.ConfirmDestructiveActions) {
+      var question = $"{char.ToUpper(what[0], CultureInfo.CurrentCulture)}{what[1..]} {row.Name} (PID {row.Pid})?";
+      var answer = MessageBox.Show(
+        consequence is null ? question : $"{question}\n\n{consequence}",
+        "Process Manager",
+        MessageBoxButtons.YesNo
+      );
 
-    if (answer != DialogResult.Yes)
-      return;
+      if (answer != DialogResult.Yes)
+        return;
+    }
 
     this.Report(action(row.Key));
     this.Refresh();
@@ -3319,6 +3373,11 @@ public sealed class MainWindow : Form {
     }
 
     var window = new PerformanceWindow(this._probe, this._sampler) { SecondsPerSample = this.Interval / 1000d };
+    // Density is set from here rather than read inside that window, so the one record this window
+    // holds stays the single answer to "what did the file say" (PRD §67).
+    if (this._settings.CompactPerformancePage)
+      window.SetDensity(compact: true);
+
     // Forgetting it on close is what keeps the tick from refreshing a window that is gone.
     window.FormClosed += (_, _) => this._performance = null;
     this._performance = window;

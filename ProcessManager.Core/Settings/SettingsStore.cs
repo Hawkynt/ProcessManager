@@ -11,26 +11,102 @@ namespace Hawkynt.ProcessManager.Settings;
 /// </remarks>
 public static class SettingsStore {
 
+  /// <summary>The name the file goes by wherever it is kept.</summary>
+  public const string FileName = "settings.conf";
+
+  /// <summary>
+  /// The environment variable that names the file outright, for a run that must not touch the
+  /// profile at all.
+  /// </summary>
+  /// <remarks>
+  /// A variable and not only a flag, because the people who need this are running the program from a
+  /// script or a service unit where adding an argument means editing somebody else's command line.
+  /// </remarks>
+  public const string PathVariable = "PROCMAN_SETTINGS";
+
+  /// <summary>
+  /// The marker beside the executable that keeps the settings beside the executable.
+  /// </summary>
+  /// <remarks>
+  /// The convention every portable build on Windows already uses: an empty file next to the program
+  /// says "keep my state here". It is a separate file from the settings themselves so that portable
+  /// mode can be switched on before there are any settings to write.
+  /// </remarks>
+  public const string PortableMarker = "procman.portable";
+
   /// <summary>
   /// The file, following each platform's own convention rather than inventing one.
   /// </summary>
   /// <remarks>
   /// <c>XDG_CONFIG_HOME</c> or <c>~/.config</c> on Unix; <c>%APPDATA%</c> on Windows.
   /// </remarks>
-  public static string Path {
-    get {
-      var directory = Environment.GetFolderPath(
-        Environment.SpecialFolder.ApplicationData,
-        Environment.SpecialFolderOption.DoNotVerify
+  public static string Path => Locate().Path;
+
+  /// <summary>
+  /// Where the settings are kept, and which of the three rules put them there (PRD §67).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// In order: the variable, then a portable install, then the profile. The order is the order of how
+  /// deliberate each one is — naming a file outright beats dropping a marker beside the binary, which
+  /// beats the default — so a more specific answer is never overruled by a vaguer one.
+  /// </para>
+  /// <para>
+  /// A portable install is one that carries its own state: either the marker is beside the executable
+  /// or a settings file already is. The second half matters for the case nobody plans for — a folder
+  /// copied onto a stick, marker and all, and then the marker deleted; the settings that are visibly
+  /// sitting there must not stop being read.
+  /// </para>
+  /// </remarks>
+  public static SettingsLocation Locate(string? explicitPath = null) {
+    if (!string.IsNullOrWhiteSpace(explicitPath))
+      return new(explicitPath, SettingsPlacement.Chosen);
+
+    if (Environment.GetEnvironmentVariable(PathVariable) is { Length: > 0 } named)
+      return new(named, SettingsPlacement.Environment);
+
+    if (BesideTheProgram() is { } portable)
+      return new(portable, SettingsPlacement.Portable);
+
+    var directory = Environment.GetFolderPath(
+      Environment.SpecialFolder.ApplicationData,
+      Environment.SpecialFolderOption.DoNotVerify
+    );
+
+    if (string.IsNullOrEmpty(directory))
+      directory = System.IO.Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile, Environment.SpecialFolderOption.DoNotVerify),
+        ".config"
       );
 
-      if (string.IsNullOrEmpty(directory))
-        directory = System.IO.Path.Combine(
-          Environment.GetFolderPath(Environment.SpecialFolder.UserProfile, Environment.SpecialFolderOption.DoNotVerify),
-          ".config"
-        );
+    return new(System.IO.Path.Combine(directory, "procman", FileName), SettingsPlacement.Profile);
+  }
 
-      return System.IO.Path.Combine(directory, "procman", "settings.conf");
+  /// <summary>
+  /// The settings file beside the executable, when this is a portable install, and null otherwise.
+  /// </summary>
+  /// <remarks>
+  /// Best-effort like everything else here: a program run from a directory it may not read is a
+  /// program that falls back to the profile, not one that fails to start (PRD §81).
+  /// </remarks>
+  private static string? BesideTheProgram() {
+    try {
+      var program = Environment.ProcessPath;
+      var directory = string.IsNullOrEmpty(program)
+        ? AppContext.BaseDirectory
+        : System.IO.Path.GetDirectoryName(program);
+
+      if (string.IsNullOrEmpty(directory))
+        return null;
+
+      var settings = System.IO.Path.Combine(directory, FileName);
+      return File.Exists(System.IO.Path.Combine(directory, PortableMarker)) || File.Exists(settings)
+        ? settings
+        : null;
+    } catch (IOException) {
+      return null;
+    } catch (UnauthorizedAccessException) {
+      return null;
     }
   }
 
@@ -73,5 +149,66 @@ public static class SettingsStore {
       return false;
     }
   }
+
+  /// <summary>
+  /// Removes the file, so the next start is a fresh install (PRD §67).
+  /// </summary>
+  /// <remarks>
+  /// Deleting rather than writing the defaults out, and the difference is the unknown keys. Every
+  /// other path through this class carries a key it does not understand through untouched, because an
+  /// older build must not eat a newer one's settings; this is the one place somebody has actually
+  /// asked for the file to stop existing, and a "restore defaults" that quietly kept lines they can
+  /// no longer see would be a worse answer than the honest one. The dialog says so, and offers an
+  /// export first.
+  /// </remarks>
+  /// <returns>Whether there is no longer a settings file — including when there never was one.</returns>
+  public static bool Delete(string? path = null) {
+    path ??= Path;
+    try {
+      File.Delete(path);
+      return true;
+    } catch (IOException) {
+      return false;
+    } catch (UnauthorizedAccessException) {
+      return false;
+    }
+  }
+
+}
+
+/// <summary>Which rule decided where the settings file is (PRD §67).</summary>
+public enum SettingsPlacement {
+
+  /// <summary>The platform's own config location — where it goes when nobody said otherwise.</summary>
+  Profile,
+
+  /// <summary>Beside the executable, because this install carries its own state.</summary>
+  Portable,
+
+  /// <summary>Named by <see cref="SettingsStore.PathVariable"/>.</summary>
+  Environment,
+
+  /// <summary>Named on the command line by <c>--settings</c>.</summary>
+  Chosen,
+
+}
+
+/// <summary>
+/// A settings file and the reason it is where it is.
+/// </summary>
+/// <remarks>
+/// The reason travels with the path because the question people actually ask is not "where is it"
+/// but "why is it not reading mine" — and a program that shows only the path leaves them to work out
+/// for themselves that a variable in their shell profile is the answer.
+/// </remarks>
+public readonly record struct SettingsLocation(string Path, SettingsPlacement Placement) {
+
+  /// <summary>One line naming the file and what put it there.</summary>
+  public string Explain() => this.Placement switch {
+    SettingsPlacement.Chosen => $"{this.Path} (given with --settings)",
+    SettingsPlacement.Environment => $"{this.Path} (named by {SettingsStore.PathVariable})",
+    SettingsPlacement.Portable => $"{this.Path} (portable: kept beside the program)",
+    _ => this.Path,
+  };
 
 }
