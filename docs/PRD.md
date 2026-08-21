@@ -1342,17 +1342,37 @@ Linux cgroups:
 
 - [x] cgroup path
 - [ ] Hierarchy
-- [ ] Controllers
-- [ ] CPU limits
-- [x] Memory limit
-- [ ] Current memory usage
+- [x] Controllers — which are *enabled* here, which is not the same as which limit files exist: a
+      delegated cgroup may have `memory` and not `cpu`, and then the CPU limit is inherited from an
+      ancestor rather than absent
+- [x] CPU limits — as a number of cores, plus how many times the cgroup has actually been throttled
+- [x] Memory limit — the hard cap and the soft one, which are different limits
+- [x] Current memory usage
 - [ ] I/O limits
-- [ ] Process membership
-- [ ] Pressure metrics (PSI)
+- [x] 🟡 Process membership — the count against the limit; the list of members is not read
+- [x] Pressure metrics (PSI) — per cgroup, through the same parser the machine-wide ones use
+
+This is the answer to "why is this slow when the machine is idle". A container or a systemd unit can
+be throttled to a fraction of a core or capped well below the machine's memory, and nothing in a
+process table shows it — the process simply appears to be doing less than it should. `--limits PID`
+prints it.
+
+**Unlimited is not a quantity.** `max` is reported as *no limit* rather than as the very large number
+the file literally contains on some kernels, because "no limit" and "a limit of nine million
+terabytes" must not look alike. Likewise a quota is divided into a number of cores: "half a core" is
+a sentence and "50000 100000" is not.
+
+**A nought throttle count and a missing one are different answers.** A cgroup with a quota it never
+reaches has genuinely never been throttled; one whose CPU controller is not enabled has no such file
+at all (§5.3).
+
+Unified hierarchy only. cgroup v1 puts each controller in its own hierarchy with its own path, so a
+process has several cgroups at once and no single one answers this — a v1 machine says so rather than
+giving half an answer.
 
 Containers:
 
-- [ ] Runtime · container ID · locally resolvable name · namespaces · resource limits
+- [ ] 🟡 Runtime · container ID ✔ (§14) · locally resolvable name · namespaces · resource limits ✔
 
 # 39. Windows / UI objects
 

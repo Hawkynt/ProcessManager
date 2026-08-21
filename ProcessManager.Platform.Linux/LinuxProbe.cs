@@ -381,6 +381,30 @@ public sealed class LinuxProbe : ISystemProbe {
     return info;
   }
 
+  /// <summary>
+  /// The limits the process runs under, read fresh: a container's quota can be changed while it runs.
+  /// </summary>
+  public CgroupInfo? DescribeCgroup(ProcessKey key) {
+    Span<byte> pathBuffer = stackalloc byte[ProcPath.MaxLength];
+    if (!this._reader.TryRead(ProcPath.Build(pathBuffer, this._procRootUtf8, key.Pid, "cgroup"u8), out var content, out _))
+      return null;
+
+    // The unified hierarchy's line is the one beginning "0::"; a v1 machine has several lines and
+    // none of them begins that way, which is how a v1 layout reports itself as unreadable rather
+    // than as half an answer.
+    var scanner = new AsciiScanner(content);
+    while (!scanner.IsEmpty) {
+      var line = scanner.NextLine();
+      if (!AsciiScanner.StartsWith(line, "0::"u8))
+        continue;
+
+      var path = System.Text.Encoding.UTF8.GetString(line[3..]);
+      return CgroupReader.Read(this._options.CgroupRoot, path);
+    }
+
+    return null;
+  }
+
   /// <summary>The desktop's windows, if this session has a desktop willing to say (PRD §39).</summary>
   public WindowList GetWindows() => X11Windows.Enumerate();
 

@@ -114,6 +114,16 @@ public interface ISystemProbe : IDisposable {
   /// </remarks>
   WindowList GetWindows() => WindowList.NotImplemented;
 
+  /// <summary>
+  /// What the process's cgroup allows it and what it is using (PRD §38).
+  /// </summary>
+  /// <remarks>
+  /// On demand, for the process being looked at: a dozen small files is affordable once and
+  /// indefensible four hundred times a second (PRD §5.4). Null where the platform has no such idea
+  /// or the process is in no cgroup worth describing.
+  /// </remarks>
+  CgroupInfo? DescribeCgroup(ProcessKey key) => null;
+
   /// <summary>The window under the pointer, for picking a process by pointing at it.</summary>
   WindowRecord? WindowUnderPointer() => null;
 

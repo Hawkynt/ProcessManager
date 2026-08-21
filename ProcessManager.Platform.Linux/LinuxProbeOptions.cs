@@ -45,6 +45,16 @@ public sealed record LinuxProbeOptions {
   /// <summary>Where a service's processes live; null uses the whole /sys/fs/cgroup tree.</summary>
   public string? ServiceCgroupRoot { get; init; }
 
+  /// <summary>
+  /// Where the unified cgroup hierarchy is mounted, for reading a process's limits (PRD §38).
+  /// </summary>
+  /// <remarks>
+  /// Its own option rather than derived from <see cref="ServiceCgroupRoot"/>: that one may be
+  /// pointed at a subtree to narrow a service scan, and the limits of an arbitrary process live
+  /// anywhere in the hierarchy.
+  /// </remarks>
+  public string CgroupRoot { get; init; } = "/sys/fs/cgroup";
+
   /// <summary>Where the password file is, for uid → name.</summary>
   public string PasswdPath { get; init; } = "/etc/passwd";
 

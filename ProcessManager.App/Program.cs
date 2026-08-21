@@ -67,6 +67,7 @@ internal static class Program {
         RunMode.Find => RunFind(sampler, probe, options),
         RunMode.Kill => RunKill(sampler, actions, options),
         RunMode.Host => HostReport.Run(sampler, probe),
+        RunMode.Limits => LimitsReport.Run(sampler, probe, options.TargetPid),
         RunMode.Startup => StartupReport.Run(probe, options),
         RunMode.Users => UsersReport.Run(sampler, probe),
         RunMode.Services => ServicesReport.Run(probe, options),
