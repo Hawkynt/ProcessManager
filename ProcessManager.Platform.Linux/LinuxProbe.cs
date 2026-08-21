@@ -1781,6 +1781,38 @@ public sealed partial class LinuxProbe : ISystemProbe {
   private const string _DELETED = " (deleted)";
 
   /// <summary>The package databases, opened the first time a column asks for one (PRD §5.4).</summary>
+  /// <summary>
+  /// Who published one mapped image, for the modules view (PRD §31, §70).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The same two databases §14 asks about a process's own executable, asked about a library
+  /// instead. Both go through <see cref="PackageDatabaseReader"/>, so the half-million-path index
+  /// is built once for the machine and the answer for <c>libc</c> is remembered across every
+  /// process that maps it.
+  /// </para>
+  /// <para>
+  /// Neither half is paid for unless it was asked for. Without <paramref name="verify"/> the file
+  /// is not opened at all — the package lookup is a question about a path — and with it the image
+  /// is hashed once and the digest kept, so the properties box and the package check share one read
+  /// of the bytes (PRD §5.4).
+  /// </para>
+  /// </remarks>
+  public ImageTrust DescribeImage(string path, bool verify = false) {
+    if (string.IsNullOrWhiteSpace(path))
+      return ImageTrust.NotChecked;
+
+    // The kernel's suffix for a mapping whose file is gone. Left on, the lookup would ask the
+    // databases about a path with " (deleted)" on the end and be told, correctly and uselessly,
+    // that nothing owns it.
+    if (path.EndsWith(_DELETED, StringComparison.Ordinal))
+      path = path[..^_DELETED.Length];
+
+    var (size, modified) = ImageStamp(path);
+    var digest = verify ? this.DigestOf(path, size, modified) : default;
+    return this.Packages.Describe(path, size, modified, digest, verify);
+  }
+
   private PackageDatabaseReader Packages
     => this._packages ??= new(this._options.PackageDatabaseRoot);
 
@@ -2361,8 +2393,10 @@ public sealed partial class LinuxProbe : ISystemProbe {
       Mitigations: ImageMitigations.None,
       BuildId: null,
       // One image on its own, and a load reason is a statement about a whole list: this row exists
-      // to be asked for its entry point and is never shown.
-      LoadReason: ModuleLoadReason.Unknown
+      // to be asked for its entry point and is never shown. So is a load count, for the same reason.
+      LoadReason: ModuleLoadReason.Unknown,
+      LoadCount: 0,
+      Runtime: ModuleRuntime.Unknown
     ), out _).EntryPoint;
 
     if (!entry.TryGetValue(out var address))
@@ -2502,7 +2536,7 @@ public sealed partial class LinuxProbe : ISystemProbe {
           ? DescriptorParser.Refused
           : DescriptorParser.Unread;
 
-      result.Add(Build((ulong)fd, target, info, mounts));
+      result.Add(Build((ulong)fd, target, info, mounts, entry));
     }
 
     return result;
@@ -2512,27 +2546,54 @@ public sealed partial class LinuxProbe : ISystemProbe {
   /// One descriptor, from its target and its <c>fdinfo</c>.
   /// </summary>
   /// <remarks>
+  /// <para>
   /// The inode is taken from <c>fdinfo</c> when it is there and from the <c>socket:[n]</c> name when
   /// it is not: the <c>ino:</c> line is recent, the bracketed number has been in the link target for
   /// as long as <c>/proc</c> has had one, and the socket join must not stop working on an older
   /// kernel.
+  /// </para>
+  /// <para>
+  /// The type comes from one <c>statx</c> on the descriptor itself, which replaces the
+  /// <c>Directory.Exists</c> this used to do on the link's target — the same syscall, asked the
+  /// better way. Through the descriptor rather than through the path, so that it still answers for
+  /// a file that has been unlinked or that lives in another mount namespace; and it settles four
+  /// things the name could only guess at instead of the one (PRD §32).
+  /// </para>
   /// </remarks>
+  /// <param name="nodePath">
+  /// <c>/proc/[pid]/fd/[n]</c>, to stat. Null through the elevated helper, whose protocol carries
+  /// the name and nothing to stat with.
+  /// </param>
   private static HandleRecord Build(
     ulong fd,
     string? target,
     DescriptorParser.DescriptorInfo info,
-    Dictionary<int, MountInfoParser.Mount> mounts
+    Dictionary<int, MountInfoParser.Mount> mounts,
+    string? nodePath
   ) {
     var inode = info.Inode;
     if (!inode.HasValue && DescriptorParser.TryParsePseudoInode(target, out var fromName))
       inode = Counter.Of(fromName);
 
+    string? nodeDevice = null;
+    var nodeType = nodePath is { Length: > 0 }
+      ? Native.NodeTypeOf(nodePath, out nodeDevice)
+      : FileNodeType.Unknown;
+
     var kind = DescriptorParser.Classify(target, info.OpenFlags);
-    // O_DIRECTORY is not compulsory — open(2) on a directory succeeds without it — so a descriptor
-    // that the flags did not settle is asked of the file system, which is what the previous version
-    // did for every descriptor.
-    if (kind == HandleKind.File && target is not null && Directory.Exists(target))
-      kind = HandleKind.Directory;
+    // Where the name was only a guess, the kernel settles it. O_DIRECTORY is not compulsory —
+    // open(2) on a directory succeeds without it — and a FIFO or a Unix socket bound under /run is
+    // a path like any other, so all three of those used to be reported as ordinary files. Only the
+    // fallback is overridden: a descriptor the name already identified keeps its kind, because the
+    // name is the more specific answer for shared memory and for the anonymous inodes.
+    if (kind == HandleKind.File)
+      kind = nodeType switch {
+        FileNodeType.Directory => HandleKind.Directory,
+        FileNodeType.Fifo => HandleKind.Pipe,
+        FileNodeType.Socket => HandleKind.Socket,
+        FileNodeType.CharacterDevice or FileNodeType.BlockDevice => HandleKind.Device,
+        _ => kind,
+      };
 
     // A socket, a pipe and an anonymous inode each carry a mount id that names a file system the
     // kernel keeps to itself: sockfs, pipefs and anon_inodefs are mounted nowhere and are in no
@@ -2551,7 +2612,9 @@ public sealed partial class LinuxProbe : ISystemProbe {
       info.MountId,
       mount?.Device,
       mount?.FileSystem,
-      info.Detail
+      info.Detail,
+      nodeType,
+      nodeDevice
     );
   }
 
@@ -2579,7 +2642,7 @@ public sealed partial class LinuxProbe : ISystemProbe {
       // about the kernel, and the two must not render the same (PRD §7). The mount table is empty
       // for the same reason: without a mount id there is nothing to look up, and an empty table
       // leaves the device unknown rather than claiming there is none.
-      result.Add(Build((ulong)fd, target.Length == 0 ? null : target, DescriptorParser.NotRelayed, []));
+      result.Add(Build((ulong)fd, target.Length == 0 ? null : target, DescriptorParser.NotRelayed, [], null));
     }
 
     return result;

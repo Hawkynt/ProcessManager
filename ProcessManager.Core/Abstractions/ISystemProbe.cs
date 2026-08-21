@@ -70,6 +70,31 @@ public interface ISystemProbe : IDisposable {
   /// <summary>Mapped files of one process.</summary>
   IReadOnlyList<ModuleRecord> GetModules(ProcessKey key);
 
+  /// <summary>
+  /// Who published one mapped image, and whether its bytes are still the ones they published
+  /// (PRD §31, §70).
+  /// </summary>
+  /// <param name="verify">
+  /// False to ask only who claims the file. True to compare its bytes against the digest the
+  /// claimant recorded, which reads the whole image and is a separate, dearer question — one
+  /// somebody asked for a version and a publisher has not asked (PRD §5.4).
+  /// </param>
+  /// <remarks>
+  /// <para>
+  /// This is where §31's version, description, company, product and signature status come from on a
+  /// machine whose executable format has none of them. A PE keeps a version resource inside the
+  /// file; an ELF has no such section and never did, so the four fields are the packaging system's
+  /// answers about the package the file arrived in, and the record says which system answered so
+  /// that nobody reads a package version as a file version (PRD §5.3).
+  /// </para>
+  /// <para>
+  /// Per image and not per process: the same <c>libc</c> is mapped by every process on the machine
+  /// and is one lookup, which is why this takes a path rather than a
+  /// <see cref="ProcessKey"/>.
+  /// </para>
+  /// </remarks>
+  ImageTrust DescribeImage(string path, bool verify = false) => ImageTrust.NotChecked;
+
   /// <summary>Open handles / descriptors of one process.</summary>
   IReadOnlyList<HandleRecord> GetHandles(ProcessKey key);
 

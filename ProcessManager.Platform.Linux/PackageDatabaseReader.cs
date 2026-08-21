@@ -110,6 +110,10 @@ internal sealed class PackageDatabaseReader {
 
   private ImageTrust Read(string path, in FileDigest digest, bool verify) {
     var owner = this.Owner(path, out var slot);
+    // What the package says it is and who assembled it, from the entry the ownership lookup has
+    // already opened. §31 asks a module for a description and a company and an ELF has neither, so
+    // this is what a Linux machine can answer with (PRD §5.3, §31).
+    var (summary, publisher) = slot >= 0 ? this.Publisher(slot) : (null, null);
 
     // Nothing claims the file. That is one answer to both questions and not a failure of either:
     // there is no package to compare the bytes against and none to have signed them.
@@ -122,7 +126,7 @@ internal sealed class PackageDatabaseReader {
         verify,
         SignatureStatus.Unsigned,
         "no packaging system on this machine claims this file, so nothing here vouches for its bytes"
-      ));
+      ), summary, publisher);
 
     if (!owner.WasChecked)
       return Trust(digest, owner, WithFile(
@@ -130,7 +134,7 @@ internal sealed class PackageDatabaseReader {
         verify,
         SignatureStatus.VerificationError,
         "the package databases could not be read"
-      ));
+      ), summary, publisher);
 
     var pacman = this._slotSources[slot] == PackageSource.Pacman;
     var chain = pacman ? PacmanChain(this._slots[slot]) : _dpkgChain;
@@ -143,17 +147,60 @@ internal sealed class PackageDatabaseReader {
       ? pacman
         ? VerifyPacman(this._slots[slot], path, digest, chain)
         : VerifyDpkg(this._slots[slot], path, chain)
-      : chain);
+      : chain, summary, publisher);
   }
 
-  private static ImageTrust Trust(in FileDigest digest, PackageIdentity owner, in Verdict verdict) => new(
+  /// <summary>
+  /// The one-line description and the packager, out of the entry a slot names (PRD §31).
+  /// </summary>
+  /// <remarks>
+  /// <c>pacman</c> keeps both in the <c>desc</c> file the version came from, so this is a re-read of
+  /// a file that has just been read and is served by the page cache. <c>dpkg</c> keeps them in
+  /// <c>status</c>, which is one file for the whole machine and is walked once per lookup — the same
+  /// walk the version already costs, and the reason both fields are taken in a single pass over it.
+  /// </remarks>
+  private (string? Summary, string? Publisher) Publisher(int slot) {
+    var entry = this._slots[slot];
+    if (this._slotSources[slot] == PackageSource.Pacman) {
+      if (!TryRead(Path.Combine(entry, "desc"), out var desc))
+        return (null, null);
+
+      var description = PacmanLocalDatabase.ReadDescription(desc);
+      return (description.Summary, description.Packager);
+    }
+
+    var package = DpkgDatabase.PackageOf(Path.GetFileName(entry), _LIST);
+    if (package is null || !TryRead(Path.Combine(this._root, _DPKG_STATUS), out var status))
+      return (null, null);
+
+    var stanza = DpkgDatabase.FindStanza(status, package);
+    return (stanza.Summary, stanza.Maintainer);
+  }
+
+  /// <summary>
+  /// One answer, out of a verdict and out of what the package says about itself (PRD §31, §70).
+  /// </summary>
+  /// <remarks>
+  /// The two travel together and are asked for separately: a verdict costs a hash of the image and
+  /// the description costs a small file already in the page cache, so one of them is behind a
+  /// button and the other is not (PRD §5.4).
+  /// </remarks>
+  private static ImageTrust Trust(
+    in FileDigest digest,
+    PackageIdentity owner,
+    in Verdict verdict,
+    string? summary,
+    string? publisher
+  ) => new(
     digest.Sha256,
     owner,
     verdict.Signature,
     verdict.Detail,
     verdict.Chain,
     verdict.ChainDetail,
-    verdict.ChainReason
+    verdict.ChainReason,
+    Summary: summary,
+    Publisher: publisher
   );
 
   /// <summary>Which package owns a path, confirmed against that package's own list.</summary>

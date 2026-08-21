@@ -256,6 +256,35 @@ public static class Humanize {
   };
 
   /// <summary>
+  /// Which execution engine reads a mapped file (PRD §31).
+  /// </summary>
+  /// <remarks>
+  /// "not code" rather than an empty cell, because it is an answer: the file was read and it is a
+  /// font, a locale archive or a database. The dash above it is the other case — nobody read it —
+  /// and the two must not look the same (PRD §72.3).
+  /// </remarks>
+  public static string ImageRuntime(ModuleRuntime runtime) => runtime switch {
+    ModuleRuntime.Native => "native",
+    ModuleRuntime.Managed => ".NET",
+    ModuleRuntime.WindowsNative => "windows",
+    ModuleRuntime.Archive => "archive",
+    ModuleRuntime.NotCode => "not code",
+    _ => "—",
+  };
+
+  /// <summary>
+  /// How many times one file is loaded into one process (PRD §31).
+  /// </summary>
+  /// <remarks>
+  /// A row exists because a mapping named the file, so the smallest true answer is one and a nought
+  /// means the pass that counts them never ran — which renders as the reason and not as a zero
+  /// somebody could read as "not loaded" (PRD §72.3).
+  /// </remarks>
+  public static string LoadCount(int loads) => loads > 0
+    ? loads.ToString(CultureInfo.InvariantCulture)
+    : Placeholder(UnknownReason.NotSampledYet);
+
+  /// <summary>
   /// The hardening an image asks for, as the short names the tools that check it use (PRD §31).
   /// </summary>
   /// <remarks>
@@ -491,6 +520,26 @@ public static class Humanize {
     HandleKind.Section => "section",
     HandleKind.Key => "key",
     HandleKind.AnonInode => "kernel object",
+    _ => "—",
+  };
+
+  /// <summary>
+  /// What the kernel says a descriptor's target is, with the device it is when it is one (PRD §32).
+  /// </summary>
+  /// <remarks>
+  /// "no type" for an anonymous inode rather than a dash. The stat succeeded and the type bits were
+  /// clear, which is a fact about eventfds and not about our access to them — and it is the answer a
+  /// reader comparing this against <c>stat</c> will see there too (PRD §72.3).
+  /// </remarks>
+  public static string FileNode(FileNodeType type, string? device = null) => type switch {
+    FileNodeType.Regular => "regular",
+    FileNodeType.Directory => "directory",
+    FileNodeType.CharacterDevice => device is { Length: > 0 } ? "character " + device : "character",
+    FileNodeType.BlockDevice => device is { Length: > 0 } ? "block " + device : "block",
+    FileNodeType.Fifo => "fifo",
+    FileNodeType.Socket => "socket",
+    FileNodeType.SymbolicLink => "symlink",
+    FileNodeType.None => "no type",
     _ => "—",
   };
 

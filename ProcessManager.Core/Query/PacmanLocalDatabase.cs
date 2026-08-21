@@ -53,7 +53,23 @@ public static class PacmanLocalDatabase {
   }
 
   /// <summary>What <c>desc</c> says the package is.</summary>
-  public readonly record struct Description(string? Name, string? Version, Validation Validation);
+  /// <param name="Summary">
+  /// The one-line description the packager wrote — <c>%DESC%</c>. This is §31's "description" on a
+  /// machine whose binaries carry no version resource: an ELF has nowhere to put one, and what a
+  /// Linux distribution publishes about a file lives in the database that installed it.
+  /// </param>
+  /// <param name="Packager">
+  /// Who built the package — <c>%PACKAGER%</c>, a name and an address. §31's "company", and the
+  /// nearest true answer to it here: nobody signs an ELF, and the person who assembled the archive
+  /// is who this machine can name.
+  /// </param>
+  public readonly record struct Description(
+    string? Name,
+    string? Version,
+    Validation Validation,
+    string? Summary,
+    string? Packager
+  );
 
   /// <summary>One line of <c>mtree</c>: what the package shipped at that path.</summary>
   /// <param name="Sha256">
@@ -65,6 +81,8 @@ public static class PacmanLocalDatabase {
   private static ReadOnlySpan<byte> _name => "%NAME%"u8;
   private static ReadOnlySpan<byte> _version => "%VERSION%"u8;
   private static ReadOnlySpan<byte> _validation => "%VALIDATION%"u8;
+  private static ReadOnlySpan<byte> _description => "%DESC%"u8;
+  private static ReadOnlySpan<byte> _packager => "%PACKAGER%"u8;
   private static ReadOnlySpan<byte> _files => "%FILES%"u8;
 
   /// <summary>
@@ -72,11 +90,11 @@ public static class PacmanLocalDatabase {
   /// </summary>
   /// <remarks>
   /// The format is a header line in percent signs followed by its values, one per line, until a
-  /// blank line. Only three headers are read; the rest — dependencies, licences, install date — are
+  /// blank line. Only five headers are read; the rest — dependencies, licences, install date — are
   /// skipped rather than parsed, because nothing here asks for them.
   /// </remarks>
   public static Description ReadDescription(ReadOnlySpan<byte> desc) {
-    string? name = null, version = null;
+    string? name = null, version = null, summary = null, packager = null;
     var validation = Validation.Unknown;
 
     var scanner = new AsciiScanner(desc);
@@ -85,25 +103,40 @@ public static class PacmanLocalDatabase {
       if (header.IsEmpty || header[0] != (byte)'%')
         continue;
 
-      var wantsName = header.SequenceEqual(_name);
-      var wantsVersion = header.SequenceEqual(_version);
-      var wantsValidation = header.SequenceEqual(_validation);
-      if (!wantsName && !wantsVersion && !wantsValidation)
+      var wanted = Which(header);
+      if (wanted == Header.Other)
         continue;
 
       var value = Trim(scanner.NextLine());
       if (value.IsEmpty)
         continue;
 
-      if (wantsName)
-        name = Encoding.UTF8.GetString(value);
-      else if (wantsVersion)
-        version = Encoding.UTF8.GetString(value);
-      else
-        validation = ReadValidation(value);
+      switch (wanted) {
+        case Header.Name: name = Encoding.UTF8.GetString(value); break;
+        case Header.Version: version = Encoding.UTF8.GetString(value); break;
+        case Header.Summary: summary = Encoding.UTF8.GetString(value); break;
+        case Header.Packager: packager = Encoding.UTF8.GetString(value); break;
+        default: validation = ReadValidation(value); break;
+      }
     }
 
-    return new(name, version, validation);
+    return new(name, version, validation, summary, packager);
+  }
+
+  /// <summary>The five headers this reads, and everything else.</summary>
+  private enum Header : byte { Other = 0, Name, Version, Validation, Summary, Packager }
+
+  private static Header Which(ReadOnlySpan<byte> header) {
+    if (header.SequenceEqual(_name))
+      return Header.Name;
+    if (header.SequenceEqual(_version))
+      return Header.Version;
+    if (header.SequenceEqual(_validation))
+      return Header.Validation;
+    if (header.SequenceEqual(_description))
+      return Header.Summary;
+
+    return header.SequenceEqual(_packager) ? Header.Packager : Header.Other;
   }
 
   private static Validation ReadValidation(ReadOnlySpan<byte> value) {

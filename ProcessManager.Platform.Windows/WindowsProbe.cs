@@ -422,7 +422,14 @@ public sealed class WindowsProbe : ISystemProbe {
           BuildId: null,
           // Toolhelp does not say why a module is loaded; the loader's own table does, and reading
           // it is a separate piece of work from listing the modules.
-          LoadReason: ModuleLoadReason.Unknown
+          LoadReason: ModuleLoadReason.Unknown,
+          // Toolhelp does hand out a load count — two of them, the global and the per-process — in
+          // the entry this row was built from. Reading them is the Windows half of §31 and is not
+          // written yet, so this is nought: the pass that fills it in has not run (PRD §7, §72.3).
+          LoadCount: 0,
+          // And the runtime a module belongs to is in the same header the mitigations are in, which
+          // is also not read yet.
+          Runtime: ModuleRuntime.Unknown
         ));
 
         entry.Size = (uint)Marshal.SizeOf<NtStructures.ModuleEntry32>();
@@ -518,7 +525,12 @@ public sealed class WindowsProbe : ISystemProbe {
           FileSystem: null,
           // Windows keeps its per-type detail in NtQueryObject's information classes rather than in a
           // text file, and none of it is read yet.
-          Detail: null
+          Detail: null,
+          // GetFileType answers §32's file type for a Windows handle — disk, character, pipe — and
+          // is not called yet. Unknown is therefore "we have not asked", which is what it means
+          // everywhere else, and not a claim that the handle has no type (PRD §7, §72.3).
+          NodeType: FileNodeType.Unknown,
+          NodeDevice: null
         ));
       } finally {
         Native.CloseHandle(copy);
@@ -627,7 +639,11 @@ public sealed class WindowsProbe : ISystemProbe {
             // The owner table names a process and stops there. Which service that process belongs
             // to is a second question, and the answer is not read yet (PRD §7).
             null,
-            null
+            null,
+            // A Windows socket has a kernel reference count and no published table prints it, which
+            // is a different statement from "not read yet" — but the tables above are read through
+            // an API that never offered it, so it is ours to add and not Windows' to refuse.
+            _NotYetOnWindows
           ));
         } else {
           var owner = Marshal.ReadInt32(entry, 52);
@@ -656,7 +672,11 @@ public sealed class WindowsProbe : ISystemProbe {
             // The owner table names a process and stops there. Which service that process belongs
             // to is a second question, and the answer is not read yet (PRD §7).
             null,
-            null
+            null,
+            // A Windows socket has a kernel reference count and no published table prints it, which
+            // is a different statement from "not read yet" — but the tables above are read through
+            // an API that never offered it, so it is ours to add and not Windows' to refuse.
+            _NotYetOnWindows
           ));
         }
       }
@@ -694,7 +714,8 @@ public sealed class WindowsProbe : ISystemProbe {
           _RateNotYetOnWindows,
           _RateNotYetOnWindows,
           null,
-          null
+          null,
+          _NotYetOnWindows
         ));
       }
     );

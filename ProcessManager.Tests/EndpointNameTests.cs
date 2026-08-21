@@ -252,7 +252,8 @@ public sealed class EndpointNameTests {
     Model.Rate.NotSampledYet,
     Model.Rate.NotSampledYet,
     null,
-    null
+    null,
+    Model.Counter.NotSupported
   );
 
   [Test]

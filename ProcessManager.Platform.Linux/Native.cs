@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using System.Runtime.InteropServices;
 using System.Text;
+using Hawkynt.ProcessManager.Model;
 
 namespace Hawkynt.ProcessManager.Platform.Linux;
 
@@ -602,6 +603,99 @@ internal static partial class Native {
       return null;
 
     return DateTime.UnixEpoch.AddTicks(seconds * TimeSpan.TicksPerSecond + nanoseconds / 100);
+  }
+
+  private const uint _StatxType = 0x1;
+  private const int _StatxModeOffset = 0x1C;
+  private const int _StatxRdevMajorOffset = 0x80;
+  private const int _StatxRdevMinorOffset = 0x84;
+
+  /// <summary>The file-type bits of <c>st_mode</c>, and the seven values POSIX puts in them.</summary>
+  private const ushort _SIfmt = 0xF000;
+
+  /// <summary>
+  /// What kind of node a path is, and which device it is when it is a device (PRD §32).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The same <c>statx</c> the birth time comes from, asked for a different field. Three offsets out
+  /// of the part of <c>struct statx</c> that has never moved: the mode at 0x1C and the device the
+  /// node <em>is</em> at 0x80, next to — and not to be confused with — the device it is
+  /// <em>on</em> at 0x88.
+  /// </para>
+  /// <para>
+  /// Called on <c>/proc/[pid]/fd/[n]</c>, which is a symlink and is deliberately followed: the
+  /// question is what the descriptor points at, and the link's own mode says only which way the
+  /// descriptor was opened.
+  /// </para>
+  /// <para>
+  /// The clear-type-bits case is the one to keep. An anonymous inode answers this call happily and
+  /// reports mode <c>0600</c> with no type at all, which is <see cref="FileNodeType.None"/> and not
+  /// a failure to ask (PRD §72.3).
+  /// </para>
+  /// </remarks>
+  public static FileNodeType NodeTypeOf(string path, out string? device) {
+    device = null;
+    Span<byte> buffer = stackalloc byte[_StatxSize];
+    if (!TryStatx(path, _StatxType, buffer))
+      return FileNodeType.Unknown;
+
+    // The mask again: a file system that could not say leaves the field cleared, and a cleared
+    // field is a real answer here — so the two have to be told apart before it is read.
+    if ((MemoryMarshal.Read<uint>(buffer) & _StatxType) == 0)
+      return FileNodeType.Unknown;
+
+    var type = (ushort)(MemoryMarshal.Read<ushort>(buffer[_StatxModeOffset..]) & _SIfmt);
+    switch (type) {
+      case 0x8000: return FileNodeType.Regular;
+      case 0x4000: return FileNodeType.Directory;
+      case 0xA000: return FileNodeType.SymbolicLink;
+      case 0x1000: return FileNodeType.Fifo;
+      case 0xC000: return FileNodeType.Socket;
+      case 0x2000:
+      case 0x6000:
+        var major = MemoryMarshal.Read<uint>(buffer[_StatxRdevMajorOffset..]);
+        var minor = MemoryMarshal.Read<uint>(buffer[_StatxRdevMinorOffset..]);
+        device = string.Create(
+          System.Globalization.CultureInfo.InvariantCulture,
+          $"{major}:{minor}"
+        );
+
+        return type == 0x2000 ? FileNodeType.CharacterDevice : FileNodeType.BlockDevice;
+      default:
+        // Nought, which is what every anonymous inode reports. Anything else is a type this kernel
+        // has and this program has not been taught, and both are "the bits say nothing I know"
+        // rather than "nobody looked".
+        return FileNodeType.None;
+    }
+  }
+
+  /// <summary>One <c>statx</c> into a caller's buffer, or false with the buffer untouched.</summary>
+  private static bool TryStatx(string path, uint mask, Span<byte> buffer) {
+    if (_statxMissing || !OperatingSystem.IsLinux() || string.IsNullOrEmpty(path))
+      return false;
+
+    var length = Encoding.UTF8.GetByteCount(path);
+    Span<byte> pathBytes = length < 512 ? stackalloc byte[length + 1] : new byte[length + 1];
+    Encoding.UTF8.GetBytes(path, pathBytes);
+    pathBytes[length] = 0;
+    buffer.Clear();
+
+    try {
+      return StatxCore(
+        _AtFdCwd,
+        ref MemoryMarshal.GetReference(pathBytes),
+        0,
+        mask,
+        ref MemoryMarshal.GetReference(buffer)
+      ) == 0;
+    } catch (EntryPointNotFoundException) {
+      _statxMissing = true;
+      return false;
+    } catch (DllNotFoundException) {
+      _statxMissing = true;
+      return false;
+    }
   }
 
   public static int LastError => Marshal.GetLastPInvokeError();

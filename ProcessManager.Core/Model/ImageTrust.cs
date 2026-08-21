@@ -134,6 +134,18 @@ public static class SignatureStatusText {
 /// this program uploads a file, and the field exists so that "we hashed it" can never be read as
 /// "we sent it".
 /// </param>
+/// <param name="Summary">
+/// What the packaging system says the package is for, in one line. §31 asks a mapped image for its
+/// description, and an ELF has nowhere to keep one: there is no counterpart to a Windows version
+/// resource in the format, so what a Linux machine publishes about a file is what the database that
+/// installed it publishes about its package. Null where nothing claims the file, and where the
+/// claim carries no such line (PRD §5.3).
+/// </param>
+/// <param name="Publisher">
+/// Who assembled the package — <c>pacman</c>'s packager, <c>dpkg</c>'s maintainer. §31's "company",
+/// answered the only way this machine can answer it. Not a signer: nobody signed the file, and this
+/// name is the party the database records rather than a party any signature names.
+/// </param>
 public sealed record ImageTrust(
   string? Sha256,
   PackageIdentity Package,
@@ -143,7 +155,9 @@ public sealed record ImageTrust(
   string? ChainDetail = null,
   UnknownReason ChainReason = UnknownReason.NotSampledYet,
   SignatureStatus Reputation = SignatureStatus.NotChecked,
-  bool Submitted = false
+  bool Submitted = false,
+  string? Summary = null,
+  string? Publisher = null
 ) {
 
   /// <summary>Nothing has been asked of this image yet.</summary>

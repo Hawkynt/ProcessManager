@@ -118,9 +118,43 @@ public static class DpkgDatabase {
   /// files: <c>Package:</c> opens one, <c>Version:</c> is somewhere inside it, and a blank line ends
   /// it. Only the two lines are read; the rest of the stanza is skipped rather than parsed.
   /// </remarks>
-  public static string? FindVersion(ReadOnlySpan<byte> status, string package) {
+  public static string? FindVersion(ReadOnlySpan<byte> status, string package)
+    => FindStanza(status, package).Version;
+
+  /// <summary>
+  /// What one stanza of <c>status</c> says about a package (PRD §31).
+  /// </summary>
+  /// <param name="Summary">
+  /// The synopsis: the first line of <c>Description:</c>, which is the one-line summary, and not the
+  /// indented paragraphs under it. §31's "description" — an ELF has no version resource to hold one,
+  /// and this is where a Debian machine keeps what it publishes about a file.
+  /// </param>
+  /// <param name="Maintainer">
+  /// Who is responsible for the package, as a name and an address. §31's "company": nothing signs an
+  /// ELF, and this is the party a Debian machine can name for a file.
+  /// </param>
+  public readonly record struct Stanza(string? Version, string? Summary, string? Maintainer);
+
+  /// <summary>
+  /// Reads one package's stanza out of <c>/var/lib/dpkg/status</c>.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The status file is a stanza per package in the RFC 822 shape <c>dpkg</c> shares with control
+  /// files: <c>Package:</c> opens one, its fields follow, and a blank line ends it. Only three
+  /// fields are read; the rest of the stanza is skipped rather than parsed.
+  /// </para>
+  /// <para>
+  /// The whole file is walked even after the wanted stanza has been read, because stopping at the
+  /// first field found would return whichever of the three came first in it. Debian writes
+  /// <c>Maintainer</c> above <c>Version</c> and <c>Description</c> at the end, and the order is not
+  /// promised anywhere.
+  /// </para>
+  /// </remarks>
+  public static Stanza FindStanza(ReadOnlySpan<byte> status, string package) {
     var wanted = Encoding.UTF8.GetBytes(package);
     var inPackage = false;
+    string? version = null, summary = null, maintainer = null;
 
     var scanner = new AsciiScanner(status);
     while (!scanner.IsEmpty) {
@@ -135,11 +169,20 @@ public static class DpkgDatabase {
         continue;
       }
 
-      if (inPackage && AsciiScanner.StartsWith(line, "Version: "u8))
-        return Encoding.UTF8.GetString(line[9..]);
+      if (!inPackage)
+        continue;
+
+      if (AsciiScanner.StartsWith(line, "Version: "u8))
+        version = Encoding.UTF8.GetString(line[9..]);
+      else if (AsciiScanner.StartsWith(line, "Maintainer: "u8))
+        maintainer = Encoding.UTF8.GetString(line[12..]);
+      else if (summary is null && AsciiScanner.StartsWith(line, "Description: "u8))
+        // The synopsis only. What follows is the extended description, indented by a space per
+        // line, and a properties box wants the sentence rather than the essay.
+        summary = Encoding.UTF8.GetString(line[13..]);
     }
 
-    return null;
+    return new(version, summary, maintainer);
   }
 
   private static ReadOnlySpan<byte> Trim(ReadOnlySpan<byte> line) {

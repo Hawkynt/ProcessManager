@@ -438,6 +438,63 @@ public enum ModuleType : byte {
 }
 
 /// <summary>
+/// Whose machine code — or whose bytecode — is in a mapped file (PRD §31).
+/// </summary>
+/// <remarks>
+/// <para>
+/// <see cref="ModuleType"/> answers what the file's own format calls it and stops at the file's
+/// first four bytes; this answers which execution engine will read it. The two are not the same
+/// question on any machine that runs more than one runtime: every assembly a .NET process loads is
+/// a mapped file that is not an ELF, and the modules view called all of them <c>data</c> — the same
+/// word it uses for a font and a locale archive. A managed assembly is not data, and saying so is
+/// the difference between a wall of identical rows and a list of what the process is running.
+/// </para>
+/// <para>
+/// Read from the file's own header and never from its name. <c>.dll</c> is a managed assembly on
+/// one machine and a Windows library on the next, and under Wine a process maps both.
+/// </para>
+/// </remarks>
+public enum ModuleRuntime : byte {
+
+  /// <summary>Nothing was read. Not "no runtime": the file's header was never opened.</summary>
+  Unknown = 0,
+
+  /// <summary>An ELF: machine code this kernel loads and runs itself.</summary>
+  Native,
+
+  /// <summary>
+  /// A PE with a CLI header — a .NET assembly, whatever the extension says.
+  /// </summary>
+  /// <remarks>
+  /// On Linux this is what a .NET process maps, twice per assembly and never executed as a PE: the
+  /// runtime reads the metadata out of the mapping and generates the machine code elsewhere.
+  /// </remarks>
+  Managed,
+
+  /// <summary>A PE without one: a Windows binary, which on Linux means a process under Wine.</summary>
+  WindowsNative,
+
+  /// <summary>
+  /// A ZIP container — a <c>.jar</c>, a <c>.whl</c>, an Android <c>.apk</c>.
+  /// </summary>
+  /// <remarks>
+  /// Named for the container and not for the language, because the container is what was read. A
+  /// JVM maps its jars, and so does anything else that ships a class path as an archive.
+  /// </remarks>
+  Archive,
+
+  /// <summary>
+  /// Read, and none of the above: a font, a locale archive, a mapped database, an icon cache.
+  /// </summary>
+  /// <remarks>
+  /// A finding rather than a hole, and the reason this enum has both this and
+  /// <see cref="Unknown"/>: "we looked and it is not code" and "nobody looked" are different
+  /// statements about a row (PRD §72.3).
+  /// </remarks>
+  NotCode,
+}
+
+/// <summary>
 /// A file mapped into a process: a shared library, the image itself, or a data mapping.
 /// </summary>
 /// <remarks>
@@ -483,6 +540,25 @@ public enum ModuleType : byte {
 /// rather than about our access to it.
 /// </param>
 /// <param name="LoadReason">Why this image is here, derived from the dependency graph.</param>
+/// <param name="LoadCount">
+/// How many times this file is loaded into this process — how many rows of the list, this one
+/// included, name it.
+/// </param>
+/// <remarks>
+/// Not the loader's reference count, which is a different number answering a different question.
+/// <c>link_map.l_direct_opencount</c> counts the <c>dlopen</c> calls that have not yet been undone,
+/// and no file under <c>/proc</c> publishes it; this counts the separate loads of one file that are
+/// in the address space right now, which is what the map does say. One is the answer for nearly
+/// every row, and that is what makes a two worth seeing: two copies of a library in one process is
+/// two sets of its global state, and it is how a plugin that shipped its own <c>libstdc++</c>
+/// announces itself. Zero is never right — a row exists because a mapping named it — so a zero here
+/// means the pass that fills this in never ran (PRD §72.3).
+/// </remarks>
+/// <param name="Runtime">
+/// Which execution engine reads this file, from its header. <see cref="ModuleRuntime.Unknown"/> is
+/// "the header was not read" and <see cref="ModuleRuntime.NotCode"/> is "it was, and this is not
+/// code".
+/// </param>
 public readonly record struct ModuleRecord(
   string Path,
   ulong BaseAddress,
@@ -504,7 +580,9 @@ public readonly record struct ModuleRecord(
   string? Interpreter,
   ImageMitigations Mitigations,
   string? BuildId,
-  ModuleLoadReason LoadReason
+  ModuleLoadReason LoadReason,
+  int LoadCount,
+  ModuleRuntime Runtime
 );
 
 /// <summary>What a handle or file descriptor refers to.</summary>
@@ -530,6 +608,43 @@ public enum HandleKind : byte {
   Notify,
   /// <summary>A memfd, or a file under a <c>tmpfs</c> that exists to be shared between processes.</summary>
   SharedMemory,
+}
+
+/// <summary>
+/// What kind of node a descriptor's target is, as the kernel's own <c>st_mode</c> says (PRD §32).
+/// </summary>
+/// <remarks>
+/// <para>
+/// A second axis, not a finer <see cref="HandleKind"/>. The kind is worked out from the name the
+/// symlink has — <c>socket:[…]</c>, a path under <c>/dev</c> — and the name is a good guess that is
+/// sometimes wrong: a FIFO in <c>/run</c> is a path like any other and read as a file, and every
+/// device node is filed by the directory it sits in rather than by what it is. This is the kernel
+/// answering the same question with the bits it keeps, and where the two disagree the kernel wins.
+/// </para>
+/// <para>
+/// <see cref="None"/> is the one that has to exist. An anonymous inode — an eventfd, a timerfd, an
+/// epoll set — has <c>st_mode</c> <c>0600</c>: the file-type bits are <em>zero</em>, which is not
+/// any of the seven POSIX types. A table mapping that nought to a regular file, or to "unknown",
+/// would file every event descriptor on the machine under a type it does not have (PRD §72.3).
+/// </para>
+/// </remarks>
+public enum FileNodeType : byte {
+
+  /// <summary>Nobody stat'ed it, or the stat failed. Not an answer about the descriptor.</summary>
+  Unknown = 0,
+
+  Regular,
+  Directory,
+  CharacterDevice,
+  BlockDevice,
+  Fifo,
+  Socket,
+  SymbolicLink,
+
+  /// <summary>
+  /// Stat'ed, and the type bits were clear: an anonymous inode, which has no file type at all.
+  /// </summary>
+  None,
 }
 
 /// <summary>
@@ -573,6 +688,17 @@ public enum HandleKind : byte {
 /// as the kernel wrote it, because every kind spells its own state differently and inventing a
 /// common shape for them would lose most of it (PRD §5.3). Null when there was none.
 /// </param>
+/// <param name="NodeType">
+/// What the kernel's <c>st_mode</c> says the target is, which is the answer where the name is only
+/// a good guess. <see cref="FileNodeType.Unknown"/> means nobody asked.
+/// </param>
+/// <param name="NodeDevice">
+/// The device a character or block node <em>is</em>, as <c>major:minor</c>. Not
+/// <paramref name="Device"/>, which is the device the node's inode is <em>on</em>: <c>/dev/null</c>
+/// is character device 1:3 and lives on the <c>devtmpfs</c> at 0:7, and confusing the two would
+/// report every device node on the machine as the same device. Null for everything that is not a
+/// device node, because everything else is not one.
+/// </param>
 public readonly record struct HandleRecord(
   ulong Handle,
   HandleKind Kind,
@@ -585,7 +711,9 @@ public readonly record struct HandleRecord(
   Counter MountId,
   string? Device,
   string? FileSystem,
-  string? Detail
+  string? Detail,
+  FileNodeType NodeType,
+  string? NodeDevice
 );
 
 public enum ConnectionProtocol : byte { Tcp, Tcp6, Udp, Udp6, Unix }
@@ -657,6 +785,19 @@ public enum SocketKind : byte { Unknown = 0, Stream, Datagram, SeqPacket }
 /// The owning process's cgroup path, which is what says whether a listening port belongs to the host
 /// or to a container. Null for the same three reasons <paramref name="OwningService"/> is.
 /// </param>
+/// <param name="References">
+/// How many references the kernel holds to this socket — <c>sk_refcnt</c>, straight out of the
+/// network table's own column.
+/// </param>
+/// <remarks>
+/// This is §32's reference count, and it is a real number rather than a derived one: the five
+/// <c>/proc/net</c> tables print it beside every row. It is the closest thing Linux publishes to
+/// the reference count Windows keeps on a kernel object, and it is published for sockets and for
+/// nothing else — a file, a pipe and an event descriptor have a <c>struct file</c> with a count in
+/// it that no file under <c>/proc</c> shows. Note that a socket held by one descriptor commonly
+/// reads two or three: the descriptor is one reference and the protocol's own hash tables are the
+/// rest, so this counts holders of the socket and not descriptors on it.
+/// </remarks>
 public readonly record struct ConnectionRecord(
   ConnectionProtocol Protocol,
   SocketKind Kind,
@@ -677,7 +818,8 @@ public readonly record struct ConnectionRecord(
   Rate SendRate,
   Rate ReceiveRate,
   string? OwningService,
-  string? ContainerPath
+  string? ContainerPath,
+  Counter References
 );
 
 /// <summary>
