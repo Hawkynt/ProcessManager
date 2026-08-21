@@ -105,6 +105,17 @@ public sealed record UserSettings {
   public bool HideUnavailableTabs { get; init; }
 
   /// <summary>
+  /// Whether the performance page opens on whatever is under the greatest load (PRD §45.3).
+  /// </summary>
+  /// <remarks>
+  /// On by default, because somebody opening that page has a machine that is doing something and
+  /// wants to know what. Off for the people who keep it open on one resource and do not want it
+  /// moved out from under them by a disk that was briefly busy — which is a preference and not a
+  /// mistake, and is why it is a setting rather than a decision.
+  /// </remarks>
+  public bool PerformanceOpensOnBusiest { get; init; } = true;
+
+  /// <summary>
   /// Colours the file overrides, by the names <see cref="ColourNames"/> lists.
   /// </summary>
   /// <remarks>
@@ -379,6 +390,12 @@ public sealed record UserSettings {
 
           break;
 
+        case "performance.busiest":
+          if (TryParseBool(value, out var busiest))
+            settings = settings with { PerformanceOpensOnBusiest = busiest };
+
+          break;
+
         case "window.split":
           if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var split) && split is >= 10 and <= 90)
             settings = settings with { SplitPercent = split };
@@ -438,6 +455,15 @@ public sealed record UserSettings {
     // a preference worth a line in everybody's file.
     if (!this.LowerPaneVisible)
       text.AppendLine("window.lowerpane=false");
+
+    // Only when it is off, like the pane above: the page opening on whatever is busiest is what it
+    // does, and a line saying so in every file is a line nobody reads.
+    if (!this.PerformanceOpensOnBusiest) {
+      text.AppendLine();
+      text.AppendLine("# The performance page opens on the processor rather than on whatever is");
+      text.AppendLine("# under the greatest load.");
+      text.AppendLine("performance.busiest=false");
+    }
 
     if (this.HideUnavailableTabs) {
       text.AppendLine();

@@ -58,6 +58,33 @@ public sealed record HostInfo {
   /// </summary>
   public Counter CpuCurrentHertz { get; init; } = Counter.Unknown(UnknownReason.NotSampledYet);
 
+  /// <summary>
+  /// The two ends of the range the processor is allowed to clock between (PRD §46).
+  /// </summary>
+  /// <remarks>
+  /// Not the same pair as base and current speed, and worth both rows: the base speed is what the
+  /// part is rated at and the maximum is what it will reach when one core is awake and the package
+  /// is cold. A machine whose maximum has been pulled down to its minimum is one whose firmware or
+  /// thermal policy has taken the boost away, which explains an otherwise inexplicable clock.
+  /// </remarks>
+  public Counter CpuMinimumHertz { get; init; } = Counter.Unknown(UnknownReason.NotSampledYet);
+
+  public Counter CpuMaximumHertz { get; init; } = Counter.Unknown(UnknownReason.NotSampledYet);
+
+  /// <summary>
+  /// Which policy is choosing the clock, and which driver is enforcing it — <c>powersave</c> under
+  /// <c>intel_pstate</c>, <c>schedutil</c> under <c>acpi-cpufreq</c>.
+  /// </summary>
+  /// <remarks>
+  /// The pair rather than either alone. The governor's name means different things under different
+  /// drivers — <c>intel_pstate</c>'s <c>powersave</c> is a full-range governor that will happily
+  /// reach the maximum clock, where the generic driver's is not — so a reading without its driver
+  /// beside it is routinely misread as a machine that has been throttled.
+  /// </remarks>
+  public string? CpuGovernor { get; init; }
+
+  public string? CpuScalingDriver { get; init; }
+
   /// <summary>Physical packages — two on a dual-socket board, one on anything portable.</summary>
   public Counter Sockets { get; init; } = Counter.Unknown(UnknownReason.NotSampledYet);
 

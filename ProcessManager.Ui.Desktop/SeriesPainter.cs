@@ -153,11 +153,20 @@ internal static class SeriesPainter {
     return double.IsNegativeInfinity(best) ? Rate.Unknown(reason) : Rate.Of(best);
   }
 
-  private static Color Lighten(Color color) => Color.FromArgb(
+  /// <summary>
+  /// The same colour, paler.
+  /// </summary>
+  /// <remarks>
+  /// Used twice: for the bright line along the top of a filled series, so two stacked fills still
+  /// show where one ends, and for the second line of a two-line plot — a disk's writes against its
+  /// reads. Toward white rather than toward another hue, because both are the same resource and
+  /// §45.5 gives a resource one colour.
+  /// </remarks>
+  public static Color Lighten(Color color, int amount = 70) => Color.FromArgb(
     color.A,
-    Math.Min(255, color.R + 70),
-    Math.Min(255, color.G + 70),
-    Math.Min(255, color.B + 70)
+    Math.Min(255, color.R + amount),
+    Math.Min(255, color.G + amount),
+    Math.Min(255, color.B + amount)
   );
 
 }

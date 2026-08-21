@@ -32,7 +32,11 @@ internal static class LinuxDeviceReader {
     return Directory.Exists(Path.Combine(sysRoot, "block", name));
   }
 
-  public static DiskInfo Describe(string sysRoot, string name) {
+  /// <param name="layout">
+  /// Where the machine's mounts and swap areas sit, or null when nobody has worked that out — in
+  /// which case the volumes and the two indicators say they are unknown rather than saying no.
+  /// </param>
+  public static DiskInfo Describe(string sysRoot, string name, LinuxStorageLayout? layout = null) {
     var root = Path.Combine(sysRoot, "block", name);
 
     // "size" is in 512-byte sectors whatever the device's own sector size, the same unit diskstats
@@ -44,10 +48,72 @@ internal static class LinuxDeviceReader {
     var rotationalText = Read(Path.Combine(root, "queue", "rotational"));
     bool? rotational = rotationalText switch { "1" => true, "0" => false, _ => null };
 
-    return new(name, Read(Path.Combine(root, "device", "model")), rotational, capacity);
+    return new(
+      name,
+      Read(Path.Combine(root, "device", "model")),
+      rotational,
+      capacity,
+      // NVMe publishes a serial of its own; a SCSI or SATA disk publishes a vendor-page one under
+      // another name, and a device-mapper target has none at all because it is not a device.
+      Serial(root),
+      Bus(root),
+      layout?.VolumesOf(name),
+      layout?.IsSystemDisk(name),
+      layout?.HoldsSwap(name)
+    );
   }
 
-  public static NetworkInterfaceInfo DescribeInterface(string sysRoot, string name) {
+  /// <summary>The device's serial, from whichever of the two files this class of device uses.</summary>
+  /// <remarks>
+  /// <c>serial</c> is NVMe's; <c>vpd_pg80</c> is the SCSI inquiry page and is a binary blob whose
+  /// tail is the serial as ASCII, which is more decoding than a description needs — so a SCSI disk
+  /// falls back to <c>wwid</c>, which the kernel has already made into text.
+  /// </remarks>
+  private static string? Serial(string root) {
+    var device = Path.Combine(root, "device");
+    return Read(Path.Combine(device, "serial")) ?? Read(Path.Combine(device, "wwid"));
+  }
+
+  /// <summary>
+  /// What the device hangs off, in the kernel's own vocabulary.
+  /// </summary>
+  /// <remarks>
+  /// The subsystem the device's driver registered with — <c>nvme</c>, <c>scsi</c>, <c>virtio</c>,
+  /// <c>mmc</c>. Deliberately not translated into "SATA" or "USB": both of those are <c>scsi</c>
+  /// from here, and the words would be a guess dressed as a reading (PRD §5.3).
+  /// </remarks>
+  private static string? Bus(string root) {
+    var subsystem = Path.Combine(root, "device", "subsystem");
+    try {
+      // A symlink into /sys/class or /sys/bus, whose leaf is the name. Resolved rather than followed
+      // as a directory, so a recorded tree without the target still answers.
+      var target = Directory.ResolveLinkTarget(subsystem, returnFinalTarget: false);
+      var name = target is null ? null : Path.GetFileName(target.FullName.TrimEnd('/'));
+      return name is { Length: > 0 } ? name : null;
+    } catch (IOException) {
+      return null;
+    } catch (UnauthorizedAccessException) {
+      return null;
+    }
+  }
+
+  /// <param name="live">
+  /// Whether these files are this machine's, rather than a recorded tree's.
+  /// </param>
+  /// <remarks>
+  /// The addresses and the wireless association are asked of the kernel directly — <c>getifaddrs</c>
+  /// and an <c>ioctl</c> — and there is no way to ask either about anybody else's interfaces. So
+  /// they may only be read when the files beside them belong to this machine too: a
+  /// <c>--probe-root</c> replay that put this laptop's address and Wi-Fi network beside a fixture's
+  /// counters would be describing two machines in one table, which is the rule §9.4 states for
+  /// <c>CPUID</c> and which holds for exactly the same reason here.
+  /// </remarks>
+  public static NetworkInterfaceInfo DescribeInterface(
+    string sysRoot,
+    string name,
+    string? procRoot = null,
+    bool live = false
+  ) {
     var root = Path.Combine(sysRoot, "class", "net", name);
 
     // Only meaningful on a link that is up, and absent entirely on anything virtual. -1 is the
@@ -65,8 +131,128 @@ internal static class LinuxDeviceReader {
     // Type 772 is ARPHRD_LOOPBACK. Worth knowing because loopback traffic is real but is not the
     // network, and a chart that includes it reports a machine talking to itself as bandwidth.
     var isLoopback = Read(Path.Combine(root, "type")) == "772";
+    var wireless = Directory.Exists(Path.Combine(root, "phy80211"));
 
-    return new(name, Read(Path.Combine(root, "address")), speed, Read(Path.Combine(root, "operstate")), mtu, isLoopback);
+    return new(
+      name,
+      Read(Path.Combine(root, "address")),
+      speed,
+      Read(Path.Combine(root, "operstate")),
+      mtu,
+      isLoopback,
+      int.TryParse(Read(Path.Combine(root, "ifindex")), NumberStyles.Integer, CultureInfo.InvariantCulture, out var index)
+        ? index
+        : null,
+      Kind(root, isLoopback, wireless),
+      Driver(root),
+      live ? LinuxAddressReader.Read(name) : null,
+      procRoot is null ? null : Gateway(procRoot, name),
+      procRoot is null ? null : Resolvers(procRoot),
+      live && wireless ? LinuxWirelessReader.Ssid(name) : null,
+      wireless && procRoot is not null ? Signal(procRoot, name) : null,
+      live && wireless ? LinuxWirelessReader.FrequencyMegahertz(name) : null
+    );
+  }
+
+  /// <summary>
+  /// What sort of interface this is, from what the kernel publishes about it.
+  /// </summary>
+  /// <remarks>
+  /// By structure and not by name. <c>phy80211</c> exists only on a wireless interface;
+  /// <c>bridge</c> and <c>bonding</c> likewise; a <c>device</c> symlink is what a real piece of
+  /// hardware has and its absence is what makes an interface virtual. Names — <c>eth0</c>,
+  /// <c>wlan0</c>, <c>tun0</c> — are a convention that predictable interface naming already broke
+  /// once, and <c>enp0s31f6</c> begins with none of them.
+  /// </remarks>
+  private static string Kind(string root, bool isLoopback, bool wireless) {
+    if (isLoopback)
+      return "loopback";
+
+    if (wireless)
+      return "wireless";
+
+    if (Directory.Exists(Path.Combine(root, "bridge")))
+      return "bridge";
+
+    if (Directory.Exists(Path.Combine(root, "bonding")))
+      return "bonding";
+
+    if (Directory.Exists(Path.Combine(root, "tun_flags")) || File.Exists(Path.Combine(root, "tun_flags")))
+      return "tunnel";
+
+    return Directory.Exists(Path.Combine(root, "device")) ? "ethernet" : "virtual";
+  }
+
+  /// <summary>The module behind the interface, from the driver symlink the kernel hangs off it.</summary>
+  private static string? Driver(string root) {
+    try {
+      var target = Directory.ResolveLinkTarget(Path.Combine(root, "device", "driver"), returnFinalTarget: false);
+      var name = target is null ? null : Path.GetFileName(target.FullName.TrimEnd('/'));
+      return name is { Length: > 0 } ? name : null;
+    } catch (IOException) {
+      return null;
+    } catch (UnauthorizedAccessException) {
+      return null;
+    }
+  }
+
+  /// <summary>The default route through this interface, IPv4 first and IPv6 where there is no IPv4.</summary>
+  /// <remarks>
+  /// One or the other rather than both: the row answers "which way off this machine", and on a
+  /// dual-stack network both gateways are the same router wearing two addresses.
+  /// </remarks>
+  private static string? Gateway(string procRoot, string name) {
+    var v4 = ReadBytes(Path.Combine(procRoot, "net", "route"));
+    if (v4 is not null && RouteTableParser.DefaultGateway(v4, name) is { } gateway)
+      return gateway;
+
+    var v6 = ReadBytes(Path.Combine(procRoot, "net", "ipv6_route"));
+    return v6 is null ? null : RouteTableParser.DefaultGatewayV6(v6, name);
+  }
+
+  /// <summary>
+  /// The nameservers this machine uses.
+  /// </summary>
+  /// <remarks>
+  /// Where <c>/etc/resolv.conf</c> holds nothing but systemd-resolved's stub listener, the file
+  /// describes this machine talking to itself and not the network — so the resolver's own upstream
+  /// list is read instead, and the stub is reported only when that is unreadable too. Both are shown
+  /// as they are found; neither is rewritten (PRD §5.3).
+  /// </remarks>
+  private static IReadOnlyList<string>? Resolvers(string procRoot) {
+    // Relative to the proc root's parent, so a recorded tree carries its own /etc beside its /proc.
+    var etc = Path.Combine(procRoot, "..", "etc", "resolv.conf");
+    var content = ReadBytes(etc);
+    if (content is null)
+      return null;
+
+    var config = ResolverConfigParser.Parse(content);
+    if (!config.IsStubOnly)
+      return config.Servers;
+
+    var upstream = ReadBytes(Path.Combine(procRoot, "..", "run", "systemd", "resolve", "resolv.conf"));
+    if (upstream is null)
+      return config.Servers;
+
+    var resolved = ResolverConfigParser.Parse(upstream);
+    return resolved.Servers.Count > 0 ? resolved.Servers : config.Servers;
+  }
+
+  private static int? Signal(string procRoot, string name) {
+    var content = ReadBytes(Path.Combine(procRoot, "net", "wireless"));
+    return content is null ? null : WirelessStatusParser.Find(content, name)?.SignalDbm;
+  }
+
+  private static byte[]? ReadBytes(string path) {
+    try {
+      // Through the text reader: several files under /proc report a length of nought, and reading
+      // by size would return an empty array for a file that has plenty in it.
+      return File.Exists(path) ? System.Text.Encoding.UTF8.GetBytes(File.ReadAllText(path)) : null;
+    } catch (IOException) {
+      return null;
+    } catch (UnauthorizedAccessException) {
+      return null;
+    }
   }
 
   /// <summary>
@@ -147,7 +333,13 @@ internal static class LinuxDeviceReader {
       MemoryBusyPercent: Counter.Unknown(UnknownReason.NotImplementedHere),
       CoreClockHertz: ReadClock(cardPath),
       MemoryClockHertz: Counter.Unknown(UnknownReason.NotImplementedHere),
-      FanPercent: ReadFan(device)
+      FanPercent: ReadFanPercent(device),
+      FanRpm: ReadHwmon(device, "fan1_input"),
+      FanCount: CountFans(device),
+      // Neither AMD's sysfs nor Intel's publishes a per-engine figure at all: i915's lives behind a
+      // perf counter that needs a privileged open, and amdgpu has only the one busy percentage.
+      EncodePercent: Counter.Unknown(UnknownReason.NotImplementedHere),
+      DecodePercent: Counter.Unknown(UnknownReason.NotImplementedHere)
     );
 
     // The vendor's own library last, because it knows more than sysfs does about every card it
@@ -172,10 +364,45 @@ internal static class LinuxDeviceReader {
     return ReadCounter(Path.Combine(cardPath, "gt_cur_freq_mhz"), 1_000_000);
   }
 
-  /// <summary>Percent, from whichever of hwmon's two spellings the driver uses.</summary>
-  private static Counter ReadFan(string devicePath) {
-    var percent = ReadHwmon(devicePath, "fan1_input");
-    return percent.HasValue ? percent : ReadHwmon(devicePath, "pwm1");
+  /// <summary>
+  /// How hard the fan is being driven, as a percentage (PRD §50.1).
+  /// </summary>
+  /// <remarks>
+  /// From <c>pwm1</c>, which is the duty cycle the driver has set, on hwmon's fixed scale of 0–255.
+  /// It was previously taken from <c>fan1_input</c> as well — and that is revolutions a minute, so a
+  /// fan at 1800 rpm was reported as being 1800 % of the way up its range. The two are different
+  /// readings of the same fan, and the tachometer now goes to its own row (PRD §76).
+  /// </remarks>
+  private static Counter ReadFanPercent(string devicePath) {
+    var duty = ReadHwmon(devicePath, "pwm1");
+    if (!duty.HasValue)
+      return duty;
+
+    return duty.Value <= 255
+      ? Counter.Of(duty.Value * 100 / 255)
+      : Counter.Unknown(UnknownReason.CounterInvalid);
+  }
+
+  /// <summary>
+  /// How many fans the card has, counted by the tachometers its hwmon node publishes.
+  /// </summary>
+  /// <remarks>
+  /// Nought is a real answer and not a failure: a laptop card cooled by the chassis has no fan of
+  /// its own, which is why its speed is unreadable. A node that publishes no tachometer at all says
+  /// nothing about the count rather than claiming there are none.
+  /// </remarks>
+  private static Counter CountFans(string devicePath) {
+    var hwmon = Path.Combine(devicePath, "hwmon");
+    if (!Directory.Exists(hwmon))
+      return Counter.Unknown(UnknownReason.NotImplementedHere);
+
+    var found = 0;
+    foreach (var node in Directory.EnumerateDirectories(hwmon))
+      for (var fan = 1; fan <= 8; ++fan)
+        if (File.Exists(Path.Combine(node, $"fan{fan.ToString(CultureInfo.InvariantCulture)}_input")))
+          ++found;
+
+    return Counter.Of((ulong)found);
   }
 
   /// <summary>

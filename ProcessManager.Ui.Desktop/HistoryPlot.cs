@@ -25,7 +25,13 @@ public sealed class HistoryPlot : OwnerDrawnControl {
 
   private readonly List<Series> _series = [];
 
-  private sealed record Series(HistoryRing<Rate> Values, Color Color, string Label);
+  /// <param name="Filled">
+  /// Whether this series is drawn as an area or as a line, where it differs from the plot's own
+  /// setting. Per series and not per plot, because the pair a two-line graph draws is most legible
+  /// as one of each: the area is the direction that dominates and the line over it is the other,
+  /// which two lines in two shades of one accent are not (PRD §48, §49).
+  /// </param>
+  private sealed record Series(HistoryRing<Rate> Values, Color Color, string Label, bool? Filled = null);
 
   public HistoryPlot() =>
     // Not OnDoubleClick: Control.DoubleClick is raised by PerformClick and never by the pointer, so
@@ -130,9 +136,13 @@ public sealed class HistoryPlot : OwnerDrawnControl {
     }
   }
 
-  public void AddSeries(HistoryRing<Rate> values, Color color, string label = "") {
+  /// <param name="filled">
+  /// Null follows <see cref="Filled"/>, which is what nearly every series wants; false strokes this
+  /// one over whatever is under it.
+  /// </param>
+  public void AddSeries(HistoryRing<Rate> values, Color color, string label = "", bool? filled = null) {
     ArgumentNullException.ThrowIfNull(values);
-    this._series.Add(new(values, color, label));
+    this._series.Add(new(values, color, label, filled));
   }
 
   /// <summary>How many samples the axis is wide.</summary>
@@ -295,7 +305,16 @@ public sealed class HistoryPlot : OwnerDrawnControl {
       g.DrawLine(RowPalette.PlotGrid, x, 0, x, this.Height);
 
     foreach (var series in this._series)
-      SeriesPainter.Draw(g, bounds, series.Values, this.Maximum, series.Color, this.Samples, this.SkipNewest, this.Filled);
+      SeriesPainter.Draw(
+        g,
+        bounds,
+        series.Values,
+        this.Maximum,
+        series.Color,
+        this.Samples,
+        this.SkipNewest,
+        series.Filled ?? this.Filled
+      );
 
     this.DrawCursor(g);
     g.DrawRectangle(theme.Border, new(0, 0, this.Width - 1, this.Height - 1));

@@ -39,6 +39,7 @@ internal static class LinuxHostReader {
 
     var performance = ReadCpuList(Path.Combine(sysRoot, "devices", "cpu_core", "cpus"));
     var efficiency = ReadCpuList(Path.Combine(sysRoot, "devices", "cpu_atom", "cpus"));
+    var nodes = ReadNodeMap(sysRoot);
 
     var cores = new List<CoreDescriptor>();
     foreach (var logical in ReadCpuList(Path.Combine(cpuRoot, "online"))) {
@@ -49,11 +50,43 @@ internal static class LinuxHostReader {
         ReadInt(Path.Combine(topology, "core_id")),
         performance.Contains(logical) ? CoreKind.Performance
           : efficiency.Contains(logical) ? CoreKind.Efficiency
-          : CoreKind.Unknown
+          : CoreKind.Unknown,
+        nodes.GetValueOrDefault(logical, -1)
       ));
     }
 
     return cores.Count > 0 ? new(cores) : CpuTopology.Empty;
+  }
+
+  /// <summary>
+  /// Which NUMA node each logical processor belongs to (PRD §46).
+  /// </summary>
+  /// <remarks>
+  /// From the node's own <c>cpulist</c> rather than from a <c>nodeN</c> symlink under each
+  /// processor: one file per node instead of one directory listing per processor, which on a
+  /// two-node machine is two reads instead of a hundred and ninety-two.
+  /// <para>
+  /// The nodes are walked by number and stop at the first gap, like the memory read below. A machine
+  /// with a hole in its node numbering — nodes 0 and 2, no node 1 — loses the ones past the hole,
+  /// which is a machine none of us has and a shape the kernel does not produce for CPU nodes.
+  /// </para>
+  /// </remarks>
+  private static Dictionary<int, int> ReadNodeMap(string sysRoot) {
+    var map = new Dictionary<int, int>();
+    var nodeRoot = Path.Combine(sysRoot, "devices", "system", "node");
+    if (!Directory.Exists(nodeRoot))
+      return map;
+
+    for (var node = 0; ; ++node) {
+      var path = Path.Combine(nodeRoot, $"node{node.ToString(CultureInfo.InvariantCulture)}", "cpulist");
+      if (!File.Exists(path))
+        break;
+
+      foreach (var logical in ReadCpuList(path))
+        map[logical] = node;
+    }
+
+    return map;
   }
 
   /// <summary>
@@ -175,6 +208,13 @@ internal static class LinuxHostReader {
       CpuSignature = live ? LiveSignature(sysRoot) : null,
       CpuFeatures = live ? LiveFeatures() : [],
       CpuBaseHertz = ReadBaseFrequency(cpuRoot, model),
+      // Across every processor rather than from cpu0. The parts differ: this laptop's favoured cores
+      // top out at 5.0 GHz and the rest at 4.9, so cpu0's ceiling is not the machine's and the page
+      // would disagree with lscpu about what the processor can do.
+      CpuMinimumHertz = ReadKilohertzExtreme(cpuRoot, "cpuinfo_min_freq", highest: false),
+      CpuMaximumHertz = ReadKilohertzExtreme(cpuRoot, "cpuinfo_max_freq", highest: true),
+      CpuGovernor = TryReadText(Path.Combine(cpuRoot, "cpu0", "cpufreq", "scaling_governor")),
+      CpuScalingDriver = TryReadText(Path.Combine(cpuRoot, "cpu0", "cpufreq", "scaling_driver")),
       CpuCurrentHertz = megahertzCount > 0
         ? Counter.Of((ulong)(megahertzTotal / megahertzCount * 1_000_000))
         : Counter.NotSupported,
@@ -240,6 +280,34 @@ internal static class LinuxHostReader {
     return double.TryParse(tail[..^3].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var number)
       ? Counter.Of((ulong)(number * scale))
       : Counter.NotSupported;
+  }
+
+  /// <summary>
+  /// The extreme of one of cpufreq's frequency files across every processor, in kilohertz.
+  /// </summary>
+  /// <remarks>
+  /// A kernel with no cpufreq at all — a virtual machine, a part whose clock the firmware owns —
+  /// has no such files, and that is not a processor with no speed range. Unsupported rather than
+  /// zero (PRD §5.3). Read once with the rest of the host description, so walking sixteen
+  /// directories costs nothing per sample (§71).
+  /// </remarks>
+  private static Counter ReadKilohertzExtreme(string cpuRoot, string file, bool highest) {
+    if (!Directory.Exists(cpuRoot))
+      return Counter.NotSupported;
+
+    var found = false;
+    var extreme = 0ul;
+    foreach (var logical in ReadCpuList(Path.Combine(cpuRoot, "online"))) {
+      var path = Path.Combine(cpuRoot, $"cpu{logical.ToString(CultureInfo.InvariantCulture)}", "cpufreq", file);
+      if (TryReadText(path) is not { } text
+          || !ulong.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var kilohertz))
+        continue;
+
+      extreme = found ? highest ? Math.Max(extreme, kilohertz) : Math.Min(extreme, kilohertz) : kilohertz;
+      found = true;
+    }
+
+    return found ? Counter.Of(extreme * 1000) : Counter.NotSupported;
   }
 
   /// <summary>

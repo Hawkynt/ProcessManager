@@ -177,7 +177,41 @@ public struct SystemCounters {
 
   public Counter ContextSwitches;
   public Counter Interrupts;
+
+  /// <summary>
+  /// Soft interrupts — the kernel's deferred work, and what Windows calls a DPC (PRD §46).
+  /// </summary>
+  /// <remarks>
+  /// A hard interrupt is the handler that must run now and is kept as short as the driver can make
+  /// it; everything it defers runs as a soft interrupt afterwards. Which is why the two are counted
+  /// apart: a saturated network adapter raises one hard interrupt per batch and thousands of soft
+  /// ones behind it, and a machine whose cores are in <c>ksoftirqd</c> is one whose deferred work
+  /// has stopped keeping up rather than one that is busy.
+  /// </remarks>
+  public Counter SoftInterrupts;
+
   public Counter ProcessesCreated;
+
+  /// <summary>
+  /// Open file descriptors across the whole machine — §46's handle count, in this kernel's terms.
+  /// </summary>
+  /// <remarks>
+  /// A descriptor is what Linux has instead of a handle, and the kernel keeps the running total in
+  /// one file rather than making it a sum over every process. That is the whole reason it is
+  /// affordable here: the per-process figure costs a directory materialisation each and is
+  /// deliberately not sampled (§3.5).
+  /// </remarks>
+  public Counter OpenDescriptors;
+
+  /// <summary>
+  /// The most the kernel will hand out, where that is a real limit.
+  /// </summary>
+  /// <remarks>
+  /// Usually not one worth showing: <c>fs.file-max</c> is derived from memory and is routinely nine
+  /// quintillion, which as a denominator says nothing at all. Kept as a counter so a caller can see
+  /// the figure and decide, rather than being handed a percentage of an imaginary ceiling.
+  /// </remarks>
+  public Counter DescriptorLimit;
 
   public double LoadAverage1;
   public double LoadAverage5;
@@ -246,7 +280,10 @@ public struct SystemCounters {
     IoPressure = PressureReading.Unknown,
     ContextSwitches = Counter.NotSampledYet,
     Interrupts = Counter.NotSampledYet,
+    SoftInterrupts = Counter.NotSampledYet,
     ProcessesCreated = Counter.NotSampledYet,
+    OpenDescriptors = Counter.NotSampledYet,
+    DescriptorLimit = Counter.NotSampledYet,
   };
 
 }

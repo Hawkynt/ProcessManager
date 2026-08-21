@@ -68,6 +68,12 @@ public sealed class PerformanceWindowTests {
     }
 
     public HostInfo DescribeHost() => new() { HostName = "stub", CpuModel = "Fixture CPU" };
+
+    /// <summary>An adapter, when a test asks for one. Most do not, and a machine with none is the
+    /// ordinary case this stub describes.</summary>
+    public readonly List<GpuInfo> Gpus = [];
+
+    public IReadOnlyList<GpuInfo> DescribeGpus() => this.Gpus;
     public Counter GetHandleCount(ProcessKey key) => Counter.NotSupported;
     public IReadOnlyList<ThreadRecord> GetThreads(ProcessKey key) => [];
     public IReadOnlyList<ModuleRecord> GetModules(ProcessKey key) => [];
@@ -92,6 +98,89 @@ public sealed class PerformanceWindowTests {
     sampler.Sample();
     sampler.Sample();
     return (new(probe, sampler), probe, sampler);
+  }
+
+  /// <summary>
+  /// The page opens on whatever is under the greatest load (PRD §45.3).
+  /// </summary>
+  /// <remarks>
+  /// The stub's processor is at fifty percent and its disks are at full active time, so the page
+  /// opens on a disk — which is the point: it lands on what is busy rather than on the processor,
+  /// where every previous version of this page always started.
+  /// </remarks>
+  [Test]
+  public void ThePageOpensOnWhateverIsBusiest() {
+    var probe = new StubProbe();
+    var sampler = new Sampler(probe);
+    sampler.Sample();
+    sampler.Sample();
+
+    var window = new PerformanceWindow(probe, sampler, openOnBusiest: true);
+    Assert.That(Titles(window)[SelectedIndex(window)], Is.EqualTo("Disk — sda"));
+  }
+
+  /// <summary>
+  /// A battery at full charge is not a machine under load, and neither is a warm sensor chip. Both
+  /// are percentages of exactly the right shape, and both used to win (PRD §45.3).
+  /// </summary>
+  [Test]
+  public void AFullBatteryIsNotTheBusiestThingOnTheMachine() {
+    var probe = new StubProbe();
+    var sampler = new Sampler(probe);
+    sampler.Sample();
+    sampler.Sample();
+
+    var battery = new BatteryInfo(
+      "BAT0",
+      ChargeState.Full,
+      "full",
+      OnExternalPower: true,
+      ChargePercent: Counter.Of(100),
+      EnergyNowMicrowattHours: Counter.NotSupported,
+      EnergyFullMicrowattHours: Counter.NotSupported,
+      EnergyDesignMicrowattHours: Counter.NotSupported,
+      PowerMicrowatts: Counter.NotSupported,
+      VoltageMicrovolts: Counter.NotSupported,
+      CycleCount: Counter.NotSupported,
+      Technology: null,
+      Manufacturer: null,
+      Model: "Fixture Pack",
+      Serial: null
+    );
+
+    var sections = Query.PerformanceReport.Build(
+      probe.DescribeHost(),
+      sampler.Current,
+      sampler.Delta,
+      probe.DescribeDisk,
+      probe.DescribeInterface,
+      describeBatteries: () => [battery]
+    );
+
+    foreach (var section in sections)
+      if (section.Title.StartsWith("Battery", StringComparison.Ordinal)) {
+        Assert.That(section.Primary.Value, Is.EqualTo(100));
+        Assert.That(section.PrimaryIsLoad, Is.False, "a charge is not a load");
+        return;
+      }
+
+    Assert.Fail("no battery section");
+  }
+
+  /// <summary>
+  /// And does not, for somebody who keeps it on one resource and does not want it moved out from
+  /// under them (PRD §45.3, §67).
+  /// </summary>
+  [Test]
+  public void TurningThatOffOpensOnTheFirstResourceInstead() {
+    var probe = new StubProbe();
+    var sampler = new Sampler(probe);
+    sampler.Sample();
+    sampler.Sample();
+
+    var window = new PerformanceWindow(probe, sampler, openOnBusiest: false);
+    Assert.That(SelectedIndex(window), Is.Zero);
+    Assert.That(Titles(window)[0], Is.EqualTo("System"));
   }
 
   [Test]
@@ -464,6 +553,56 @@ public sealed class PerformanceWindowTests {
   /// by nought pixels. The page's whole top half was blank, and both the test suite and the capture
   /// log described it as one graph showing.
   /// </remarks>
+  /// <summary>
+  /// The top of a scale is labelled in the unit the series is measured in (PRD §45.4, §76).
+  /// </summary>
+  /// <remarks>
+  /// Every ceiling that was not a percentage used to be printed as a quantity of bytes, so a card's
+  /// power graph was labelled "130 B" two inches from a caption reading "15.6 W of 130.0 W". A test
+  /// and not a screenshot, because the label is six characters in the corner of one plot of six.
+  /// </remarks>
+  [Test]
+  public void AScaleIsLabelledInItsOwnUnit() {
+    var probe = new StubProbe();
+    probe.Gpus.Add(new(
+      "card0",
+      "Fixture GPU",
+      "fixture",
+      BusyPercent: Counter.Of(40),
+      MemoryUsedBytes: Counter.Of(4ul * 1024 * 1024 * 1024),
+      MemoryTotalBytes: Counter.Of(16ul * 1024 * 1024 * 1024),
+      TemperatureMilliCelsius: Counter.Of(53_000),
+      PowerMicrowatts: Counter.Of(15_600_000),
+      PowerState: "D0",
+      PowerLimitMicrowatts: Counter.Of(130_000_000),
+      PowerCapMicrowatts: Counter.Unknown(UnknownReason.NotImplementedHere),
+      MemoryBusyPercent: Counter.Of(10),
+      CoreClockHertz: Counter.Unknown(UnknownReason.NotImplementedHere),
+      MemoryClockHertz: Counter.Unknown(UnknownReason.NotImplementedHere),
+      FanPercent: Counter.Unknown(UnknownReason.NotImplementedHere),
+      FanRpm: Counter.Unknown(UnknownReason.NotImplementedHere),
+      FanCount: Counter.Unknown(UnknownReason.NotImplementedHere),
+      EncodePercent: Counter.Unknown(UnknownReason.NotImplementedHere),
+      DecodePercent: Counter.Unknown(UnknownReason.NotImplementedHere)
+    ));
+
+    var sampler = new Sampler(probe);
+    sampler.Sample();
+    sampler.Sample();
+    var window = new PerformanceWindow(probe, sampler, openOnBusiest: false);
+    Assert.That(window.Show("GPU — Fixture GPU"), Is.True);
+
+    var labels = new List<string>();
+    foreach (var control in window.Controls)
+      if (control is HistoryPlot { Visible: true } plot)
+        labels.Add(plot.ScaleLabel);
+
+    Assert.That(labels, Does.Contain("100%"), "utilisation is a percentage");
+    Assert.That(labels, Does.Contain("16.0G"), "the card's memory is a quantity of bytes");
+    Assert.That(labels, Does.Contain("130.0 W"), "the power ceiling is watts, and was rendered as bytes");
+    Assert.That(labels, Does.Contain("100 °C"), "a fixed hundred degrees is not a hundred percent");
+  }
+
   [Test]
   public void EveryPagesGraphsHaveARealSize() {
     var (window, _, _) = Open();

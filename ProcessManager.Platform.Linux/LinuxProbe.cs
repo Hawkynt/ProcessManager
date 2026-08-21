@@ -20,6 +20,7 @@ public sealed class LinuxProbe : ISystemProbe {
   private static ReadOnlySpan<byte> _btimePrefix => "btime "u8;
   private static ReadOnlySpan<byte> _ctxtPrefix => "ctxt "u8;
   private static ReadOnlySpan<byte> _intrPrefix => "intr "u8;
+  private static ReadOnlySpan<byte> _softirqPrefix => "softirq "u8;
   private static ReadOnlySpan<byte> _procsPrefix => "processes "u8;
   private static ReadOnlySpan<byte> _procsRunningPrefix => "procs_running "u8;
 
@@ -110,13 +111,18 @@ public sealed class LinuxProbe : ISystemProbe {
 
   /// <summary>Read once; nothing in it changes while the program runs, except the live clock speed.</summary>
   public HostInfo DescribeHost()
-    => this._host ??= LinuxHostReader.Read(
-      this._options.ProcRoot,
-      this._options.SysRoot,
-      // CPUID answers about the processor running it and about no other, so it is only the truth
-      // when the files beside it are this machine's as well.
-      live: this._options.ProcRoot == "/proc" && this._options.SysRoot == "/sys"
-    );
+    => this._host ??= LinuxHostReader.Read(this._options.ProcRoot, this._options.SysRoot, this.IsThisMachine);
+
+  /// <summary>
+  /// Whether the files being read are this machine's rather than a recorded tree's.
+  /// </summary>
+  /// <remarks>
+  /// Everything that asks the kernel a question directly rather than reading a file under the roots
+  /// — <c>CPUID</c>, <c>getifaddrs</c>, the wireless ioctls — may only be consulted when this is
+  /// true. There is no way to ask any of them about another machine, and mixing their answers into
+  /// a fixture's counters describes two machines in one table (PRD §9.4).
+  /// </remarks>
+  private bool IsThisMachine => this._options.ProcRoot == "/proc" && this._options.SysRoot == "/sys";
 
   public void Sample(SystemSnapshot snapshot) {
     ArgumentNullException.ThrowIfNull(snapshot);
@@ -144,6 +150,38 @@ public sealed class LinuxProbe : ISystemProbe {
     this.ReadLoadAverage(ref system);
     this.ReadPressure(ref system);
     this.ReadUptime(ref system);
+    this.ReadDescriptorCount(ref system);
+  }
+
+  /// <summary>
+  /// How many descriptors the whole machine has open — §46's handle count (PRD §46).
+  /// </summary>
+  /// <remarks>
+  /// <c>file-nr</c> is three numbers: allocated, free, and the ceiling. The middle one has been
+  /// nought since the kernel stopped keeping a free list in 2.6 and is skipped rather than reported
+  /// as a real zero. One file of thirty bytes a sample, which is what makes a machine-wide figure
+  /// affordable where the per-process one is not (§3.5).
+  /// </remarks>
+  private void ReadDescriptorCount(ref SystemCounters system) {
+    // Before the read: a kernel with no such file — a lockdown mount, a recorded tree that predates
+    // this — must not report a machine with nothing open (PRD §5.3).
+    system.OpenDescriptors = Counter.NotSupported;
+    system.DescriptorLimit = Counter.NotSupported;
+
+    Span<byte> pathBuffer = stackalloc byte[ProcPath.MaxLength];
+    if (!this._reader.TryRead(ProcPath.Build(pathBuffer, this._procRootUtf8, "sys/fs/file-nr"u8), out var content, out _))
+      return;
+
+    var scanner = new AsciiScanner(content);
+    var open = scanner.NextField();
+    if (open.IsEmpty)
+      return;
+
+    system.OpenDescriptors = Counter.Of(AsciiScanner.ParseUInt64(open));
+    scanner.Skip(1);
+    var limit = scanner.NextField();
+    if (!limit.IsEmpty)
+      system.DescriptorLimit = Counter.Of(AsciiScanner.ParseUInt64(limit));
   }
 
   private void ReadStat(SystemSnapshot snapshot, ref SystemCounters system) {
@@ -189,6 +227,10 @@ public sealed class LinuxProbe : ISystemProbe {
         system.ContextSwitches = Counter.Of(AsciiScanner.ParseUInt64(line[_ctxtPrefix.Length..]));
       else if (AsciiScanner.StartsWith(line, _intrPrefix))
         system.Interrupts = Counter.Of(AsciiScanner.ParseUInt64(line[_intrPrefix.Length..]));
+      // The first number on each of these two lines is the total; the rest is one column per vector,
+      // which is what /proc/interrupts and /proc/softirqs break out and this page does not need.
+      else if (AsciiScanner.StartsWith(line, _softirqPrefix))
+        system.SoftInterrupts = Counter.Of(AsciiScanner.ParseUInt64(line[_softirqPrefix.Length..]));
       else if (AsciiScanner.StartsWith(line, _procsPrefix))
         system.ProcessesCreated = Counter.Of(AsciiScanner.ParseUInt64(line[_procsPrefix.Length..]));
       else if (AsciiScanner.StartsWith(line, _procsRunningPrefix))
@@ -572,10 +614,16 @@ public sealed class LinuxProbe : ISystemProbe {
     if (this._diskInfo.TryGetValue(name, out var known))
       return known;
 
-    var info = LinuxDeviceReader.Describe(this._options.SysRoot, name);
+    // Worked out once for the whole machine rather than per disk: the mount table and the swap list
+    // are one file each and answer about every device at once (PRD §48).
+    this._storage ??= new(this._options.SysRoot, this._options.ProcRoot);
+    var info = LinuxDeviceReader.Describe(this._options.SysRoot, name, this._storage);
     this._diskInfo[name] = info;
     return info;
   }
+
+  /// <summary>Which disk each mount and swap area is on, read the first time a disk is described.</summary>
+  private LinuxStorageLayout? _storage;
 
   /// <summary>
   /// The limits the process runs under, read fresh: a container's quota can be changed while it runs.
@@ -750,7 +798,12 @@ public sealed class LinuxProbe : ISystemProbe {
     if (this._interfaceInfo.TryGetValue(name, out var known))
       return known;
 
-    var info = LinuxDeviceReader.DescribeInterface(this._options.SysRoot, name);
+    var info = LinuxDeviceReader.DescribeInterface(
+      this._options.SysRoot,
+      name,
+      this._options.ProcRoot,
+      this.IsThisMachine
+    );
     this._interfaceInfo[name] = info;
     return info;
   }

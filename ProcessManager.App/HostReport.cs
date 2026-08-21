@@ -31,7 +31,8 @@ internal static class HostReport {
       sampler.Delta,
       probe.DescribeDisk,
       probe.DescribeInterface,
-      probe.DescribeGpus
+      probe.DescribeGpus,
+      topology: probe.DescribeTopology()
     );
 
     foreach (var section in sections) {

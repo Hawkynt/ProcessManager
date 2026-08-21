@@ -199,6 +199,27 @@ public sealed class SnapshotDelta {
   /// </remarks>
   public Rate SystemContextSwitchesPerSecond { get; private set; } = Rate.NotSampledYet;
 
+  /// <summary>Hard interrupts across the whole machine, per second (PRD §46).</summary>
+  public Rate SystemInterruptsPerSecond { get; private set; } = Rate.NotSampledYet;
+
+  /// <summary>
+  /// Soft interrupts per second — the kernel's deferred work, and the closest thing this machine has
+  /// to a DPC rate (PRD §46).
+  /// </summary>
+  public Rate SystemSoftInterruptsPerSecond { get; private set; } = Rate.NotSampledYet;
+
+  /// <summary>
+  /// How much of the interval the machine spent servicing interrupts, hard and deferred.
+  /// </summary>
+  /// <remarks>
+  /// Both of these are already inside <see cref="SystemKernelPercent"/> and are broken out because
+  /// the question they answer is a different one: kernel time says the machine is in the kernel, and
+  /// only these say it is in there on behalf of a device rather than on behalf of a process.
+  /// </remarks>
+  public Rate SystemInterruptPercent { get; private set; } = Rate.NotSampledYet;
+
+  public Rate SystemSoftInterruptPercent { get; private set; } = Rate.NotSampledYet;
+
   /// <summary>The machine's kernel and user time, the same split as the per-core figures.</summary>
   public Rate SystemKernelPercent { get; private set; } = Rate.NotSampledYet;
 
@@ -252,6 +273,10 @@ public sealed class SnapshotDelta {
       this.SystemKernelPercent = Rate.NotSampledYet;
       this.SystemUserPercent = Rate.NotSampledYet;
       this.SystemContextSwitchesPerSecond = Rate.NotSampledYet;
+      this.SystemInterruptsPerSecond = Rate.NotSampledYet;
+      this.SystemSoftInterruptsPerSecond = Rate.NotSampledYet;
+      this.SystemInterruptPercent = Rate.NotSampledYet;
+      this.SystemSoftInterruptPercent = Rate.NotSampledYet;
       this.PerCoreCount = 0;
       var processes = current.Processes;
       for (var i = 0; i < processes.Length; ++i) {
@@ -338,6 +363,12 @@ public sealed class SnapshotDelta {
     this.SystemUserPercent = RateCalculator.UserPercent(previous.System.Cpu, current.System.Cpu);
     this.SystemContextSwitchesPerSecond =
       RateCalculator.PerSecond(previous.System.ContextSwitches, current.System.ContextSwitches, elapsed);
+    this.SystemInterruptsPerSecond =
+      RateCalculator.PerSecond(previous.System.Interrupts, current.System.Interrupts, elapsed);
+    this.SystemSoftInterruptsPerSecond =
+      RateCalculator.PerSecond(previous.System.SoftInterrupts, current.System.SoftInterrupts, elapsed);
+    this.SystemInterruptPercent = RateCalculator.InterruptPercent(previous.System.Cpu, current.System.Cpu);
+    this.SystemSoftInterruptPercent = RateCalculator.SoftInterruptPercent(previous.System.Cpu, current.System.Cpu);
 
     var coreCount = Math.Min(previous.PerCoreCount, current.PerCoreCount);
     EnsureLength(ref this._perCoreBusy, coreCount);
@@ -383,12 +414,31 @@ public sealed class SnapshotDelta {
   /// Share of the interval the device had at least one request in flight — what Task Manager calls
   /// active time. Saturates at 100 and says nothing about queue depth.
   /// </param>
+  /// <param name="QueueLength">
+  /// How many requests were outstanding on average over the interval — the time-weighted depth, not
+  /// the instantaneous one. A disk at 100 % active time with a queue of one is saturated by a single
+  /// client; the same disk with a queue of thirty is being asked for far more than it can do, and
+  /// active time alone cannot tell the two apart (PRD §48).
+  /// </param>
+  /// <param name="ReadLatencyMilliseconds">
+  /// How long the average read waited, from queueing to completion. Wall-clock per request rather
+  /// than device time, which is why a queued request's wait includes the requests in front of it.
+  /// </param>
+  /// <param name="ResponseTimeMilliseconds">
+  /// Both directions together, weighted by how many requests each had — a disk doing one slow write
+  /// among a thousand fast reads has a response time near the reads', which is what somebody asking
+  /// "is this disk slow" means.
+  /// </param>
   public readonly record struct DiskRates(
     Rate ReadBytesPerSecond,
     Rate WriteBytesPerSecond,
     Rate ReadOperationsPerSecond,
     Rate WriteOperationsPerSecond,
-    Rate BusyPercent
+    Rate BusyPercent,
+    Rate QueueLength,
+    Rate ReadLatencyMilliseconds,
+    Rate WriteLatencyMilliseconds,
+    Rate ResponseTimeMilliseconds
   );
 
   public readonly record struct NetworkRates(
@@ -402,7 +452,8 @@ public sealed class SnapshotDelta {
   // present and it is zero". A device plugged in a moment ago would report a confident zero for
   // every rate it has (PRD §72.3).
   private static readonly DiskRates _NoDiskRates = new(
-    Rate.NotSampledYet, Rate.NotSampledYet, Rate.NotSampledYet, Rate.NotSampledYet, Rate.NotSampledYet
+    Rate.NotSampledYet, Rate.NotSampledYet, Rate.NotSampledYet, Rate.NotSampledYet, Rate.NotSampledYet,
+    Rate.NotSampledYet, Rate.NotSampledYet, Rate.NotSampledYet, Rate.NotSampledYet
   );
 
   private static readonly NetworkRates _NoNetworkRates = new(
@@ -437,12 +488,27 @@ public sealed class SnapshotDelta {
       if (!this._previousDisks.TryGetValue(disk.Name, out var before))
         continue;
 
+      var reads = disk.ReadOperations.Since(before.ReadOperations);
+      var writes = disk.WriteOperations.Since(before.WriteOperations);
       this._diskRates[disk.Name] = new(
         RateCalculator.PerSecond(before.ReadBytes, disk.ReadBytes, elapsed),
         RateCalculator.PerSecond(before.WriteBytes, disk.WriteBytes, elapsed),
         RateCalculator.PerSecond(before.ReadOperations, disk.ReadOperations, elapsed),
         RateCalculator.PerSecond(before.WriteOperations, disk.WriteOperations, elapsed),
-        BusyPercent(before.BusyMilliseconds, disk.BusyMilliseconds, elapsed)
+        BusyPercent(before.BusyMilliseconds, disk.BusyMilliseconds, elapsed),
+        // Millisecond-requests accumulated over the interval, against the interval in milliseconds:
+        // the average number outstanding. Per second and then divided by a thousand, so the whole
+        // calculation goes through the one place a division is allowed to happen.
+        Scaled(RateCalculator.PerSecond(before.WeightedQueueMilliseconds, disk.WeightedQueueMilliseconds, elapsed), 1 / 1000d),
+        Latency(disk.ReadWaitMilliseconds.Since(before.ReadWaitMilliseconds), reads),
+        Latency(disk.WriteWaitMilliseconds.Since(before.WriteWaitMilliseconds), writes),
+        Latency(
+          Add(
+            disk.ReadWaitMilliseconds.Since(before.ReadWaitMilliseconds),
+            disk.WriteWaitMilliseconds.Since(before.WriteWaitMilliseconds)
+          ),
+          Add(reads, writes)
+        )
       );
     }
 
@@ -463,6 +529,37 @@ public sealed class SnapshotDelta {
       );
     }
   }
+
+  /// <summary>
+  /// Milliseconds of waiting against the requests that did the waiting (PRD §48).
+  /// </summary>
+  /// <remarks>
+  /// An interval in which nothing was asked of the disk has no latency — not a nought, which would
+  /// draw an idle disk as an infinitely fast one. Zero requests is the ordinary case on a machine
+  /// doing nothing, so it is the one that has to be right (PRD §5.3).
+  /// </remarks>
+  private static Rate Latency(Counter waited, Counter requests) {
+    if (!waited.HasValue)
+      return Rate.Unknown(waited.Reason);
+
+    if (!requests.HasValue)
+      return Rate.Unknown(requests.Reason);
+
+    return requests.Value == 0
+      ? Rate.Unknown(UnknownReason.NotSampledYet)
+      : Rate.Of((double)waited.Value / requests.Value);
+  }
+
+  /// <summary>Two counters added, unknown unless both are — an unknown plus a number is unknown.</summary>
+  private static Counter Add(Counter first, Counter second) {
+    if (!first.HasValue)
+      return Counter.Unknown(first.Reason);
+
+    return second.HasValue ? Counter.Of(first.Value + second.Value) : Counter.Unknown(second.Reason);
+  }
+
+  private static Rate Scaled(Rate rate, double factor)
+    => rate.HasValue ? Rate.Of(rate.Value * factor) : rate;
 
   /// <summary>
   /// Busy milliseconds against wall-clock nanoseconds, as a percentage.

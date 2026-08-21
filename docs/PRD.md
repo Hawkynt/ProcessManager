@@ -2238,8 +2238,12 @@ Four levels, and nothing may jump a level:
 - [x] Optional sensors and devices — every hwmon chip, grouped by chip, with temperatures and
       fans first and the electrical channels in the collapsed block
 
-- [ ] The page opens on whatever is under the greatest meaningful load rather than always on the
-      processor, with a setting to turn that off
+- [x] The page opens on whatever is under the greatest meaningful load rather than always on the
+      processor, with a setting to turn that off — `performance.busiest=false`. **Meaningful** is
+      the load-bearing word: only the resources whose primary measures how hard they are being
+      worked are compared, because a battery at 100 % charge and a sensor chip at 65 °C on a
+      hundred-degree scale are percentages of exactly the right shape that measure no load at all,
+      and both beat a processor at 60 %. Without that test the page opened on a full battery
 
 ## 45.4 Graphs
 
@@ -2248,7 +2252,12 @@ Four levels, and nothing may jump a level:
 - [x] Selectable history: 30 s · 60 s · 2 min · 5 min · 15 min — the axis is the span rather than
       the sample count, so a page open for sixteen seconds fills the right quarter of a minute-wide
       graph instead of stretching sixteen samples across it
-- [ ] Optional 500 ms mode
+- [ ] 🟡 Optional 500 ms mode — the page already draws whatever interval it is told, half a second
+      included: the axis is a span in seconds divided by the sample interval, and `interval=0.5`
+      gives the whole program a two-hertz tick that it renders correctly. What is missing is a
+      control on the page itself, and that is not the page's to offer — the tick belongs to the main
+      window, and a graph page that changed the rate under it would leave that window's own plots
+      labelled with an axis they no longer have
 - [x] Engineering graticule — major and minor rules, graph paper rather than an analytics chart
 - [x] Thin resource-coloured stroke over a translucent fill; no data-point markers; no animation
       that gets in the way of reading the current value
@@ -2385,13 +2394,19 @@ wrong, and which the tests now catch.
 - [x] L1 / L2 / L3 cache — data and instruction separately at L1
 - [x] Process count
 - [x] Thread count
-- [ ] Handle / resource count
+- [x] Handle / resource count — open descriptors across the whole machine, from
+      `/proc/sys/fs/file-nr`, which is what Linux hands out instead of handles. One small file
+      rather than a sum over four hundred processes, which is what makes it affordable at all
+      (§3.5); its ceiling is `fs.file-max`, routinely nine quintillion, and is said in words
 - [x] Uptime
 - [x] **Pressure stall information** — how much of the last ten, sixty and three hundred seconds
       something was stalled waiting for the processor
-- [ ] Context switches per second
-- [ ] Interrupts per second
-- [ ] System calls per second
+- [x] Context switches per second
+- [x] Interrupts per second
+- [ ] System calls per second — refused. Linux keeps no machine-wide counter for them: the figure
+      can be had per process with `ptrace` or a BPF probe, and both are far more intrusive than a
+      performance page has any business being. The context-switch count moves at a similar speed
+      and is a different number, which is exactly why it is not shown under this name (§5.3)
 
 **Pressure is a different question from utilisation, and usually the better one.** A processor at
 100 % is not in trouble if nothing is waiting for it; a processor at 60 % with things queued behind
@@ -2411,7 +2426,23 @@ identical otherwise, and one of them may be thrashing (§5.3).
 
 Three small files for the whole machine, so this costs three reads a sample however many processes
 there are — unlike the per-process figures of §5.4.
-- [ ] DPC-like kernel activity
+- [x] DPC-like kernel activity — soft interrupts, which are what a DPC is on this machine: the work
+      a hard interrupt handler deferred so it could return. Counted per second beside the hard
+      interrupts, and their share of the interval broken out of the kernel time that already
+      contains it, because kernel time cannot say whether the machine is in there for a process or
+      for a device. A machine at 30 % kernel of which 25 is soft IRQ is an adapter drowning it
+- [x] Frequency scaling — the range the clock is allowed, taken across every processor rather than
+      from cpu0, because a part with favoured cores does not have one ceiling: this laptop's
+      favoured cores reach 5.0 GHz and the rest 4.9, so cpu0's answer disagrees with `lscpu`. The
+      governor comes with
+      the driver enforcing it, because `powersave` under `intel_pstate` is a full-range governor and
+      `powersave` under the generic driver is not — the name alone is routinely misread as a
+      throttled machine
+- [x] Where each logical processor sits — socket, physical core, its SMT sibling, whether it is a
+      performance or an efficiency core, and which NUMA node its memory is on. Two logical
+      processors sharing a core do not do twice the work of one, and a saturated efficiency core
+      beside an idle performance core is a scheduling problem rather than a busy machine. A machine
+      that publishes no topology gets none of those rows rather than a column of unknowns
 
 The three rate counters, plus their cumulative totals, belong in the collapsed **system counters**
 section of §45.2 level 4 rather than beside the utilisation — they are diagnostics, not status.
@@ -2470,7 +2501,12 @@ Graph modes:
       plot per core; the terminal has no checkbox and prints them all
 - [x] 🟡 Physical cores — SMT siblings sit adjacent in the heat map, so a physical core reads as a
       pair; they are not yet summed into one cell
-- [ ] NUMA nodes
+- [x] NUMA nodes — one plot per node, each the mean of that node's own processors, since the kernel
+      publishes no per-node CPU line. A checkbox beside the per-core one and exclusive with it: the
+      two are different divisions of the same processor, and showing both at once would put a node's
+      plot beside the plots of the very cores it is the mean of. Offered only where there is more
+      than one node, because "node 0 is the whole machine" is not a distribution and a per-node view
+      of it would be a second copy of the processor's own graph
 
 The main window shows the cores as a **heat map** rather than a meter each. A bar per core is
 readable at eight and useless at sixty-four — four pixels of width is a texture, not a reading —
@@ -2592,12 +2628,31 @@ cache · kernel pools, paged and non-paged, with their allocation and free count
 For each physical disk or device:
 
 - [ ] 🟡 Friendly name ✔ · model ✔ · media type ✔ (rotational or solid state, and *unknown* when
-      the kernel does not say) · capacity ✔ · serial, bus/interface, volumes and the system-disk and
-      page-file indicators are not read ·
-      capacity · formatted capacity · mounted volumes · system-disk indicator · page/swap indicator
-- [ ] 🟡 Active time ✔ · read rate ✔ · write rate ✔ · read IOPS ✔ · write IOPS ✔ · cumulative reads
-      and writes ✔ · average response time, queue length and per-direction latency are not ·
-      queue length · read latency · write latency · cumulative reads · cumulative writes
+      the kernel does not say) · capacity ✔ · serial ✔ · bus/interface ✔ · mounted volumes ✔ ·
+      system-disk indicator ✔ · page/swap indicator ✔ · formatted capacity is not read — it is the
+      sum of the file systems' own sizes rather than anything the block layer knows, and a `statvfs`
+      per mount is a different kind of read from the rest of this
+- [x] Active time ✔ · read rate ✔ · write rate ✔ · read IOPS ✔ · write IOPS ✔ · cumulative reads
+      and writes ✔ · average response time ✔ · queue length ✔ · per-direction latency ✔
+
+**Active time says a disk is busy and nothing else.** The three figures that say whether it is
+*keeping up* are the milliseconds each direction waited and the time-weighted queue depth, all three
+already in `diskstats` and previously skipped over. A disk at 100 % active time with a queue of one
+is saturated by a single client; the same disk at the same active time with a queue of thirty is
+being asked for far more than it can do, and nothing else on the page tells those apart. The
+arithmetic is `iostat`'s, and was checked against it on a disk under load.
+
+A disk with no requests in the interval says **idle** rather than the placeholder meaning "wait one
+interval" — on a disk that stays idle that is a wait with no end (§45.6).
+
+**Which disk a mount is on is followed down the stack, not looked up by device number.** btrfs and
+ZFS report a synthetic `major:minor` of their own — the root of the machine this was written on is
+`0:30` — so a lookup by device number finds nothing for exactly the file systems most likely to be
+the root one. The source path is resolved through `/sys/block` instead: a mapper name to its `dm-N`,
+a device-mapper target to its slaves, a partition to the disk holding it. Every layer is credited,
+because the root really is on the volume, on the container under it and on the disk under both. A
+swap *file* is charged to the disk under the file system holding its path, found by the longest
+mount point that path begins with.
 
 Sources: `/proc/diskstats` — one file for the whole machine, which is what makes this affordable on
 the sampling path where the per-process figures of §18 are not. Whole devices only: a partition is
@@ -2609,37 +2664,71 @@ Windows needs `IOCTL_STORAGE_QUERY_PROPERTY` and the disk performance counters, 
 Graphs — two, not one:
 
 - [x] **Active time**, fixed 0–100 %
-- [x] 🟡 **Transfer rate** on a dynamic scale whose unit follows the traffic — one combined line,
-      with reads and writes named separately in its label; two lines are not drawn yet. Active time
-      says a disk is busy; only the transfer rate says whether that is a hundred large reads or a
-      hundred thousand small ones
+- [x] **Transfer rate** on a dynamic scale whose unit follows the traffic, as two lines: reads as
+      the filled area and writes as a line over it, both in the disk's own accent. Their sum was one
+      line until now, and a disk reading at 500 MB/s and one writing at 500 MB/s draw the same
+      combined line and are not the same machine. Active time says a disk is busy; only the transfer
+      rate says whether that is a hundred large reads or a hundred thousand small ones
 
-- [ ] Optional hardware-health plugin: temperature · wear · SMART/NVMe health · remaining life
+- [ ] Optional hardware-health plugin: temperature · wear · SMART/NVMe health · remaining life —
+      the temperature is already on the page as its own hwmon chip (§45.3), and the rest needs a
+      privileged `ioctl` per device: `NVME_IOCTL_ADMIN_CMD` for a health log, `SG_IO` for a SMART
+      one. Both are a different kind of access from every read in this program, which is the reason
+      the box below exists
 - [ ] Hardware health is **separately permissioned**, because platform coverage varies too much for
       it to be a baseline promise
 
 # 49. Network adapter performance
 
-- [ ] 🟡 Name ✔ · state ✔ · description, type and interface index are not
-- [ ] 🟡 Link speed ✔ where the kernel reports one — absent on Wi-Fi and on anything virtual, and
-      reported as unknown rather than as a dead link. Utilisation needs the link speed, so it is not
+- [x] Name ✔ · state ✔ · description ✔ · type ✔ · interface index ✔ — the type from what the kernel
+      publishes about the interface rather than from its name: `phy80211` exists only on a wireless
+      one, a `device` symlink is what a real piece of hardware has, and its absence is what makes an
+      interface virtual. Names are a convention that predictable naming already broke once, and
+      `enp0s31f6` begins with none of the old ones
+- [x] Link speed where the kernel reports one — absent on Wi-Fi and on anything virtual, and
+      reported as unknown rather than as a dead link — and utilisation where there is a speed to
+      divide by, and only there: a percentage of a guessed denominator is worse than no percentage
 - [x] Send rate · receive rate · errors · drops — packets are counted and their rate is computed
-- [ ] 🟡 MTU ✔ · MAC address ✔ · the addresses and the gateway are not
-- [ ] DNS servers where readable
-- [ ] Wi-Fi SSID and signal strength where permitted
-- [ ] Graph modes: total · send vs receive — receive and send drawn as distinguishable lines within
-      the one network accent, on a dynamic scale that reads Kbps, Mbps or Gbps as the traffic requires
-- [ ] Wi-Fi pages additionally carry SSID · protocol · signal strength · channel · band
+- [x] MTU ✔ · MAC address ✔ · addresses ✔ with their prefix lengths · gateway ✔. The addresses come
+      from `getifaddrs`, because no `/proc` file lists an interface's IPv4 ones; the gateway from the
+      routing tables, whose two files disagree about byte order in a way that produces a plausible
+      address belonging to somebody else
+- [x] DNS servers where readable — and where `resolv.conf` holds nothing but systemd-resolved's stub
+      listener, the resolver's own upstream list instead: 127.0.0.53 is this machine talking to
+      itself and describes nothing about the network
+- [x] Wi-Fi SSID and signal strength where permitted — the SSID through the wireless extensions,
+      which every driver still answers and a kernel built without `CONFIG_CFG80211_WEXT` refuses,
+      reported then as unknown rather than as an adapter associated with nothing; the signal from
+      `/proc/net/wireless` in dBm, with a positive "dBm" refused because it is the old relative scale
+      wearing this one's name
+- [x] Graph modes: total · send vs receive — receive as the filled area and send as a line over it,
+      both in the one network accent, on a dynamic scale that follows the traffic. Two lines in two
+      shades of one colour are a pair nobody can tell apart at a pixel wide, which is why it is one
+      of each rather than two of the same
+- [ ] 🟡 Wi-Fi pages additionally carry SSID ✔ · signal strength ✔ · channel ✔ · band ✔ · protocol
+      is not: the negotiated 802.11 generation lives in the association's rate table behind nl80211,
+      and an adapter's own capability is not what it negotiated (§5.3)
 
-Sources: `/sys/class/net/*` and `/proc/net/dev`; `GetIfTable2` and `GetAdaptersAddresses`.
+Sources: `/sys/class/net/*` and `/proc/net/dev` for the counters and the description; `getifaddrs`
+for the addresses, `/proc/net/route` and `/proc/net/ipv6_route` for the gateway, `resolv.conf` for
+the nameservers, and the `SIOCGIW*` ioctls for what a wireless adapter is associated with.
+`GetIfTable2` and `GetAdaptersAddresses` on Windows.
 
 # 50. GPU performance
 
 - [x] Adapter name · vendor · device · driver
-- [ ] 🟡 Memory totals · dedicated memory · shared memory · current dedicated usage · current shared
-      usage — dedicated total and in-use, plus how busy the memory bus is; shared memory is not read
+- [ ] 🟡 Memory totals ✔ · dedicated memory ✔ · current dedicated usage ✔ · how busy the memory bus
+      is ✔ · shared memory is not read — what a card borrows from the machine's own memory is what
+      Task Manager's second figure is, and nothing on Linux publishes it: NVML's BAR1 is an aperture
+      rather than an allocation, and the DRM accounting is per client. The dedicated figure is
+      `nvmlDeviceGetMemoryInfo_v2`, because the original call counts the driver's own reservation as
+      in use and put the page four hundred megabytes above what every other tool reports
 - [x] Overall utilisation
-- [ ] Per-engine utilisation: compute · graphics · copy · encode · decode
+- [ ] 🟡 Per-engine utilisation: encode ✔ · decode ✔ · compute, graphics and copy are not read —
+      `nvmlDeviceGetUtilizationRates` reports one figure for the shaders with graphics and compute
+      already summed, and no interface takes them apart. The two video engines are shown as one plot
+      with two lines, because a card that is transcoding is using both and either alone reads as an
+      idle video block
 - [x] Temperature, power and clock where available — draw against the ceiling, the momentary cap
       beside it, core and memory clocks, and the fan
 - [x] **OS-provided data is separated from vendor-specific sensor extensions**, and vendor plugins
@@ -2691,11 +2780,20 @@ and hot, and only seeing both at once explains either. Stacked, in this order, e
 - [x] **Utilisation**, 0–100 % — the per-engine selector (3D · compute · copy · decode · encode) is not
 - [x] **Dedicated memory**, scaled to the card's VRAM — `14.7G / 16.0G`
 - [x] **Memory bus**, which sysfs and NVML both offer and Task Manager does not
-- [ ] **Shared memory** — not read
+- [ ] **Shared memory** — not read, and refused with its reason rather than drawn as nought: see §50
+- [x] **Video engines**, encode against decode on one plot
 - [x] **Power**, scaled to the ceiling and labelled with both figures — `25.5 W of 130.0 W`
 - [x] **Temperature**, on the red accent so it never reads as another utilisation figure, and on a
       fixed 0–100 scale so a card idling between 40 and 42 °C does not fill its graph
-- [ ] 🟡 **Fan** — plotted where the card reports one; RPM and multiple fans are not read
+- [ ] 🟡 **Fan** — the duty cycle ✔, the tachometer ✔ and the number of fans ✔; a card with more
+      than one reports only the first. The percentage was previously taken from `fan1_input` where
+      `pwm1` was missing, and that is revolutions a minute — a fan at 1800 rpm was drawn as being
+      1800 % of the way up its range. They are two readings of the same fan and neither can be
+      computed from the other, because nothing publishes the speed a fan turns at flat out
+
+Every scale label is in its series' own unit. They were all rendered as quantities of bytes, so a
+card's power graph was labelled `130 B` two inches from a caption reading `15.6 W of 130.0 W`
+(§76).
 
 A card that exposes no fan sensor shows **no fan graph** (§45.6) rather than an empty one.
 

@@ -28,6 +28,34 @@ public struct DiskCounters {
   /// </remarks>
   public Counter BusyMilliseconds;
 
+  /// <summary>
+  /// Milliseconds spent waiting, summed over every request of that direction (PRD §48).
+  /// </summary>
+  /// <remarks>
+  /// Wall-clock time per request, from when it was queued to when it completed — so a device with a
+  /// deep queue accumulates far more of this than the interval itself contains. Against the count of
+  /// requests it is the average response time, which is the figure that says whether a busy disk is
+  /// keeping up or falling behind. <c>iostat</c>'s <c>r_await</c> and <c>w_await</c> are this
+  /// arithmetic.
+  /// </remarks>
+  public Counter ReadWaitMilliseconds;
+
+  public Counter WriteWaitMilliseconds;
+
+  /// <summary>
+  /// The time-weighted queue depth, in millisecond-requests.
+  /// </summary>
+  /// <remarks>
+  /// The kernel adds the in-flight count to this on every millisecond of activity, so its growth
+  /// over an interval divided by that interval is the average number of requests outstanding — a
+  /// disk at 100 % active time with a queue of one is saturated by one client, and the same disk
+  /// with a queue of thirty-two is being asked for far more than it can do.
+  /// </remarks>
+  public Counter WeightedQueueMilliseconds;
+
+  /// <summary>Requests outstanding at the instant of the sample, which is an instantaneous depth.</summary>
+  public Counter QueuedRequests;
+
 }
 
 /// <summary>What a storage device is, as opposed to what it is doing. Read once (PRD §48).</summary>
@@ -35,11 +63,33 @@ public struct DiskCounters {
 /// <see langword="true"/> for spinning rust, <see langword="false"/> for solid state, and
 /// <see langword="null"/> where the kernel does not say — which is not the same as "no".
 /// </param>
+/// <param name="Serial">
+/// The device's own serial number, where the driver publishes one. Null where it does not — a
+/// virtual disk, a device-mapper target, an SD card — which is not the same as a blank serial.
+/// </param>
+/// <param name="Bus">
+/// What the device is attached by, in the kernel's own word for it: <c>nvme</c>, <c>scsi</c>,
+/// <c>virtio</c>, <c>mmc</c>. Deliberately the subsystem rather than a prettier name: "SATA" and
+/// "USB" are both <c>scsi</c> from here, and inventing the distinction would be a guess.
+/// </param>
+/// <param name="Volumes">
+/// Where this disk is mounted, one entry per mount point, through whatever stack of partitions,
+/// device-mapper targets and RAID sets is between them. Null when the mount table could not be read
+/// at all, empty when it could and nothing on this disk is mounted — two different statements
+/// (PRD §5.3).
+/// </param>
+/// <param name="IsSystemDisk">Whether the root file system lives on it. Null when nobody could tell.</param>
+/// <param name="HoldsSwap">Whether a swap area lives on it, as a partition or as a file.</param>
 public sealed record DiskInfo(
   string Name,
   string? Model,
   bool? Rotational,
-  Counter CapacityBytes
+  Counter CapacityBytes,
+  string? Serial = null,
+  string? Bus = null,
+  IReadOnlyList<string>? Volumes = null,
+  bool? IsSystemDisk = null,
+  bool? HoldsSwap = null
 );
 
 /// <summary>One network interface as one sample saw it (PRD §49).</summary>
@@ -66,14 +116,55 @@ public struct NetworkCounters {
 /// reported as unknown rather than as zero, which would read as a dead link.
 /// </param>
 /// <param name="State">operstate: up, down, unknown, dormant.</param>
+/// <param name="Index">
+/// The kernel's <c>ifindex</c> — what the routing table, netlink and every packet capture identify
+/// this interface by, and the only name for it that does not change when udev renames the device.
+/// </param>
+/// <param name="Kind">
+/// What sort of interface it is: <c>ethernet</c>, <c>wireless</c>, <c>loopback</c>, <c>bridge</c>,
+/// <c>tunnel</c>, <c>virtual</c>. Worked out from what the kernel publishes about it rather than
+/// from its name, because a name is a convention and a machine with two of anything breaks it.
+/// </param>
+/// <param name="Driver">The module driving it — <c>iwlwifi</c>, <c>e1000e</c> — or null for a
+/// virtual interface, which has none.</param>
+/// <param name="Addresses">
+/// Every address it carries, as <c>address/prefix</c>. Empty means it is up and has none, which is a
+/// real state; null means nobody could ask (PRD §5.3).
+/// </param>
+/// <param name="Gateway">The default route through this interface, where it has one.</param>
+/// <param name="DnsServers">
+/// Who the machine asks about names. A machine-wide fact rather than a per-interface one — the
+/// resolver has one list however many adapters are up — and carried here because this is the page
+/// where somebody looks for it.
+/// </param>
+/// <param name="Ssid">The network a wireless adapter is associated with, or null for anything else.</param>
+/// <param name="SignalDbm">
+/// How well it hears that network, in dBm: about −40 is excellent and −85 is unusable. Negative by
+/// nature, which is why it is not a <see cref="Counter"/>.
+/// </param>
+/// <param name="FrequencyMegahertz">What it is tuned to, from which the channel and band follow.</param>
 public sealed record NetworkInterfaceInfo(
   string Name,
   string? MacAddress,
   Counter LinkSpeedBitsPerSecond,
   string? State,
   Counter MaximumTransmissionUnit,
-  bool IsLoopback
-);
+  bool IsLoopback,
+  int? Index = null,
+  string? Kind = null,
+  string? Driver = null,
+  IReadOnlyList<string>? Addresses = null,
+  string? Gateway = null,
+  IReadOnlyList<string>? DnsServers = null,
+  string? Ssid = null,
+  int? SignalDbm = null,
+  int? FrequencyMegahertz = null
+) {
+
+  /// <summary>Whether this is a wireless adapter, which is what gives it four rows nothing else has.</summary>
+  public bool IsWireless => this.Kind == "wireless";
+
+}
 
 /// <summary>
 /// One graphics adapter, as one reading saw it (PRD §50).
@@ -112,6 +203,25 @@ public sealed record NetworkInterfaceInfo(
 /// How much of the interval the memory bus was being read or written, which is a different question
 /// from how full the memory is and often the one that explains a stall.
 /// </param>
+/// <param name="FanPercent">
+/// How fast the fan is turning as a share of what it can do. Not the same reading as
+/// <paramref name="FanRpm"/> and not derivable from it: the maximum a card's fan can turn at is not
+/// published anywhere, so revolutions cannot be turned into a percentage (PRD §5.3).
+/// </param>
+/// <param name="FanRpm">
+/// Revolutions a minute, where there is a tachometer to read. hwmon publishes them and NVML does
+/// not, which is why both readings exist rather than one being computed from the other.
+/// </param>
+/// <param name="FanCount">
+/// How many fans the card has. Nought is a real answer — a laptop card whose cooling belongs to the
+/// chassis has none of its own — and is why an unreadable fan speed on such a card is the truth
+/// rather than a failure.
+/// </param>
+/// <param name="EncodePercent">
+/// The video engines, which are the two of §50's five that a driver will name separately. The
+/// shaders' figure in <paramref name="BusyPercent"/> already has graphics and compute summed and no
+/// interface splits them, so those two and the copy engines are unread rather than invented.
+/// </param>
 public sealed record GpuInfo(
   string Name,
   string? Model,
@@ -127,5 +237,9 @@ public sealed record GpuInfo(
   Counter MemoryBusyPercent,
   Counter CoreClockHertz,
   Counter MemoryClockHertz,
-  Counter FanPercent
+  Counter FanPercent,
+  Counter FanRpm,
+  Counter FanCount,
+  Counter EncodePercent,
+  Counter DecodePercent
 );

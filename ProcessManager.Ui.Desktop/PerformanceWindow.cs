@@ -56,6 +56,19 @@ public sealed class PerformanceWindow : Form {
   private readonly HistoryPlot _plot = new();
   private readonly MenuStrip _menu = new();
   private readonly CheckBox _perCore = new() { Text = "Per logical processor" };
+
+  /// <summary>
+  /// The third of §46's graph modes, and only on a machine that has more than one node.
+  /// </summary>
+  /// <remarks>
+  /// Beside the per-core box rather than replacing it, and the two are exclusive: they are two ways
+  /// of dividing the same processor and showing both at once would put a node's plot beside the
+  /// plots of the very cores it is the mean of.
+  /// </remarks>
+  private readonly CheckBox _perNode = new() { Text = "Per NUMA node", Visible = false };
+
+  /// <summary>How the processors are arranged, read once — nothing repartitions while we watch.</summary>
+  private readonly CpuTopology _topology;
   private readonly Button _pause = new() { Text = "Pause" };
   private readonly Button _inspect = new() { Text = "Expand" };
   private readonly ComboBox _spanBox = new() { DropDownStyle = ComboBoxStyle.DropDownList };
@@ -134,12 +147,19 @@ public sealed class PerformanceWindow : Form {
   /// </remarks>
   private (int Rows, int Longest) _diagnostics;
 
-  public PerformanceWindow(ISystemProbe probe, Sampler sampler) {
+  /// <param name="openOnBusiest">
+  /// Whether to open on whatever is under the greatest load. Null reads the setting from the file,
+  /// which is what the program does; a caller that says either way is not asking about anybody's
+  /// configuration — which is what lets this be tested without one (PRD §67).
+  /// </param>
+  public PerformanceWindow(ISystemProbe probe, Sampler sampler, bool? openOnBusiest = null) {
     ArgumentNullException.ThrowIfNull(probe);
     ArgumentNullException.ThrowIfNull(sampler);
 
     this._probe = probe;
     this._sampler = sampler;
+    this._topology = probe.DescribeTopology();
+    this.OpenOnBusiest = openOnBusiest ?? Settings.SettingsStore.Load().PerformanceOpensOnBusiest;
 
     this.Text = "System information";
     // A secondary window closing must not take the program with it. Form.QuitsOnClose defaults to
@@ -173,9 +193,24 @@ public sealed class PerformanceWindow : Form {
     // The processor's two views, as one box rather than as twenty rail entries: a machine with
     // twenty cores would bury the disks under them, and the question "overall or per core" is one
     // switch and not twenty destinations (PRD §46).
-    this._perCore.CheckedChanged += (_, _) => this.ShowSelected(force: true);
+    this._perCore.CheckedChanged += (_, _) => {
+      if (this._perCore.Checked)
+        this._perNode.Checked = false;
+
+      this.ShowSelected(force: true);
+    };
+
     this._perCore.Visible = false;
     this.Controls.Add(this._perCore);
+
+    this._perNode.CheckedChanged += (_, _) => {
+      if (this._perNode.Checked)
+        this._perCore.Checked = false;
+
+      this.ShowSelected(force: true);
+    };
+
+    this.Controls.Add(this._perNode);
 
     this.BuildGraphControls();
 
@@ -232,6 +267,16 @@ public sealed class PerformanceWindow : Form {
 
   /// <summary>Whether the drawing is frozen. Collection carries on regardless (PRD §45.4).</summary>
   public bool Paused => this._frozenSamples >= 0;
+
+  /// <summary>
+  /// Whether the page opens on whatever is under the greatest load (PRD §45.3, §67).
+  /// </summary>
+  /// <remarks>
+  /// Read from the settings file when the window is built, and only ever consulted while nothing is
+  /// selected: once a reader has chosen a resource, a disk that gets briefly busy must not take the
+  /// page away from them.
+  /// </remarks>
+  public bool OpenOnBusiest { get; set; } = true;
 
   #region the strip above the graphs (PRD §45.4, §45.8)
 
@@ -378,6 +423,9 @@ public sealed class PerformanceWindow : Form {
     graph.DropDownItems.Add(new ToolStripSeparator());
     graph.DropDownItems.Add(Item("Expand…", this.Inspect));
     graph.DropDownItems.Add(Item("Show logical processors", () => this._perCore.Checked = !this._perCore.Checked));
+    // Does nothing on a machine with one node, like Ctrl+6 on a machine with no discrete graphics:
+    // the mode has nothing to divide, and landing somewhere else would be worse than doing nothing.
+    graph.DropDownItems.Add(Item("Show NUMA nodes", () => this._perNode.Checked = !this._perNode.Checked));
     this._menu.Items.Add(graph);
 
     var copy = new ToolStripMenuItem("Copy");
@@ -617,7 +665,8 @@ public sealed class PerformanceWindow : Form {
       this._sampler.Delta,
       this._probe.DescribeDisk,
       this._probe.DescribeInterface,
-      this._probe.DescribeGpus
+      this._probe.DescribeGpus,
+      topology: this._topology
     );
 
     this.RecordHistory();
@@ -647,8 +696,14 @@ public sealed class PerformanceWindow : Form {
 
       // One ring per series, so a GPU's six move independently and a disk's transfer rate is not
       // overwritten by its active time.
-      foreach (var graph in section.Series)
+      foreach (var graph in section.Series) {
         this.Ring(SeriesKey(section.Title, graph.Label)).Add(graph.Value);
+        // And one more for a second line where the series has one — a disk's writes under its
+        // reads, an adapter's send under its receive. Only where it was asked for: a ring fed
+        // default(Rate) would draw a confident nought along the floor (PRD §5.3).
+        if (graph.HasCompanion)
+          this.Ring(CompanionKey(section.Title, graph.Label)).Add(graph.Companion);
+      }
 
       this.Ring(section.Title).Add(section.Primary);
 
@@ -678,7 +733,16 @@ public sealed class PerformanceWindow : Form {
   /// A series is identified by its section and its label together, with a separator no label can
   /// contain — "Temperature" belongs to a GPU, and two GPUs each have one.
   /// </summary>
-  private static string SeriesKey(string section, string label) => $"{section} {label}";
+  private static string SeriesKey(string section, string label) => $"{section}\0{label}";
+
+  /// <summary>
+  /// And the second line of one, kept apart by the same separator.
+  /// </summary>
+  /// <remarks>
+  /// A key of its own rather than a second ring hanging off the first, because everything that reads
+  /// history here — the plot, the ceiling, the inspection view — takes a ring and a name.
+  /// </remarks>
+  private static string CompanionKey(string section, string label) => $"{section}\0{label}\0second";
 
   /// <summary>
   /// Keeps the rail in step with the sections.
@@ -709,7 +773,9 @@ public sealed class PerformanceWindow : Form {
 
       this._rail.SelectedIndex = this._rail.Items.Count == 0
         ? -1
-        : selected < 0 ? this.BusiestOf(wanted) : Math.Clamp(selected, 0, this._rail.Items.Count - 1);
+        : selected < 0
+          ? this.OpenOnBusiest ? this.BusiestOf(wanted) : 0
+          : Math.Clamp(selected, 0, this._rail.Items.Count - 1);
 
       return;
     }
@@ -722,10 +788,12 @@ public sealed class PerformanceWindow : Form {
   /// Which resource to open on: whatever is under the greatest load (PRD §45.3).
   /// </summary>
   /// <remarks>
-  /// Only the ones on a fixed 0–100 scale are compared, because those are the only ones whose
-  /// numbers mean the same thing. A network adapter's headline is bytes per second, and eleven
-  /// thousand of those is not busier than a processor at eleven percent — it is a different quantity
-  /// wearing a larger number.
+  /// Only the ones that measure a load are compared, and only on a fixed 0–100 scale. Both halves
+  /// are needed. A network adapter's headline is bytes per second, and eleven thousand of those is
+  /// not busier than a processor at eleven percent — it is a different quantity wearing a larger
+  /// number. And a battery at 100 % charge or a sensor chip reading 65 °C on a hundred-degree scale
+  /// are percentages of the right shape that measure no load at all: without the second test the
+  /// page opened on a fully charged battery on every laptop (PRD §45.3).
   /// <para>
   /// Ties go to the earlier entry, which puts the processor first when the machine is idle. Somebody
   /// opening this page on a quiet machine expects the processor, not whichever disk happened to
@@ -736,7 +804,7 @@ public sealed class PerformanceWindow : Form {
     var best = 0;
     var highest = double.NegativeInfinity;
     for (var i = 0; i < titles.Count; ++i) {
-      if (this.Find(titles[i]) is not { PrimaryMaximum: 100 } section || !section.Primary.HasValue)
+      if (this.Find(titles[i]) is not { PrimaryMaximum: 100, PrimaryIsLoad: true } section || !section.Primary.HasValue)
         continue;
 
       if (section.Primary.Value <= highest)
@@ -826,7 +894,11 @@ public sealed class PerformanceWindow : Form {
     // and the inspection view, plus the processor's own switch on the left where it belongs to the
     // page rather than to the graphs.
     var strip = top + 30;
+    // The per-core box keeps its full width: at two hundred pixels its own label was drawn as
+    // "Per logical processor (16" — a control clipped by the control beside it, which is the same
+    // failure as a statistic dropped off the bottom of a column.
     this._perCore.Bounds = new(left, strip, 220, 22);
+    this._perNode.Bounds = new(left + 226, strip, 170, 22);
     this._inspect.Bounds = new(left + width - 90, strip, 90, 24);
     this._pause.Bounds = new(left + width - 186, strip, 90, 24);
     // A little taller than the buttons beside it: a drop-down list draws its own frame inside its
@@ -1041,16 +1113,31 @@ public sealed class PerformanceWindow : Form {
     this._diagnostics = DiagnosticsOf(chosen);
     this.ApplyLayout();
 
-    var parts = this.PartsOf(title);
-    this._perCore.Visible = parts.Count > 0;
-    this._perCore.Text = $"Per logical processor ({parts.Count})";
-    var split = this._perCore.Visible && this._perCore.Checked;
+    var cores = this.PartsOf(title);
+    // Only the processor has nodes under it, and only on a machine with more than one — the report
+    // builds none otherwise, so this is empty rather than switched off by name here.
+    var nodes = this.PartsOf(PerformanceReport.NodeGroup);
+    this._perCore.Visible = cores.Count > 0;
+    this._perCore.Text = $"Per logical processor ({cores.Count})";
+    this._perNode.Visible = cores.Count > 0 && nodes.Count > 0;
+    this._perNode.Text = $"Per NUMA node ({nodes.Count})";
 
-    // Three shapes, in order of specificity: the cores when asked for, a resource's own stack of
+    List<PerformanceSection> parts = this._perNode.Visible && this._perNode.Checked ? nodes
+      : this._perCore.Visible && this._perCore.Checked ? cores
+      : [];
+
+    var split = parts.Count > 0;
+
+    // Three shapes, in order of specificity: the parts when asked for, a resource's own stack of
     // series where it has more than one, and otherwise the single plot.
+    //
+    // A lone series with a second line goes through the stack as well, because only that path draws
+    // companions. An adapter has exactly one graph — receive against send — and through the single
+    // plot it drew the sum of the two as one filled area and quietly dropped the second line
+    // (PRD §49).
     var series = chosen.Series;
-    var stacked = !split && series.Count > 1;
-    this.LayOutPlots(split ? parts : [], stacked ? (title, series) : default);
+    var stacked = !split && (series.Count > 1 || (series.Count == 1 && series[0].HasCompanion));
+    this.LayOutPlots(parts, stacked ? (title, series) : default);
     this._plot.Visible = !split && !stacked && series.Count > 0;
     this.ShowComposition(chosen);
 
@@ -1078,7 +1165,7 @@ public sealed class PerformanceWindow : Form {
 
     this._plot.Maximum = chosen.PrimaryMaximum > 0 ? chosen.PrimaryMaximum : this.Ceiling(title);
     this._plot.Unit = series.Count > 0 ? series[0].Unit : PerformanceUnit.Percent;
-    this._plot.ScaleLabel = ScaleLabelFor(chosen.PrimaryMaximum, this._plot.Maximum);
+    this._plot.ScaleLabel = ScaleLabelFor(chosen.PrimaryMaximum, this._plot.Maximum, this._plot.Unit);
     this._plot.Value = chosen.PrimaryLabel;
     this._plot.Invalidate();
 
@@ -1200,10 +1287,31 @@ public sealed class PerformanceWindow : Form {
   }
 
   /// <summary>
-  /// How the top of a scale reads — <c>100%</c> for a percentage, the quantity otherwise (§45.4).
+  /// How the top of a scale reads — <c>100%</c>, <c>16.0G</c>, <c>130.0 W</c> (§45.4).
   /// </summary>
-  private static string ScaleLabelFor(double declared, double actual)
-    => declared == 100 ? "100%" : Humanize.Bytes(Counter.Of((ulong)Math.Max(0, actual)));
+  /// <remarks>
+  /// In the series' own unit, and that is the whole point of the parameter: every ceiling that was
+  /// not a percentage used to be rendered as a quantity of bytes, so a graphics card's power graph
+  /// was labelled "130 B" — a wattage in bytes, in the corner of a plot whose caption said watts
+  /// two inches away (PRD §76).
+  /// </remarks>
+  private static string ScaleLabelFor(double declared, double actual, PerformanceUnit unit) {
+    // The one §45.4 spells out, and only for a scale that really is a percentage: a temperature
+    // plotted against a fixed hundred degrees is also a fixed scale, and "100%" on it is a unit
+    // that graph does not use.
+    if (declared == 100 && unit == PerformanceUnit.Percent)
+      return "100%";
+
+    var ceiling = Math.Max(0, actual);
+    return unit switch {
+      PerformanceUnit.Bytes => Humanize.Bytes(Counter.Of((ulong)ceiling)),
+      PerformanceUnit.BytesPerSecond => Humanize.BytesPerSecond(Rate.Of(ceiling)),
+      PerformanceUnit.Watts => string.Format(System.Globalization.CultureInfo.InvariantCulture, "{0:0.0} W", ceiling),
+      PerformanceUnit.Celsius => string.Format(System.Globalization.CultureInfo.InvariantCulture, "{0:0} °C", ceiling),
+      PerformanceUnit.Count => Humanize.Count(Counter.Of((ulong)ceiling)),
+      _ => Humanize.Percent(Rate.Of(ceiling)) + " %",
+    };
+  }
 
   /// <summary>
   /// The top of the scale for a series with no natural ceiling.
@@ -1318,15 +1426,36 @@ public sealed class PerformanceWindow : Form {
     for (var i = 0; i < series.Count; ++i) {
       var plot = this._corePlots[i];
       plot.Bounds = new(this._plotArea.X, this._plotArea.Y + (i * height), this._plotArea.Width, height - 2);
-      plot.Caption = series[i].Label;
-      plot.AccessibleName = $"{title} — {series[i].Label}";
-      plot.Value = series[i].ValueLabel;
-      plot.Maximum = series[i].Maximum > 0 ? series[i].Maximum : this.Ceiling(SeriesKey(title, series[i].Label));
-      plot.Unit = series[i].Unit;
-      plot.ScaleLabel = ScaleLabelFor(series[i].Maximum == 100 ? 100 : 0, plot.Maximum);
+      var graph = series[i];
+      plot.Caption = graph.Label;
+      plot.AccessibleName = $"{title} — {graph.Label}";
+      plot.Value = graph.ValueLabel;
+      // Both lines share one scale, so the ceiling is the higher of the two: an adapter receiving a
+      // hundred times what it sends would otherwise draw its send line off the top of the plot.
+      plot.Maximum = graph.Maximum > 0
+        ? graph.Maximum
+        : graph.HasCompanion
+          ? Math.Max(this.Ceiling(SeriesKey(title, graph.Label)), this.Ceiling(CompanionKey(title, graph.Label)))
+          : this.Ceiling(SeriesKey(title, graph.Label));
+
+      plot.Unit = graph.Unit;
+      plot.ScaleLabel = ScaleLabelFor(graph.Maximum == 100 ? 100 : 0, plot.Maximum, graph.Unit);
       plot.Visible = true;
       plot.ClearSeries();
-      plot.AddSeries(this.Ring(SeriesKey(title, series[i].Label)), AccentFor(series[i].Accent), series[i].Label);
+      var accent = AccentFor(graph.Accent);
+      plot.AddSeries(this.Ring(SeriesKey(title, graph.Label)), accent, graph.FirstLabel);
+      // The second line in a lighter shade of the same accent, not in another hue: they are two
+      // halves of one quantity, and §45.5 gives the whole resource one colour. Stroked over the
+      // first one's fill rather than filled beside it — two areas on one axis hide each other, and
+      // two lines in two shades of one colour are a pair nobody can tell apart at one pixel wide.
+      if (graph.HasCompanion)
+        plot.AddSeries(
+          this.Ring(CompanionKey(title, graph.Label)),
+          SeriesPainter.Lighten(accent, 110),
+          graph.CompanionLabel,
+          filled: false
+        );
+
       plot.Invalidate();
     }
   }
@@ -1376,7 +1505,10 @@ public sealed class PerformanceWindow : Form {
   private static Color ColourFor(string title) => AccentFor(title switch {
     "Processor" => "cpu",
     "Memory" => "memory",
+    // A core and a NUMA node are both the processor divided up, and both keep its colour: a
+    // different hue would say they are a different kind of thing from the machine they are part of.
     _ when title.StartsWith("Core ", StringComparison.Ordinal) => "cpu",
+    _ when title.StartsWith("Node ", StringComparison.Ordinal) => "cpu",
     _ when title.StartsWith("Disk", StringComparison.Ordinal) => "io",
     _ when title.StartsWith("GPU", StringComparison.Ordinal) => "gpu",
     _ => "network",

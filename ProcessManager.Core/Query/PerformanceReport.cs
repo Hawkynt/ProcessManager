@@ -70,14 +70,37 @@ public readonly record struct PerformanceRow(
 /// reading under a hover cursor, an exported point. Without it a plot can only guess from its own
 /// scale, and guessing turns 1.2 MB/s into "1.2M" (PRD §45.4, §76).
 /// </param>
+/// <param name="Companion">
+/// A second line on the same axis, where one quantity is genuinely two — a disk's reads against its
+/// writes, an adapter's receive against its send (PRD §48, §49). Only ever read when
+/// <paramref name="CompanionLabel"/> names it, because <c>default(Rate)</c> is a confident zero and
+/// a graph that did not ask for a second line must not be given one drawn along the floor (§5.3).
+/// </param>
+/// <param name="CompanionLabel">What the second line is, and the flag that there is one.</param>
+/// <param name="SeriesLabel">
+/// What the <em>first</em> line is called where that differs from the graph's own heading. A plot
+/// headed "Transfer rate" has lines called "read" and "write"; one headed "Temperature" has one line
+/// and needs no other name for it.
+/// </param>
 public readonly record struct PerformanceGraph(
   string Label,
   Rate Value,
   double Maximum,
   string ValueLabel,
   string Accent,
-  PerformanceUnit Unit = PerformanceUnit.Percent
-);
+  PerformanceUnit Unit = PerformanceUnit.Percent,
+  Rate Companion = default,
+  string CompanionLabel = "",
+  string SeriesLabel = ""
+) {
+
+  /// <summary>Whether a second line was asked for, which is the only thing that makes one exist.</summary>
+  public bool HasCompanion => this.CompanionLabel.Length > 0;
+
+  /// <summary>What to call the first line: its own name where it has one, the heading otherwise.</summary>
+  public string FirstLabel => this.SeriesLabel.Length > 0 ? this.SeriesLabel : this.Label;
+
+}
 
 /// <summary>What a plotted sample is measured in (PRD §76).</summary>
 public enum PerformanceUnit {
@@ -142,7 +165,17 @@ public enum PerformanceUnit {
 /// utilisation, the total beside the memory in use, the temperature beside the GPU's load
 /// (PRD §45.1). Short — it shares a line with the headline figure.
 /// </param>
+/// <param name="PrimaryIsLoad">
+/// Whether the primary measures how hard this resource is being worked, as opposed to some other
+/// quantity that happens to be a percentage (PRD §45.3).
+/// </param>
 /// <remarks>
+/// <paramref name="PrimaryIsLoad"/> exists because "whatever is under the greatest load" cannot be
+/// answered by comparing percentages: a battery at 100 % charge and a sensor chip reading 65 °C on a
+/// nought-to-a-hundred scale both beat a processor at 60 %, and neither of them is under any load at
+/// all. Utilisation, active time and memory in use are loads; a charge, a temperature and a fan
+/// speed are not.
+/// <para>
 /// <paramref name="PartOf"/> is what keeps the window's rail readable: a machine with twenty cores
 /// would otherwise put twenty entries in it and bury the disks below them. The cores belong under
 /// the processor, where a checkbox switches between the whole and the parts — the shape Task Manager
@@ -161,7 +194,8 @@ public readonly record struct PerformanceSection(
   string RailDetail = "",
   string RailTitle = "",
   IReadOnlyList<PerformanceGraph>? Graphs = null,
-  MemoryComposition Composition = default
+  MemoryComposition Composition = default,
+  bool PrimaryIsLoad = false
 ) {
 
   /// <summary>Whether there is a second series worth plotting.</summary>
@@ -206,7 +240,9 @@ public readonly record struct PerformanceSection(
   private static string DefaultAccent(string title) => title switch {
     "Processor" => "cpu",
     "Memory" => "memory",
+    // The processor divided up either way keeps the processor's colour (PRD §45.5).
     _ when title.StartsWith("Core ", StringComparison.Ordinal) => "cpu",
+    _ when title.StartsWith("Node ", StringComparison.Ordinal) => "cpu",
     _ when title.StartsWith("Disk", StringComparison.Ordinal) => "io",
     _ => "network",
   };
@@ -235,6 +271,11 @@ public static class PerformanceReport {
   /// What a disk is, by name. Optional: without it the devices still appear with their rates, just
   /// without a model or a capacity.
   /// </param>
+  /// <param name="topology">
+  /// How the logical processors are arranged. Optional: without it a core says what it is doing and
+  /// not where it sits, and the machine gets no per-node view — which is the honest shape for a
+  /// machine that does not publish one (PRD §46).
+  /// </param>
   public static IReadOnlyList<PerformanceSection> Build(
     HostInfo host,
     SystemSnapshot snapshot,
@@ -243,7 +284,8 @@ public static class PerformanceReport {
     Func<string, NetworkInterfaceInfo>? describeInterface = null,
     Func<IReadOnlyList<GpuInfo>>? describeGpus = null,
     Func<IReadOnlyList<BatteryInfo>>? describeBatteries = null,
-    Func<IReadOnlyList<SensorGroup>>? describeSensors = null
+    Func<IReadOnlyList<SensorGroup>>? describeSensors = null,
+    CpuTopology? topology = null
   ) {
     ArgumentNullException.ThrowIfNull(host);
     ArgumentNullException.ThrowIfNull(snapshot);
@@ -259,13 +301,14 @@ public static class PerformanceReport {
       new("Activity", BuildActivity(snapshot, delta)),
       new(
         "Processor",
-        BuildProcessor(host, snapshot, delta),
+        BuildProcessor(host, snapshot, delta, topology),
         utilisation,
         100,
         Percent(utilisation),
         delta?.SystemKernelPercent ?? Rate.NotSampledYet,
         "kernel",
-        RailDetail: host.CpuCurrentHertz.HasValue ? Hertz(host.CpuCurrentHertz) : string.Empty
+        RailDetail: host.CpuCurrentHertz.HasValue ? Hertz(host.CpuCurrentHertz) : string.Empty,
+        PrimaryIsLoad: true
       ),
       new(
         "Memory",
@@ -275,7 +318,8 @@ public static class PerformanceReport {
         Percent(memory),
         RailDetail: MemoryDetail(snapshot),
         Graphs: MemoryGraphs(snapshot),
-        Composition: MemoryComposition.Of(in snapshot.System)
+        Composition: MemoryComposition.Of(in snapshot.System),
+        PrimaryIsLoad: true
       ),
     };
 
@@ -287,7 +331,7 @@ public static class PerformanceReport {
       var busy = delta!.PerCoreBusyPercent(core);
       sections.Add(new(
         $"Core {core}",
-        BuildCore(core, delta),
+        BuildCore(core, delta, topology),
         busy,
         100,
         Percent(busy),
@@ -296,6 +340,8 @@ public static class PerformanceReport {
         PartOf: "Processor"
       ));
     }
+
+    AddNodes(sections, delta, topology);
 
     // One per adapter, and only where there is an adapter: a machine with no discrete graphics gets
     // no heading rather than an empty one (PRD §50).
@@ -313,7 +359,8 @@ public static class PerformanceReport {
         Percent(busy),
         RailDetail: gpu.TemperatureMilliCelsius.HasValue ? Celsius(gpu.TemperatureMilliCelsius) : string.Empty,
         RailTitle: $"GPU {adapter++}",
-        Graphs: GpuGraphs(gpu)
+        Graphs: GpuGraphs(gpu),
+        PrimaryIsLoad: true
       ));
     }
 
@@ -370,17 +417,24 @@ public static class PerformanceReport {
         // that is a hundred large reads or a hundred thousand small ones (PRD §48).
         Graphs: [
           new("Active time", busy, 100, Percent(busy), "io"),
+          // Two lines rather than their sum: a disk reading at 500 MB/s and one writing at 500 MB/s
+          // draw the same combined line and are not the same machine, and the direction is most of
+          // what somebody looking at a busy disk wants to know (PRD §48).
           new(
             "Transfer rate",
-            rates is { } t ? Sum(t.ReadBytesPerSecond, t.WriteBytesPerSecond) : Rate.NotSampledYet,
+            rates is { } t ? t.ReadBytesPerSecond : Rate.NotSampledYet,
             0,
             rates is { } shown
               ? $"{Humanize.BytesPerSecond(shown.ReadBytesPerSecond)} read, {Humanize.BytesPerSecond(shown.WriteBytesPerSecond)} write"
               : Pending,
             "io",
-            PerformanceUnit.BytesPerSecond
+            PerformanceUnit.BytesPerSecond,
+            Companion: rates is { } w ? w.WriteBytesPerSecond : Rate.NotSampledYet,
+            CompanionLabel: "write",
+            SeriesLabel: "read"
           ),
-        ]
+        ],
+        PrimaryIsLoad: true
       ));
     }
 
@@ -407,7 +461,25 @@ public static class PerformanceReport {
         0,
         Humanize.BytesPerSecond(throughput),
         RailDetail: rates is { } n ? $"↓ {Humanize.BytesPerSecond(n.ReceivedBytesPerSecond)}" : string.Empty,
-        RailTitle: $"Net {network.Name}"
+        RailTitle: $"Net {network.Name}",
+        // Receive and send as two lines rather than their sum: an adapter pulling a hundred megabits
+        // and one pushing them are the same combined line and very different machines, and which
+        // direction is moving is the first thing anybody asks of a busy adapter (PRD §49).
+        Graphs: [
+          new(
+            "Throughput",
+            rates is { } r ? r.ReceivedBytesPerSecond : Rate.NotSampledYet,
+            0,
+            rates is { } shown
+              ? $"↓ {Humanize.BytesPerSecond(shown.ReceivedBytesPerSecond)}  ↑ {Humanize.BytesPerSecond(shown.SentBytesPerSecond)}"
+              : Pending,
+            "network",
+            PerformanceUnit.BytesPerSecond,
+            Companion: rates is { } s ? s.SentBytesPerSecond : Rate.NotSampledYet,
+            CompanionLabel: "send",
+            SeriesLabel: "receive"
+          ),
+        ]
       ));
     }
 
@@ -436,6 +508,17 @@ public static class PerformanceReport {
         // not be described as a hard disk by default.
         null => Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform),
       }));
+
+      if (info.Bus is { Length: > 0 } bus)
+        rows.Add(new("Interface", bus, Level: PerformanceRowLevel.Hardware));
+
+      if (info.Serial is { Length: > 0 } serial)
+        rows.Add(new("Serial", serial, Level: PerformanceRowLevel.Hardware));
+
+      // What this disk is to the machine, which is the pair of facts somebody about to unplug it
+      // wants: whether the system is on it, and whether it is swapping to it.
+      rows.Add(new("Role", Role(info), Level: PerformanceRowLevel.Hardware));
+      rows.Add(new("Mounted at", Mounted(info.Volumes), Level: PerformanceRowLevel.Hardware));
     }
 
     rows.Add(new("Active time", rates is { } active ? Percent(active.BusyPercent) : Pending));
@@ -445,6 +528,24 @@ public static class PerformanceReport {
     rows.Add(new("Write rate", rates is { } write ? Humanize.BytesPerSecond(write.WriteBytesPerSecond) : Pending));
     rows.Add(new("Read IOPS", rates is { } readOps ? Humanize.Rate(readOps.ReadOperationsPerSecond) : Pending));
     rows.Add(new("Write IOPS", rates is { } writeOps ? Humanize.Rate(writeOps.WriteOperationsPerSecond) : Pending));
+    // Active time says the disk is busy; only these say whether it is keeping up. A queue of one at
+    // full active time is a disk saturated by a single client, and a queue of thirty at the same
+    // active time is a disk being asked for far more than it can do (PRD §48).
+    // A disk nobody asked anything of has no latency to report, and saying "one more sample" about
+    // it sends a reader off to wait for a figure that will never arrive while the disk stays idle.
+    // Three rows of it on every idle disk is what this avoids (PRD §45.6).
+    var idle = rates is { } quiet && Idle(quiet);
+    rows.Add(new("Response time", rates is { } response ? idle ? _Idle : Milliseconds(response.ResponseTimeMilliseconds) : Pending));
+    rows.Add(new("Queue length", rates is { } queue ? Depth(queue.QueueLength) : Pending));
+    rows.Add(new(
+      "Latency",
+      rates is { } latency
+        ? idle
+          ? _Idle
+          : $"{Milliseconds(latency.ReadLatencyMilliseconds)} read, {Milliseconds(latency.WriteLatencyMilliseconds)} write"
+        : Pending
+    ));
+
     rows.Add(new("Total read", Humanize.Bytes(disk.ReadBytes)));
     rows.Add(new("Total written", Humanize.Bytes(disk.WriteBytes)));
     return [.. rows];
@@ -460,15 +561,40 @@ public static class PerformanceReport {
 
     if (info is not null) {
       rows.Add(new("State", info.State ?? Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform), Level: PerformanceRowLevel.Hardware));
+      rows.Add(new("Type", Description(info), Level: PerformanceRowLevel.Hardware));
       rows.Add(new("Link speed", Bits(info.LinkSpeedBitsPerSecond), Level: PerformanceRowLevel.Hardware));
       rows.Add(new("MAC address", info.MacAddress ?? Humanize.Placeholder(UnknownReason.NotPermitted), Level: PerformanceRowLevel.Hardware));
       rows.Add(new("MTU", Humanize.Count(info.MaximumTransmissionUnit), Level: PerformanceRowLevel.Hardware));
+      rows.Add(new(
+        "Index",
+        info.Index is { } index ? index.ToString(CultureInfo.InvariantCulture) : Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform),
+        Level: PerformanceRowLevel.Hardware
+      ));
+
+      rows.Add(new("Address", Addresses(info.Addresses), Level: PerformanceRowLevel.Hardware));
+      rows.Add(new("Gateway", info.Gateway ?? Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform), Level: PerformanceRowLevel.Hardware));
+      rows.Add(new("DNS", Addresses(info.DnsServers), Level: PerformanceRowLevel.Hardware));
     }
 
     rows.Add(new("Receive rate", rates is { } received ? Humanize.BytesPerSecond(received.ReceivedBytesPerSecond) : Pending));
     rows.Add(new("Send rate", rates is { } sent ? Humanize.BytesPerSecond(sent.SentBytesPerSecond) : Pending));
+    // Only where the link speed is known, which excludes Wi-Fi and everything virtual. A utilisation
+    // against a guessed denominator is worse than none at all (PRD §49).
+    if (info is not null && info.LinkSpeedBitsPerSecond.HasValue)
+      rows.Add(new("Utilisation", Percent(Utilisation(rates, info.LinkSpeedBitsPerSecond))));
+
     rows.Add(new("Received", Humanize.Bytes(network.ReceivedBytes)));
     rows.Add(new("Sent", Humanize.Bytes(network.SentBytes)));
+
+    // The four rows a wireless adapter has and a wired one does not (PRD §49).
+    if (info is { IsWireless: true }) {
+      rows.Add(new("Network", info.Ssid ?? "not associated"));
+      rows.Add(new("Signal", Signal(info.SignalDbm)));
+      rows.Add(new("Channel", Channel(info.FrequencyMegahertz), Level: PerformanceRowLevel.Hardware));
+      // 802.11n against 802.11ax is in the association's own rate table, which needs nl80211 and is
+      // not read: an adapter's own capability is not what it negotiated (PRD §5.3).
+      rows.Add(new("Protocol", Humanize.Placeholder(UnknownReason.NotImplementedHere), Level: PerformanceRowLevel.Hardware));
+    }
 
     // Errors and drops are two different failures, and both are almost always zero — which is why
     // they are worth a row: a non-zero one is the whole reason somebody opened this page.
@@ -477,7 +603,179 @@ public static class PerformanceReport {
     return [.. rows];
   }
 
+  /// <summary>
+  /// What the machine uses a disk for: "system, swap", "swap", or nothing much (PRD §48).
+  /// </summary>
+  /// <remarks>
+  /// One row for the two indicators, because a disk that is neither would otherwise carry two rows
+  /// reading "no". Unknown where the mount table could not be read at all — which is a machine
+  /// nobody asked rather than a disk nothing is on (§5.3).
+  /// </remarks>
+  private static string Role(DiskInfo info) {
+    if (info.IsSystemDisk is not { } system || info.HoldsSwap is not { } swap)
+      return Humanize.Placeholder(UnknownReason.NotPermitted);
+
+    return (system, swap) switch {
+      (true, true) => "system disk, swap",
+      (true, false) => "system disk",
+      (false, true) => "swap",
+      _ => "data",
+    };
+  }
+
+  /// <summary>
+  /// Where a disk is mounted, or the fact that it is not.
+  /// </summary>
+  /// <remarks>
+  /// A disk with a dozen subvolumes would fill the column, so the list stops at four and says how
+  /// many it did not name — the point of the row is to identify the disk, and four mount points do
+  /// that as well as twelve.
+  /// </remarks>
+  private static string Mounted(IReadOnlyList<string>? volumes) {
+    if (volumes is null)
+      return Humanize.Placeholder(UnknownReason.NotPermitted);
+
+    if (volumes.Count == 0)
+      return "not mounted";
+
+    const int Shown = 4;
+    var text = new System.Text.StringBuilder();
+    for (var i = 0; i < Math.Min(Shown, volumes.Count); ++i) {
+      if (text.Length > 0)
+        text.Append(", ");
+
+      text.Append(volumes[i]);
+    }
+
+    if (volumes.Count > Shown)
+      text.Append(", +").Append((volumes.Count - Shown).ToString(CultureInfo.InvariantCulture)).Append(" more");
+
+    return text.ToString();
+  }
+
+  /// <summary>
+  /// What a disk with no requests in the interval says about how long they took.
+  /// </summary>
+  /// <remarks>
+  /// A statement about the interval rather than a measurement of it — which is exactly what it is,
+  /// and is why it is a word and not a nought (PRD §5.3).
+  /// </remarks>
+  private const string _Idle = "idle";
+
+  /// <summary>Whether the device completed no request at all in the interval.</summary>
+  private static bool Idle(SnapshotDelta.DiskRates rates)
+    => rates.ReadOperationsPerSecond is { HasValue: true, Value: 0 }
+      && rates.WriteOperationsPerSecond is { HasValue: true, Value: 0 };
+
+  /// <summary>A duration in the unit a disk's response times actually fall in.</summary>
+  /// <remarks>
+  /// Microseconds under a millisecond, because an NVMe device answers in about a hundred of them
+  /// and "0.1 ms" throws away the digit that distinguishes a fast device from a slow one.
+  /// </remarks>
+  private static string Milliseconds(Rate rate) {
+    if (!rate.HasValue)
+      return Humanize.Placeholder(rate.Reason);
+
+    return rate.Value < 1
+      ? (rate.Value * 1000).ToString("0", CultureInfo.InvariantCulture) + " µs"
+      : rate.Value.ToString(rate.Value >= 100 ? "0" : "0.0", CultureInfo.InvariantCulture) + " ms";
+  }
+
+  /// <summary>An average queue depth, which is a count and routinely a fraction of one.</summary>
+  private static string Depth(Rate rate)
+    => rate.HasValue
+      ? rate.Value.ToString(rate.Value >= 10 ? "0.0" : "0.00", CultureInfo.InvariantCulture)
+      : Humanize.Placeholder(rate.Reason);
+
   private static string Pending => Humanize.Placeholder(UnknownReason.NotSampledYet);
+
+  /// <summary>"wireless · iwlwifi" — what the interface is, and what is driving it.</summary>
+  private static string Description(NetworkInterfaceInfo info) {
+    var kind = info.Kind ?? Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform);
+    return info.Driver is { Length: > 0 } driver ? $"{kind} · {driver}" : kind;
+  }
+
+  /// <summary>
+  /// Addresses on one line, or the reason there are none to show.
+  /// </summary>
+  /// <remarks>
+  /// Three separate statements, and they must not collapse into one: null is nobody asked, empty is
+  /// an interface that genuinely carries none — an unconfigured adapter, a bridge port — and a list
+  /// is a list (PRD §5.3).
+  /// </remarks>
+  private static string Addresses(IReadOnlyList<string>? addresses) {
+    if (addresses is null)
+      return Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform);
+
+    return addresses.Count == 0 ? "none" : string.Join(", ", addresses);
+  }
+
+  /// <summary>
+  /// How much of the link the traffic is using, both directions against the one negotiated speed.
+  /// </summary>
+  /// <remarks>
+  /// Bytes into bits, because a link speed is quoted in bits and getting that wrong is a factor of
+  /// eight. Full duplex is not modelled: a gigabit link can carry a gigabit each way at once, so a
+  /// saturated pair would read 200 %, and every tool that shows this figure sums them anyway — the
+  /// question being asked is how loaded the link is.
+  /// </remarks>
+  private static Rate Utilisation(SnapshotDelta.NetworkRates? rates, Counter linkSpeedBits) {
+    if (rates is not { } moving)
+      return Rate.NotSampledYet;
+
+    if (!moving.ReceivedBytesPerSecond.HasValue)
+      return Rate.Unknown(moving.ReceivedBytesPerSecond.Reason);
+
+    if (!moving.SentBytesPerSecond.HasValue)
+      return Rate.Unknown(moving.SentBytesPerSecond.Reason);
+
+    if (!linkSpeedBits.HasValue || linkSpeedBits.Value == 0)
+      return Rate.Unknown(linkSpeedBits.HasValue ? UnknownReason.CounterInvalid : linkSpeedBits.Reason);
+
+    var bits = (moving.ReceivedBytesPerSecond.Value + moving.SentBytesPerSecond.Value) * 8;
+    return Rate.Of(bits * 100d / linkSpeedBits.Value);
+  }
+
+  /// <summary>"−61 dBm  (good)" — the number, and what it means to somebody who does not read dBm.</summary>
+  /// <remarks>
+  /// The thresholds are the ones every wireless tool uses: −50 and better is as good as it gets,
+  /// −70 is the edge of comfortable, and below −80 a connection drops under any load at all.
+  /// </remarks>
+  private static string Signal(int? dbm) {
+    if (dbm is not { } level)
+      return Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform);
+
+    var quality = level switch {
+      >= -50 => "excellent",
+      >= -60 => "good",
+      >= -70 => "fair",
+      >= -80 => "weak",
+      _ => "very weak",
+    };
+
+    // A typographic minus, like every other signed figure in the program: a hyphen in front of a
+    // number reads as a dash between two of them at small sizes.
+    return string.Format(
+      CultureInfo.InvariantCulture,
+      "{0}{1} dBm  ({2})",
+      level < 0 ? "−" : string.Empty,
+      Math.Abs(level),
+      quality
+    );
+  }
+
+  /// <summary>"6  (2.4 GHz, 2437 MHz)" — the channel, its band, and the frequency behind both.</summary>
+  private static string Channel(int? megahertz) {
+    if (megahertz is not { } frequency)
+      return Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform);
+
+    var placement = WirelessChannel.Of(frequency);
+    var band = placement is { } known
+      ? string.Format(CultureInfo.InvariantCulture, "{0}  ({1}, {2} MHz)", known.Channel, known.Band, frequency)
+      : string.Format(CultureInfo.InvariantCulture, "{0} MHz", frequency);
+
+    return band;
+  }
 
   private static string Bits(Counter counter) {
     if (!counter.HasValue)
@@ -557,7 +855,12 @@ public static class PerformanceReport {
     return [.. rows];
   }
 
-  private static PerformanceRow[] BuildProcessor(HostInfo host, SystemSnapshot snapshot, SnapshotDelta? delta) {
+  private static PerformanceRow[] BuildProcessor(
+    HostInfo host,
+    SystemSnapshot snapshot,
+    SnapshotDelta? delta,
+    CpuTopology? topology
+  ) {
     var rows = new List<PerformanceRow> {
       // Live: what it is doing. Utilisation and speed are the two largest figures on the page.
       new("Utilisation", Percent(delta?.SystemCpuPercent)),
@@ -565,6 +868,12 @@ public static class PerformanceReport {
       new("User time", Percent(delta?.SystemUserPercent)),
       new("Kernel time", Percent(delta?.SystemKernelPercent)),
       new("Processes", Humanize.Count(Counter.Of((ulong)snapshot.ProcessCount))),
+      new("Threads", Humanize.Count(Counter.Of((ulong)Math.Max(0, snapshot.System.TotalThreads)))),
+      // §46's handle count, in this kernel's own word for it. Descriptors rather than handles,
+      // because that is what Linux hands out and calling them handles would be describing this
+      // machine in another system's vocabulary (PRD §5.3).
+      new("Descriptors", Humanize.Count(snapshot.System.OpenDescriptors)),
+      new("Uptime", Uptime(snapshot.System.UptimeSeconds)),
       // Pressure, not utilisation: a processor at 100 % is not in trouble if nothing is waiting for
       // it, and one at 60 % with things queued behind it is (PRD §46).
       new("Stalled on CPU", Pressure(snapshot.System.CpuPressure.Some)),
@@ -584,6 +893,26 @@ public static class PerformanceReport {
 
     if (host.CpuSignature is { } signature)
       rows.Add(new("Signature", signature, Level: PerformanceRowLevel.Hardware));
+
+    // What the clock is allowed to do, and who is deciding. Only where cpufreq is present at all: a
+    // virtual machine whose clock its host owns has no policy, and three unknown rows would say the
+    // machine had one nobody could read (PRD §5.3).
+    if (host.CpuMinimumHertz.HasValue || host.CpuMaximumHertz.HasValue)
+      rows.Add(new("Speed range", $"{Hertz(host.CpuMinimumHertz)} – {Hertz(host.CpuMaximumHertz)}", Level: PerformanceRowLevel.Hardware));
+
+    if (host.CpuGovernor is { Length: > 0 } governor)
+      rows.Add(new(
+        "Governor",
+        host.CpuScalingDriver is { Length: > 0 } driver ? $"{governor}  ({driver})" : governor,
+        Level: PerformanceRowLevel.Hardware
+      ));
+
+    // Only on a part that has both kinds. On anything else the row would answer a question the
+    // machine does not raise (PRD §46).
+    if (topology is { IsHybrid: true })
+      rows.Add(new("Core kinds", CoreKinds(topology), Level: PerformanceRowLevel.Hardware));
+
+    AddProcessorCounters(rows, snapshot, delta);
 
     // What the silicon can actually do, from CPUID — grouped rather than listed, because sixty rows
     // of one word each is a data dump and five sentences is a specification (PRD §46). Level four
@@ -614,6 +943,84 @@ public static class PerformanceReport {
   }
 
   /// <summary>
+  /// "8 performance, 8 efficiency" — the two halves of a hybrid part, counted in logical processors.
+  /// </summary>
+  private static string CoreKinds(CpuTopology topology) {
+    var performance = 0;
+    var efficiency = 0;
+    foreach (var core in topology.Cores)
+      switch (core.Kind) {
+        case CoreKind.Performance: ++performance; break;
+        case CoreKind.Efficiency: ++efficiency; break;
+        default: break;
+      }
+
+    return $"{performance.ToString(CultureInfo.InvariantCulture)} performance, {efficiency.ToString(CultureInfo.InvariantCulture)} efficiency";
+  }
+
+  /// <summary>
+  /// The machine's own bookkeeping: switches, interrupts and deferred work (PRD §46).
+  /// </summary>
+  /// <remarks>
+  /// Level four rather than beside the utilisation, which is where §46 puts them: these are
+  /// diagnostics and not status, and a reader glancing at the page is asking how busy the processor
+  /// is rather than how many times a second it changed its mind.
+  /// <para>
+  /// Each is the rate with its cumulative total beside it, because the two answer different
+  /// questions — the rate says what the machine is doing now, and the total says how much of it the
+  /// machine has done since it booted, which is the figure a second reading is differenced against.
+  /// </para>
+  /// <para>
+  /// The interrupt shares are already inside the kernel time above and are broken out for the one
+  /// question kernel time cannot answer: whether the kernel is in there for a process or for a
+  /// device. A machine at 30 % kernel of which 25 is soft IRQ is an adapter drowning it, not a
+  /// program doing system calls.
+  /// </para>
+  /// </remarks>
+  private static void AddProcessorCounters(List<PerformanceRow> rows, SystemSnapshot snapshot, SnapshotDelta? delta) {
+    void Add(string label, string value) => rows.Add(new(label, value, PerformanceRowLevel.Diagnostic));
+
+    var system = snapshot.System;
+    Add("Context switches", Churn(delta?.SystemContextSwitchesPerSecond, system.ContextSwitches));
+    Add("Interrupts", Churn(delta?.SystemInterruptsPerSecond, system.Interrupts));
+    // What Windows calls a DPC, under this machine's own name for it (PRD §5.3). Two words and not
+    // three: the label column is a hundred and sixty pixels, and "Soft interrupts (deferred)" was
+    // drawn as "Soft interrupts (defe…" — a label that has to be guessed at is worse than a shorter
+    // one that does not.
+    Add("Soft interrupts", Churn(delta?.SystemSoftInterruptsPerSecond, system.SoftInterrupts));
+    Add("Interrupt time", $"{Percent(delta?.SystemInterruptPercent)} hard, {Percent(delta?.SystemSoftInterruptPercent)} deferred");
+    // Linux keeps no machine-wide system-call counter. It can be had per process with ptrace or a
+    // BPF probe, and both are far more intrusive than a performance page has any business being —
+    // so this is refused rather than approximated from the context-switch count, which is a
+    // different number that happens to move at a similar speed (PRD §5.3, §46).
+    Add("System calls", Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform));
+    Add("Descriptor limit", DescriptorCeiling(system.DescriptorLimit));
+    Add("Forks", Humanize.Count(system.ProcessesCreated));
+  }
+
+  /// <summary>A rate with the counter it was differenced from: "12.4k/s  (3.52G since boot)".</summary>
+  private static string Churn(Rate? perSecond, Counter total) {
+    var rate = Humanize.Rate(perSecond ?? Rate.NotSampledYet);
+    return total.HasValue ? $"{rate}/s  ({Humanize.Rate(Rate.Of(total.Value))} since boot)" : rate + "/s";
+  }
+
+  /// <summary>
+  /// The kernel's ceiling on open descriptors, where it is one worth printing.
+  /// </summary>
+  /// <remarks>
+  /// <c>fs.file-max</c> is derived from how much memory the machine has and on anything modern is
+  /// nine quintillion, which is not a limit anybody is going to reach and reads as a typographical
+  /// error next to a five-figure count. Above a billion it is reported as unlimited in words rather
+  /// than as a number nobody can use.
+  /// </remarks>
+  private static string DescriptorCeiling(Counter limit) {
+    if (!limit.HasValue)
+      return Humanize.Placeholder(limit.Reason);
+
+    return limit.Value > 1_000_000_000 ? "no practical limit" : Humanize.Count(limit);
+  }
+
+  /// <summary>
   /// One line of features, or none at all where the processor reports none of that kind.
   /// </summary>
   /// <remarks>
@@ -631,19 +1038,201 @@ public static class PerformanceReport {
   }
 
   /// <summary>
-  /// One logical processor's own figures.
+  /// What a section holding a NUMA node is grouped under.
+  /// </summary>
+  /// <remarks>
+  /// Not <c>Processor</c>, which the cores already use: a front-end asking for the processor's parts
+  /// wants one of the two lists and never both interleaved, and the two views are a choice rather
+  /// than a sum (PRD §46).
+  /// </remarks>
+  public const string NodeGroup = "Processor nodes";
+
+  /// <summary>
+  /// One section per NUMA node, where the machine has more than one (PRD §46).
+  /// </summary>
+  /// <remarks>
+  /// Aggregated from the per-core figures rather than read separately, because the kernel publishes
+  /// no per-node CPU line: a node's utilisation is the mean of its processors', which is the same
+  /// arithmetic the machine-wide figure is.
+  /// <para>
+  /// Only where there is more than one node. "Node 0 is the whole machine" is not a distribution,
+  /// and offering a per-node view of it would put a second copy of the processor's own graph on the
+  /// page (§47 makes the same argument about per-node memory).
+  /// </para>
+  /// </remarks>
+  private static void AddNodes(List<PerformanceSection> sections, SnapshotDelta? delta, CpuTopology? topology) {
+    if (delta is null || topology is null)
+      return;
+
+    var nodes = topology.Nodes;
+    if (nodes.Count < 2)
+      return;
+
+    foreach (var node in nodes) {
+      var members = topology.OnNode(node);
+      var busy = MeanOf(members, delta.PerCoreBusyPercent);
+      sections.Add(new(
+        $"Node {node.ToString(CultureInfo.InvariantCulture)}",
+        BuildNode(node, members, delta),
+        busy,
+        100,
+        Percent(busy),
+        MeanOf(members, delta.PerCoreKernelPercent),
+        "kernel",
+        PartOf: NodeGroup
+      ));
+    }
+  }
+
+  private static PerformanceRow[] BuildNode(int node, IReadOnlyList<CoreDescriptor> members, SnapshotDelta delta) {
+    var rows = new List<PerformanceRow> {
+      new("NUMA node", node.ToString(CultureInfo.InvariantCulture)),
+      new("Utilisation", Percent(MeanOf(members, delta.PerCoreBusyPercent))),
+      new("User time", Percent(MeanOf(members, delta.PerCoreUserPercent))),
+      new("Kernel time", Percent(MeanOf(members, delta.PerCoreKernelPercent))),
+      new("Logical processors", members.Count.ToString(CultureInfo.InvariantCulture), PerformanceRowLevel.Hardware),
+    };
+
+    // Which processors they are, so somebody about to pin a thread to this node knows what to pin it
+    // to. Ranges rather than a list of forty numbers.
+    if (members.Count > 0)
+      rows.Add(new("Processors", Ranges(members), PerformanceRowLevel.Hardware));
+
+    return [.. rows];
+  }
+
+  /// <summary>
+  /// The mean of one reading across a group of processors.
+  /// </summary>
+  /// <remarks>
+  /// Unknown when every member is, rather than nought: a node whose cores have not been sampled yet
+  /// has no utilisation, and averaging no readings into a zero would draw an idle node (PRD §5.3).
+  /// Members that are individually unreadable are left out of the mean rather than counted as idle —
+  /// a hot-unplugged core must not halve the node's figure.
+  /// </remarks>
+  private static Rate MeanOf(IReadOnlyList<CoreDescriptor> members, Func<int, Rate> reading) {
+    var total = 0d;
+    var counted = 0;
+    var reason = UnknownReason.NotSampledYet;
+    foreach (var member in members) {
+      var value = reading(member.Logical);
+      if (!value.HasValue) {
+        reason = value.Reason;
+        continue;
+      }
+
+      total += value.Value;
+      ++counted;
+    }
+
+    return counted > 0 ? Rate.Of(total / counted) : Rate.Unknown(reason);
+  }
+
+  /// <summary>"0-7, 16-23" — a run of processor numbers written the way the kernel writes them.</summary>
+  private static string Ranges(IReadOnlyList<CoreDescriptor> members) {
+    var numbers = new List<int>(members.Count);
+    foreach (var member in members)
+      numbers.Add(member.Logical);
+
+    numbers.Sort();
+    var text = new System.Text.StringBuilder();
+    for (var i = 0; i < numbers.Count;) {
+      var start = i;
+      while (i + 1 < numbers.Count && numbers[i + 1] == numbers[i] + 1)
+        ++i;
+
+      if (text.Length > 0)
+        text.Append(", ");
+
+      text.Append(numbers[start].ToString(CultureInfo.InvariantCulture));
+      if (i > start)
+        text.Append('-').Append(numbers[i].ToString(CultureInfo.InvariantCulture));
+
+      ++i;
+    }
+
+    return text.ToString();
+  }
+
+  /// <summary>
+  /// One logical processor's own figures, and where it sits (PRD §46).
   /// </summary>
   /// <remarks>
   /// User and kernel do not add up to busy, and deliberately: steal time is busy from this machine's
   /// point of view and belongs to neither, so a virtual machine losing a third of its core to the
   /// hypervisor shows it as the gap rather than hiding it in one of the two.
+  /// <para>
+  /// The placement rows are what turn a number into a reading: two logical processors sharing one
+  /// physical core do not do twice the work of one, and a saturated efficiency core beside an idle
+  /// performance core is a scheduling problem rather than a busy machine. A machine that publishes
+  /// no topology gets no such rows rather than a column of unknowns (§5.3).
+  /// </para>
   /// </remarks>
-  private static PerformanceRow[] BuildCore(int core, SnapshotDelta delta) => [
-    new("Logical processor", core.ToString(CultureInfo.InvariantCulture)),
-    new("Utilisation", Percent(delta.PerCoreBusyPercent(core))),
-    new("User time", Percent(delta.PerCoreUserPercent(core))),
-    new("Kernel time", Percent(delta.PerCoreKernelPercent(core))),
-  ];
+  private static PerformanceRow[] BuildCore(int core, SnapshotDelta delta, CpuTopology? topology) {
+    var rows = new List<PerformanceRow> {
+      new("Logical processor", core.ToString(CultureInfo.InvariantCulture)),
+      new("Utilisation", Percent(delta.PerCoreBusyPercent(core))),
+      new("User time", Percent(delta.PerCoreUserPercent(core))),
+      new("Kernel time", Percent(delta.PerCoreKernelPercent(core))),
+    };
+
+    if (Placement(topology, core) is not { } placement)
+      return [.. rows];
+
+    if (placement.Package >= 0)
+      rows.Add(new("Socket", placement.Package.ToString(CultureInfo.InvariantCulture), PerformanceRowLevel.Hardware));
+
+    if (placement.Core >= 0) {
+      rows.Add(new("Physical core", placement.Core.ToString(CultureInfo.InvariantCulture), PerformanceRowLevel.Hardware));
+      var siblings = SiblingsOf(topology!, placement);
+      if (siblings.Length > 0)
+        rows.Add(new("SMT sibling", siblings, PerformanceRowLevel.Hardware));
+    }
+
+    if (placement.Kind != CoreKind.Unknown)
+      rows.Add(new("Kind", placement.Kind == CoreKind.Performance ? "performance" : "efficiency", PerformanceRowLevel.Hardware));
+
+    if (placement.Node >= 0)
+      rows.Add(new("NUMA node", placement.Node.ToString(CultureInfo.InvariantCulture), PerformanceRowLevel.Hardware));
+
+    return [.. rows];
+  }
+
+  private static CoreDescriptor? Placement(CpuTopology? topology, int logical) {
+    foreach (var core in topology?.Cores ?? [])
+      if (core.Logical == logical)
+        return core;
+
+    return null;
+  }
+
+  /// <summary>
+  /// The other logical processors on the same physical core, which is what SMT means here.
+  /// </summary>
+  /// <remarks>
+  /// Empty on a part with no SMT, and empty rather than "none": a row saying a core has no sibling
+  /// on a machine where nothing does is a row on every page for no reason.
+  /// </remarks>
+  private static string SiblingsOf(CpuTopology topology, CoreDescriptor of) {
+    var siblings = new List<int>();
+    foreach (var core in topology.Cores)
+      if (core.Package == of.Package && core.Core == of.Core && core.Logical != of.Logical)
+        siblings.Add(core.Logical);
+
+    if (siblings.Count == 0)
+      return string.Empty;
+
+    siblings.Sort();
+    var text = new System.Text.StringBuilder();
+    foreach (var sibling in siblings) {
+      if (text.Length > 0)
+        text.Append(", ");
+
+      text.Append(sibling.ToString(CultureInfo.InvariantCulture));
+    }
+
+    return text.ToString();
+  }
 
   /// <summary>
   /// One graphics adapter's figures (PRD §50).
@@ -734,8 +1323,23 @@ public static class PerformanceReport {
         PerformanceUnit.Celsius
       ));
 
+    // The video engines, as one plot with two lines: a card that is transcoding uses both, and the
+    // pair against each other is what says whether it is encoding, decoding or doing both.
+    if (gpu.EncodePercent.HasValue || gpu.DecodePercent.HasValue)
+      graphs.Add(new(
+        "Video engines",
+        AsRate(gpu.EncodePercent),
+        100,
+        $"{AsPercent(gpu.EncodePercent)} encode, {AsPercent(gpu.DecodePercent)} decode",
+        "gpu",
+        PerformanceUnit.Percent,
+        Companion: AsRate(gpu.DecodePercent),
+        CompanionLabel: "decode",
+        SeriesLabel: "encode"
+      ));
+
     if (gpu.FanPercent.HasValue)
-      graphs.Add(new("Fan", AsRate(gpu.FanPercent), 100, AsPercent(gpu.FanPercent), "fan"));
+      graphs.Add(new("Fan", AsRate(gpu.FanPercent), 100, FanSpeed(gpu), "fan"));
 
     return [.. graphs];
   }
@@ -884,7 +1488,10 @@ public static class PerformanceReport {
       new("Power", PowerDraw(gpu.PowerMicrowatts, gpu.PowerLimitMicrowatts)),
       new("Core clock", Hertz(gpu.CoreClockHertz)),
       new("Memory clock", Hertz(gpu.MemoryClockHertz)),
-      new("Fan", AsPercent(gpu.FanPercent)),
+      new("Fan", FanSpeed(gpu)),
+      // The two engines a driver will name apart from the shaders. Shown together because a card
+      // that is transcoding is using both, and either alone reads as an idle video block.
+      new("Video engines", $"{AsPercent(gpu.EncodePercent)} encode, {AsPercent(gpu.DecodePercent)} decode"),
       new("Adapter", gpu.Model ?? gpu.Name, Level: PerformanceRowLevel.Hardware),
       new("Driver", gpu.Driver ?? Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform), Level: PerformanceRowLevel.Hardware),
       new("Dedicated memory", Humanize.Bytes(gpu.MemoryTotalBytes), Level: PerformanceRowLevel.Hardware),
@@ -894,7 +1501,37 @@ public static class PerformanceReport {
     if (gpu.PowerState is { } state)
       rows.Add(new("Power state", state, Level: PerformanceRowLevel.Hardware));
 
+    // Only where the card says: nought fans is a fact about a laptop card and worth a row, and an
+    // unknown count is a driver that was never asked and is not (PRD §5.3).
+    if (gpu.FanCount.HasValue)
+      rows.Add(new("Fans", Humanize.Count(gpu.FanCount), Level: PerformanceRowLevel.Hardware));
+
+    // Shared memory — what a card borrows from the machine's own — is what Task Manager's second
+    // memory figure is. Nothing on Linux publishes it: NVML's BAR1 is an aperture rather than an
+    // allocation, and the DRM accounting is per client. Refused rather than approximated (PRD §50.1).
+    rows.Add(new("Shared memory", Humanize.Placeholder(UnknownReason.NotImplementedHere), Level: PerformanceRowLevel.Hardware));
+
     return [.. rows];
+  }
+
+  /// <summary>
+  /// The fan, in whichever units the card publishes — and both where it publishes both.
+  /// </summary>
+  /// <remarks>
+  /// A percentage is a duty cycle and revolutions are a measurement, and neither can be computed
+  /// from the other: nothing publishes the speed a fan turns at when it is driven flat out. A card
+  /// with no fan of its own says so, which is a different sentence from a fan nobody can read.
+  /// </remarks>
+  private static string FanSpeed(GpuInfo gpu) {
+    if (gpu.FanCount is { HasValue: true, Value: 0 })
+      return "none";
+
+    var percent = AsPercent(gpu.FanPercent);
+    if (!gpu.FanRpm.HasValue)
+      return percent;
+
+    var revolutions = string.Format(CultureInfo.InvariantCulture, "{0} rpm", gpu.FanRpm.Value);
+    return gpu.FanPercent.HasValue ? $"{percent}  ({revolutions})" : revolutions;
   }
 
   /// <summary>A counter that is already a percentage, rendered like every other percentage.</summary>

@@ -214,6 +214,12 @@ public sealed class WindowsProbe : ISystemProbe {
     system.PageTableBytes = missing;
     system.KernelStackBytes = missing;
     system.SharedMemoryBytes = missing;
+    // The three §46 rate counters and the machine's handle total. Every one of them is in
+    // SYSTEM_PERFORMANCE_INFORMATION, which this probe does not query yet — so they say that rather
+    // than sending a reader off to wait for the next sample (PRD §45.6).
+    system.SoftInterrupts = missing;
+    system.OpenDescriptors = missing;
+    system.DescriptorLimit = missing;
   }
 
   /// <summary>
