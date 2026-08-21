@@ -2827,64 +2827,70 @@ be lost."*
 
 # 91. Source-tool parity matrix
 
+What the tools this one is meant to replace can do, and whether it can. Ticked means a person can
+reach it and it gives a true answer; 🟡 means part of it is there and the rest is named after it.
+Several capabilities exist only on the command line so far — that is written down here rather than
+hidden behind a tick, because a feature nobody can reach from the window is not parity with a tool
+that has a tab for it. That drift is what made an earlier version of this matrix wrong.
+
 ## Windows Task Manager
 
 - [x] Processes
-- [ ] 🟡 Performance
-- [ ] App / usage history
-- [ ] 🟡 Startup
-- [ ] 🟡 Users
+- [ ] 🟡 Performance — the window and its graphs exist; the per-resource pages are still landing
+- [ ] App / usage history — nothing keeps a per-application total across sessions
+- [ ] 🟡 Startup — `--startup` reads the autostart entries and says which are enabled; no window, and nothing can turn one off yet
+- [ ] 🟡 Users — `--users` lists who is logged in and what their processes cost; no window
 - [x] Details
-- [ ] Services
-- [ ] Run new task
+- [ ] 🟡 Services — `--services` lists every unit and its state; no window, and no start/stop
+- [ ] 🟡 Run new task — `--run` starts a program with a directory, environment and priority; no dialog
 - [x] End task
 - [ ] Restart supported applications
 - [x] Priority
-- [ ] Affinity
-- [ ] Efficiency / QoS
+- [x] Affinity
+- [ ] Efficiency / QoS — the scheduling policy is shown; nothing sets a QoS class
 - [ ] Dumps
-- [ ] Wait chains
+- [ ] 🟡 Wait chains — each thread says what it is blocked in; nothing follows the chain from one process to the next
 - [x] Process search / filter
 - [ ] Startup enable / disable
 - [ ] User session control
 - [ ] Service controls
-- [ ] Kernel vs user CPU graph
+- [x] Kernel vs user CPU graph
 
 ## Process Explorer
 
 - [x] Hierarchical process tree
 - [x] Process ownership / account
 - [x] Highly configurable columns
-- [ ] Process properties window
-- [ ] Lower pane
-- [ ] 🟡 Handles
-- [ ] 🟡 DLLs / mapped files
-- [ ] Search for resource owners
-- [ ] Signature verification
-- [ ] Image metadata
+- [x] Process properties window
+- [x] Lower pane
+- [x] Handles
+- [x] DLLs / mapped files
+- [x] Search for resource owners
+- [ ] Signature verification — an ELF carries no Authenticode; the honest equivalent is asking the package manager whether the file still matches what it shipped, which is not written yet
+- [ ] 🟡 Image metadata — architecture, word size, position independence, interpreter, size and mtime are read; there is no version or vendor string to read on Linux
 - [x] CPU / memory / I/O histories
-- [ ] 🟡 Per-process inspection
+- [x] Per-process inspection
 
 ## System Informer / Process Hacker lineage
 
 - [x] Detailed process tree
 - [x] Resource highlighting
-- [ ] 🟡 System graphs
-- [ ] 🟡 Handles
-- [ ] 🟡 Modules
-- [ ] 🟡 Threads
+- [ ] 🟡 System graphs — the performance window is being filled out page by page
+- [x] Handles
+- [x] Modules
+- [x] Threads
 - [ ] Stack traces
-- [ ] Services
-- [ ] 🟡 Network connections
-- [ ] Disk activity
-- [ ] GPU data
-- [ ] Memory maps
+- [ ] 🟡 Services — listed, not controlled
+- [x] Network connections
+- [ ] 🟡 Disk activity — per-process I/O columns are there; there is no view of the disks themselves
+- [ ] 🟡 GPU data — the device's own figures are read; per-process accounting is still landing
+- [x] Memory maps
 - [x] Environment
 - [ ] Security / token information
-- [ ] File / resource ownership search
-- [ ] Advanced process scheduling
+- [x] File / resource ownership search
+- [x] Advanced process scheduling
 - [ ] Detailed service control
-- [ ] Binary inspection
+- [ ] 🟡 Binary inspection — the ELF header and the mapped images; nothing disassembles
 - [ ] Runtime inspection
 - [ ] Process notes / rules
 - [x] Configurable columns
@@ -2892,12 +2898,12 @@ be lost."*
 ## DBC Task Manager
 
 - [x] Clear simple process page
-- [ ] Attractive resource graphs
-- [ ] Resource selector
+- [ ] 🟡 Attractive resource graphs — restyled onto a graticule; the remaining pages are landing
+- [x] Resource selector
 - [ ] 🟡 CPU · memory · disks · networks pages
-- [ ] Services
+- [ ] 🟡 Services
 - [ ] 🟡 Startup
-- [ ] Users
+- [ ] 🟡 Users
 - [ ] Minimal cognitive overhead for ordinary users
 
 ---
