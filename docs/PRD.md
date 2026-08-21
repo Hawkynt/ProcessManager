@@ -439,14 +439,16 @@ Primary navigation:
 - [ ] Applications / usage history (§44)
 - [x] Startup (§42)
 - [x] Users / sessions (§43)
-- [ ] 🟡 Services — there is a view; there are still no start or stop verbs, and the view says so
-      rather than offering buttons that would only ever refuse (§41)
+- [x] Services — a view, and all six verbs on a right-click (§41)
 - [x] Network — every socket on the machine, with the process holding it where this account may see
       one; opening a row goes to that process (§40)
 - [ ] System activity (§51)
 - [x] Search / find resources — from the rail, which opens §33's dialog
 - [ ] Logs / history (§63)
-- [ ] Settings (§67)
+- [ ] 🟡 Settings (§67) — reachable and complete, as a dialog rather than a page in the content
+      region. The same argument as Performance above: the box hands back a record and closes, where
+      a page would be a fifth place the same record is edited and would have to agree with the other
+      four about when a change takes effect
 
 The four table views are collected when they are chosen and when Refresh is asked for, and never on
 the sample tick: enumerating every unit on the machine once a second would cost more than the thing
@@ -3717,9 +3719,18 @@ where supported the core and memory clocks, voltage, power limit and temperature
 - [x] Context-switch rate — machine-wide, from the kernel's own counter
 - [x] 🟡 Thread creation — the live thread count; the rate of creation is not tracked
 - [x] Disk activity
-- [ ] Network activity
-- [ ] Clicking any top-process entry navigates to that process — the entry carries the identity pair
-      ready for it; the page has no click handling yet
+- [x] Network activity — what the machine is sending and receiving, summed across its interfaces
+      with loopback left out: traffic a host sends to itself crosses no wire and is counted twice,
+      so a database and its client on one box would otherwise read as heavy network users while
+      nothing had left it. This is the machine's figure and not any process's — §18 refuses
+      per-process byte counters because no portable source exists, and that refusal says nothing
+      about the interfaces, which have counted every byte since boot. A reader seeing a busy link
+      over an idle process table has learnt something: whatever is using it is not here
+- [x] Clicking any top-process entry navigates to that process — the row carries the identity pair
+      through to the window, which re-checks it before moving. The page is modeless and outlives any
+      one sample, so a row clicked a second after it was drawn must not be able to take somebody to
+      whatever has since been given that number (§8.2); if the process has gone it says so. A pooled
+      label that is emptied forgets whose row it was, or a click on blank space would navigate
 
 This is the question a sorted table answers only if you already sorted it by the right column.
 Somebody opening a system page wants three answers at once — what is using the processor, the memory

@@ -190,4 +190,140 @@ public sealed class SystemActivityTests {
 
   #endregion
 
+
+  #region what the machine is sending (PRD §51)
+
+  /// <summary>
+  /// Two samples of a machine with the given interfaces, each moving the given bytes in the second.
+  /// </summary>
+  private static (SystemSnapshot Snapshot, SnapshotDelta Delta) Wires(params (string Name, ulong In, ulong Out)[] wires) {
+    var before = new SystemSnapshot { TimestampTicks = 0 };
+    before.PrepareProcesses(0);
+    var first = before.PrepareNetworks(wires.Length);
+    for (var i = 0; i < wires.Length; ++i) {
+      first[i] = default;
+      first[i].Name = wires[i].Name;
+      first[i].ReceivedBytes = Counter.Of(0);
+      first[i].SentBytes = Counter.Of(0);
+    }
+
+    var after = new SystemSnapshot { TimestampTicks = System.Diagnostics.Stopwatch.Frequency };
+    after.PrepareProcesses(0);
+    var second = after.PrepareNetworks(wires.Length);
+    for (var i = 0; i < wires.Length; ++i) {
+      second[i] = default;
+      second[i].Name = wires[i].Name;
+      second[i].ReceivedBytes = Counter.Of(wires[i].In);
+      second[i].SentBytes = Counter.Of(wires[i].Out);
+    }
+
+    var delta = new SnapshotDelta();
+    delta.Update(before, after, CpuPercentMode.Normalized);
+    return (after, delta);
+  }
+
+  private static string RowValue(IReadOnlyList<PerformanceRow> rows, string label) {
+    foreach (var row in rows)
+      if (row.Label == label)
+        return row.Value;
+
+    Assert.Fail($"no row called '{label}'");
+    return string.Empty;
+  }
+
+  /// <summary>
+  /// The machine's own traffic is the sum of its interfaces. §18 refuses <em>per-process</em> byte
+  /// counters because no portable source exists; that says nothing about the machine as a whole,
+  /// whose interfaces have counted every byte since boot.
+  /// </summary>
+  [Test]
+  public void TheMachinesTrafficIsTheSumOfItsInterfaces() {
+    var (snapshot, delta) = Wires(("eth0", 1000, 100), ("wlan0", 2000, 200));
+
+    var rows = SystemActivity.Rates(snapshot, delta);
+
+    Assert.That(RowValue(rows, "Network in"), Does.Contain("3.0"));
+    Assert.That(RowValue(rows, "Network out"), Does.Contain("300"));
+  }
+
+  /// <summary>
+  /// Loopback is left out. Traffic a machine sends to itself crosses no wire and is counted twice —
+  /// once out and once in — so a database and its client on one host would read as heavy network
+  /// users while nothing had left the box.
+  /// </summary>
+  [Test]
+  public void WhatTheMachineSendsToItselfIsNotNetworkTraffic() {
+    var (snapshot, delta) = Wires(("lo", 900_000, 900_000), ("eth0", 1000, 100));
+
+    var rows = SystemActivity.Rates(snapshot, delta);
+
+    Assert.That(RowValue(rows, "Network in"), Does.Contain("1.0"), "the loopback megabyte is not in it");
+    Assert.That(RowValue(rows, "Network in"), Does.Not.Contain("M"));
+  }
+
+  /// <summary>
+  /// A machine whose interfaces have no rates yet says so rather than reporting nought. Nought is a
+  /// measurement — an idle link — and this is the absence of one (PRD §72.3).
+  /// </summary>
+  [Test]
+  public void AMachineNobodyHasSampledTwiceDoesNotReportNought() {
+    var lonely = new SystemSnapshot { TimestampTicks = 0 };
+    lonely.PrepareProcesses(0);
+    lonely.PrepareNetworks(0);
+
+    var rows = SystemActivity.Rates(lonely, null);
+
+    Assert.That(RowValue(rows, "Network in"), Is.Not.EqualTo("0"));
+    Assert.That(RowValue(rows, "Network out"), Is.Not.EqualTo("0"));
+  }
+
+  /// <summary>
+  /// A machine with nothing but loopback reports unknown rather than nought, for the same reason:
+  /// there is no measurement of anything leaving it, and nought would claim there was.
+  /// </summary>
+  [Test]
+  public void AMachineWithOnlyLoopbackHasNoMeasurementToReport() {
+    var (snapshot, delta) = Wires(("lo", 900_000, 900_000));
+
+    var rows = SystemActivity.Rates(snapshot, delta);
+
+    Assert.That(RowValue(rows, "Network in"), Is.Not.EqualTo("0"));
+  }
+
+  #endregion
+
+
+  /// <summary>
+  /// A top-five entry carries the process it names, so clicking it can navigate (PRD §51).
+  /// </summary>
+  /// <remarks>
+  /// The identity pair rather than a pid. The page is modeless and outlives any particular sample,
+  /// so a row read a second after it was drawn must not be able to take somebody to whatever has
+  /// since been given that number (PRD §8.2).
+  /// </remarks>
+  [Test]
+  public void ATopEntryKnowsWhichProcessItNames() {
+    var (snapshot, delta) = Machine(10, 90, 30);
+
+    var top = SystemActivity.Top(snapshot, delta, ProcessField.WorkingSetBytes);
+
+    Assert.That(top, Is.Not.Empty);
+    foreach (var entry in top) {
+      Assert.That(entry.Key.Pid, Is.GreaterThan(0), entry.Name);
+      Assert.That(entry.Key.StartTicks, Is.Not.Zero, "a pid alone is not an identity");
+    }
+  }
+
+  /// <summary>
+  /// And a row that is not about a process says so, so a click on "Context switches" navigates
+  /// nowhere rather than to whatever the pooled control last displayed.
+  /// </summary>
+  [Test]
+  public void ARowThatIsNotAboutAProcessCarriesNoProcess() {
+    var (snapshot, delta) = Wires(("eth0", 1000, 100));
+
+    foreach (var row in SystemActivity.Rates(snapshot, delta))
+      Assert.That(row.IsAboutAProcess, Is.False, row.Label);
+  }
+
 }
