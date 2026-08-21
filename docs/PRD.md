@@ -31,10 +31,17 @@ shorthand:
 it is not known*. An unticked box must never become a zero on screen. This is restated here because
 it is the single requirement most likely to be broken while filling the tables in.
 
-**Counting, as of the last update:** **491 of 1260 boxes are ticked** — 62 of 189 in the field
-registry (§14–22), 429 of 1071 across the capabilities. A further 143 are marked 🟡, meaning some of
+**Counting, as of the last update:** **623 of 1343 boxes are ticked** — 84 of 198 in the field
+registry (§14–22), 539 of 1145 across the capabilities. A further 135 are marked 🟡, meaning some of
 the work behind them is already done. §100 tracks the phases; §101 defines when this may be called
 finished.
+
+This paragraph is counted by hand and goes stale the moment two branches are in flight against this
+file, which is exactly when somebody reads it. Recount before quoting it:
+
+```sh
+grep -c '\[x\]' docs/PRD.md && grep -c '\[ \]' docs/PRD.md
+```
 
 ---
 
