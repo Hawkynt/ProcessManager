@@ -98,6 +98,7 @@ public sealed class MainWindow : Form {
 
     this._settings = settings;
     RowPalette.Apply(settings.Colours);
+    ProcessRow.Thresholds = settings.Thresholds;
 
     this._view.SortColumn = settings.SortField;
     this._view.SortDescending = settings.SortDescending;
@@ -135,6 +136,7 @@ public sealed class MainWindow : Form {
       TreeMode = this._view.TreeMode,
       CpuMode = this._sampler.CpuPercentMode,
       DesktopColumns = [.. this._columns],
+      Thresholds = ProcessRow.Thresholds,
       WindowWidth = this.Width,
       WindowHeight = this.Height,
     };
@@ -384,7 +386,16 @@ public sealed class MainWindow : Form {
     DrawGridLines(e);
 
     var info = ColumnSet.Info(this._columns[e.ColumnIndex]);
-    if (info.Series is not { } series || e.Node.Tag is not ProcessRow row)
+    if (e.Node.Tag is not ProcessRow row)
+      return;
+
+    // A process leaning hard on something gets its cell marked, not its row. The row's colour
+    // already says what kind of process it is, which is a different question — colouring the row
+    // for both would mean one of the two facts quietly winning (PRD §23).
+    if (RowPalette.HeatColour(row.HeatOf(info.Id), e.Theme) is { } heat)
+      e.Graphics.FillRectangle(heat, e.Bounds);
+
+    if (info.Series is not { } series)
       return;
 
     var colour = series switch {

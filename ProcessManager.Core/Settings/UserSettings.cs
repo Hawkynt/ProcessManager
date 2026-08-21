@@ -69,6 +69,16 @@ public sealed record UserSettings {
   public IReadOnlyDictionary<string, uint> Colours { get; init; }
     = new Dictionary<string, uint>(StringComparer.OrdinalIgnoreCase);
 
+  /// <summary>
+  /// When a cell is busy enough to be marked (PRD §23).
+  /// </summary>
+  /// <remarks>
+  /// Worth being settable because the right answer depends on the machine: a whole core is a lot on
+  /// a laptop and nothing on a build server, and a hundred megabytes a second is saturation for a
+  /// spinning disk and idle for an NVMe.
+  /// </remarks>
+  public UsageThresholds Thresholds { get; init; } = UsageThresholds.Default;
+
   /// <summary>Named column sets, as PRD §11 requires and §94 names.</summary>
   public IReadOnlyDictionary<string, ProcessField[]> ColumnSets { get; init; }
     = new Dictionary<string, ProcessField[]>(StringComparer.OrdinalIgnoreCase);
@@ -259,6 +269,30 @@ public sealed record UserSettings {
 
           break;
 
+        case "heat.cpu.warm":
+          settings = settings with { Thresholds = settings.Thresholds with { WarmCpuPercent = Number(value, settings.Thresholds.WarmCpuPercent) } };
+          break;
+
+        case "heat.cpu.hot":
+          settings = settings with { Thresholds = settings.Thresholds with { HotCpuPercent = Number(value, settings.Thresholds.HotCpuPercent) } };
+          break;
+
+        case "heat.memory.warm":
+          settings = settings with { Thresholds = settings.Thresholds with { WarmMemoryPercent = Number(value, settings.Thresholds.WarmMemoryPercent) } };
+          break;
+
+        case "heat.memory.hot":
+          settings = settings with { Thresholds = settings.Thresholds with { HotMemoryPercent = Number(value, settings.Thresholds.HotMemoryPercent) } };
+          break;
+
+        case "heat.io.warm":
+          settings = settings with { Thresholds = settings.Thresholds with { WarmBytesPerSecond = Number(value, settings.Thresholds.WarmBytesPerSecond) } };
+          break;
+
+        case "heat.io.hot":
+          settings = settings with { Thresholds = settings.Thresholds with { HotBytesPerSecond = Number(value, settings.Thresholds.HotBytesPerSecond) } };
+          break;
+
         case "window.split":
           if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var split) && split is >= 10 and <= 90)
             settings = settings with { SplitPercent = split };
@@ -300,6 +334,18 @@ public sealed record UserSettings {
 
     if (this.SplitPercent > 0)
       text.Append("window.split=").AppendLine(this.SplitPercent.ToString(CultureInfo.InvariantCulture));
+
+    if (this.Thresholds != UsageThresholds.Default) {
+      text.AppendLine();
+      text.AppendLine("# When a cell is marked as busy. CPU and memory are percentages — CPU of one");
+      text.AppendLine("# core, memory of the machine — and the I/O pair are bytes per second.");
+      text.Append("heat.cpu.warm=").AppendLine(this.Thresholds.WarmCpuPercent.ToString("0.###", CultureInfo.InvariantCulture));
+      text.Append("heat.cpu.hot=").AppendLine(this.Thresholds.HotCpuPercent.ToString("0.###", CultureInfo.InvariantCulture));
+      text.Append("heat.memory.warm=").AppendLine(this.Thresholds.WarmMemoryPercent.ToString("0.###", CultureInfo.InvariantCulture));
+      text.Append("heat.memory.hot=").AppendLine(this.Thresholds.HotMemoryPercent.ToString("0.###", CultureInfo.InvariantCulture));
+      text.Append("heat.io.warm=").AppendLine(this.Thresholds.WarmBytesPerSecond.ToString("0", CultureInfo.InvariantCulture));
+      text.Append("heat.io.hot=").AppendLine(this.Thresholds.HotBytesPerSecond.ToString("0", CultureInfo.InvariantCulture));
+    }
 
     if (this.Colours.Count > 0) {
       text.AppendLine();
@@ -379,6 +425,18 @@ public sealed record UserSettings {
     argb = 0xFF000000u | rgb;
     return true;
   }
+
+  /// <summary>
+  /// A threshold, or the one already there.
+  /// </summary>
+  /// <remarks>
+  /// A line that will not parse leaves the setting alone rather than zeroing it — a threshold of
+  /// nought marks every cell, which is the most annoying possible response to a typo.
+  /// </remarks>
+  private static double Number(string text, double fallback)
+    => double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var value) && value >= 0
+      ? value
+      : fallback;
 
   private static bool TryParseBool(string text, out bool value) {
     switch (text.ToLowerInvariant()) {

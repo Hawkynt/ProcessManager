@@ -78,6 +78,25 @@ public static class RowPalette {
     };
   }
 
+  /// <summary>
+  /// The wash behind a cell whose reading is high (PRD §23).
+  /// </summary>
+  /// <remarks>
+  /// Deliberately pale, and deliberately amber-then-red rather than any of the category hues: it has
+  /// to be legible under the row colour it sits on, and it must not be mistakable for one of the
+  /// category colours that mean something else entirely. It is also never the only signal — the
+  /// number is right there in the cell, which is what keeps this readable in high contrast and for
+  /// anyone who cannot separate the two hues (PRD §45.9).
+  /// </remarks>
+  public static Color? HeatColour(UsageHeat heat, ITheme theme) {
+    var dark = IsDark(theme.FieldBackground);
+    return heat switch {
+      UsageHeat.Warm => Pick("heat.warm", dark ? Color.FromArgb(0xFF, 0x5A, 0x45, 0x14) : Color.FromArgb(0xFF, 0xFF, 0xEA, 0xB8)),
+      UsageHeat.Hot => Pick("heat.hot", dark ? Color.FromArgb(0xFF, 0x6E, 0x24, 0x1C) : Color.FromArgb(0xFF, 0xFF, 0xC9, 0xBC)),
+      _ => null,
+    };
+  }
+
   /// <summary>The colour of the plot series and meters, so the whole window agrees with itself.</summary>
   public static Color Cpu => Pick("cpu", Color.FromArgb(0xFF, 0x28, 0xC8, 0x28));
 
