@@ -152,7 +152,14 @@ public sealed class DescriptorTests {
         info.Position,
         info.OpenFlags,
         info.Inode,
-        info.TargetPid
+        info.TargetPid,
+        info.MountId,
+        // The recording carries no mount table, so nothing resolves the mount id — which is a
+        // different statement from "this descriptor is on no file system" and is why the id itself
+        // travels beside the two fields it would have filled.
+        null,
+        null,
+        info.Detail
       ));
     }
 

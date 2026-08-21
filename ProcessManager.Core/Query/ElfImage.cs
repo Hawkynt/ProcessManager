@@ -34,12 +34,21 @@ public static class ElfImage {
   public delegate int ElfRead(long offset, Span<byte> buffer);
 
   /// <summary>What the header of a mapped image says about it.</summary>
+  /// <param name="Needed">
+  /// The <c>SONAME</c>s of the libraries this image links against, in the order it names them. Empty
+  /// for an image that links against nothing and for one whose dynamic section was not read — the
+  /// two are told apart by <paramref name="Mitigations"/>, which carries
+  /// <see cref="ImageMitigations.Read"/> only in the first case.
+  /// </param>
   public readonly record struct Description(
     ModuleType Type,
     string? Architecture,
     Counter EntryPoint,
     string? Soname,
-    string? Interpreter
+    string? Interpreter,
+    ImageMitigations Mitigations,
+    string? BuildId,
+    IReadOnlyList<string> Needed
   );
 
   /// <summary>Nothing was read, and every field says so rather than saying zero (PRD §72.3).</summary>
@@ -48,7 +57,10 @@ public static class ElfImage {
     null,
     Counter.NotSampledYet,
     null,
-    null
+    null,
+    ImageMitigations.None,
+    null,
+    []
   );
 
   private const int _Ei_Class = 4;
@@ -56,9 +68,29 @@ public static class ElfImage {
   private const int _Pt_Load = 1;
   private const int _Pt_Dynamic = 2;
   private const int _Pt_Interp = 3;
+  private const int _Pt_Note = 4;
+
+  /// <summary>The three <c>PT_GNU_*</c> segments, which are how a toolchain records hardening.</summary>
+  private const uint _Pt_GnuStack = 0x6474E551;
+  private const uint _Pt_GnuRelro = 0x6474E552;
+  private const uint _Pt_GnuProperty = 0x6474E553;
+
   private const int _Dt_Null = 0;
+  private const int _Dt_Needed = 1;
   private const int _Dt_StrTab = 5;
   private const int _Dt_SoName = 14;
+  private const int _Dt_BindNow = 24;
+  private const int _Dt_Flags = 30;
+  private const long _Dt_Flags1 = 0x6FFFFFFB;
+  private const ulong _Df_BindNow = 0x8;
+  private const ulong _Df1_Now = 0x1;
+
+  /// <summary>The note types this reads: the build identity, and the processor feature list.</summary>
+  private const uint _Nt_GnuBuildId = 3;
+  private const uint _Nt_GnuPropertyType0 = 5;
+
+  private const uint _GnuProperty_X86Feature1 = 0xC0000002;
+  private const uint _GnuProperty_Aarch64Feature1 = 0xC0000000;
 
   /// <summary>The most program headers any real image has is about a dozen; this is the sanity cap.</summary>
   private const int _MaxProgramHeaders = 128;
@@ -68,6 +100,18 @@ public static class ElfImage {
 
   /// <summary>The longest SONAME or interpreter path worth reading. Real ones are under sixty bytes.</summary>
   private const int _MaxNameLength = 512;
+
+  /// <summary>
+  /// A note segment longer than this is not one this reads. The two notes worth having — the build
+  /// identity and the processor feature list — are a hundred bytes between them.
+  /// </summary>
+  private const int _MaxNoteBytes = 8 * 1024;
+
+  /// <summary>An image linking against more libraries than this is not one worth graphing.</summary>
+  private const int _MaxNeeded = 256;
+
+  /// <summary>How many note segments are read. Three is what a current toolchain emits.</summary>
+  private const int _MaxNoteSegments = 8;
 
   /// <summary>
   /// Describes an image.
@@ -115,7 +159,19 @@ public static class ElfImage {
     // A library that declares no entry point writes zero, and zero is an address — reporting it would
     // put the load base in the column once the bias is added, which reads as a real answer. Saying
     // the image has none is the truth (PRD §72.3).
-    description = new(type, architecture, entry == 0 ? Counter.NotSupported : Counter.Of(entry), null, null);
+    description = new(
+      type,
+      architecture,
+      entry == 0 ? Counter.NotSupported : Counter.Of(entry),
+      null,
+      null,
+      // Still None: the header alone says nothing about hardening, and the program headers below are
+      // where every one of those flags is written.
+      ImageMitigations.None,
+      null,
+      []
+    );
+
     if (programHeaderOffset <= 0 || programHeaderSize < (is64 ? 56 : 32) || programHeaderCount is 0 or > _MaxProgramHeaders)
       return true;
 
@@ -128,9 +184,22 @@ public static class ElfImage {
     // offset. DT_STRTAB is given as an address, and without the load segments there is no way back.
     long dynamicOffset = 0, dynamicSize = 0, interpreterOffset = 0, interpreterSize = 0;
     var loads = new List<(ulong VirtualAddress, ulong Size, long FileOffset)>(programHeaderCount);
+    var notes = new List<(long Offset, int Size)>(_MaxNoteSegments);
+
+    // The headers were read, so from here on the absence of a flag is a statement about the image
+    // rather than about how far this got (PRD §72.3). An ET_DYN image is the one the kernel is free
+    // to place where it likes, which is what makes randomisation possible at all.
+    var mitigations = ImageMitigations.Read;
+    if (type == ModuleType.SharedObject)
+      mitigations |= ImageMitigations.PositionIndependent;
+
     for (var i = 0; i < programHeaderCount; ++i) {
       var entryBytes = table.AsSpan(i * programHeaderSize, programHeaderSize);
       var segmentType = ReadUInt32(entryBytes, isLittleEndian);
+      // p_flags sits immediately after the type on a 64-bit image and at the very end of the entry
+      // on a 32-bit one, which is the only field in this structure the two classes disagree about
+      // the order of.
+      var segmentFlags = ReadUInt32(entryBytes[(is64 ? 4 : 24)..], isLittleEndian);
       var fileOffset = is64
         ? (long)ReadUInt64(entryBytes[8..], isLittleEndian)
         : ReadUInt32(entryBytes[4..], isLittleEndian);
@@ -153,24 +222,64 @@ public static class ElfImage {
           interpreterOffset = fileOffset;
           interpreterSize = fileSize;
           break;
+        case _Pt_Note or _Pt_GnuProperty:
+          // The property note is reachable both ways — it is inside a PT_NOTE segment and named
+          // again by PT_GNU_PROPERTY — so both are collected and the note walk sorts out which
+          // note is which. Reading only the second would miss a linker that emits only the first.
+          if (notes.Count < _MaxNoteSegments && fileSize is > 0 and <= _MaxNoteBytes)
+            notes.Add((fileOffset, (int)fileSize));
+
+          break;
+        case _Pt_GnuStack:
+          // The execute bit here is the whole question. A segment that is not there at all leaves
+          // the decision to the ABI, and neither flag is set: "this image does not say" is not the
+          // same claim as either answer.
+          mitigations |= (segmentFlags & 1) != 0
+            ? ImageMitigations.ExecutableStack
+            : ImageMitigations.NonExecutableStack;
+          break;
+        case _Pt_GnuRelro:
+          mitigations |= ImageMitigations.Relro;
+          break;
         default:
           break;
       }
     }
 
+    var dynamic = ReadDynamic(read, is64, isLittleEndian, dynamicOffset, dynamicSize, loads);
     description = description with {
       Interpreter = ReadString(read, interpreterOffset, (int)Math.Min(interpreterSize, _MaxNameLength)),
-      Soname = ReadSoname(read, is64, isLittleEndian, dynamicOffset, dynamicSize, loads),
+      Soname = dynamic.Soname,
+      Needed = dynamic.Needed,
+      Mitigations = mitigations | dynamic.Mitigations | ReadNotes(read, is64, isLittleEndian, notes, out var buildId),
+      BuildId = buildId,
     };
 
     return true;
   }
 
+  /// <summary>What the dynamic section says: the name it publishes, the names it needs, how it binds.</summary>
+  private readonly record struct Dynamic(string? Soname, IReadOnlyList<string> Needed, ImageMitigations Mitigations);
+
   /// <summary>
-  /// The <c>DT_SONAME</c> string: the name a library says other binaries should link against, which
-  /// is not always the name of the file it is in.
+  /// Walks <c>PT_DYNAMIC</c> once for everything §31 wants out of it.
   /// </summary>
-  private static string? ReadSoname(
+  /// <remarks>
+  /// <para>
+  /// <c>DT_SONAME</c> is the name a library says other binaries should link against, which is not
+  /// always the name of the file it is in; <c>DT_NEEDED</c> is the same kind of name, pointing the
+  /// other way, and is what makes a load reason derivable at all. Both are offsets into
+  /// <c>DT_STRTAB</c>, which is given as an address — so the load segments are needed to get back to
+  /// a file offset, and one walk collects the tags before any string is read.
+  /// </para>
+  /// <para>
+  /// Binding is asked three ways because it is written three ways: the ancient <c>DT_BIND_NOW</c>,
+  /// the <c>DF_BIND_NOW</c> bit of <c>DT_FLAGS</c>, and <c>DF_1_NOW</c> in <c>DT_FLAGS_1</c>, which
+  /// is what a current linker emits. Reading only one of them reports full RELRO as partial on half
+  /// the binaries on the machine.
+  /// </para>
+  /// </remarks>
+  private static Dynamic ReadDynamic(
     ElfRead read,
     bool is64,
     bool isLittleEndian,
@@ -180,15 +289,17 @@ public static class ElfImage {
   ) {
     var entrySize = is64 ? 16 : 8;
     if (dynamicOffset <= 0 || dynamicSize < entrySize || dynamicSize / entrySize > _MaxDynamicEntries)
-      return null;
+      return new(null, [], ImageMitigations.None);
 
     var section = new byte[dynamicSize];
     if (read(dynamicOffset, section) < section.Length)
-      return null;
+      return new(null, [], ImageMitigations.None);
 
     ulong stringTable = 0, nameOffset = 0;
     var haveStringTable = false;
     var haveName = false;
+    var mitigations = ImageMitigations.None;
+    var neededOffsets = new List<ulong>();
     for (var offset = 0; offset + entrySize <= section.Length; offset += entrySize) {
       var span = section.AsSpan(offset);
       var tag = is64 ? (long)ReadUInt64(span, isLittleEndian) : (int)ReadUInt32(span, isLittleEndian);
@@ -196,28 +307,157 @@ public static class ElfImage {
       if (tag == _Dt_Null)
         break;
 
-      if (tag == _Dt_StrTab) {
-        stringTable = value;
-        haveStringTable = true;
-      } else if (tag == _Dt_SoName) {
-        nameOffset = value;
-        haveName = true;
+      switch (tag) {
+        case _Dt_StrTab:
+          stringTable = value;
+          haveStringTable = true;
+          break;
+        case _Dt_SoName:
+          nameOffset = value;
+          haveName = true;
+          break;
+        case _Dt_Needed:
+          if (neededOffsets.Count < _MaxNeeded)
+            neededOffsets.Add(value);
+
+          break;
+        case _Dt_BindNow:
+          mitigations |= ImageMitigations.BindNow;
+          break;
+        case _Dt_Flags when (value & _Df_BindNow) != 0:
+        case _Dt_Flags1 when (value & _Df1_Now) != 0:
+          mitigations |= ImageMitigations.BindNow;
+          break;
+        default:
+          break;
       }
     }
 
-    if (!haveStringTable || !haveName)
-      return null;
+    if (!haveStringTable)
+      return new(null, [], mitigations);
 
-    foreach (var load in loads) {
-      var address = stringTable + nameOffset;
-      if (address < load.VirtualAddress || address >= load.VirtualAddress + load.Size)
+    var needed = new List<string>(neededOffsets.Count);
+    foreach (var entry in neededOffsets)
+      if (StringAt(stringTable + entry) is { } name)
+        needed.Add(name);
+
+    return new(haveName ? StringAt(stringTable + nameOffset) : null, needed, mitigations);
+
+    // The string at an address in the string table, found by whichever load segment covers it.
+    string? StringAt(ulong address) {
+      foreach (var load in loads) {
+        if (address < load.VirtualAddress || address >= load.VirtualAddress + load.Size)
+          continue;
+
+        return ReadString(read, load.FileOffset + (long)(address - load.VirtualAddress), _MaxNameLength);
+      }
+
+      return null;
+    }
+  }
+
+  /// <summary>
+  /// The two notes worth reading: which build this is, and which processor features it was built for.
+  /// </summary>
+  /// <remarks>
+  /// A note segment is a sequence of records — a name length, a description length, a type, then the
+  /// name and the description each padded up to four bytes. The build identity is a <c>GNU</c> note
+  /// of type 3, and the feature list a <c>GNU</c> note of type 5 whose description is itself a list
+  /// of properties. Nothing else in either segment is read past its length field.
+  /// </remarks>
+  private static ImageMitigations ReadNotes(
+    ElfRead read,
+    bool is64,
+    bool isLittleEndian,
+    List<(long Offset, int Size)> segments,
+    out string? buildId
+  ) {
+    buildId = null;
+    var mitigations = ImageMitigations.None;
+    foreach (var (offset, size) in segments) {
+      var segment = new byte[size];
+      var got = read(offset, segment);
+      if (got <= 0)
         continue;
 
-      return ReadString(read, load.FileOffset + (long)(address - load.VirtualAddress), _MaxNameLength);
+      var notes = segment.AsSpan(0, got);
+      for (var at = 0; at + 12 <= notes.Length;) {
+        var nameSize = (int)ReadUInt32(notes[at..], isLittleEndian);
+        var descriptionSize = (int)ReadUInt32(notes[(at + 4)..], isLittleEndian);
+        var type = ReadUInt32(notes[(at + 8)..], isLittleEndian);
+        var nameAt = at + 12;
+        var descriptionAt = nameAt + Align(nameSize, 4);
+        var next = descriptionAt + Align(descriptionSize, 4);
+        if (nameSize < 0 || descriptionSize < 0 || next <= at || next > notes.Length)
+          break;
+
+        at = next;
+        // Every note this reads is the GNU vendor's. Another vendor may use the same type numbers
+        // for something else entirely, which is exactly what the name field is for.
+        if (nameSize != 4 || !notes.Slice(nameAt, 4).SequenceEqual("GNU\0"u8))
+          continue;
+
+        var description = notes.Slice(descriptionAt, descriptionSize);
+        if (type == _Nt_GnuBuildId && descriptionSize > 0)
+          buildId ??= Convert.ToHexStringLower(description);
+        else if (type == _Nt_GnuPropertyType0)
+          mitigations |= ReadProperties(description, is64, isLittleEndian);
+      }
     }
 
-    return null;
+    return mitigations;
   }
+
+  /// <summary>
+  /// The processor features a <c>NT_GNU_PROPERTY_TYPE_0</c> note declares.
+  /// </summary>
+  /// <remarks>
+  /// Each property is a type, a length and its data, padded to the size of an address — eight bytes
+  /// in a 64-bit image, four in a 32-bit one, which is the one thing about this structure that is
+  /// not the same everywhere. The two properties read here are the "AND" feature words: a bit is set
+  /// only when every object linked into the image had it set, which is what makes them a statement
+  /// about the whole binary rather than about one of its files.
+  /// </remarks>
+  private static ImageMitigations ReadProperties(ReadOnlySpan<byte> properties, bool is64, bool isLittleEndian) {
+    var alignment = is64 ? 8 : 4;
+    var result = ImageMitigations.None;
+    for (var at = 0; at + 8 <= properties.Length;) {
+      var type = ReadUInt32(properties[at..], isLittleEndian);
+      var size = (int)ReadUInt32(properties[(at + 4)..], isLittleEndian);
+      var dataAt = at + 8;
+      var next = dataAt + Align(size, alignment);
+      if (size < 0 || next <= at || dataAt + size > properties.Length)
+        break;
+
+      at = next;
+      if (size < 4)
+        continue;
+
+      var features = ReadUInt32(properties[dataAt..], isLittleEndian);
+      switch (type) {
+        case _GnuProperty_X86Feature1:
+          if ((features & 1) != 0)
+            result |= ImageMitigations.IndirectBranchTracking;
+          if ((features & 2) != 0)
+            result |= ImageMitigations.ShadowStack;
+
+          break;
+        case _GnuProperty_Aarch64Feature1:
+          if ((features & 1) != 0)
+            result |= ImageMitigations.BranchTargetIdentification;
+          if ((features & 2) != 0)
+            result |= ImageMitigations.PointerAuthentication;
+
+          break;
+        default:
+          break;
+      }
+    }
+
+    return result;
+  }
+
+  private static int Align(int value, int alignment) => (value + alignment - 1) / alignment * alignment;
 
   /// <summary>A NUL-terminated string at a file offset, or null when there is nothing there.</summary>
   private static string? ReadString(ElfRead read, long offset, int maximum) {

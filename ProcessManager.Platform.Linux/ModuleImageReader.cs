@@ -34,7 +34,13 @@ internal sealed class ModuleImageReader {
   private const int _MaxCacheEntries = 4096;
 
   /// <summary>Adds the file's own account of itself to a row that came out of <c>maps</c>.</summary>
-  public ModuleRecord Describe(ModuleRecord module) {
+  /// <param name="description">
+  /// What the file declared, for <see cref="ModuleGraph"/>: the load reason of a row is a statement
+  /// about the <em>other</em> rows — which of them names it — so the descriptions have to outlive
+  /// the per-row enrichment that produced them.
+  /// </param>
+  public ModuleRecord Describe(ModuleRecord module, out ElfImage.Description description) {
+    description = ElfImage.Unread;
     var info = new FileInfo(module.Path);
     long length;
     long modified;
@@ -61,21 +67,30 @@ internal sealed class ModuleImageReader {
     // A device node is never an image, and opening one is the only thing here that could block: a
     // serial port waits for carrier detect, and the modules view would wait with it. Shared memory
     // under /dev/shm is an ordinary file and is not excluded.
-    if (module.Path.StartsWith("/dev/", StringComparison.Ordinal) && !module.Path.StartsWith("/dev/shm/", StringComparison.Ordinal))
+    if (module.Path.StartsWith("/dev/", StringComparison.Ordinal) && !module.Path.StartsWith("/dev/shm/", StringComparison.Ordinal)) {
+      // A device is not an image and was never opened, so its hardening flags are not "none" —
+      // there are none to have, and the mitigation word stays at the value that means nothing was
+      // read (PRD §72.3).
+      description = ElfImage.Unread with { Type = ModuleType.Data, EntryPoint = Counter.NotSupported };
       return enriched with {
         Type = ModuleType.Data,
         EntryPoint = Counter.NotSupported,
       };
+    }
 
-    if (!this.TryDescribe(module.Path, length, modified, out var description, out var failure))
+    if (!this.TryDescribe(module.Path, length, modified, out description, out var failure)) {
+      description = ElfImage.Unread;
       return enriched with {
         Type = ModuleType.Unknown,
         EntryPoint = Counter.Unknown(failure),
       };
+    }
 
     return enriched with {
       Type = description.Type,
       Architecture = description.Architecture,
+      Mitigations = description.Mitigations,
+      BuildId = description.BuildId,
       // A shared object's header states its entry point relative to wherever it was loaded, so the
       // load bias has to be added back before the number means anything in this process. An
       // executable's is already absolute, and adding the base to it would produce an address in the
@@ -168,6 +183,8 @@ internal sealed class ModuleImageReader {
     EntryPoint = Counter.Unknown(reason),
     Soname = null,
     Interpreter = null,
+    Mitigations = ImageMitigations.None,
+    BuildId = null,
   };
 
 }

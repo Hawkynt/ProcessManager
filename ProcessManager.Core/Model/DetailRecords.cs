@@ -324,6 +324,108 @@ public enum MapPermissions : byte {
   Private = 16,
 }
 
+/// <summary>
+/// The hardening an image asks for, as its own program headers and dynamic section declare it
+/// (PRD §31).
+/// </summary>
+/// <remarks>
+/// <para>
+/// This is what the <em>file</em> requests, which is not always what the kernel granted: a
+/// non-executable stack is honoured everywhere, and address-space randomisation additionally needs
+/// the process not to have turned it off with <c>ADDR_NO_RANDOMIZE</c>. The two are separate claims
+/// and only the first is readable from a mapped file.
+/// </para>
+/// <para>
+/// <see cref="None"/> means the headers were never read, which is why <see cref="Read"/> exists:
+/// without it "this image has no mitigations" and "nobody looked" would be the same value, and the
+/// first is a finding while the second is a hole (PRD §72.3).
+/// </para>
+/// </remarks>
+[Flags]
+public enum ImageMitigations : ushort {
+  None = 0,
+
+  /// <summary>The program headers were read, so the absence of a flag below is a statement.</summary>
+  Read = 1,
+
+  /// <summary>
+  /// <c>ET_DYN</c>: the image can be loaded anywhere, which is what lets the kernel randomise it.
+  /// An <c>ET_EXEC</c> image names its own addresses and is placed where it says.
+  /// </summary>
+  PositionIndependent = 2,
+
+  /// <summary><c>PT_GNU_STACK</c> without the execute bit.</summary>
+  NonExecutableStack = 4,
+
+  /// <summary>
+  /// <c>PT_GNU_STACK</c> <em>with</em> it — a finding rather than a mitigation, and the reason the
+  /// stack has two flags instead of one: a segment that is absent altogether leaves the decision to
+  /// the ABI and neither bit is set.
+  /// </summary>
+  ExecutableStack = 8,
+
+  /// <summary><c>PT_GNU_RELRO</c>: the relocations are made read-only once they are resolved.</summary>
+  Relro = 16,
+
+  /// <summary>
+  /// <c>DT_BIND_NOW</c>, or the same request spelled as a bit of <c>DT_FLAGS</c> or
+  /// <c>DT_FLAGS_1</c>. Only with this is <see cref="Relro"/> the full protection people mean by it.
+  /// </summary>
+  BindNow = 32,
+
+  /// <summary>x86 indirect branch tracking — half of what Intel calls CET.</summary>
+  IndirectBranchTracking = 64,
+
+  /// <summary>The other half: a shadow stack.</summary>
+  ShadowStack = 128,
+
+  /// <summary>AArch64 branch target identification, which is the same idea as x86's.</summary>
+  BranchTargetIdentification = 256,
+
+  /// <summary>AArch64 pointer authentication.</summary>
+  PointerAuthentication = 512,
+}
+
+/// <summary>
+/// How an image came to be in the process, as far as the dependency graph can say (PRD §31).
+/// </summary>
+/// <remarks>
+/// Windows records this per module and Linux records nothing at all, so this is derived rather than
+/// read: the executable names its interpreter in <c>PT_INTERP</c> and its libraries in
+/// <c>DT_NEEDED</c>, and every image that nothing loaded names arrived some other way. That last
+/// case is the interesting one and also the least precise — see <see cref="RunTime"/>.
+/// </remarks>
+public enum ModuleLoadReason : byte {
+  /// <summary>Nothing was read. Not "no reason": the file's headers were never opened.</summary>
+  Unknown = 0,
+
+  /// <summary>The program itself.</summary>
+  Image,
+
+  /// <summary>The dynamic loader the program asked for in <c>PT_INTERP</c>.</summary>
+  Interpreter,
+
+  /// <summary>Named in the executable's own <c>DT_NEEDED</c>.</summary>
+  Direct,
+
+  /// <summary>Named by another loaded library, and not by the executable.</summary>
+  Dependency,
+
+  /// <summary>
+  /// Nothing loaded names it.
+  /// </summary>
+  /// <remarks>
+  /// Usually <c>dlopen</c> — a plugin, a graphics driver, a name-service module — and sometimes
+  /// <c>LD_PRELOAD</c>. The two are indistinguishable from outside, and so is the third case: a
+  /// library named by another image whose own headers could not be read. It says "nothing that could
+  /// be read names this", which is exactly the claim the graph supports.
+  /// </remarks>
+  RunTime,
+
+  /// <summary>Mapped, and not an image: a locale archive, a font, a database.</summary>
+  Data,
+}
+
 /// <summary>What an image declares itself to be in its own header.</summary>
 public enum ModuleType : byte {
   Unknown = 0,
@@ -368,6 +470,19 @@ public enum ModuleType : byte {
 /// The program interpreter the image asks for — the dynamic loader. Only an executable declares one;
 /// a library, and anything that is not an image, leave it null.
 /// </param>
+/// <param name="Mitigations">
+/// The hardening the file asks for. <see cref="ImageMitigations.None"/> is "the headers were not
+/// read" and not "this image is unprotected"; the two are told apart by
+/// <see cref="ImageMitigations.Read"/>.
+/// </param>
+/// <param name="BuildId">
+/// The <c>NT_GNU_BUILD_ID</c> note, as hex. The identity a distribution's symbol server, its debug
+/// packages and its crash reports are all keyed by, and the one field that says two files are the
+/// same build without reading either of them whole. Null where the image carries no such note —
+/// which is what a binary built without <c>--build-id</c> looks like, and is a fact about the build
+/// rather than about our access to it.
+/// </param>
+/// <param name="LoadReason">Why this image is here, derived from the dependency graph.</param>
 public readonly record struct ModuleRecord(
   string Path,
   ulong BaseAddress,
@@ -386,7 +501,10 @@ public readonly record struct ModuleRecord(
   string? Architecture,
   Counter EntryPoint,
   string? Soname,
-  string? Interpreter
+  string? Interpreter,
+  ImageMitigations Mitigations,
+  string? BuildId,
+  ModuleLoadReason LoadReason
 );
 
 /// <summary>What a handle or file descriptor refers to.</summary>
@@ -437,6 +555,24 @@ public enum HandleKind : byte {
 /// The process a pidfd refers to. Unknown for every other kind, because every other kind refers to
 /// something that is not a process.
 /// </param>
+/// <param name="MountId">
+/// Which mount the descriptor's inode lives on, from <c>fdinfo</c>'s <c>mnt_id</c>. On its own it is
+/// a number nobody can act on; joined to <c>mountinfo</c> it becomes
+/// <paramref name="Device"/> and <paramref name="FileSystem"/>.
+/// </param>
+/// <param name="Device">
+/// The device the descriptor's inode is on, in the <c>major:minor</c> notation the file system uses,
+/// followed by where it is mounted. Null when no mount answers for it, which is the ordinary case
+/// for a socket, a pipe or an anonymous inode: those live on kernel-internal filesystems that are
+/// mounted nowhere and appear in no process's mount table (PRD §32).
+/// </param>
+/// <param name="FileSystem">The type of that mount — <c>ext4</c>, <c>btrfs</c>, <c>tmpfs</c>.</param>
+/// <param name="Detail">
+/// What <c>fdinfo</c> said that is specific to this one kind of descriptor: an eventfd's count, the
+/// descriptors an epoll set is watching, an inotify watch list, the namespaced pids of a pidfd. Kept
+/// as the kernel wrote it, because every kind spells its own state differently and inventing a
+/// common shape for them would lose most of it (PRD §5.3). Null when there was none.
+/// </param>
 public readonly record struct HandleRecord(
   ulong Handle,
   HandleKind Kind,
@@ -445,7 +581,11 @@ public readonly record struct HandleRecord(
   Counter Position,
   Counter OpenFlags,
   Counter Inode,
-  Counter TargetPid
+  Counter TargetPid,
+  Counter MountId,
+  string? Device,
+  string? FileSystem,
+  string? Detail
 );
 
 public enum ConnectionProtocol : byte { Tcp, Tcp6, Udp, Udp6, Unix }

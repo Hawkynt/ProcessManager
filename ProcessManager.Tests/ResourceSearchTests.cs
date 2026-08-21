@@ -99,7 +99,11 @@ public sealed class ResourceSearchTests {
       Position: Counter.NotSampledYet,
       OpenFlags: Counter.NotSampledYet,
       Inode: Counter.NotSampledYet,
-      TargetPid: Counter.NotSampledYet
+      TargetPid: Counter.NotSampledYet,
+      MountId: Counter.NotSampledYet,
+      Device: null,
+      FileSystem: null,
+      Detail: null
     )];
     probe.Modules[100] = [new(
       Path: "/usr/lib/libssl.so.3",
@@ -119,7 +123,10 @@ public sealed class ResourceSearchTests {
       Architecture: "x86-64",
       EntryPoint: Counter.NotSampledYet,
       Soname: "libssl.so.3",
-      Interpreter: null
+      Interpreter: null,
+      Mitigations: ImageMitigations.None,
+      BuildId: null,
+      LoadReason: ModuleLoadReason.Unknown
     )];
     probe.Connections[100] = [
       new(

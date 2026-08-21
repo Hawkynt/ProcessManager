@@ -21,13 +21,22 @@ namespace Hawkynt.ProcessManager.Query;
 /// </remarks>
 public static class DescriptorParser {
 
-  /// <summary>Everything <c>fdinfo</c> reports that is not specific to one kind of descriptor.</summary>
+  /// <summary>
+  /// Everything <c>fdinfo</c> reports: the five lines every descriptor has, and the rest.
+  /// </summary>
+  /// <param name="Detail">
+  /// The lines that belong to one kind of descriptor only — an eventfd's count, the <c>tfd:</c> list
+  /// of an epoll set, an inotify watch, a pidfd's namespaced pids. Kept as the kernel wrote them
+  /// because each subsystem spells its own state differently and a common shape for them would lose
+  /// most of it (PRD §5.3). Null when the file had nothing but the common lines.
+  /// </param>
   public readonly record struct DescriptorInfo(
     Counter Position,
     Counter OpenFlags,
     Counter MountId,
     Counter Inode,
-    Counter TargetPid
+    Counter TargetPid,
+    string? Detail
   );
 
   /// <summary>Nothing was read: every field says so rather than saying zero (PRD §72.3).</summary>
@@ -36,7 +45,8 @@ public static class DescriptorParser {
     Counter.NotSampledYet,
     Counter.NotSampledYet,
     Counter.NotSampledYet,
-    Counter.NotSampledYet
+    Counter.NotSampledYet,
+    null
   );
 
   /// <summary>Refused: the descriptor exists, this user may not look inside it.</summary>
@@ -45,7 +55,8 @@ public static class DescriptorParser {
     Counter.NotPermitted,
     Counter.NotPermitted,
     Counter.NotPermitted,
-    Counter.NotPermitted
+    Counter.NotPermitted,
+    null
   );
 
   /// <summary>
@@ -61,8 +72,19 @@ public static class DescriptorParser {
     Counter.Unknown(UnknownReason.NotImplementedHere),
     Counter.Unknown(UnknownReason.NotImplementedHere),
     Counter.Unknown(UnknownReason.NotImplementedHere),
-    Counter.Unknown(UnknownReason.NotImplementedHere)
+    Counter.Unknown(UnknownReason.NotImplementedHere),
+    null
   );
+
+  /// <summary>How many lines of per-kind detail are kept, and how long the whole of it may be.</summary>
+  /// <remarks>
+  /// An epoll set writes one <c>tfd:</c> line per descriptor it watches, and a browser's main epoll
+  /// watches hundreds. The properties box wants to show what kind of thing this is, not to hold a
+  /// copy of the set, so the list is cut and says that it was.
+  /// </remarks>
+  private const int _MaxDetailLines = 12;
+
+  private const int _MaxDetailLength = 640;
 
   /// <summary>
   /// Parses one <c>/proc/[pid]/fdinfo/[fd]</c>.
@@ -82,6 +104,10 @@ public static class DescriptorParser {
     var inode = Counter.NotSupported;
     var targetPid = Counter.NotSupported;
 
+    var detail = new StringBuilder();
+    var lines = 0;
+    var truncated = false;
+
     var scanner = new AsciiScanner(content);
     while (!scanner.IsEmpty) {
       var line = scanner.NextLine();
@@ -98,9 +124,31 @@ public static class DescriptorParser {
         inode = Counter.Of(value);
       else if (TryValue(line, "Pid:"u8, out value))
         targetPid = Counter.Of(value);
+      else
+        // Everything else, whatever it is. A pidfd's NSpid line lands here and is worth having: the
+        // target's pid inside its own namespace is a different number from the one beside it, and
+        // for a process in a container it is the only one its own logs will show.
+        Keep(line);
     }
 
-    return new(position, flags, mountId, inode, targetPid);
+    if (truncated)
+      detail.Append('…');
+
+    return new(position, flags, mountId, inode, targetPid, detail.Length > 0 ? detail.ToString() : null);
+
+    // One line of per-kind detail, as the kernel wrote it, up to the cut.
+    void Keep(ReadOnlySpan<byte> line) {
+      if (lines >= _MaxDetailLines || detail.Length >= _MaxDetailLength) {
+        truncated = true;
+        return;
+      }
+
+      ++lines;
+      if (detail.Length > 0)
+        detail.Append('\n');
+
+      detail.Append(Encoding.UTF8.GetString(line).TrimEnd());
+    }
   }
 
   /// <summary>
