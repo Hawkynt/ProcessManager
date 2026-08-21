@@ -1,3 +1,4 @@
+using Hawkynt.NativeForms;
 using Hawkynt.ProcessManager.Abstractions;
 using Hawkynt.ProcessManager.Model;
 using Hawkynt.ProcessManager.Sampling;
@@ -51,6 +52,14 @@ public sealed class ShellWindowTests {
     public void Dispose() { }
   }
 
+  private static IEnumerable<Control> Descendants(Control root) {
+    foreach (Control child in root.Controls) {
+      yield return child;
+      foreach (var deeper in Descendants(child))
+        yield return deeper;
+    }
+  }
+
   private static MainWindow Window(StubProbe? probe = null) {
     probe ??= new();
     return new(new Sampler(probe), probe, null);
@@ -94,6 +103,65 @@ public sealed class ShellWindowTests {
     var shown = window.DescribeView("Network");
     Assert.That(shown, Does.Contain("93.184.216.34:https"));
     Assert.That(shown, Does.Not.Contain(":443"));
+  }
+
+  /// <summary>
+  /// A socket row offers its owner from a menu and not only from a double-click. The gesture worked
+  /// and was the only way in, which for somebody who works from a menu is the same as a command that
+  /// is not there (PRD §25.3, §40).
+  /// </summary>
+  [Test]
+  public void ASocketRowOffersItsOwner() {
+    var window = Window();
+    Assert.That(window.ShowView("Network"), Is.True);
+
+    var labels = new List<string>();
+    foreach (var control in Descendants(window))
+      if (control is TreeListView { AccessibleName: "Connections" } list && list.ContextMenuStrip is { } menu)
+        foreach (var item in menu.Items)
+          if (item is ToolStripMenuItem entry)
+            labels.Add(entry.Text);
+
+    Assert.That(labels, Does.Contain("Go to process"));
+    Assert.That(labels, Does.Contain("Process properties…"));
+  }
+
+  /// <summary>
+  /// A socket whose owner this account may not see is not a socket owned by nobody. Going to it says
+  /// which of the two it is, rather than navigating nowhere and leaving the reader to conclude the
+  /// program cannot attribute sockets at all (PRD §72.3).
+  /// </summary>
+  [Test]
+  public void GoingToAnUnattributableOwnerSaysWhyRatherThanNothing() {
+    var probe = new StubProbe {
+      Connections = [
+        new(
+          ConnectionProtocol.Tcp, SocketKind.Stream,
+          "0.0.0.0", 22, string.Empty, 0,
+          "LISTEN", 91, 0, -1, null, "lo",
+          Counter.NotSupported, Counter.NotSupported, Counter.NotSupported,
+          SocketStatistics.NotSupported, Rate.NotSampledYet, Rate.NotSampledYet,
+          null, null, Counter.NotSupported
+        ),
+      ],
+    };
+
+    var window = Window(probe);
+    var said = new List<string>();
+    window.Announce = said.Add;
+    Assert.That(window.ShowView("Network"), Is.True);
+
+    foreach (var control in Descendants(window))
+      if (control is TreeListView { AccessibleName: "Connections" } list) {
+        list.SelectedNode = list.Nodes[0];
+        foreach (var item in list.ContextMenuStrip!.Items)
+          if (item is ToolStripMenuItem { Text: "Go to process" } go)
+            go.PerformClick();
+      }
+
+    Assert.That(said, Has.Count.EqualTo(1));
+    Assert.That(said[0], Does.Contain("not visible from this account"));
+    Assert.That(window.ShownView, Is.EqualTo("Network"), "and the view is left where it was");
   }
 
   [Test]

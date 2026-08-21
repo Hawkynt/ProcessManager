@@ -1869,6 +1869,7 @@ public sealed class MainWindow : Form {
     // Opening a socket row goes to the process holding it, which is the question a connection list
     // is usually being read to answer (PRD §33, §40).
     this._shell.NetworkRowOpened += (_, _) => this.GoToSocketOwner();
+    this._shell.NetworkMenu = this.BuildNetworkMenu();
 
     this.ShowView(0);
   }
@@ -2045,21 +2046,62 @@ public sealed class MainWindow : Form {
     this._shell.RefreshNetwork(names);
   }
 
-  private void GoToSocketOwner() {
+  /// <summary>
+  /// What a socket row offers (PRD §40).
+  /// </summary>
+  /// <remarks>
+  /// Both items became real the moment there was a machine-wide connection view to invoke them from.
+  /// Until then every socket on show belonged to the selected process by construction, so "go to
+  /// process" was a command to go where the reader already was. Double-clicking a row already did the
+  /// first of them, and a gesture reachable from nowhere else is — for somebody who works from a menu
+  /// — the same as a command that is not there (PRD §25.3).
+  /// </remarks>
+  private ContextMenuStrip BuildNetworkMenu() {
+    var menu = new ContextMenuStrip();
+    menu.Items.Add(Item("Go to process", () => this.GoToSocketOwner()));
+    menu.Items.Add(Item("Process properties…", this.ShowSocketOwnerProperties));
+    return menu;
+  }
+
+  /// <summary>
+  /// A socket whose owner this account may not see is not a socket owned by nobody.
+  /// </summary>
+  /// <remarks>
+  /// The kernel gives an unprivileged reader the socket and withholds the inode's owner, so the pid
+  /// column reads "—" rather than nought. Saying which of the two it is costs a sentence and saves a
+  /// reader from concluding the program cannot attribute sockets at all (PRD §72.3).
+  /// </remarks>
+  private const string _SocketOwnerNotVisible
+    = "This socket's owning process is not visible from this account. Sockets held by other users' "
+    + "processes cannot be attributed without privilege.";
+
+  private bool GoToSocketOwner() {
     var pid = this._shell.SelectedNetworkPid;
     if (pid <= 0) {
-      MessageBox.Show(
-        "This socket's owning process is not visible from this account. Sockets held by other users' "
-        + "processes cannot be attributed without privilege.",
-        "Process Manager"
-      );
-
-      return;
+      this.Announce(_SocketOwnerNotVisible);
+      return false;
     }
 
     this._rail.SelectedIndex = 0;
-    if (!this.SelectPid(pid))
-      MessageBox.Show($"The socket belongs to pid {pid}, which is not in the process list.", "Process Manager");
+    if (this.SelectPid(pid))
+      return true;
+
+    this.Announce($"The socket belongs to pid {pid}, which is not in the process list.");
+    return false;
+  }
+
+  /// <summary>
+  /// Opens the socket's owner in a properties window (PRD §40).
+  /// </summary>
+  /// <remarks>
+  /// Through the navigation rather than beside it: the row is selected in the process list first and
+  /// the existing command opened on it, so there is one code path that decides which process a
+  /// properties window is about. A second one reading a pid off a socket row would be a second place
+  /// that had to agree with the first about identity (PRD §8.2).
+  /// </remarks>
+  private void ShowSocketOwnerProperties() {
+    if (this.GoToSocketOwner())
+      this.ShowProperties();
   }
 
   #endregion

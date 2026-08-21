@@ -2797,10 +2797,18 @@ Protocols:
 
 Actions:
 
-- [ ] 🟡 Go to process — the window's network tab shows one process's own sockets, so the owner is
-      already the selected row of the tree and there is nowhere to go. It becomes a real command when
-      there is a machine-wide connection view to invoke it from
-- [ ] 🟡 Process properties — as above
+- [x] Go to process — it became a real command the moment there was a machine-wide connection view to
+      invoke it from. In the lower pane's network tab there is still nowhere to go — every socket
+      there belongs to the selected process by construction — so it lives on the view behind the
+      rail, which shows the whole machine's sockets and the pid of each. Double-clicking a row did
+      this already and from nowhere else, and a gesture with no menu item is, for somebody who works
+      from a menu, the same as a command that is not there (§25.3). A socket whose owner this account
+      may not see says so rather than navigating nowhere: the kernel gives an unprivileged reader the
+      socket and withholds the inode's owner, and the difference between "nobody owns it" and "you
+      may not ask" is the whole of §72.3
+- [x] Process properties — the same row, through the same navigation: the owner is selected in the
+      process list and the existing command opened on it, so one code path decides which process a
+      properties window is about rather than two that have to agree about identity (§8.2)
 - [x] Copy endpoint — both ends of the selected row, as one line worth pasting into a search. Taken
       from the drawn cells rather than re-read: a connection can close between a right-click and a
       menu choice, and what the reader asked to copy is what they were looking at
@@ -4674,7 +4682,7 @@ a naive parser hands the attacker the parse.
 
 # 99. Testing strategy
 
-**1896 tests pass on every leg, under both a UTF-8 and a `C` locale.**
+**1898 tests pass on every leg, under both a UTF-8 and a `C` locale.**
 
 ## Unit tests
 

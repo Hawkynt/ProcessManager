@@ -288,6 +288,12 @@ internal sealed class ShellViews(ISystemProbe probe) {
         ? pid
         : -1;
 
+  /// <summary>The menu a right-click on a socket row opens (PRD §40).</summary>
+  public ContextMenuStrip? NetworkMenu {
+    get => this._network.ContextMenuStrip;
+    set => this._network.ContextMenuStrip = value;
+  }
+
   /// <summary>Raised when a socket row is opened, which is the gesture for "show me who owns this".</summary>
   public event EventHandler<MouseEventArgs>? NetworkRowOpened {
     add => this._network.RowOpened += value;
