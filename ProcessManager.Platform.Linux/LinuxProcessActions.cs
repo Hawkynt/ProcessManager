@@ -208,6 +208,15 @@ public sealed class LinuxProcessActions(LinuxProbeOptions? options = null) : IPr
   /// </para>
   /// </remarks>
   public ActionResult SetSchedulingClass(ProcessKey key, SchedulingPolicy policy, int priority) {
+    // Identity first, before the class is looked at and before the priority is checked against it.
+    // Every other order lets a request naming a process that no longer exists come back saying
+    // something about the class instead — which reads as a fault in the request rather than as the
+    // one thing that actually mattered, and on a platform where a later branch refuses outright the
+    // stale key would never be looked at at all (PRD §8.2).
+    var check = this.Verify(key);
+    if (!check.Succeeded)
+      return check;
+
     if (PolicyNumber(policy) is not { } number)
       return ActionResult.Fail(
         ActionOutcome.NotSupportedOnPlatform,
@@ -231,10 +240,6 @@ public sealed class LinuxProcessActions(LinuxProbeOptions? options = null) : IPr
           ? $"{Query.Humanize.SchedulingPolicy(policy)} has no static priority; it takes {range.Min} and nothing else"
           : $"{Query.Humanize.SchedulingPolicy(policy)} takes a static priority of {range.Min} to {range.Max}, not {priority}"
       );
-
-    var check = this.Verify(key);
-    if (!check.Succeeded)
-      return check;
 
     if (Native.SetScheduler(key.Pid, number, priority) == 0)
       return ActionResult.Ok;

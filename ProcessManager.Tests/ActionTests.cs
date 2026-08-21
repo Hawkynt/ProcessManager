@@ -145,6 +145,30 @@ public sealed class LinuxProcessActionIdentityTests {
   }
 
   /// <summary>
+  /// The identity is checked before the arguments are, on every platform.
+  /// </summary>
+  /// <remarks>
+  /// Both answers are defensible in isolation — the class is unaskable and the key is stale — and
+  /// only one of them is the answer to what was asked. The order also has to be the same everywhere:
+  /// this ran first on Linux and second on Windows and macOS, where the class is refused outright
+  /// and the stale key was therefore never looked at. An action that can reach a platform branch
+  /// without having validated its key is one syscall away from acting on the wrong process (§8.2).
+  /// </remarks>
+  [Test]
+  public void TheIdentityIsCheckedBeforeTheArgumentsAre() {
+    var actions = Actions();
+    var stale = new ProcessKey(1000, 999_999);
+
+    Assert.Multiple(() => {
+      // Every one of these arguments is independently wrong: 500 is outside every real-time range,
+      // SCHED_DEADLINE cannot be asked for at all, and SCHED_OTHER takes no static priority.
+      Assert.That(actions.SetSchedulingClass(stale, SchedulingPolicy.Fifo, 500).Outcome, Is.EqualTo(ActionOutcome.IdentityMismatch));
+      Assert.That(actions.SetSchedulingClass(stale, SchedulingPolicy.Deadline, 0).Outcome, Is.EqualTo(ActionOutcome.IdentityMismatch));
+      Assert.That(actions.SetSchedulingClass(stale, SchedulingPolicy.Other, 9).Outcome, Is.EqualTo(ActionOutcome.IdentityMismatch));
+    });
+  }
+
+  /// <summary>
   /// A class this call cannot express is named as such, rather than being attempted and failing with
   /// an errno that says nothing about why (PRD §5.3).
   /// </summary>

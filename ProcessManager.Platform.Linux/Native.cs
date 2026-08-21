@@ -289,7 +289,8 @@ internal static partial class Native {
   /// <c>struct sched_param</c> is one <c>int</c> and nothing else, so it is passed as one rather
   /// than wrapped — the layout is fixed by the ABI and has been since the call existed.
   /// </remarks>
-  public static int SetScheduler(int pid, int policy, int priority) => SchedSetScheduler(pid, policy, ref priority);
+  public static int SetScheduler(int pid, int policy, int priority)
+    => OperatingSystem.IsLinux() ? SchedSetScheduler(pid, policy, ref priority) : -1;
 
   /// <summary>
   /// The static-priority range a class accepts, or <see langword="null"/> where the kernel does not
@@ -302,6 +303,12 @@ internal static partial class Native {
   /// nothing to say about why.
   /// </remarks>
   public static (int Min, int Max)? SchedulerPriorityRange(int policy) {
+    // Guarded on the platform for the reason ClockTicksPerSecond is: the tests replay a recorded
+    // tree on Windows and macOS, where there is no libc of this shape to ask — and where the numbers
+    // would mean something else anyway, since the SCHED_* constants are not the same ones.
+    if (!OperatingSystem.IsLinux())
+      return null;
+
     var min = SchedGetPriorityMin(policy);
     if (min < 0)
       return null;
