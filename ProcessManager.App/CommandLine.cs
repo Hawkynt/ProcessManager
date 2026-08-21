@@ -7,7 +7,7 @@ using Hawkynt.ProcessManager.Ui.Terminal;
 namespace Hawkynt.ProcessManager.App;
 
 /// <summary>Which face of the program the arguments asked for.</summary>
-internal enum RunMode : byte { Desktop, Terminal, List, Find, Kill, EndTask, Restart, Scheduling, SelfTest, HelperCheck, Help, HelpFields, Host, Startup, Users, Services, Connections, Limits, Run, Version }
+internal enum RunMode : byte { Desktop, Terminal, List, Find, Kill, EndTask, Restart, Scheduling, Signal, ResourceLimit, OutOfMemory, Freezer, SelfTest, HelperCheck, Help, HelpFields, Host, Startup, Users, Services, Connections, Limits, Run, Version }
 
 /// <summary>
 /// Which sockets <c>--connections</c> lists.
@@ -52,6 +52,24 @@ internal sealed record CommandLineOptions {
   public SchedulingPolicy SchedulingClass { get; init; } = SchedulingPolicy.Unknown;
 
   public int SchedulingPriority { get; init; }
+
+  /// <summary>The signal number --signal asked for; never a name, because the number is what the
+  /// kernel takes and the mapping is the architecture's (PRD §25.1).</summary>
+  public int Signal { get; init; }
+
+  /// <summary>Which ceiling --rlimit sets, and to what (PRD §25.2).</summary>
+  public ResourceLimitKind LimitKind { get; init; }
+
+  /// <summary>Null is <c>RLIM_INFINITY</c> — no limit, which is not a quantity.</summary>
+  public ulong? LimitSoft { get; init; }
+
+  public ulong? LimitHard { get; init; }
+
+  /// <summary>What --oom sets the out-of-memory adjustment to (PRD §25.5).</summary>
+  public int OomAdjustment { get; init; }
+
+  /// <summary>Whether --freeze or --thaw was given; the two are one action with two directions.</summary>
+  public bool Freeze { get; init; }
 
 
   /// <summary>The program to start and its arguments, for <c>--run</c> (PRD §54).</summary>
@@ -534,6 +552,67 @@ internal sealed record CommandLineOptions {
           i += 2;
           break;
         }
+        case "--signal": {
+          // Two values, like --scheduling: the pid and the signal are one request, and either
+          // without the other is not something anybody means.
+          if (i + 2 >= args.Length || !int.TryParse(args[i + 1], out var signalled))
+            return options with { Error = "--signal needs a pid and a signal, by name or by number: --signal 412 TERM" };
+
+          if (!Signals.TryParse(args[i + 2], out var number))
+            return options with {
+              Error = Signals.NumbersAreKnownHere
+                ? $"unknown signal '{args[i + 2]}'; it is a name such as TERM or HUP, or a number from 1 to 64"
+                : Signals.UnknownArchitecture,
+            };
+
+          options = options with { Mode = RunMode.Signal, TargetPid = signalled, Signal = number };
+          explicitMode = true;
+          i += 2;
+          break;
+        }
+
+        case "--rlimit": {
+          // Three, because a ceiling is a pid, a name and a value and none of the three has a
+          // default that would be safe to invent.
+          if (i + 3 >= args.Length || !int.TryParse(args[i + 1], out var capped))
+            return options with { Error = $"--rlimit needs a pid, a limit and a value: --rlimit 412 nofile 1024 (limits: {ResourceLimits.Vocabulary})" };
+
+          if (!ResourceLimits.TryParse(args[i + 2], out var kind))
+            return options with {
+              Error = ResourceLimits.NumbersAreKnownHere
+                ? $"unknown limit '{args[i + 2]}'; it is one of {ResourceLimits.Vocabulary}"
+                : ResourceLimits.UnknownArchitecture,
+            };
+
+          if (!TryLimitValues(args[i + 3], out var soft, out var hard))
+            return options with { Error = $"--rlimit takes a value, or soft:hard, or the word unlimited; '{args[i + 3]}' is none of them" };
+
+          options = options with { Mode = RunMode.ResourceLimit, TargetPid = capped, LimitKind = kind, LimitSoft = soft, LimitHard = hard };
+          explicitMode = true;
+          i += 3;
+          break;
+        }
+
+        case "--oom": {
+          if (i + 2 >= args.Length || !int.TryParse(args[i + 1], out var scored) || !int.TryParse(args[i + 2], out var adjustment))
+            return options with { Error = "--oom needs a pid and an adjustment from -1000 to 1000" };
+
+          options = options with { Mode = RunMode.OutOfMemory, TargetPid = scored, OomAdjustment = adjustment };
+          explicitMode = true;
+          i += 2;
+          break;
+        }
+
+        case "--freeze":
+        case "--thaw": {
+          if (!TryValue(args, ref i, inlineValue, out var pid) || !int.TryParse(pid, out var member))
+            return options with { Error = $"{name} needs a pid" };
+
+          options = options with { Mode = RunMode.Freezer, TargetPid = member, Freeze = name == "--freeze" };
+          explicitMode = true;
+          break;
+        }
+
         case "--tree":
           options = options with { TreeMode = true, KillTree = true };
           break;
@@ -752,6 +831,26 @@ internal sealed record CommandLineOptions {
     return equals < 0 ? (argument, null) : (argument[..equals], argument[(equals + 1)..]);
   }
 
+  /// <summary>
+  /// Reads a limit as <c>soft:hard</c>, or as one value meaning both.
+  /// </summary>
+  /// <remarks>
+  /// One value setting both halves is <c>prlimit</c>'s own rule, and following it is what makes an
+  /// answer checkable against the tool. Both halves are always sent, because the syscall sets both
+  /// together — a switch that changed one and preserved the other would have to read the other back
+  /// first and would race with anything the process did to itself in between.
+  /// </remarks>
+  private static bool TryLimitValues(string text, out ulong? soft, out ulong? hard) {
+    soft = null;
+    hard = null;
+    var colon = text.IndexOf(':', StringComparison.Ordinal);
+    if (colon < 0)
+      return ResourceLimits.TryParseValue(text, out soft) && ResourceLimits.TryParseValue(text, out hard);
+
+    return ResourceLimits.TryParseValue(text[..colon], out soft)
+      && ResourceLimits.TryParseValue(text[(colon + 1)..], out hard);
+  }
+
   private static bool TryValue(string[] args, ref int index, string? inlineValue, out string value) {
     if (inlineValue is not null) {
       value = inlineValue;
@@ -785,7 +884,8 @@ internal sealed record CommandLineOptions {
       procman --list [--json]        one snapshot to stdout, then exit
       procman --find <pattern>       which processes match, by name, command line or open file
       procman --host                 what this machine is: processor, memory, cache, uptime
-      procman --limits PID           what a process's cgroup allows it, and what it is using
+      procman --limits PID           every ceiling on a process: its own, its cgroup's, and the
+                                     out-of-memory standing that decides who dies first
       procman --run PROGRAM [ARG...] start a program; everything after --run belongs to it
       procman --startup              what is configured to start when you log in
       procman --users                who is logged in, and what their processes cost
@@ -796,6 +896,10 @@ internal sealed record CommandLineOptions {
       procman --end-task <pid>       ask a process to close: its window first, SIGTERM if it has none
       procman --restart <pid>        end it and start it again with the same arguments and directory
       procman --scheduling <pid> <c> move it into a scheduler class: other, batch, idle, rr, fifo
+      procman --signal <pid> <sig>   send any signal, by name or number: TERM, HUP, USR1, 34
+      procman --rlimit <pid> <l> <v> set one ceiling: --rlimit 412 nofile 1024, or 512:4096
+      procman --oom <pid> <n>        how likely the out-of-memory killer is to pick it, -1000 to 1000
+      procman --freeze <pid>         stop every process in its cgroup; --thaw starts them again
 
     Options:
       --sort <field>     any field key; see --help-fields for the list

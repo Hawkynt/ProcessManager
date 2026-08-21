@@ -525,11 +525,14 @@ public sealed class MainWindow : Form {
     menu.Items.Add(Item("Restart", this.RestartProcess));
     menu.Items.Add(Item("Suspend", () => this.Act("suspend", key => this._actions!.Suspend(key))));
     menu.Items.Add(Item("Resume", () => this.Act("resume", key => this._actions!.Resume(key))));
+    menu.Items.Add(Item("Send signal…", this.SendSignal));
+    menu.Items.Add(this.FreezerMenu());
     menu.Items.Add(new ToolStripSeparator());
     menu.Items.Add(this.PriorityMenu());
     menu.Items.Add(this.IoPriorityMenu());
     menu.Items.Add(this.SchedulingMenu());
     menu.Items.Add(Item("Set affinity…", this.ChooseAffinity));
+    menu.Items.Add(Item("Limits…", this.ShowLimits));
     menu.Items.Add(new ToolStripSeparator());
     menu.Items.Add(this.NavigationMenu());
     menu.Items.Add(new ToolStripSeparator());
@@ -617,6 +620,125 @@ public sealed class MainWindow : Form {
     }
 
     return menu;
+  }
+
+  /// <summary>
+  /// Stopping a whole unit, which on Linux is the cgroup and not the process (PRD §25.1, §38).
+  /// </summary>
+  /// <remarks>
+  /// A submenu of its own rather than two items beside Suspend, because it is not a stronger
+  /// suspend — it is a different target. Suspend stops the one process and leaves everything it
+  /// started running; freezing stops the cgroup, every cgroup below it, and anything either of them
+  /// starts while it is frozen. Putting them side by side under one heading would invite exactly the
+  /// reading §5.3 forbids.
+  /// </remarks>
+  private ToolStripMenuItem FreezerMenu() {
+    var menu = new ToolStripMenuItem("Whole cgroup");
+    menu.DropDownItems.Add(Item("Freeze…", () => this.Freeze(true)));
+    menu.DropDownItems.Add(Item("Thaw", () => this.Freeze(false)));
+    return menu;
+  }
+
+  /// <summary>
+  /// Sends a signal the menu does not have an item for (PRD §25.1).
+  /// </summary>
+  /// <remarks>
+  /// The confirmation comes after the choosing rather than inside the dialog, so that it is the same
+  /// confirmation every other destructive item here uses and names the same four things: the action,
+  /// the target, its pid and what it costs (PRD §90).
+  /// </remarks>
+  private void SendSignal() {
+    if (this._binder.SelectedRow is not { } row)
+      return;
+
+    if (this._actions is null) {
+      MessageBox.Show("This build has no actions for this platform.", "Process Manager");
+      return;
+    }
+
+    var chooser = new SignalDialog(row.Name, row.Pid);
+    chooser.ShowDialog();
+    if (!chooser.Accepted || chooser.Chosen is not { } signal)
+      return;
+
+    this.Act(
+      $"send {Signals.Describe(signal)} to",
+      key => this._actions!.SendSignal(key, signal),
+      Signals.Consequence(signal)
+    );
+  }
+
+  /// <summary>
+  /// Freezes or thaws the cgroup the selected process is in (PRD §25.1, §38).
+  /// </summary>
+  /// <remarks>
+  /// The confirmation names the cgroup and counts what is in it, because the selected row is one
+  /// member of it and usually not the interesting one: freezing a service's process freezes the
+  /// service, and freezing a container's shell freezes the container (PRD §5.5).
+  /// </remarks>
+  private void Freeze(bool frozen) {
+    if (this._binder.SelectedRow is not { } row)
+      return;
+
+    if (this._actions is null) {
+      MessageBox.Show("This build has no actions for this platform.", "Process Manager");
+      return;
+    }
+
+    if (!frozen) {
+      // Thawing is the reversal and costs nothing, so it is not confirmed — the same call
+      // "End task" makes about being the reversible one.
+      this.Report(this._actions.FreezeCgroup(row.Key, false));
+      this.Refresh();
+      return;
+    }
+
+    var cgroup = this._probe.DescribeCgroup(row.Key);
+    if (cgroup is null) {
+      MessageBox.Show(
+        $"{row.Name} (PID {row.Pid}) is in no cgroup this build can read. Only the unified hierarchy "
+        + "(cgroup v2) has a freezer.",
+        "Process Manager"
+      );
+
+      return;
+    }
+
+    if (cgroup.Freezer is not { Supported: true }) {
+      MessageBox.Show("This kernel's cgroups have no freezer; it arrived in Linux 5.2.", "Process Manager");
+      return;
+    }
+
+    var members = cgroup.PidsCurrent.HasValue
+      ? $"{Humanize.Count(cgroup.PidsCurrent)} processes"
+      : "every process";
+
+    var answer = MessageBox.Show(
+      $"Freeze {cgroup.Path}?\n\n"
+      + $"This stops {members} in that cgroup, not only {row.Name} (PID {row.Pid}). "
+      + "They keep every file, socket and lock they hold, and each still reports itself as sleeping — "
+      + "the kernel has no process state for frozen.",
+      "Process Manager",
+      MessageBoxButtons.YesNo
+    );
+
+    if (answer != DialogResult.Yes)
+      return;
+
+    this.Report(this._actions.FreezeCgroup(row.Key, true));
+    this.Refresh();
+  }
+
+  /// <summary>
+  /// Every ceiling on the selected process, and its standing with the out-of-memory killer
+  /// (PRD §25.2, §25.5).
+  /// </summary>
+  private void ShowLimits() {
+    if (this._binder.SelectedRow is not { } row)
+      return;
+
+    new ResourceLimitsDialog(this._probe, this._actions, row.Key, row.Name).ShowDialog();
+    this.Refresh();
   }
 
   /// <summary>
@@ -1252,7 +1374,10 @@ public sealed class MainWindow : Form {
     process.DropDownItems.Add(Item("Restart", this.RestartProcess));
     process.DropDownItems.Add(Item("Suspend", () => this.Act("suspend", key => this._actions!.Suspend(key))));
     process.DropDownItems.Add(Item("Resume", () => this.Act("resume", key => this._actions!.Resume(key))));
+    process.DropDownItems.Add(Item("Send signal…", this.SendSignal));
+    process.DropDownItems.Add(this.FreezerMenu());
     process.DropDownItems.Add(new ToolStripSeparator());
+    process.DropDownItems.Add(Item("Limits…", this.ShowLimits));
     process.DropDownItems.Add(Item("Read handle count", this.FillHandleCounts));
     process.DropDownItems.Add(Item("Properties…", this.ShowProperties));
     process.DropDownItems.Add(Item("Refresh details", () => this._details.Invalidate()));
