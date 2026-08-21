@@ -820,6 +820,7 @@ public sealed class MainWindow : Form {
     menu.Items.Add(Item("Limits…", this.ShowLimits));
     menu.Items.Add(new ToolStripSeparator());
     menu.Items.Add(this.NavigationMenu());
+    menu.Items.Add(this.InspectMenu());
     menu.Items.Add(new ToolStripSeparator());
     menu.Items.Add(Item("Read handle count", this.FillHandleCounts));
     menu.Items.Add(Item("Properties…", this.ShowProperties));
@@ -1051,6 +1052,42 @@ public sealed class MainWindow : Form {
     menu.DropDownItems.Add(Item("Executable properties…", this.ShowExecutableProperties));
     menu.DropDownItems.Add(new ToolStripSeparator());
     menu.DropDownItems.Add(Item("Search the web for this name…", this.SearchTheWeb));
+    return menu;
+  }
+
+  /// <summary>
+  /// The diagnostics of §25.4, each landing on the page that answers it.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// All of these existed and several were reachable only by opening a window and hunting along a tab
+  /// strip for the right caption — which for the memory map and the security context meant they were
+  /// not reachable at all. A menu that names the question is the difference between a feature and a
+  /// feature somebody can find (PRD §25.4).
+  /// </para>
+  /// <para>
+  /// Under its own heading beside "Go to" and away from the items that change something, for the
+  /// reason §5.5 gives: nothing here alters the process it is aimed at.
+  /// </para>
+  /// </remarks>
+  private ToolStripMenuItem InspectMenu() {
+    var menu = new ToolStripMenuItem("Inspect");
+    foreach (var (label, page) in (ReadOnlySpan<(string Label, string Page)>)[
+      ("Threads…", "Threads"),
+      ("Modules…", "Modules"),
+      ("Handles and descriptors…", "Handles"),
+      ("Memory map…", "Memory map"),
+      ("Environment…", "Environment"),
+      ("Network connections…", "Network"),
+      ("Security context…", "Security"),
+      ("cgroup and limits…", "cgroup"),
+    ]) {
+      // Copied out of the span before the closure captures it: a ref struct's element cannot be
+      // captured, and a loop variable that could would be the same one for every item.
+      var target = page;
+      menu.DropDownItems.Add(Item(label, () => this.ShowProperties(target)));
+    }
+
     return menu;
   }
 
@@ -1696,6 +1733,7 @@ public sealed class MainWindow : Form {
     process.DropDownItems.Add(Item("Send signal…", this.SendSignal));
     process.DropDownItems.Add(this.FreezerMenu());
     process.DropDownItems.Add(new ToolStripSeparator());
+    process.DropDownItems.Add(this.InspectMenu());
     process.DropDownItems.Add(Item("Limits…", this.ShowLimits));
     process.DropDownItems.Add(Item("Read handle count", this.FillHandleCounts));
     process.DropDownItems.Add(Item("Properties…", this.ShowProperties));
@@ -2017,7 +2055,14 @@ public sealed class MainWindow : Form {
   /// rather than opening a duplicate — several windows are the point, several of the *same* process
   /// are not.
   /// </remarks>
-  private void ShowProperties() {
+  private void ShowProperties() => this.ShowProperties(null);
+
+  /// <param name="page">
+  /// Which tab to land on, or null for the one the window opens with. Named rather than indexed,
+  /// because the strip's order is the pane's own and a number here would be a second place that had
+  /// to agree with it (PRD §5.1).
+  /// </param>
+  private void ShowProperties(string? page) {
     if (this._binder.SelectedRow is not { } row)
       return;
 
@@ -2026,6 +2071,9 @@ public sealed class MainWindow : Form {
         // The toolkit has no Activate; focusing it is the nearest thing and is enough to say
         // "this one is already open" rather than opening a second.
         open.Focus();
+        if (page is { Length: > 0 })
+          open.ShowPage(page);
+
         return;
       }
 
@@ -2040,6 +2088,8 @@ public sealed class MainWindow : Form {
     window.FormClosed += (_, _) => this._properties.Remove(window);
     this._properties.Add(window);
     window.Show();
+    if (page is { Length: > 0 })
+      window.ShowPage(page);
   }
 
   private PerformanceWindow? _performance;
