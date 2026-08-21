@@ -66,11 +66,37 @@ public sealed record ResourceRow(
 public sealed class ResourceRail : ListBox {
 
   private const int _Pad = 8;
-  private const int _SparkHeight = 26;
 
   public ResourceRail() =>
     // Tall enough for three bands — name, sparkline, readings — at the sizes §45.1 asks for.
     this.ItemHeight = 76;
+
+  /// <summary>
+  /// How many samples wide each row's sparkline is, which the page keeps equal to its graph's span.
+  /// </summary>
+  /// <remarks>
+  /// §45.1 asks for a sparkline "over the same history the main graph uses". Changing the graph to
+  /// five minutes and leaving the rail on one would put two different time axes on one page, and
+  /// nothing on either would say which is which.
+  /// </remarks>
+  public int Samples { get; set; } = 60;
+
+  /// <summary>Frozen with the graphs, so pausing the page pauses all of it (PRD §45.4).</summary>
+  public int SkipNewest { get; set; }
+
+  /// <summary>
+  /// Tightens the rows for §45.7's compact density: less spacing, and a shorter sparkline, so more
+  /// resources are on screen at once.
+  /// </summary>
+  public bool Compact {
+    set {
+      this.ItemHeight = value ? 64 : 76;
+      this.Invalidate();
+    }
+  }
+
+  /// <summary>Whatever is left of the row once the name and the readings have had theirs.</summary>
+  private int SparkHeight => Math.Max(8, this.ItemHeight - 42);
 
   protected override void OnDrawRow(IGraphics g, int index, Rectangle bounds, bool selected) {
     if (this.Items[index] is not ResourceRow row) {
@@ -97,11 +123,11 @@ public sealed class ResourceRail : ListBox {
 
     // A resource with no history of its own — the System summary — gets no empty black box
     // pretending to be a graph.
-    var spark = new Rectangle(left, bounds.Y + 22, width, _SparkHeight);
+    var spark = new Rectangle(left, bounds.Y + 22, width, this.SparkHeight);
     if (row.History is not null)
-      Sparkline.Draw(g, spark, row.History, row.Maximum, row.Accent);
+      Sparkline.Draw(g, spark, row.History, row.Maximum, row.Accent, this.Samples, this.SkipNewest);
 
-    var readings = new Rectangle(left, spark.Bottom + 4, width, 16);
+    var readings = new Rectangle(left, bounds.Bottom - 18, width, 16);
     g.DrawText(row.Primary, theme.DefaultFont, text, readings, ContentAlignment.TopLeft);
     if (row.Secondary.Length > 0)
       g.DrawText(row.Secondary, theme.DefaultFont, text, readings, ContentAlignment.TopRight);

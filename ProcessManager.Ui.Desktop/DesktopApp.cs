@@ -106,11 +106,27 @@ public static class DesktopApp {
           // and a capture that photographs a different page every run is not a regression detector.
           performance.Show("Memory");
           description += performance.DescribeForCapture();
+          description += "page sweep:\n" + performance.DescribeEveryPageForCapture();
           var pagePng = Path.Combine(directory, "performance.png");
           var pageSize = GtkCapture.Window(pagePng, out var pageFailure, performance.Text);
           description += pageSize is { } page
             ? $"page capture: {page.Width}x{page.Height} -> {pagePng}\n"
             : $"page capture: none — {pageFailure}\n";
+
+          // And the same page with its fourth level open, on the resource that has the most of it.
+          // The collapsed block, the compact density and the per-core grid are three states that a
+          // photograph of the default page cannot show, and a state nobody photographs is one whose
+          // layout regressions ship (PRD §45.2, §45.7).
+          performance.Show("Processor");
+          // Compact opens the fourth level with it: somebody who asked for density asked to see
+          // more at once, not the same thing in less space.
+          performance.SetDensity(compact: true);
+          description += performance.DescribeForCapture();
+          var expandedPng = Path.Combine(directory, "performance-expanded.png");
+          var expandedSize = GtkCapture.Window(expandedPng, out var expandedFailure, performance.Text);
+          description += expandedSize is { } expanded
+            ? $"page expanded: {expanded.Width}x{expanded.Height} -> {expandedPng}\n"
+            : $"page expanded: none — {expandedFailure}\n";
         } else
           description += "capture:      not implemented on this platform\n";
 
