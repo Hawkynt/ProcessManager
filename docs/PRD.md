@@ -4201,8 +4201,11 @@ GUI:
       effect is that the desktop's text-scaling factor never reaches this program at all. Nothing
       here can honour a number it is never told
 - [ ] 🟡 Non-colour status indicators — **downgraded from a tick, on the evidence.** Every *row*
-      colour is also a column: the category a wash names is in State, User, Elevated or Package, and
-      a marked cell keeps its number. The core heat map is not: sixty-four cells on a green-amber-red
+      colour is also a column, and since this was written, one column in particular: `category` calls
+      the very classifier the palette calls, so the words and the wash cannot disagree — yours, the
+      system's, elevated, a service, suspended, a zombie, newly started, packaged, running a managed
+      runtime. It costs nothing to read, so it may sit in a default layout. A marked cell keeps its
+      number. The core heat map is not: sixty-four cells on a green-amber-red
       ramp with not a digit anywhere on them, which is a reading available to nobody who cannot
       separate those hues. It now has a textual summary a screen reader is given, and that is not the
       same as a visible one — see §45.9's colour-blind row, which is the box this actually belongs to

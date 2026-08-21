@@ -489,6 +489,9 @@ public sealed class MainWindow : Form {
 
   public void Start() {
     this._binder.CurrentUserId = CurrentUserId();
+    // And the classifier behind the Kind column, which every front-end reaches through the shared
+    // accessor and so cannot be handed an identity of its own.
+    Query.ProcessCategories.CurrentUserId = this._binder.CurrentUserId;
     // Read once, before the first paint: the machine will not rearrange its cores while we watch.
     this._cores.Topology = this._probe.DescribeTopology();
     // One sample even when the tick is off. A window asked to refresh by hand still has to open on

@@ -15,6 +15,32 @@ internal static class Program {
 
   private const int _ExitOk = 0;
   private const int _ExitError = 1;
+  /// <summary>
+  /// The user id this program is running as, or -1 where it cannot be read.
+  /// </summary>
+  /// <remarks>
+  /// Minus one classifies nothing as "yours", which is the right way to be wrong: claiming a process
+  /// belongs to whoever happens to be looking is the one mistake here that would matter.
+  /// </remarks>
+  private static int CurrentUserId() {
+    if (!OperatingSystem.IsLinux())
+      return -1;
+
+    try {
+      foreach (var line in File.ReadLines("/proc/self/status")) {
+        if (!line.StartsWith("Uid:", StringComparison.Ordinal))
+          continue;
+
+        var fields = line[4..].Split('\t', StringSplitOptions.RemoveEmptyEntries);
+        return fields.Length > 0 && int.TryParse(fields[0].Trim(), out var uid) ? uid : -1;
+      }
+    } catch (IOException) {
+    } catch (UnauthorizedAccessException) {
+    }
+
+    return -1;
+  }
+
   private const int _ExitNoMatch = 2;
 
   private static int Main(string[] args) {
@@ -80,6 +106,11 @@ internal static class Program {
       Console.Error.WriteLine("Linux and Windows are supported; macOS is PRD §10 M9.");
       return _ExitError;
     }
+
+    // Who is running this, once, for the classifier behind the Kind column. Every front-end reaches
+    // that through the shared accessor, which takes a process and no caller identity — so it is set
+    // here, where all three of them pass through, rather than three times over.
+    Query.ProcessCategories.CurrentUserId = CurrentUserId();
 
     using (probe)
     using (ProbeFactory.Elevated) {

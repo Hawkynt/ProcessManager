@@ -32,6 +32,12 @@ public static class FieldAccessor {
       // Not "unknown": a parent that is not in this sample has exited and the process has been
       // reparented, which is a fact about the tree rather than a gap in what could be read.
       case ProcessField.ParentName: return process.ParentName ?? "—";
+      // The words the legend uses, so the colour and the column cannot drift apart — and so that
+      // what a row's colour means is available to somebody who cannot see it (PRD §74).
+      case ProcessField.Category:
+        return ProcessCategories.Describe(
+          ProcessCategories.Classify(in process, ProcessCategories.CurrentUserId, delta?.IsNew(index) ?? false)
+        );
       case ProcessField.UserName:
         return process.UserName ?? Humanize.Placeholder(UnknownReason.NotPermitted);
       case ProcessField.State: return Humanize.State(process.State);
@@ -525,6 +531,9 @@ public static class FieldAccessor {
   ) => field switch {
     ProcessField.Name => process.Name,
     ProcessField.ParentName => process.ParentName,
+    ProcessField.Category => ProcessCategories.Describe(
+      ProcessCategories.Classify(in process, ProcessCategories.CurrentUserId, delta?.IsNew(index) ?? false)
+    ),
     ProcessField.UserName => process.UserName,
     ProcessField.ImagePath => process.ImagePath,
     ProcessField.CommandLine => process.CommandLine,
@@ -663,6 +672,14 @@ public static class FieldAccessor {
         return string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase);
       case ProcessField.ParentName:
         return string.Compare(a.ParentName, b.ParentName, StringComparison.OrdinalIgnoreCase);
+      // By the words on screen. Ordering by the enum's declaration order instead would group the
+      // rows correctly and put them in an order nobody clicking a header could predict.
+      case ProcessField.Category:
+        return string.Compare(
+          Text(ProcessField.Category, in a, delta, indexA),
+          Text(ProcessField.Category, in b, delta, indexB),
+          StringComparison.OrdinalIgnoreCase
+        );
       case ProcessField.UserName:
         return string.Compare(a.UserName, b.UserName, StringComparison.OrdinalIgnoreCase);
       case ProcessField.EffectiveUserName:
