@@ -4,16 +4,55 @@ using Hawkynt.ProcessManager.Sampling;
 
 namespace Hawkynt.ProcessManager.Query;
 
+/// <summary>
+/// Which of §45.2's levels a figure belongs to, and therefore where it is read.
+/// </summary>
+/// <remarks>
+/// Four levels, and nothing may jump one. The two that a page separates into columns are here; the
+/// immediate status above them is the graphs rather than a row.
+/// </remarks>
+public enum PerformanceRowLevel {
+
+  /// <summary>What the resource is doing now — the left column.</summary>
+  Live,
+
+  /// <summary>
+  /// What the resource is. The right column: a reader glancing at a page wants the measurements, and
+  /// the specifications are what they look at once, when they first meet the machine. Reading the
+  /// two as one list is what makes a performance page look like a data dump (PRD §45.1).
+  /// </summary>
+  Hardware,
+
+  /// <summary>
+  /// Engineering diagnostics — level four, and collapsed until asked for.
+  /// </summary>
+  /// <remarks>
+  /// Kernel pools, page tables, reclaim lists, huge pages. Every one of them answers a question
+  /// somebody eventually has, and all of them at once are what turns a page into a wall. They are in
+  /// the report whatever the window does with them, so <c>--host</c> and an export still carry the
+  /// whole machine (PRD §58).
+  /// </remarks>
+  Diagnostic,
+
+}
+
 /// <summary>One labelled figure on the performance page.</summary>
 /// <param name="Label">What it is called.</param>
 /// <param name="Value">What it says, already formatted and including the reason when there is none.</param>
-/// <param name="IsHardware">
-/// Whether this describes the hardware rather than what it is doing. The two go in different columns
-/// (PRD §45.1): a reader glancing at a page wants the live measurements, and the specifications are
-/// what they look at once, when they first meet the machine. Reading them as one list is what makes
-/// a performance page look like a data dump.
-/// </param>
-public readonly record struct PerformanceRow(string Label, string Value, bool IsHardware = false);
+/// <param name="Level">Which of §45.2's levels it belongs to, and so where it is shown.</param>
+public readonly record struct PerformanceRow(
+  string Label,
+  string Value,
+  PerformanceRowLevel Level = PerformanceRowLevel.Live
+) {
+
+  /// <summary>Whether this describes the hardware rather than what it is doing.</summary>
+  public bool IsHardware => this.Level == PerformanceRowLevel.Hardware;
+
+  /// <summary>Whether it belongs in the collapsed block rather than in either column.</summary>
+  public bool IsDiagnostic => this.Level == PerformanceRowLevel.Diagnostic;
+
+}
 
 /// <summary>
 /// One plotted series on a resource's page.
@@ -102,6 +141,17 @@ public readonly record struct PerformanceSection(
   /// <summary>Whether there is a second series worth plotting.</summary>
   public bool HasSecondary => this.SecondaryLabel.Length > 0;
 
+  /// <summary>
+  /// Whether this section measures anything at all.
+  /// </summary>
+  /// <remarks>
+  /// Not <c>Primary.HasValue</c>, which is the trap: <c>default(Rate)</c> is a confident zero, so a
+  /// section that never named a primary — the host description, the activity lists — answered that
+  /// it was measured and idle. The rail drew each of them a sparkline flat along the floor, which is
+  /// a graph of something nobody measured (PRD §5.3, §72.3).
+  /// </remarks>
+  public bool HasPrimary => this.PrimaryLabel.Length > 0 || this.Graphs is { Count: > 0 };
+
   /// <summary>Whether this stands on its own in a list of resources.</summary>
   public bool IsTopLevel => this.PartOf.Length == 0;
 
@@ -110,10 +160,13 @@ public readonly record struct PerformanceSection(
 
   /// <summary>
   /// Every series this page plots. A resource that named none plots the one its primary describes,
-  /// so a caller never has to ask which shape it is dealing with.
+  /// so a caller never has to ask which shape it is dealing with — and a section that measures
+  /// nothing plots nothing, rather than a line along the floor.
   /// </summary>
-  public IReadOnlyList<PerformanceGraph> Series
-    => this.Graphs ?? [new(this.Title, this.Primary, this.PrimaryMaximum, this.PrimaryLabel, DefaultAccent(this.Title))];
+  public IReadOnlyList<PerformanceGraph> Series => this.Graphs
+    ?? (this.HasPrimary
+      ? [new(this.Title, this.Primary, this.PrimaryMaximum, this.PrimaryLabel, DefaultAccent(this.Title))]
+      : []);
 
   private static string DefaultAccent(string title) => title switch {
     "Processor" => "cpu",
@@ -300,11 +353,11 @@ public static class PerformanceReport {
 
     var rows = new List<PerformanceRow>();
     if (info?.Model is { Length: > 0 } model)
-      rows.Add(new("Model", model, IsHardware: true));
+      rows.Add(new("Model", model, Level: PerformanceRowLevel.Hardware));
 
     if (info is not null) {
-      rows.Add(new("Capacity", Humanize.Bytes(info.CapacityBytes), IsHardware: true));
-      rows.Add(new("Media", IsHardware: true, Value: info.Rotational switch {
+      rows.Add(new("Capacity", Humanize.Bytes(info.CapacityBytes), Level: PerformanceRowLevel.Hardware));
+      rows.Add(new("Media", Level: PerformanceRowLevel.Hardware, Value: info.Rotational switch {
         true => "rotational",
         false => "solid state",
         // The kernel not saying is not the same as "no", and a machine that reports neither should
@@ -334,10 +387,10 @@ public static class PerformanceReport {
     var rows = new List<PerformanceRow>();
 
     if (info is not null) {
-      rows.Add(new("State", info.State ?? Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform), IsHardware: true));
-      rows.Add(new("Link speed", Bits(info.LinkSpeedBitsPerSecond), IsHardware: true));
-      rows.Add(new("MAC address", info.MacAddress ?? Humanize.Placeholder(UnknownReason.NotPermitted), IsHardware: true));
-      rows.Add(new("MTU", Humanize.Count(info.MaximumTransmissionUnit), IsHardware: true));
+      rows.Add(new("State", info.State ?? Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform), Level: PerformanceRowLevel.Hardware));
+      rows.Add(new("Link speed", Bits(info.LinkSpeedBitsPerSecond), Level: PerformanceRowLevel.Hardware));
+      rows.Add(new("MAC address", info.MacAddress ?? Humanize.Placeholder(UnknownReason.NotPermitted), Level: PerformanceRowLevel.Hardware));
+      rows.Add(new("MTU", Humanize.Count(info.MaximumTransmissionUnit), Level: PerformanceRowLevel.Hardware));
     }
 
     rows.Add(new("Receive rate", rates is { } received ? Humanize.BytesPerSecond(received.ReceivedBytesPerSecond) : Pending));
@@ -444,24 +497,27 @@ public static class PerformanceReport {
       // it, and one at 60 % with things queued behind it is (PRD §46).
       new("Stalled on CPU", Pressure(snapshot.System.CpuPressure.Some)),
       // Hardware: what it is.
-      new("Model", host.CpuModel ?? Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform), IsHardware: true),
-      new("Vendor", host.CpuVendor ?? Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform), IsHardware: true),
-      new("Base speed", Hertz(host.CpuBaseHertz), IsHardware: true),
-      new("Sockets", Humanize.Count(host.Sockets), IsHardware: true),
-      new("Physical cores", Humanize.Count(host.PhysicalCores), IsHardware: true),
-      new("Logical processors", Humanize.Count(host.LogicalProcessors), IsHardware: true),
-      new("NUMA nodes", Humanize.Count(host.NumaNodes), IsHardware: true),
-      new("L1 data", Humanize.Bytes(host.L1DataBytes), IsHardware: true),
-      new("L1 instruction", Humanize.Bytes(host.L1InstructionBytes), IsHardware: true),
-      new("L2", Humanize.Bytes(host.L2Bytes), IsHardware: true),
-      new("L3", Humanize.Bytes(host.L3Bytes), IsHardware: true),
+      new("Model", host.CpuModel ?? Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform), Level: PerformanceRowLevel.Hardware),
+      new("Vendor", host.CpuVendor ?? Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform), Level: PerformanceRowLevel.Hardware),
+      new("Base speed", Hertz(host.CpuBaseHertz), Level: PerformanceRowLevel.Hardware),
+      new("Sockets", Humanize.Count(host.Sockets), Level: PerformanceRowLevel.Hardware),
+      new("Physical cores", Humanize.Count(host.PhysicalCores), Level: PerformanceRowLevel.Hardware),
+      new("Logical processors", Humanize.Count(host.LogicalProcessors), Level: PerformanceRowLevel.Hardware),
+      new("NUMA nodes", Humanize.Count(host.NumaNodes), Level: PerformanceRowLevel.Hardware),
+      new("L1 data", Humanize.Bytes(host.L1DataBytes), Level: PerformanceRowLevel.Hardware),
+      new("L1 instruction", Humanize.Bytes(host.L1InstructionBytes), Level: PerformanceRowLevel.Hardware),
+      new("L2", Humanize.Bytes(host.L2Bytes), Level: PerformanceRowLevel.Hardware),
+      new("L3", Humanize.Bytes(host.L3Bytes), Level: PerformanceRowLevel.Hardware),
     };
 
     if (host.CpuSignature is { } signature)
-      rows.Add(new("Signature", signature, IsHardware: true));
+      rows.Add(new("Signature", signature, Level: PerformanceRowLevel.Hardware));
 
     // What the silicon can actually do, from CPUID — grouped rather than listed, because sixty rows
-    // of one word each is a data dump and five sentences is a specification (PRD §46).
+    // of one word each is a data dump and five sentences is a specification (PRD §46). Level four
+    // rather than level three: these are five of the longest lines on the page and the ones read
+    // least often, and leaving them in the hardware column sets the height of the statistics for
+    // every other resource as well (PRD §45.2).
     AddFeatures(rows, host, "Instruction sets", CpuFeatureKind.InstructionSet);
     AddFeatures(rows, host, "Cryptography", CpuFeatureKind.Cryptography);
     AddFeatures(rows, host, "Security", CpuFeatureKind.Security);
@@ -499,7 +555,7 @@ public static class PerformanceReport {
         names.Add(feature.Name);
 
     if (names.Count > 0)
-      rows.Add(new(label, string.Join(", ", names), IsHardware: true));
+      rows.Add(new(label, string.Join(", ", names), Level: PerformanceRowLevel.Diagnostic));
   }
 
   /// <summary>
@@ -623,14 +679,14 @@ public static class PerformanceReport {
       new("Core clock", Hertz(gpu.CoreClockHertz)),
       new("Memory clock", Hertz(gpu.MemoryClockHertz)),
       new("Fan", AsPercent(gpu.FanPercent)),
-      new("Adapter", gpu.Model ?? gpu.Name, IsHardware: true),
-      new("Driver", gpu.Driver ?? Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform), IsHardware: true),
-      new("Dedicated memory", Humanize.Bytes(gpu.MemoryTotalBytes), IsHardware: true),
-      new("Power cap", Watts(gpu.PowerCapMicrowatts), IsHardware: true),
+      new("Adapter", gpu.Model ?? gpu.Name, Level: PerformanceRowLevel.Hardware),
+      new("Driver", gpu.Driver ?? Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform), Level: PerformanceRowLevel.Hardware),
+      new("Dedicated memory", Humanize.Bytes(gpu.MemoryTotalBytes), Level: PerformanceRowLevel.Hardware),
+      new("Power cap", Watts(gpu.PowerCapMicrowatts), Level: PerformanceRowLevel.Hardware),
     };
 
     if (gpu.PowerState is { } state)
-      rows.Add(new("Power state", state, IsHardware: true));
+      rows.Add(new("Power state", state, Level: PerformanceRowLevel.Hardware));
 
     return [.. rows];
   }
@@ -662,7 +718,7 @@ public static class PerformanceReport {
       : Humanize.Placeholder(microwatts.Reason);
 
   /// <summary>
-  /// The memory page's two series (PRD §47).
+  /// The memory page's series (PRD §47).
   /// </summary>
   /// <remarks>
   /// Physical memory is scaled to what the machine has rather than to a hundred, because the useful
@@ -672,6 +728,12 @@ public static class PerformanceReport {
   /// Commit is its own series and not a second line on the first: it counts what has been asked for
   /// rather than what has been taken, routinely exceeds physical memory, and drawn on the same axis
   /// would either be clipped or would squash the physical line into the floor.
+  /// </para>
+  /// <para>
+  /// Swap and cache are the two that say which way a machine is going. Cache falling while physical
+  /// memory stays put is the kernel giving up its cache to something; swap rising after that is the
+  /// point where it has run out of cache to give. Neither is visible in the physical-memory series,
+  /// which stays pinned near the top through all of it.
   /// </para>
   /// </remarks>
   private static PerformanceGraph[] MemoryGraphs(SystemSnapshot snapshot) {
@@ -703,16 +765,55 @@ public static class PerformanceReport {
         "memory"
       ));
 
+    // The file cache, on the machine's own scale so it can be read against the physical series
+    // directly above it. Buffers included, because the split between them is a kernel-internal
+    // detail and the question here is how much memory the cache is holding.
+    var cache = Sum(AsRate(system.CachedMemoryBytes), AsRate(system.BufferMemoryBytes));
+    if (cache.HasValue)
+      graphs.Add(new(
+        "Cache",
+        cache,
+        total,
+        $"{Humanize.Bytes(Counter.Of((ulong)cache.Value))} of {Humanize.Bytes(system.TotalMemoryBytes)}",
+        "memory"
+      ));
+
+    // Only where there is somewhere to swap to. A machine with no swap device gets no swap graph
+    // rather than a flat line at the floor of a scale of zero — the graph would be drawing the
+    // absence of a device as an idle one (PRD §45.6).
+    if (system.TotalSwapBytes is { HasValue: true, Value: > 0 } swap)
+      graphs.Add(new(
+        "Swap",
+        AsRate(system.UsedSwapBytes),
+        swap.Value,
+        Pair(system.UsedSwapBytes, system.TotalSwapBytes),
+        "memory"
+      ));
+
     return [.. graphs];
   }
 
+  /// <summary>
+  /// The memory page's figures (PRD §47).
+  /// </summary>
+  /// <remarks>
+  /// Three levels, in the order §45.2 puts them. The measurements a reader came for are first; what
+  /// the sticks are is beside them; and the twenty-odd figures that answer "why" — the reclaim
+  /// lists, the pools, the huge pages — are marked as diagnostics and collapsed, because all of them
+  /// at once is what turns a page into a wall.
+  /// <para>
+  /// <b>Free is not available and available is not free.</b> A healthy machine keeps almost nothing
+  /// free, because it caches with the rest and hands that cache back the moment anything asks. The
+  /// two rows sit next to each other for exactly that reason.
+  /// </para>
+  /// </remarks>
   private static PerformanceRow[] BuildMemory(HostInfo host, SystemSnapshot snapshot) {
     var system = snapshot.System;
     var used = system.TotalMemoryBytes.HasValue && system.AvailableMemoryBytes.HasValue
       ? Counter.Of(system.TotalMemoryBytes.Value - Math.Min(system.AvailableMemoryBytes.Value, system.TotalMemoryBytes.Value))
       : Counter.Unknown(system.TotalMemoryBytes.HasValue ? system.AvailableMemoryBytes.Reason : system.TotalMemoryBytes.Reason);
 
-    return [
+    var rows = new List<PerformanceRow> {
       new("In use", Humanize.Bytes(used)),
       new("Available", Humanize.Bytes(system.AvailableMemoryBytes)),
       new("Free", Humanize.Bytes(system.FreeMemoryBytes)),
@@ -724,19 +825,142 @@ public static class PerformanceReport {
       // against how much the kernel will ever agree to. Either alone says very little (PRD §16).
       new("Committed", Pair(system.CommittedBytes, system.CommitLimitBytes)),
       new("Swap", Pair(system.UsedSwapBytes, system.TotalSwapBytes)),
-      new("Stalled on memory", Pressure(system.MemoryPressure.Some)),
-      // Full pressure is the serious one: not "something waited" but "nothing ran at all". More
-      // than a few percent of it means the machine is thrashing rather than busy.
-      new("Stalled completely", Pressure(system.MemoryPressure.Full)),
-      new("Kernel, reclaimable", Humanize.Bytes(system.ReclaimableKernelBytes)),
-      new("Kernel, fixed", Humanize.Bytes(system.UnreclaimableKernelBytes)),
-      new("Page tables", Humanize.Bytes(system.PageTableBytes)),
-      new("Kernel stacks", Humanize.Bytes(system.KernelStackBytes)),
-      new("Total", Humanize.Bytes(system.TotalMemoryBytes), IsHardware: true),
-      new("Speed", Transfers(host.MemoryTransfersPerSecond), IsHardware: true),
-      new("Form factor", host.MemoryFormFactor ?? Humanize.Placeholder(UnknownReason.NotPermitted), IsHardware: true),
-      new("Slots used", Slots(host.MemorySlotsUsed, host.MemorySlotsTotal), IsHardware: true),
-    ];
+    };
+
+    // Only on a machine that compresses. Where it does, the pair is the whole point: a gigabyte
+    // holding two and a half is a machine that has saved itself the difference in swapping.
+    if (system.CompressedBytes.HasValue)
+      rows.Add(new("Compressed", Compressed(system.CompressedBytes, system.CompressedOriginalBytes)));
+
+    rows.Add(new("Stalled on memory", Pressure(system.MemoryPressure.Some)));
+    // Full pressure is the serious one: not "something waited" but "nothing ran at all". More than a
+    // few percent of it means the machine is thrashing rather than busy.
+    rows.Add(new("Stalled completely", Pressure(system.MemoryPressure.Full)));
+
+    // What the machine is, on the right. "Installed" is a firmware fact and "usable" is a kernel
+    // one, and they are not the same number: the difference is what the firmware kept for itself.
+    // Nothing readable without root says what is installed, so the difference is refused rather
+    // than guessed — a hardware-reserved figure of zero would be a claim, not a reading (PRD §47).
+    rows.Add(new("Installed", Humanize.Bytes(host.InstalledMemoryBytes), Level: PerformanceRowLevel.Hardware));
+    rows.Add(new("Usable", Humanize.Bytes(system.TotalMemoryBytes), Level: PerformanceRowLevel.Hardware));
+    rows.Add(new("Hardware reserved", Humanize.Bytes(Reserved(host.InstalledMemoryBytes, system.TotalMemoryBytes)), Level: PerformanceRowLevel.Hardware));
+    rows.Add(new("Speed", Transfers(host.MemoryTransfersPerSecond), Level: PerformanceRowLevel.Hardware));
+    rows.Add(new("Channels", Humanize.Count(host.MemoryChannels), Level: PerformanceRowLevel.Hardware));
+    rows.Add(new("Form factor", host.MemoryFormFactor ?? Humanize.Placeholder(UnknownReason.NotPermitted), Level: PerformanceRowLevel.Hardware));
+    rows.Add(new("Slots used", Slots(host.MemorySlotsUsed, host.MemorySlotsTotal), Level: PerformanceRowLevel.Hardware));
+
+    // How the memory is spread across the nodes, where there is more than one of them. A single-node
+    // machine gets no rows: "node 0 has all of it" is not a distribution (PRD §47).
+    if (host.NumaMemoryBytes.Count > 1)
+      for (var node = 0; node < host.NumaMemoryBytes.Count; ++node)
+        rows.Add(new($"Node {node}", Humanize.Bytes(host.NumaMemoryBytes[node]), Level: PerformanceRowLevel.Hardware));
+
+    AddMemoryDiagnostics(rows, system);
+    return [.. rows];
+  }
+
+  /// <summary>
+  /// The collapsed block: what the kernel is doing with the memory, rather than how much is gone
+  /// (PRD §45.2 level 4, §47).
+  /// </summary>
+  /// <remarks>
+  /// Paired onto single lines wherever two figures only mean something together — active against
+  /// inactive, dirty against in-writeback, reclaimable slab against fixed. Twenty rows of one number
+  /// each is a data dump; ten rows of a comparison is a diagnosis.
+  /// </remarks>
+  private static void AddMemoryDiagnostics(List<PerformanceRow> rows, in SystemCounters system) {
+    void Add(string label, string value) => rows.Add(new(label, value, PerformanceRowLevel.Diagnostic));
+
+    // Anonymous against file-backed is the split that decides what happens under pressure: file
+    // pages can be dropped and read back, anonymous ones can only be compressed or swapped, and on
+    // a machine with no swap they cannot go anywhere at all.
+    Add("Anonymous", Humanize.Bytes(system.AnonymousBytes));
+    Add("Mapped", Humanize.Bytes(system.MappedBytes));
+    Add("Anonymous, by list", Lists(system.ActiveAnonymousBytes, system.InactiveAnonymousBytes));
+    Add("File, by list", Lists(system.ActiveFileBytes, system.InactiveFileBytes));
+    // The two halves of "modified": what has not started moving, and what is moving now.
+    Add("Dirty", Humanize.Bytes(system.DirtyBytes));
+    Add("In writeback", Humanize.Bytes(system.WritebackBytes));
+    Add("Swap cached", Humanize.Bytes(system.SwapCachedBytes));
+    // Linux's answer to the paged and non-paged pools: what the kernel can hand back under pressure
+    // and what it cannot. Named for what they are here rather than for what Windows calls them —
+    // the equivalence is real but the words are not this machine's (PRD §5.3, §47).
+    Add("Kernel, reclaimable", Humanize.Bytes(system.ReclaimableKernelBytes));
+    Add("Kernel, fixed", Humanize.Bytes(system.UnreclaimableKernelBytes));
+    Add("Slab, total", Humanize.Bytes(system.SlabBytes));
+    Add("Page tables", Humanize.Bytes(system.PageTableBytes));
+    Add("Kernel stacks", Humanize.Bytes(system.KernelStackBytes));
+    Add("Per-CPU", Humanize.Bytes(system.PerCpuBytes));
+    Add("Vmalloc used", Humanize.Bytes(system.VmallocUsedBytes));
+    // Pages that cannot be reclaimed at all, and the part of them somebody asked for by name.
+    Add("Unevictable", Humanize.Bytes(system.UnevictableBytes));
+    Add("Locked", Humanize.Bytes(system.LockedBytes));
+    // Reserved huge pages are gone from every other figure on this page the moment they are
+    // reserved, whether or not anything has ever touched them.
+    Add("Huge pages", HugePages(in system));
+    Add("Transparent huge", Transparent(in system));
+    // Almost always zero, and worth a row for exactly that reason: anything else is a failing DIMM.
+    Add("Hardware corrupted", Humanize.Bytes(system.HardwareCorruptedBytes));
+  }
+
+  /// <summary>"1.1G holding 2.4G  (2.2×)" — the pool, what is in it, and whether it is worth it.</summary>
+  private static string Compressed(Counter pool, Counter original) {
+    if (!pool.HasValue)
+      return Humanize.Placeholder(pool.Reason);
+
+    if (!original.HasValue)
+      return Humanize.Bytes(pool);
+
+    var ratio = pool.Value > 0
+      ? string.Format(CultureInfo.InvariantCulture, "  ({0:0.0}×)", (double)original.Value / pool.Value)
+      : string.Empty;
+
+    return $"{Humanize.Bytes(pool)} holding {Humanize.Bytes(original)}{ratio}";
+  }
+
+  /// <summary>"29.3G active, 4.7G inactive" — the reclaim lists, which only mean anything as a pair.</summary>
+  private static string Lists(Counter active, Counter inactive)
+    => active.HasValue || inactive.HasValue
+      ? $"{Humanize.Bytes(active)} active, {Humanize.Bytes(inactive)} inactive"
+      : Humanize.Placeholder(active.Reason);
+
+  /// <summary>"0 of 0 reserved, 2.0M each", or the reason this kernel has no such thing.</summary>
+  private static string HugePages(in SystemCounters system) {
+    if (!system.HugePagesTotal.HasValue)
+      return Humanize.Placeholder(system.HugePagesTotal.Reason);
+
+    var each = system.HugePageSizeBytes.HasValue ? $", {Humanize.Bytes(system.HugePageSizeBytes)} each" : string.Empty;
+    var used = system.HugePagesFree.HasValue
+      ? Counter.Of(system.HugePagesTotal.Value - Math.Min(system.HugePagesFree.Value, system.HugePagesTotal.Value))
+      : Counter.Unknown(system.HugePagesFree.Reason);
+
+    return $"{Humanize.Count(used)} of {Humanize.Count(system.HugePagesTotal)} in use{each}";
+  }
+
+  /// <summary>The huge pages the kernel arranged by itself, which are not reserved out of anything.</summary>
+  private static string Transparent(in SystemCounters system)
+    => system.AnonymousHugePagesBytes.HasValue
+      ? $"{Humanize.Bytes(system.AnonymousHugePagesBytes)} anonymous, {Humanize.Bytes(system.SharedHugePagesBytes)} shared, {Humanize.Bytes(system.FileHugePagesBytes)} file"
+      : Humanize.Placeholder(system.AnonymousHugePagesBytes.Reason);
+
+  /// <summary>
+  /// What the firmware kept: installed less usable.
+  /// </summary>
+  /// <remarks>
+  /// Unknown unless both halves are, and unknown rather than zero when they are equal in a way that
+  /// cannot be right — a subtraction of two figures one of which nobody read is not a small number,
+  /// it is not a number (PRD §5.3).
+  /// </remarks>
+  private static Counter Reserved(Counter installed, Counter usable) {
+    if (!installed.HasValue)
+      return Counter.Unknown(installed.Reason);
+
+    if (!usable.HasValue)
+      return Counter.Unknown(usable.Reason);
+
+    return installed.Value >= usable.Value
+      ? Counter.Of(installed.Value - usable.Value)
+      : Counter.Unknown(UnknownReason.CounterInvalid);
   }
 
   /// <summary>
