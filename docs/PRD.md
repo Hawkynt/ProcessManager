@@ -3084,7 +3084,7 @@ a naive parser hands the attacker the parse.
 - [x] Field registry — 14 tests, including the one that enforces §103
 - [x] Filters
 - [x] Sorting
-- [ ] Export schemas
+- [x] Export schemas
 
 ## Fixture replay
 
