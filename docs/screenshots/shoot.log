@@ -2,113 +2,67 @@ content floor: 0x0
 title:        Process Manager
 bounds:       {X=0,Y=0,Width=1240,Height=820}
 client size:  {Width=1240, Height=820}
-controls:     7
+controls:     6
 process rows: 20 roots, 20 visible
-columns:      5 — name:260* pid:70 cpu:78 ws:92 private:96
-sorted by:    ws desc
-grouped by:   none, 0 heading(s), 20 process row(s)
-filter:       (none), case ignored
-ticked rows:  0
-split at:     304, lower pane shown
-rail:         {X=0,Y=190,Width=168,Height=608}, 7 entries — Processes, Performance, Startup, Users, Services, Network, Find resources
+columns:      5
+split at:     319, lower pane shown
+rail:         {X=0,Y=160,Width=168,Height=638}, 7 entries — Processes, Performance, Startup, Users, Services, Network, Find resources
 command bar:  {X=0,Y=26,Width=1240,Height=30}, 7 items
-content:      {X=168,Y=190,Width=1072,Height=608} showing Processes
+content:      {X=168,Y=160,Width=1072,Height=638} showing Processes
 plots:        cpu {X=6,Y=6,Width=392,Height=92}, memory {X=404,Y=6,Width=392,Height=92}, cores {X=802,Y=6,Width=432,Height=92}
 topology:     16 logical, 1 socket(s), hybrid False
-status:       20 of 20 processes  ·  CPU 57.6% (normalized)  ·  memory 125G total, 81.7G free  ·  sample 1.6 ms
+status:       20 of 20 processes  ·  CPU 82.5% (normalized)  ·  memory 125G total, 86.7G free  ·  sample 1.2 ms
 capture:      1240x820 -> docs/screenshots/desktop.png
-title:        Process Manager
-bounds:       {X=0,Y=0,Width=1240,Height=820}
-client size:  {Width=1240, Height=820}
-controls:     7
-process rows: 10 roots, 30 visible
-columns:      5 — name:260* pid:70 cpu:78 ws:92 private:96
-sorted by:    ws desc
-grouped by:   executable, 10 heading(s), 20 process row(s)
-filter:       (none), case ignored
-ticked rows:  0
-split at:     304, lower pane shown
-rail:         {X=0,Y=190,Width=168,Height=608}, 7 entries — Processes, Performance, Startup, Users, Services, Network, Find resources
-command bar:  {X=0,Y=26,Width=1240,Height=30}, 7 items
-content:      {X=168,Y=190,Width=1072,Height=608} showing Processes
-plots:        cpu {X=6,Y=6,Width=392,Height=92}, memory {X=404,Y=6,Width=392,Height=92}, cores {X=802,Y=6,Width=432,Height=92}
-topology:     16 logical, 1 socket(s), hybrid False
-status:       grouped by executable — 10 heading(s)
-grouped capture: 1240x820 -> docs/screenshots/desktop-grouped.png
-title:        Process Manager
-bounds:       {X=0,Y=0,Width=1240,Height=820}
-client size:  {Width=1240, Height=820}
-controls:     7
-process rows: 7 roots, 7 visible
-columns:      5 — name:260* pid:70 cpu:78 ws:92 private:96
-sorted by:    ws desc
-grouped by:   none, 0 heading(s), 7 process row(s)
-filter:       ba, case ignored
-ticked rows:  0
-split at:     304, lower pane shown
-rail:         {X=0,Y=190,Width=168,Height=608}, 7 entries — Processes, Performance, Startup, Users, Services, Network, Find resources
-command bar:  {X=0,Y=26,Width=1240,Height=30}, 7 items
-content:      {X=168,Y=190,Width=1072,Height=608} showing Processes
-plots:        cpu {X=6,Y=6,Width=392,Height=92}, memory {X=404,Y=6,Width=392,Height=92}, cores {X=802,Y=6,Width=432,Height=92}
-topology:     16 logical, 1 socket(s), hybrid False
-status:       7 of 20 processes  ·  CPU 57.6% (normalized)  ·  memory 125G total, 81.7G free  ·  sample 1.6 ms
-filtered capture: 1240x820 -> docs/screenshots/desktop-filtered.png
-columns opened:  name:260* pid:70 cpu:78 ws:92 private:96
-columns fitted:  name:114* pid:44 cpu:69 ws:105 private:112
-columns moved:   pid:44* name:114 cpu:69 ws:105 private:112
-columns resized: pid:92* name:114 cpu:69 ws:105 private:112
-columns reset:   name:260* pid:70 cpu:78 io.total:104 private:96 user:130
-columns put back:name:260* pid:70 cpu:78 ws:92 private:96
 page rail:    22 resources, showing 'Memory'
 page header:  Memory / 125G
 page stats:   12 live, 7 hardware, 0 diagnostics
 page graphs:  4 visible, 60 s span, live
-page plots:   914x330 at 254,94
+page plots:   914x290 at 254,94
 page bar:     composition shown
 page sweep:
   System                   0 graph(s) at 0 px · 7 live, 0 hardware, 0 diagnostic
   Activity                 0 graph(s) at 0 px · 8 live, 0 hardware, 0 diagnostic
-  Processor                1 graph(s) at 330 px · 7 live, 12 hardware, 5 diagnostic
-  Memory                   4 graph(s) at 80 px · 12 live, 7 hardware, 19 diagnostic
-  GPU — NVIDIA RTX A5000 Laptop GPU 5 graph(s) at 64 px · 8 live, 5 hardware, 0 diagnostic
-  GPU — Intel 9a60         1 graph(s) at 330 px · 8 live, 5 hardware, 0 diagnostic
-  Battery — DELL CR72X26   1 graph(s) at 330 px · 7 live, 7 hardware, 0 diagnostic
+  Processor                1 graph(s) at 290 px · 10 live, 14 hardware, 12 diagnostic
+  Memory                   4 graph(s) at 70 px · 12 live, 7 hardware, 19 diagnostic
+  GPU — NVIDIA RTX A5000 Laptop GPU 6 graph(s) at 46 px · 9 live, 7 hardware, 0 diagnostic
+  GPU — Intel 9a60         1 graph(s) at 290 px · 9 live, 6 hardware, 0 diagnostic
+  Battery — DELL CR72X26   1 graph(s) at 290 px · 7 live, 7 hardware, 0 diagnostic
   Sensors — BAT0           0 graph(s) at 0 px · 0 live, 0 hardware, 2 diagnostic
-  Sensors — coretemp       1 graph(s) at 330 px · 9 live, 0 hardware, 0 diagnostic
-  Sensors — dell_smm       1 graph(s) at 330 px · 10 live, 0 hardware, 0 diagnostic
-  Sensors — iwlwifi_1_8    1 graph(s) at 330 px · 1 live, 0 hardware, 0 diagnostic
-  Sensors — nvme           1 graph(s) at 330 px · 2 live, 0 hardware, 0 diagnostic
-  Sensors — nvme           1 graph(s) at 330 px · 2 live, 0 hardware, 0 diagnostic
+  Sensors — coretemp       1 graph(s) at 290 px · 9 live, 0 hardware, 0 diagnostic
+  Sensors — dell_smm       1 graph(s) at 290 px · 10 live, 0 hardware, 0 diagnostic
+  Sensors — iwlwifi_1_8    1 graph(s) at 290 px · 1 live, 0 hardware, 0 diagnostic
+  Sensors — nvme           1 graph(s) at 290 px · 2 live, 0 hardware, 0 diagnostic
+  Sensors — nvme           1 graph(s) at 290 px · 2 live, 0 hardware, 0 diagnostic
   Sensors — ucsi_source_psy_USBC000:001 0 graph(s) at 0 px · 0 live, 0 hardware, 2 diagnostic
   Sensors — ucsi_source_psy_USBC000:002 0 graph(s) at 0 px · 0 live, 0 hardware, 2 diagnostic
-  Disk — nvme0n1           2 graph(s) at 163 px · 8 live, 3 hardware, 0 diagnostic
-  Disk — nvme1n1           2 graph(s) at 163 px · 8 live, 3 hardware, 0 diagnostic
-  Disk — dm-0              2 graph(s) at 163 px · 8 live, 2 hardware, 0 diagnostic
-  Disk — dm-1              2 graph(s) at 163 px · 8 live, 2 hardware, 0 diagnostic
-  Disk — dm-2              2 graph(s) at 163 px · 8 live, 2 hardware, 0 diagnostic
-  Network — enp0s31f6      1 graph(s) at 330 px · 6 live, 4 hardware, 0 diagnostic
-  Network — wlp148s0       1 graph(s) at 330 px · 6 live, 4 hardware, 0 diagnostic
+  Disk — nvme0n1           2 graph(s) at 143 px · 11 live, 7 hardware, 0 diagnostic
+  Disk — nvme1n1           2 graph(s) at 143 px · 11 live, 7 hardware, 0 diagnostic
+  Disk — dm-0              2 graph(s) at 143 px · 11 live, 4 hardware, 0 diagnostic
+  Disk — dm-1              2 graph(s) at 143 px · 11 live, 4 hardware, 0 diagnostic
+  Disk — dm-2              2 graph(s) at 143 px · 11 live, 4 hardware, 0 diagnostic
+  Network — enp0s31f6      1 graph(s) at 288 px · 6 live, 9 hardware, 0 diagnostic
+  Network — wlp148s0       1 graph(s) at 288 px · 8 live, 11 hardware, 0 diagnostic
 page capture: 1180x780 -> docs/screenshots/performance.png
 page rail:    22 resources, showing 'Processor'
 page header:  Processor / 11th Gen Intel(R) Core(TM) i9-11950H @ 2.60GHz
-page stats:   7 live, 12 hardware, 5 diagnostics
+page stats:   10 live, 14 hardware, 12 diagnostics
 page graphs:  1 visible, 60 s span, live
-page plots:   914x298 at 254,94
+page plots:   914x154 at 254,94
 page bar:     none
 page expanded: 1180x780 -> docs/screenshots/performance-expanded.png
 shell views:
   Processes        20 row(s) — 20 rows
   Performance      (opens a window of its own)
-  Startup          23 row(s) — 23 entries, 13 of which will run.  As of 17:41:09.
-  Users            4 row(s) — 4 records, 1 of them somebody logged in.  As of 17:41:09.
-  Services         372 row(s) — 372 units, 1 running.  As of 17:41:09.  Starting and stopping them is not implemented yet.
-  Network          1839 row(s) — 1839 sockets, 10 of them traceable to a process from this account.  As of 17:41:09.
+  Startup          23 row(s) — 23 entries, 13 of which will run.  As of 17:36:12.
+  Users            4 row(s) — 4 records, 1 of them somebody logged in.  As of 17:36:12.
+  Services         372 row(s) — 372 units, 1 running.  As of 17:36:12.  Starting and stopping them is not implemented yet.
+  Network          1668 row(s) — 1668 sockets, 10 of them traceable to a process from this account.  As of 17:36:13.
   Find resources   (opens a window of its own)
 properties:   12 tabs, 26 facts on General
 properties general: 1280x640 -> docs/screenshots/properties.png
 span:         60 s over 17 retained samples
-  CPU         {X=8,Y=40,Width=627,Height=169}  0.1 %
-  Memory      {X=643,Y=40,Width=627,Height=169}  17.9M
+  CPU         {X=8,Y=40,Width=627,Height=169}  0.0 %
+  Memory      {X=643,Y=40,Width=627,Height=169}  16.8M
   Disk        {X=8,Y=217,Width=627,Height=169}  0 B/s
   GPU         {X=643,Y=217,Width=627,Height=169}  …
   Descriptors {X=8,Y=394,Width=627,Height=169}  10
