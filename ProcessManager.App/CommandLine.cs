@@ -168,6 +168,24 @@ internal sealed record CommandLineOptions {
   public bool WantsSupplementaryGroups => this.Wants(ProcessField.SupplementaryGroups);
 
   /// <summary>
+  /// Whether the mitigation, umask, tracer and descriptor-table lines are worth recognising
+  /// (PRD §5.4, §20, §21).
+  /// </summary>
+  /// <remarks>
+  /// The same rule again, and for a cost that is neither a read nor an allocation: the lines are in
+  /// a file the sampler already has open, but five more labels to recognise in a loop that runs
+  /// fifty times per process cost a measurable share of the sample when every run paid it. So no run
+  /// pays it unless a column or a filter names one of the six.
+  /// </remarks>
+  public bool WantsSecurityStatus
+    => this.Wants(ProcessField.SpeculationStoreBypass)
+    || this.Wants(ProcessField.SpeculationIndirectBranch)
+    || this.Wants(ProcessField.ThreadFeatures)
+    || this.Wants(ProcessField.Umask)
+    || this.Wants(ProcessField.TracerPid)
+    || this.Wants(ProcessField.DescriptorTableSize);
+
+  /// <summary>
   /// Whether anything this run asked for needs a third sample (PRD §15).
   /// </summary>
   /// <remarks>

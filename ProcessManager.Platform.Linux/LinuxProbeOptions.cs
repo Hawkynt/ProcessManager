@@ -37,6 +37,21 @@ public sealed record LinuxProbeOptions {
   public bool ReadCpuAffinity { get; init; }
 
   /// <summary>
+  /// Read the mitigation, umask, tracer and descriptor-table lines of <c>status</c> (PRD §21, §20).
+  /// </summary>
+  /// <remarks>
+  /// Off, and for the same reason the group list and the affinity list are off: the lines cost no
+  /// extra read — they are in a file the sampler already has open — but recognising them is not
+  /// free. Reading all five unconditionally measured seven to eight milliseconds per thousand
+  /// processes against a sample whose whole budget is twenty-five, and it was the room the labels
+  /// took up in the parse loop rather than the comparisons themselves: fifty lines per process, six
+  /// hundred processes, and five more labels of up to twenty-six bytes to carry through all of it.
+  /// Moving them out of line recovered most of that and not all of it, so the rest is bought the
+  /// way §5.4 says it should be — by somebody naming one of the columns.
+  /// </remarks>
+  public bool ReadSecurityStatus { get; init; }
+
+  /// <summary>
   /// Read <c>cpu.stat</c> from each process's cgroup, for the throttling column (PRD §15, §38).
   /// </summary>
   /// <remarks>

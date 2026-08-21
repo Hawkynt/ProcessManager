@@ -25,6 +25,14 @@ public sealed class LinuxSecurityTests(bool portable) {
     EffectiveUserId = 0,
   };
 
+  /// <summary>
+  /// What a run that named one of the six status columns of §20 and §21 asks the probe for. They
+  /// are opt-in for a cost that is neither a read nor an allocation: five more labels to recognise
+  /// in a loop that runs fifty times per process, measured against main at seven to eight
+  /// milliseconds per thousand processes (PRD §5.4, §71.2).
+  /// </summary>
+  private LinuxProbeOptions Secure => this.Options with { ReadSecurityStatus = true };
+
   private static ProcessRecord Find(SystemSnapshot snapshot, int pid) {
     foreach (var process in snapshot.Processes)
       if (process.Pid == pid)
@@ -363,7 +371,7 @@ public sealed class LinuxSecurityTests(bool portable) {
   /// </summary>
   [Test]
   public void TheSpeculationStatesAreReadFromTheStatusTheSamplerAlreadyHas() {
-    var snapshot = this.Sample();
+    var snapshot = this.Sample(this.Secure);
     var delta = new SnapshotDelta();
     delta.Update(null, snapshot, CpuPercentMode.Normalized);
 
@@ -396,7 +404,7 @@ public sealed class LinuxSecurityTests(bool portable) {
   /// </summary>
   [Test]
   public void AKernelTooOldForALineLeavesItUnknownRatherThanSafe() {
-    var older = Find(this.Sample(), 1001);
+    var older = Find(this.Sample(this.Secure), 1001);
 
     Assert.That(older.SpeculationStoreBypass.HasValue, Is.True, "4.17 and newer write this one");
     Assert.That(
@@ -418,7 +426,7 @@ public sealed class LinuxSecurityTests(bool portable) {
   /// </summary>
   [Test]
   public void TheLockedFeatureSetIsNotMistakenForTheEnabledOne() {
-    var snapshot = this.Sample();
+    var snapshot = this.Sample(this.Secure);
     var delta = new SnapshotDelta();
     delta.Update(null, snapshot, CpuPercentMode.Normalized);
 
@@ -444,7 +452,7 @@ public sealed class LinuxSecurityTests(bool portable) {
   /// </summary>
   [Test]
   public void NoFeaturesIsNotTheSameAsNoLine() {
-    var snapshot = this.Sample();
+    var snapshot = this.Sample(this.Secure);
     var delta = new SnapshotDelta();
     delta.Update(null, snapshot, CpuPercentMode.Normalized);
 
@@ -464,6 +472,31 @@ public sealed class LinuxSecurityTests(bool portable) {
 
   #endregion
 
+  /// <summary>
+  /// Recognising these five lines is not free, so no run pays for it unless a column or a filter
+  /// named one of the six fields — and "nobody asked" must not be reported as "this kernel does not
+  /// write it", which would be a mitigation column saying "not supported here" on a kernel that
+  /// supports it perfectly well (PRD §5.4, §72.3).
+  /// </summary>
+  [Test]
+  public void TheStatusSecurityLinesAreNotReadUnlessTheyWereAskedFor() {
+    var process = Find(this.Sample(), 1);
+
+    foreach (var counter in new[] {
+      process.SpeculationStoreBypass, process.SpeculationIndirectBranch, process.ThreadFeatures,
+      process.Umask, process.TracerPid, process.DescriptorTableSize,
+    }) {
+      Assert.That(counter.HasValue, Is.False);
+      Assert.That(counter.Reason, Is.EqualTo(UnknownReason.NotSampledYet));
+    }
+
+    // And when they are asked for, the same process answers all six.
+    var asked = Find(this.Sample(this.Secure), 1);
+    Assert.That(asked.SpeculationStoreBypass.HasValue, Is.True);
+    Assert.That(asked.Umask.HasValue, Is.True);
+    Assert.That(asked.DescriptorTableSize.HasValue, Is.True);
+  }
+
   #region the umask, the tracer and the descriptor table
 
   /// <summary>
@@ -472,7 +505,7 @@ public sealed class LinuxSecurityTests(bool portable) {
   /// </summary>
   [Test]
   public void TheUmaskIsReadAsOctalAndShownAsOctal() {
-    var snapshot = this.Sample();
+    var snapshot = this.Sample(this.Secure);
     var delta = new SnapshotDelta();
     delta.Update(null, snapshot, CpuPercentMode.Normalized);
 
@@ -497,7 +530,7 @@ public sealed class LinuxSecurityTests(bool portable) {
   /// </summary>
   [Test]
   public void TheTracerIsNamedRatherThanCountedAndNoneReadsAsNone() {
-    var snapshot = this.Sample();
+    var snapshot = this.Sample(this.Secure);
     var delta = new SnapshotDelta();
     delta.Update(null, snapshot, CpuPercentMode.Normalized);
 
@@ -521,7 +554,7 @@ public sealed class LinuxSecurityTests(bool portable) {
   /// </summary>
   [Test]
   public void TheDescriptorTableSizeIsItsOwnNumber() {
-    var snapshot = this.Sample(this.Options with { CountFileDescriptors = true });
+    var snapshot = this.Sample(this.Secure with { CountFileDescriptors = true });
     var delta = new SnapshotDelta();
     delta.Update(null, snapshot, CpuPercentMode.Normalized);
 
@@ -638,7 +671,7 @@ public sealed class LinuxSecurityTests(bool portable) {
 
   [Test]
   public void TheyCanBeFilteredByTheWordOrByTheNumber() {
-    var snapshot = this.Sample();
+    var snapshot = this.Sample(this.Secure);
     var delta = new SnapshotDelta();
     delta.Update(null, snapshot, CpuPercentMode.Normalized);
 

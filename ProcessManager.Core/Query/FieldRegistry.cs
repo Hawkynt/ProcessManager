@@ -291,20 +291,25 @@ public static class FieldRegistry {
 
     // PRD §21. What Linux has instead of a per-process mitigation policy: not a request that was
     // made for the process, but the state the kernel would report through prctl if you asked it.
-    // Free — all three lines are in the status the sampler already has open — and each of them
-    // distinguishes "the kernel says none" from "the kernel does not write this line", because for a
-    // mitigation those are opposite findings (PRD §72.3).
+    // Each of them distinguishes "the kernel says none" from "the kernel does not write this line",
+    // because for a mitigation those are opposite findings (PRD §72.3).
+    //
+    // High, and the cost is neither a read nor an allocation — which is why the figure had to be
+    // measured rather than assumed. The lines are in a file the sampler already has open, but
+    // recognising five more labels in a loop that runs fifty times per process cost seven to eight
+    // milliseconds per thousand processes when every run paid it. So no run pays it unless one of
+    // these six columns was named (PRD §5.4, §71.2).
     new(ProcessField.SpeculationStoreBypass, "spec.ssb", "Store bypass mitigation", "SSB",
       "Whether speculative store bypass is mitigated for this process, and whether the process chose that or had it chosen for it. Sorts by exposure, so the unmitigated rows come to the top.",
-      FieldKind.State, FieldUnit.None, _LINUX, FieldCost.Free, 168, 22, false, true,
+      FieldKind.State, FieldUnit.None, _LINUX, FieldCost.High, 168, 22, false, true,
       Aliases: "ssb spectre.ssb"),
     new(ProcessField.SpeculationIndirectBranch, "spec.ib", "Indirect branch mitigation", "IndBr",
       "Whether indirect branch speculation is restricted for this process. Its own control and its own answer: a process may have asked for one mitigation and not the other.",
-      FieldKind.State, FieldUnit.None, _LINUX, FieldCost.Free, 180, 26, false, true,
+      FieldKind.State, FieldUnit.None, _LINUX, FieldCost.High, 180, 26, false, true,
       Aliases: "spec.indirect indirect.branch"),
     new(ProcessField.ThreadFeatures, "shadow.stack", "Shadow stack", "Shstk",
       "The hardware protections the kernel has switched on for the process — a shadow stack, and whether the program may write to it. A reading rather than a policy: a binary built for it still runs without one unless the loader turned it on, and this is what tells the two apart.",
-      FieldKind.State, FieldUnit.None, _LINUX, FieldCost.Free, 140, 12, false, true,
+      FieldKind.State, FieldUnit.None, _LINUX, FieldCost.High, 140, 12, false, true,
       Aliases: "shstk thread.features"),
     // Textual on purpose, and not because a mask is prose. The kernel holds it to nine bits, so the
     // four octal digits are always four octal digits — which means comparing them as text gives the
@@ -314,10 +319,10 @@ public static class FieldRegistry {
     // most worth searching for would have matched nothing.
     new(ProcessField.Umask, "umask", "Umask", "Umask",
       "The file-creation mask: which permissions are withheld from every file the process makes. A daemon running with a mask of nothing creates world-writable files, which no other column on the row would show.",
-      FieldKind.Text, FieldUnit.None, _LINUX, FieldCost.Free, 84, 6, true, false),
+      FieldKind.Text, FieldUnit.None, _LINUX, FieldCost.High, 84, 6, true, false),
     new(ProcessField.TracerPid, "tracer", "Traced by", "Tracer",
       "Which process is attached to this one as a debugger, or none. The pid rather than a yes or no, because \"something is reading this process's memory\" is only half the question.",
-      FieldKind.Identifier, FieldUnit.None, _LINUX, FieldCost.Free, 96, 7, true, true,
+      FieldKind.Identifier, FieldUnit.None, _LINUX, FieldCost.High, 96, 7, true, true,
       Aliases: "tracer.pid ptrace"),
 
     new(ProcessField.PrivilegeChanged, "setuid", "Privilege change", "SetID",
@@ -423,13 +428,14 @@ public static class FieldRegistry {
       "How many descriptors are pipes. Both ends of one pipe are a descriptor each, so a shell pipeline holds two of them per process.",
       FieldKind.Instant, FieldUnit.Count, _LINUX, FieldCost.High, 96, 6, true, true,
       Aliases: "pipes"),
-    // PRD §20. Free, unlike the three above it, because the number is a line of the status the
-    // sampler already reads rather than a walk of the descriptor table. It is also not the same
-    // number: a capacity is not a count and it is not the high-water mark either, and the header
-    // says capacity because that is what it is.
+    // PRD §20. Far cheaper than the three above it — the number is a line of the status the sampler
+    // already reads rather than a walk of the descriptor table — but opt-in all the same, and with
+    // the mitigation columns, because it is recognised in the same pass and by the same switch. It
+    // is also not the same number as any of them: a capacity is not a count and it is not the
+    // high-water mark either, and the header says capacity because that is what it is.
     new(ProcessField.DescriptorTableSize, "fd.table", "Descriptor table", "FDSize",
       "How many descriptor slots the kernel has allocated for the process. Not the count of open descriptors and not a peak: the table grows when one will not fit and never shrinks, so it is an upper bound on how many the process has ever held at once — which is the nearest thing Linux has to a peak handle count, and is labelled as the different number it is.",
-      FieldKind.Instant, FieldUnit.Count, _LINUX, FieldCost.Free, 132, 7, true, true,
+      FieldKind.Instant, FieldUnit.Count, _LINUX, FieldCost.High, 132, 7, true, true,
       Aliases: "fdsize"),
     new(ProcessField.Nice, "nice", "Nice", "NI",
       "The politeness a process was started with. Backwards on purpose: -20 gets the most processor and 19 the least.",
