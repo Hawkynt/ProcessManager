@@ -31,8 +31,8 @@ shorthand:
 it is not known*. An unticked box must never become a zero on screen. This is restated here because
 it is the single requirement most likely to be broken while filling the tables in.
 
-**Counting, as of the last update:** **983 of 1341 boxes are ticked** — 158 of 190 in the field
-registry (§14–22), 825 of 1151 across the capabilities. A further 154 are marked 🟡, meaning some of
+**Counting, as of the last update:** **996 of 1340 boxes are ticked** — 168 of 189 in the field
+registry (§14–22), 828 of 1151 across the capabilities. A further 153 are marked 🟡, meaning some of
 the work behind them is already done. §100 tracks the phases; §101 defines when this may be called
 finished.
 
@@ -4597,6 +4597,12 @@ A major reason to replace an ordinary task manager is to remain usable when the 
 The single-file AOT binary is most of the way to this already: 3.2 MB, no runtime to load, no
 dependencies to be missing on a broken machine.
 
+**The `minimal` column preset is not this, and measuring proved it.** On sixteen cores at load 12.5
+with 1,144 processes, `--columns @minimal` takes 1.52–1.65 s against 1.54–1.74 s for the default
+listing — no difference worth the name. Choosing fewer columns changes what is *printed*; the
+collectors that cost the time are chosen by §5.4's opt-in switches, and the preset touches none of
+them. The flag above is what would, and until it exists this section is describing an intention.
+
 ---
 
 # 82. Process aggregation
@@ -4951,7 +4957,7 @@ a naive parser hands the attacker the parse.
 
 # 99. Testing strategy
 
-**2008 tests pass on every leg, under both a UTF-8 and a `C` locale.**
+**2078 tests pass on every leg, under both a UTF-8 and a `C` locale.**
 
 ## Unit tests
 
@@ -5134,15 +5140,42 @@ Persistent history · alert rules · diagnostic bundles · plugin SDK · local A
 ProcessManager may claim to replace the named applications only when all ten are true:
 
 - [ ] Every common Task Manager workflow can be completed without Task Manager
-- [ ] Process trees, handles, modules and resource-owner search remove routine need for
-      Process Explorer
+- [x] Process trees, handles, modules and resource-owner search remove routine need for
+      Process Explorer — §91's Process Explorer row is twelve of twelve, including the two that took
+      the longest to answer honestly: signature verification, where an ELF carries no Authenticode
+      and the local equivalent is what the package manager recorded, and image metadata, where the
+      version resource is read on Windows and the package is asked on Linux because an ELF has no
+      version resource — two different sources for one question, each named as itself rather than
+      pretending to be the other
 - [ ] Advanced process, thread, security, network, service and memory inspection removes routine
       need for System Informer
 - [ ] Performance dashboards are at least as approachable as DBC's or modern Task Manager's
 - [x] GUI and TUI expose the same canonical information
-- [ ] 🟡 Every unsupported platform-specific feature explicitly communicates why
+- [x] Every unsupported platform-specific feature explicitly communicates why — **checked over the
+      registry rather than field by field**, which is how it kept going wrong: `app.name` read "none"
+      on Windows, which is a Linux finding meaning the machine has no desktop entry for the program;
+      `runtime` rendered an empty placeholder; two counters read as a confident nought. Every one of
+      those sat inside a box that was already ticked. Now every field the registry declares as
+      belonging to another platform is sampled here and has to come back as one of the eight marks
+      that mean "no answer" — never a number, never a name, and never an empty cell, because a reader
+      cannot tell "nothing to report" from "nobody asked" and one of those is a finding. Forty-one
+      Windows-only fields are covered, and the assertion was mutated to confirm it sees all forty-one
+      rather than passing over an empty loop. The same fields export as nothing rather than as a mark
+      meant for a person, and no mark parses as a number or is wide enough to be mistaken for one
 - [x] Common actions work without running the whole program elevated
-- [ ] 🟡 Recovery/minimal mode remains functional under significant load
+- [ ] 🟡 Recovery/minimal mode remains functional under significant load — **measured, and the
+      measurement found the gap.** On sixteen cores at load 12.5 with 1,144 processes, a full listing
+      returns every row in 1.54–1.74 s, of which a second is the deliberate wait between the two
+      samples a rate needs: 540–740 ms of actual work against 150 ms on an idle machine with a third
+      of the processes. The forensic preset — every expensive reading at once — costs 2.46 s, about
+      2.7× the default, which is the §5.4 opt-in trade behaving as designed and now with a number on
+      it. Peak resident for that heaviest case was 117 MiB, though that is the framework build rather
+      than the single-file one that ships.
+
+      **What the measurement showed is that the `minimal` column preset saves nothing**: 1.52–1.65 s,
+      indistinguishable from the default. Choosing fewer columns does not turn a collector off, and
+      §81's `procman --minimal` — which would — is not written. The preset is not a substitute for
+      the mode and this box stays open until the mode exists
 - [x] Data can be copied, exported and scripted — six formats over every field the registry holds
       (text, CSV, TSV, JSON, JSON lines, Markdown), a filter language shared by all three front-ends,
       a cell, a row and a column copyable from either of them, and three exit codes a script can
@@ -5150,7 +5183,10 @@ ProcessManager may claim to replace the named applications only when all ten are
       158 fields export; the three that refuse are drawn histories and say so by name rather than
       exporting a picture as text
 - [ ] The product is stable enough that administrators trust it while diagnosing an already
-      unstable machine
+      unstable machine — no soak has been run, and one run of anything is not the evidence this asks
+      for. What is known: under the load above it returned all 1,144 rows on every attempt with no
+      dropped or duplicated process, and the row count tracked the machine's own `/proc` exactly.
+      Trust is a longer-run claim than that and this stays open until something has run for days
 
 # 102. Acceptance criteria for v1
 
