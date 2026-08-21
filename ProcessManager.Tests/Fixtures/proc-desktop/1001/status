@@ -1,11 +1,13 @@
 Name:	foo) 0 (bar
-Umask:	0022
+Umask:	0077
 State:	S (sleeping)
 Tgid:	1
 Ngid:	0
 Pid:	1
+TracerPid:	0
 Uid:	1000	1000	1000	1000
 Gid:	1000	44	1000	44
+FDSize:	128
 Groups:	44 1000 
 CapInh:	0000000000000000
 CapPrm:	0000000000003000
@@ -14,6 +16,7 @@ CapBnd:	0000060000000000
 CapAmb:	0000000000000000
 NoNewPrivs:	0
 Seccomp:	0
+Speculation_Store_Bypass:	not vulnerable
 VmPeak:	  150000 kB
 VmSize:	  100000 kB
 VmHWM:	  95048 kB

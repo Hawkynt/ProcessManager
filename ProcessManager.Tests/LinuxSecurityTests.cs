@@ -25,6 +25,14 @@ public sealed class LinuxSecurityTests(bool portable) {
     EffectiveUserId = 0,
   };
 
+  /// <summary>
+  /// What a run that named one of the six status columns of §20 and §21 asks the probe for. They
+  /// are opt-in for a cost that is neither a read nor an allocation: five more labels to recognise
+  /// in a loop that runs fifty times per process, measured against main at seven to eight
+  /// milliseconds per thousand processes (PRD §5.4, §71.2).
+  /// </summary>
+  private LinuxProbeOptions Secure => this.Options with { ReadSecurityStatus = true };
+
   private static ProcessRecord Find(SystemSnapshot snapshot, int pid) {
     foreach (var process in snapshot.Processes)
       if (process.Pid == pid)
@@ -354,6 +362,217 @@ public sealed class LinuxSecurityTests(bool portable) {
 
   #endregion
 
+  #region the mitigation state (PRD §21)
+
+  /// <summary>
+  /// Linux has no per-process mitigation <em>policy</em> the way Windows does, but it does publish
+  /// the mitigation <em>state</em>, and it is per task rather than per machine: the fixture's shell
+  /// asked for both mitigations and the process beside it did not.
+  /// </summary>
+  [Test]
+  public void TheSpeculationStatesAreReadFromTheStatusTheSamplerAlreadyHas() {
+    var snapshot = this.Sample(this.Secure);
+    var delta = new SnapshotDelta();
+    delta.Update(null, snapshot, CpuPercentMode.Normalized);
+
+    var systemd = Find(snapshot, 1);
+    Assert.That(
+      FieldAccessor.Text(ProcessField.SpeculationStoreBypass, in systemd, delta, 0),
+      Is.EqualTo("thread vulnerable")
+    );
+    Assert.That(
+      FieldAccessor.Text(ProcessField.SpeculationIndirectBranch, in systemd, delta, 0),
+      Is.EqualTo("conditional enabled")
+    );
+
+    var confined = Find(snapshot, 1000);
+    Assert.That(
+      FieldAccessor.Text(ProcessField.SpeculationStoreBypass, in confined, delta, 0),
+      Is.EqualTo("thread mitigated")
+    );
+    Assert.That(
+      FieldAccessor.Text(ProcessField.SpeculationIndirectBranch, in confined, delta, 0),
+      Is.EqualTo("conditional force disabled")
+    );
+  }
+
+  /// <summary>
+  /// Three kernel vintages on one fixture. The store-bypass line arrived in 4.17, the seccomp filter
+  /// count in 5.9, the indirect-branch line in 5.11 and the thread features in 6.6 — so a kernel
+  /// between them writes some of these and not others, and every absence must read as an absence
+  /// rather than as the safest value in the table (PRD §72.3).
+  /// </summary>
+  [Test]
+  public void AKernelTooOldForALineLeavesItUnknownRatherThanSafe() {
+    var older = Find(this.Sample(this.Secure), 1001);
+
+    Assert.That(older.SpeculationStoreBypass.HasValue, Is.True, "4.17 and newer write this one");
+    Assert.That(
+      (SpeculationState)older.SpeculationStoreBypass.Value,
+      Is.EqualTo(SpeculationState.NotVulnerable)
+    );
+
+    Assert.That(older.SpeculationIndirectBranch.HasValue, Is.False, "5.11 added this line");
+    Assert.That(older.SpeculationIndirectBranch.Reason, Is.EqualTo(UnknownReason.NotSupportedOnPlatform));
+    Assert.That(older.ThreadFeatures.HasValue, Is.False, "6.6 added this one");
+    Assert.That(older.SeccompFilters.HasValue, Is.False, "and 5.9 this one");
+  }
+
+  /// <summary>
+  /// <c>x86_Thread_features_locked:</c> is the very next line and begins with every character of
+  /// <c>x86_Thread_features</c>. A prefix match that dropped the colon would read the locked set as
+  /// the enabled one — the same mistake that once read <c>Seccomp_filters</c> as the seccomp mode —
+  /// so the fixture gives one process two lines whose contents differ.
+  /// </summary>
+  [Test]
+  public void TheLockedFeatureSetIsNotMistakenForTheEnabledOne() {
+    var snapshot = this.Sample(this.Secure);
+    var delta = new SnapshotDelta();
+    delta.Update(null, snapshot, CpuPercentMode.Normalized);
+
+    // The fixture's enabled set is "shstk" while its locked set is "shstk wrss".
+    var confined = Find(snapshot, 1000);
+    Assert.That(
+      (ThreadSecurityFeatures)confined.ThreadFeatures.Value,
+      Is.EqualTo(ThreadSecurityFeatures.ShadowStack)
+    );
+    Assert.That(FieldAccessor.Text(ProcessField.ThreadFeatures, in confined, delta, 0), Is.EqualTo("shstk"));
+
+    var both = Find(snapshot, 1002);
+    Assert.That(
+      (ThreadSecurityFeatures)both.ThreadFeatures.Value,
+      Is.EqualTo(ThreadSecurityFeatures.ShadowStack | ThreadSecurityFeatures.WriteableShadowStack)
+    );
+  }
+
+  /// <summary>
+  /// A process with no shadow stack is the ordinary case, and "none" is what it says. The kernel
+  /// thread beside it has no such line at all, which is a different statement — and the one that
+  /// would have been a confident "no protections here" if the field defaulted to zero.
+  /// </summary>
+  [Test]
+  public void NoFeaturesIsNotTheSameAsNoLine() {
+    var snapshot = this.Sample(this.Secure);
+    var delta = new SnapshotDelta();
+    delta.Update(null, snapshot, CpuPercentMode.Normalized);
+
+    var systemd = Find(snapshot, 1);
+    Assert.That(systemd.ThreadFeatures.HasValue, Is.True);
+    Assert.That(FieldAccessor.Text(ProcessField.ThreadFeatures, in systemd, delta, 0), Is.EqualTo("none"));
+
+    var kernelThread = Find(snapshot, 2);
+    Assert.That(kernelThread.ThreadFeatures.HasValue, Is.False);
+    Assert.That(kernelThread.SpeculationStoreBypass.HasValue, Is.False);
+    Assert.That(kernelThread.SpeculationIndirectBranch.HasValue, Is.False);
+    Assert.That(
+      FieldAccessor.Text(ProcessField.ThreadFeatures, in kernelThread, delta, 0),
+      Is.EqualTo(Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform))
+    );
+  }
+
+  #endregion
+
+  /// <summary>
+  /// Recognising these five lines is not free, so no run pays for it unless a column or a filter
+  /// named one of the six fields — and "nobody asked" must not be reported as "this kernel does not
+  /// write it", which would be a mitigation column saying "not supported here" on a kernel that
+  /// supports it perfectly well (PRD §5.4, §72.3).
+  /// </summary>
+  [Test]
+  public void TheStatusSecurityLinesAreNotReadUnlessTheyWereAskedFor() {
+    var process = Find(this.Sample(), 1);
+
+    foreach (var counter in new[] {
+      process.SpeculationStoreBypass, process.SpeculationIndirectBranch, process.ThreadFeatures,
+      process.Umask, process.TracerPid, process.DescriptorTableSize,
+    }) {
+      Assert.That(counter.HasValue, Is.False);
+      Assert.That(counter.Reason, Is.EqualTo(UnknownReason.NotSampledYet));
+    }
+
+    // And when they are asked for, the same process answers all six.
+    var asked = Find(this.Sample(this.Secure), 1);
+    Assert.That(asked.SpeculationStoreBypass.HasValue, Is.True);
+    Assert.That(asked.Umask.HasValue, Is.True);
+    Assert.That(asked.DescriptorTableSize.HasValue, Is.True);
+  }
+
+  #region the umask, the tracer and the descriptor table
+
+  /// <summary>
+  /// Base eight. Reading <c>0022</c> as the decimal twenty-two would name a mask that withholds
+  /// nothing anybody expects, and no other column on the row would contradict it.
+  /// </summary>
+  [Test]
+  public void TheUmaskIsReadAsOctalAndShownAsOctal() {
+    var snapshot = this.Sample(this.Secure);
+    var delta = new SnapshotDelta();
+    delta.Update(null, snapshot, CpuPercentMode.Normalized);
+
+    var ordinary = Find(snapshot, 1000);
+    Assert.That(ordinary.Umask.Value, Is.EqualTo(0b000_010_010UL), "0022 is eighteen, not twenty-two");
+    Assert.That(FieldAccessor.Text(ProcessField.Umask, in ordinary, delta, 0), Is.EqualTo("0022"));
+
+    var strict = Find(snapshot, 1001);
+    Assert.That(strict.Umask.Value, Is.EqualTo(0b000_111_111UL), "0077");
+    Assert.That(FieldAccessor.Text(ProcessField.Umask, in strict, delta, 0), Is.EqualTo("0077"));
+
+    // Nought is a real mask and a finding: this process withholds nothing from anything it creates.
+    var open = Find(snapshot, 2);
+    Assert.That(open.Umask.HasValue, Is.True);
+    Assert.That(FieldAccessor.Text(ProcessField.Umask, in open, delta, 0), Is.EqualTo("0000"));
+  }
+
+  /// <summary>
+  /// Zero means nobody is attached, which is the usual answer and is not a missing one. Verified
+  /// against the kernel by attaching to a child with <c>PTRACE_ATTACH</c>: the line went from 0 to
+  /// the tracer's pid and back to 0 on detach.
+  /// </summary>
+  [Test]
+  public void TheTracerIsNamedRatherThanCountedAndNoneReadsAsNone() {
+    var snapshot = this.Sample(this.Secure);
+    var delta = new SnapshotDelta();
+    delta.Update(null, snapshot, CpuPercentMode.Normalized);
+
+    var traced = Find(snapshot, 1000);
+    Assert.That(traced.TracerPid.Value, Is.EqualTo(1002UL));
+    Assert.That(FieldAccessor.Text(ProcessField.TracerPid, in traced, delta, 0), Is.EqualTo("1002"));
+
+    var untraced = Find(snapshot, 1);
+    Assert.That(untraced.TracerPid.Value, Is.EqualTo(0UL));
+    Assert.That(FieldAccessor.Text(ProcessField.TracerPid, in untraced, delta, 0), Is.EqualTo("none"));
+
+    var noLine = Find(snapshot, 2);
+    Assert.That(noLine.TracerPid.HasValue, Is.False);
+  }
+
+  /// <summary>
+  /// A capacity, not a count and not a ceiling. On the machine this was written on a shell held four
+  /// open descriptors with a table of 256 and an <c>RLIMIT_NOFILE</c> of 524288: three numbers, none
+  /// of them the other two, which is why this is its own field and not <c>handles.peak</c>
+  /// (PRD §20).
+  /// </summary>
+  [Test]
+  public void TheDescriptorTableSizeIsItsOwnNumber() {
+    var snapshot = this.Sample(this.Secure with { CountFileDescriptors = true });
+    var delta = new SnapshotDelta();
+    delta.Update(null, snapshot, CpuPercentMode.Normalized);
+
+    var confined = Find(snapshot, 1000);
+    Assert.That(confined.DescriptorTableSize.Value, Is.EqualTo(64UL));
+    Assert.That(FieldAccessor.Text(ProcessField.DescriptorTableSize, in confined, delta, 0), Is.EqualTo("64"));
+
+    // The table has room for more than the process is using, which is the whole point of reporting
+    // it: it is an upper bound on what was once held, not what is held now.
+    Assert.That(confined.HandleCount.HasValue, Is.True);
+    Assert.That(confined.HandleCount.Value, Is.LessThan(confined.DescriptorTableSize.Value));
+
+    Assert.That(Find(snapshot, 1).DescriptorTableSize.Value, Is.EqualTo(512UL));
+    Assert.That(Find(snapshot, 2).DescriptorTableSize.HasValue, Is.False, "no line, no number");
+  }
+
+  #endregion
+
   #region the LSM label
 
   [Test]
@@ -385,6 +604,52 @@ public sealed class LinuxSecurityTests(bool portable) {
     );
   }
 
+  /// <summary>
+  /// The bracketed word is a fact the label column already shows and cannot be sorted on. Splitting
+  /// it out is what makes "which of these are only being watched" one click rather than a read of
+  /// six hundred labels.
+  /// </summary>
+  [Test]
+  public void TheConfinementModeComesOutOfTheLabelTheLsmColumnAlreadyRead() {
+    var snapshot = this.Sample(this.Options with { ReadSecurityContext = true });
+    var delta = new SnapshotDelta();
+    delta.Update(null, snapshot, CpuPercentMode.Normalized);
+
+    var confined = Find(snapshot, 1000);
+    Assert.That(confined.SecurityContext, Is.EqualTo("/usr/bin/bash (enforce)"));
+    Assert.That((LsmConfinementMode)confined.ConfinementMode.Value, Is.EqualTo(LsmConfinementMode.Enforce));
+    Assert.That(FieldAccessor.Text(ProcessField.ConfinementMode, in confined, delta, 0), Is.EqualTo("enforce"));
+  }
+
+  /// <summary>
+  /// It costs no read of its own, so it must not appear without one: nothing turns the label on but
+  /// somebody naming a column, and asking for the mode has to be one of those names or the column
+  /// ships permanently empty (PRD §5.4).
+  /// </summary>
+  [Test]
+  public void TheModeIsNotFilledUnlessTheLabelWasAskedFor() {
+    var process = Find(this.Sample(), 1000);
+
+    Assert.That(process.ConfinementMode.HasValue, Is.False);
+    Assert.That(process.ConfinementMode.Reason, Is.EqualTo(UnknownReason.NotSampledYet));
+  }
+
+  /// <summary>
+  /// A kernel with no security module has no label and therefore no mode, and the two say the same
+  /// thing rather than one of them claiming the process is unconfined.
+  /// </summary>
+  [Test]
+  public void NoLabelMeansNoModeRatherThanUnconfined() {
+    var process = Find(this.Sample(this.Options with { ReadSecurityContext = true }), 1);
+
+    Assert.That(process.ConfinementMode.HasValue, Is.False);
+    Assert.That(process.ConfinementMode.Reason, Is.EqualTo(UnknownReason.NotSupportedOnPlatform));
+    Assert.That(
+      FieldAccessor.Text(ProcessField.ConfinementMode, in process, null, 0),
+      Is.EqualTo(Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform))
+    );
+  }
+
   #endregion
 
   #region how they read and filter
@@ -406,7 +671,7 @@ public sealed class LinuxSecurityTests(bool portable) {
 
   [Test]
   public void TheyCanBeFilteredByTheWordOrByTheNumber() {
-    var snapshot = this.Sample();
+    var snapshot = this.Sample(this.Secure);
     var delta = new SnapshotDelta();
     delta.Update(null, snapshot, CpuPercentMode.Normalized);
 
@@ -441,6 +706,27 @@ public sealed class LinuxSecurityTests(bool portable) {
     // filter reading the abbreviated column text would have missed, since that text says "all".
     Assert.That(Matching("caps:cap_net_admin", snapshot, delta), Is.EqualTo(new[] { 1, 1001, 1002 }));
     Assert.That(Matching("caps.bounding:cap_sys_module", snapshot, delta), Is.EqualTo(new[] { 1, 1000, 1002 }));
+    // The kernel's own words, so the question reads the way it would be said aloud. The trap is
+    // worth asserting rather than hiding: "vulnerable" is a substring of "not vulnerable", so the
+    // loose form catches the safe process along with the exposed one. That is the Contains operator
+    // behaving the way it does for every text field in the language rather than anything about this
+    // one, and the exact form is how the question gets asked precisely.
+    Assert.That(Matching("spec.ssb:vulnerable", snapshot, delta), Is.EqualTo(new[] { 1, 1001 }));
+    Assert.That(Matching("spec.ssb==\"thread vulnerable\"", snapshot, delta), Is.EqualTo(new[] { 1 }));
+    Assert.That(Matching("spec.ssb:\"not vulnerable\"", snapshot, delta), Is.EqualTo(new[] { 1001 }));
+    Assert.That(Matching("spec.ib:\"conditional force disabled\"", snapshot, delta), Is.EqualTo(new[] { 1000 }));
+    Assert.That(Matching("shstk:shstk", snapshot, delta), Is.EqualTo(new[] { 1000, 1002 }));
+    Assert.That(Matching("shstk:none", snapshot, delta), Is.EqualTo(new[] { 1 }));
+
+    // The octal digits, because that is the form somebody has the number in. The kernel holds a
+    // mask to nine bits, so all four digits are always there and comparing them as text gives the
+    // same order as comparing them as numbers: "withholds less than the usual" is still a
+    // comparison, and it still finds the process that withholds nothing.
+    Assert.That(Matching("umask:0077", snapshot, delta), Is.EqualTo(new[] { 1001 }));
+    Assert.That(Matching("umask<0022", snapshot, delta), Is.EqualTo(new[] { 2 }));
+    Assert.That(Matching("tracer>0", snapshot, delta), Is.EqualTo(new[] { 1000 }));
+    Assert.That(Matching("fd.table>=256", snapshot, delta), Is.EqualTo(new[] { 1, 1002 }));
+
     Assert.That(Matching("setuid:yes", snapshot, delta), Is.EqualTo(new[] { 1001, 1002 }));
     Assert.That(Matching("euid:0", snapshot, delta), Is.EqualTo(new[] { 1, 2, 1002 }));
     Assert.That(Matching("uid:1000", snapshot, delta), Is.EqualTo(new[] { 1000, 1001, 1002 }));

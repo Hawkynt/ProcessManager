@@ -4,8 +4,10 @@ State:	S (sleeping)
 Tgid:	1
 Ngid:	0
 Pid:	1
+TracerPid:	0
 Uid:	1000	0	0	1000
 Gid:	1000	1000	1000	1000
+FDSize:	256
 Groups:	1000 
 CapInh:	0000000000000000
 CapPrm:	0000003fffffffff
@@ -15,6 +17,8 @@ CapAmb:	0000000000000020
 NoNewPrivs:	0
 Seccomp:	0
 Seccomp_filters:	0
+Speculation_Store_Bypass:	globally mitigated
+SpeculationIndirectBranch:	not affected
 VmPeak:	  100000 kB
 VmSize:	  100000 kB
 VmHWM:	  2548 kB
@@ -27,3 +31,5 @@ VmSwap:	  0 kB
 Threads:	1
 voluntary_ctxt_switches:	2
 nonvoluntary_ctxt_switches:	0
+x86_Thread_features:	shstk wrss 
+x86_Thread_features_locked:	

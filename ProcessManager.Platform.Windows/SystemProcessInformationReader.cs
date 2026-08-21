@@ -131,6 +131,23 @@ internal static class SystemProcessInformationReader {
       record.AmbientCapabilities = Counter.NotSupported;
       record.EffectiveUserId = -1;
       record.SecurityContextReason = UnknownReason.NotSupportedOnPlatform;
+      record.ConfinementMode = Counter.NotSupported;
+      // Windows reports its mitigations as a policy per process rather than as a state per thread,
+      // and those are §21's own fields — dep, aslr, cfg, cet — which are not built. The Linux
+      // readings have no counterpart to be filled in from here, so they say so rather than
+      // reporting a machine with every mitigation off (PRD §5.3, §72.3).
+      record.SpeculationStoreBypass = Counter.NotSupported;
+      record.SpeculationIndirectBranch = Counter.NotSupported;
+      record.ThreadFeatures = Counter.NotSupported;
+      // A process on Windows has no file-creation mask: the equivalent is the inherited ACL of the
+      // directory a file is made in, which belongs to the file rather than to the process.
+      record.Umask = Counter.NotSupported;
+      // Whether a debugger is attached is answerable here through CheckRemoteDebuggerPresent, and
+      // that names no debugger — so this is unbuilt rather than unanswerable (PRD §7).
+      record.TracerPid = Counter.Unknown(UnknownReason.NotImplementedHere);
+      // There is no descriptor table to size. The handle table has a quota, which is a different
+      // number and belongs to whichever field ends up reporting it.
+      record.DescriptorTableSize = Counter.NotSupported;
       // Hashing an image is the same operation on any platform and nothing here asks for it yet,
       // which is a fact about us rather than about Windows (PRD §7, §21).
       record.ImageSha256 = null;

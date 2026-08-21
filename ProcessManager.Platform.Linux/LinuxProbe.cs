@@ -461,6 +461,94 @@ public sealed class LinuxProbe : ISystemProbe {
   }
 
   /// <summary>
+  /// The five security lines of <c>status</c> that are neither an identity nor a size (PRD §21).
+  /// </summary>
+  /// <remarks>
+  /// Deliberately not inlined into <see cref="ReadStatus"/>'s loop. Five labels of up to
+  /// twenty-six bytes each is a lot of code to carry through a loop that runs fifty times for every
+  /// one of six hundred processes every second, and carrying them there made the whole loop slower
+  /// — measurably, and by more than the comparisons themselves could account for. The caller spends
+  /// one byte's test to decide whether to come here at all, and comes here for about eight lines of
+  /// the fifty (PRD §71.2).
+  /// </remarks>
+  [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+  private static void ReadSecurityLine(ReadOnlySpan<byte> line, ref ProcessRecord record) {
+    switch (line[0]) {
+      case (byte)'U':
+        // Octal, because the kernel writes it that way and because reading 0022 as twenty-two would
+        // describe a mask nobody holds.
+        if (TryOctal(line, "Umask:"u8, out var octal))
+          record.Umask = Counter.Of(octal);
+
+        break;
+
+      case (byte)'T':
+        // Zero is a real answer and the usual one: nothing is attached. The counter's business is
+        // the line being absent, not the nought.
+        if (TryValue(line, "TracerPid:"u8, out var tracer))
+          record.TracerPid = Counter.Of(tracer);
+
+        break;
+
+      case (byte)'F':
+        if (TryValue(line, "FDSize:"u8, out var slots))
+          record.DescriptorTableSize = Counter.Of(slots);
+
+        break;
+
+      case (byte)'S':
+        // Words rather than numbers, decoded in Core so that a recorded status reads the same on
+        // every CI leg (PRD §9.2). The two lines do not share a vocabulary, so they do not share a
+        // table.
+        if (AsciiScanner.StartsWith(line, "Speculation_Store_Bypass:"u8))
+          record.SpeculationStoreBypass = Counter.Of(
+            (ulong)SecurityStatusParser.StoreBypass(line["Speculation_Store_Bypass:"u8.Length..])
+          );
+        else if (AsciiScanner.StartsWith(line, "SpeculationIndirectBranch:"u8))
+          record.SpeculationIndirectBranch = Counter.Of(
+            (ulong)SecurityStatusParser.IndirectBranch(line["SpeculationIndirectBranch:"u8.Length..])
+          );
+
+        break;
+
+      case (byte)'x':
+        // The colon is what keeps this off x86_Thread_features_locked, which is the very next line
+        // and would otherwise be read as this one — the same shape of mistake that once read
+        // Seccomp_filters as the seccomp mode.
+        if (AsciiScanner.StartsWith(line, "x86_Thread_features:"u8))
+          record.ThreadFeatures = Counter.Of(
+            (ulong)SecurityStatusParser.ThreadFeatures(line["x86_Thread_features:"u8.Length..])
+          );
+
+        break;
+    }
+  }
+
+  /// <summary>
+  /// The <c>Umask:</c> line, as the mask it spells rather than as the digits.
+  /// </summary>
+  /// <remarks>
+  /// Base eight, because that is what the kernel writes and what every tool that sets one accepts.
+  /// Reading <c>0022</c> as the decimal twenty-two would name a mask that withholds nothing a reader
+  /// expects and grants two things they do not, and no other column on the row would contradict it.
+  /// </remarks>
+  private static bool TryOctal(ReadOnlySpan<byte> line, ReadOnlySpan<byte> key, out ulong value) {
+    value = 0;
+    if (!AsciiScanner.StartsWith(line, key))
+      return false;
+
+    var digits = line[key.Length..].Trim(" \t"u8);
+    foreach (var digit in digits) {
+      if (digit is < (byte)'0' or > (byte)'7')
+        break;
+
+      value = (value << 3) | (byte)(digit - (byte)'0');
+    }
+
+    return true;
+  }
+
+  /// <summary>
   /// Pressure stall information (PRD §46).
   /// </summary>
   /// <remarks>
@@ -1022,6 +1110,18 @@ public sealed class LinuxProbe : ISystemProbe {
     record.InheritableCapabilities = Counter.NotSupported;
     record.BoundingCapabilities = Counter.NotSupported;
     record.AmbientCapabilities = Counter.NotSupported;
+    // "Nobody asked for these" and "this kernel does not write them" are different answers, and the
+    // column must not report the second when the first is true — a mitigation reading that says
+    // "not supported here" on a kernel that supports it perfectly well is the same lie as a nought.
+    var securityUnread = this._options.ReadSecurityStatus
+      ? Counter.NotSupported
+      : Counter.NotSampledYet;
+    record.SpeculationStoreBypass = securityUnread;
+    record.SpeculationIndirectBranch = securityUnread;
+    record.ThreadFeatures = securityUnread;
+    record.Umask = securityUnread;
+    record.TracerPid = securityUnread;
+    record.DescriptorTableSize = securityUnread;
     record.EffectiveUserId = -1;
     record.SavedUserId = -1;
     record.FilesystemUserId = -1;
@@ -1053,6 +1153,12 @@ public sealed class LinuxProbe : ISystemProbe {
         record.InheritableCapabilities = Counter.NotPermitted;
         record.BoundingCapabilities = Counter.NotPermitted;
         record.AmbientCapabilities = Counter.NotPermitted;
+        record.SpeculationStoreBypass = Counter.NotPermitted;
+        record.SpeculationIndirectBranch = Counter.NotPermitted;
+        record.ThreadFeatures = Counter.NotPermitted;
+        record.Umask = Counter.NotPermitted;
+        record.TracerPid = Counter.NotPermitted;
+        record.DescriptorTableSize = Counter.NotPermitted;
         record.SupplementaryGroupsReason = UnknownReason.NotPermitted;
         record.CpuAffinityReason = UnknownReason.NotPermitted;
       }
@@ -1068,6 +1174,8 @@ public sealed class LinuxProbe : ISystemProbe {
     var haveRssShmem = false;
     var haveData = false;
     var haveEffectiveUid = false;
+    // Hoisted, so the loop tests a local rather than reaching through the options every line.
+    var wantSecurity = this._options.ReadSecurityStatus;
     var scanner = new AsciiScanner(content);
     while (!scanner.IsEmpty) {
       var line = scanner.NextLine();
@@ -1157,6 +1265,18 @@ public sealed class LinuxProbe : ISystemProbe {
         voluntary = value;
       else if (TryValue(line, "nonvoluntary_ctxt_switches:"u8, out value))
         involuntary = value;
+      // The five security lines are recognised by their first byte here and read somewhere else,
+      // and only when somebody asked for one of them. All three of those are measured rather than
+      // tidy. Written inline, as five more links in this chain, they cost seven to eight
+      // milliseconds per thousand processes against a sample whose budget is twenty-five — and
+      // moving them around inside the loop changed nothing, because what they cost was the room
+      // they took up rather than the comparisons they made: fifty lines per process, six hundred
+      // processes a second, and five more labels of up to twenty-six bytes to carry through all of
+      // it made even the memory lines slower. Out of line behind one byte's test recovered most of
+      // that; the switch buys the rest, the way §5.4 says a cost that only some runs need should
+      // be bought (PRD §71.2).
+      else if (wantSecurity && line[0] is (byte)'U' or (byte)'T' or (byte)'F' or (byte)'S' or (byte)'x')
+        ReadSecurityLine(line, ref record);
     }
 
     record.SwapBytes = Counter.Of(swap);
@@ -1186,8 +1306,10 @@ public sealed class LinuxProbe : ISystemProbe {
 
     if (this._options.ReadSecurityContext)
       this.ReadSecurityContext(cache, ref record);
-    else
+    else {
       record.SecurityContextReason = UnknownReason.NotSampledYet;
+      record.ConfinementMode = Counter.NotSampledYet;
+    }
 
     if (!this._options.UseProportionalSetSize) {
       // Nobody asked for it, which is not the same as the machine having none.
@@ -1214,6 +1336,7 @@ public sealed class LinuxProbe : ISystemProbe {
   /// the same order of cost as the file-descriptor scan that had to leave the sample loop (PRD §4).
   /// </remarks>
   private void ReadSecurityContext(ProcessCache cache, ref ProcessRecord record) {
+    record.ConfinementMode = Counter.NotSupported;
     if (!this._reader.TryRead(cache.SecurityContextPath, out var content, out var errno)) {
       // A kernel with no LSM loaded fails this read with EINVAL rather than leaving the file empty,
       // so "no security module here" and "not allowed to look" are different answers and are
@@ -1221,6 +1344,7 @@ public sealed class LinuxProbe : ISystemProbe {
       record.SecurityContextReason = errno is Native.EACCES or Native.EPERM
         ? UnknownReason.NotPermitted
         : UnknownReason.NotSupportedOnPlatform;
+      record.ConfinementMode = Counter.Unknown(record.SecurityContextReason);
 
       return;
     }
@@ -1240,6 +1364,14 @@ public sealed class LinuxProbe : ISystemProbe {
     // "unconfined" is what AppArmor says when there is no profile. It is a real answer, not a
     // missing one, so it is kept rather than blanked.
     record.SecurityContext = text;
+
+    // The bracketed word out of the same string, so that "which of these are only being watched"
+    // is a sort rather than a read of six hundred labels. A context that states no mode — every
+    // SELinux one — stays unknown rather than being given a mode it never claimed (PRD §5.3).
+    var mode = SecurityStatusParser.ConfinementMode(text);
+    record.ConfinementMode = mode == LsmConfinementMode.Unknown
+      ? Counter.NotSupported
+      : Counter.Of((ulong)mode);
   }
 
   /// <summary>

@@ -139,8 +139,15 @@ internal sealed record CommandLineOptions {
   /// Inferred rather than flagged: naming the field in --columns or in --filter is already a clear
   /// request for it, and a separate --security switch would only be a way to get an empty column
   /// by forgetting it (PRD §5.4).
+  /// <para>
+  /// The confinement mode is here rather than in a switch of its own because it is the same read:
+  /// the bracketed word comes out of the label the file already carries, so asking for either buys
+  /// both. Leaving it out is how a field ships whose read nothing ever turns on, and the column is
+  /// then permanently empty while the document claims it works.
+  /// </para>
   /// </remarks>
-  public bool WantsSecurityContext => this.Wants(ProcessField.SecurityContext);
+  public bool WantsSecurityContext
+    => this.Wants(ProcessField.SecurityContext) || this.Wants(ProcessField.ConfinementMode);
 
   /// <summary>
   /// Whether the proportional set size is worth the file read it costs (PRD §5.4).
@@ -165,6 +172,24 @@ internal sealed record CommandLineOptions {
   /// different resource.
   /// </remarks>
   public bool WantsSupplementaryGroups => this.Wants(ProcessField.SupplementaryGroups);
+
+  /// <summary>
+  /// Whether the mitigation, umask, tracer and descriptor-table lines are worth recognising
+  /// (PRD §5.4, §20, §21).
+  /// </summary>
+  /// <remarks>
+  /// The same rule again, and for a cost that is neither a read nor an allocation: the lines are in
+  /// a file the sampler already has open, but five more labels to recognise in a loop that runs
+  /// fifty times per process cost a measurable share of the sample when every run paid it. So no run
+  /// pays it unless a column or a filter names one of the six.
+  /// </remarks>
+  public bool WantsSecurityStatus
+    => this.Wants(ProcessField.SpeculationStoreBypass)
+    || this.Wants(ProcessField.SpeculationIndirectBranch)
+    || this.Wants(ProcessField.ThreadFeatures)
+    || this.Wants(ProcessField.Umask)
+    || this.Wants(ProcessField.TracerPid)
+    || this.Wants(ProcessField.DescriptorTableSize);
 
   /// <summary>
   /// Whether anything this run asked for needs a third sample (PRD §15).

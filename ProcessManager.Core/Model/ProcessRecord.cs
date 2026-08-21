@@ -566,6 +566,71 @@ public struct ProcessRecord {
   public Counter AmbientCapabilities;
 
   /// <summary>
+  /// The <see cref="SpeculationState"/> of this task's store-bypass mitigation, as its ordinal.
+  /// </summary>
+  /// <remarks>
+  /// A <see cref="Counter"/> rather than the enum, so that "the kernel does not write this line"
+  /// stays distinct from "the kernel wrote <c>unknown</c>". Both are answers and they are different
+  /// answers: the first is a kernel too old or an architecture with no such control, the second is
+  /// this kernel declining to say for this task (PRD §72.3).
+  /// </remarks>
+  public Counter SpeculationStoreBypass;
+
+  /// <summary>
+  /// The <see cref="IndirectBranchState"/> of this task's indirect-branch mitigation, as its ordinal.
+  /// </summary>
+  /// <remarks>
+  /// Its own field because it is its own control: a process may have asked for one mitigation and
+  /// not the other, and folding the pair into a single "mitigated" word would answer less than
+  /// either of them does (PRD §5.3).
+  /// </remarks>
+  public Counter SpeculationIndirectBranch;
+
+  /// <summary>
+  /// The <see cref="ThreadSecurityFeatures"/> the kernel has switched on for this task, as the mask.
+  /// </summary>
+  /// <remarks>
+  /// <see cref="ThreadSecurityFeatures.None"/> is a real answer and the ordinary one — most
+  /// processes on most machines run without a shadow stack. The line being absent is not that
+  /// answer, and the counter carries the difference.
+  /// </remarks>
+  public Counter ThreadFeatures;
+
+  /// <summary>
+  /// The file-creation mask, as the number <c>status</c> writes in octal.
+  /// </summary>
+  /// <remarks>
+  /// Kept as the value of the mask rather than as its four digits, so that it sorts and filters as
+  /// the set of bits it is. A daemon running with a mask of 0 creates every file it touches
+  /// world-writable, which is a finding no other column on this row would show.
+  /// </remarks>
+  public Counter Umask;
+
+  /// <summary>
+  /// Which process is tracing this one, or 0 for none.
+  /// </summary>
+  /// <remarks>
+  /// Zero is a real answer here and the usual one, so the counter's business is the other case: a
+  /// kernel that does not write the line, or a <c>hidepid</c> mount. The pid rather than a yes/no,
+  /// because "something is attached to this process" is only half the question and the other half is
+  /// what.
+  /// </remarks>
+  public Counter TracerPid;
+
+  /// <summary>
+  /// How many slots this process's descriptor table has, from <c>FDSize</c> (PRD §20).
+  /// </summary>
+  /// <remarks>
+  /// A capacity, not a count and not a peak. The table is grown when a descriptor will not fit and
+  /// is never shrunk while the process lives, so it is an upper bound on how many descriptors this
+  /// process has ever held at once — which is a different statement from the high-water mark Windows
+  /// reports, and is labelled as the different statement it is. On the machine this was written on a
+  /// shell held four descriptors with a table of 256 and a ceiling of 524288: three numbers, none of
+  /// them the other two.
+  /// </remarks>
+  public Counter DescriptorTableSize;
+
+  /// <summary>
   /// The digests of the image the process is running, or <see langword="null"/> (PRD §21, §70).
   /// </summary>
   /// <remarks>
@@ -654,5 +719,16 @@ public struct ProcessRecord {
   /// <see cref="Counter"/> does, and "no answer" needs one just as much (PRD §72.3).
   /// </summary>
   public UnknownReason SecurityContextReason;
+
+  /// <summary>
+  /// The <see cref="LsmConfinementMode"/> the label states, as its ordinal (PRD §21).
+  /// </summary>
+  /// <remarks>
+  /// Derived from <see cref="SecurityContext"/> and so only ever filled when that was asked for,
+  /// which is what keeps it free: the bracketed word is already inside the string the label column
+  /// reads, and this is the same fact in a form that can be sorted and filtered on. A label that
+  /// states no mode — every SELinux context does — leaves this unknown rather than inventing one.
+  /// </remarks>
+  public Counter ConfinementMode;
 
 }

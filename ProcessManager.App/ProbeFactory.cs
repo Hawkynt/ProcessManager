@@ -82,6 +82,12 @@ internal static class ProbeFactory {
   /// Whether anything on this run asked when each image file was created. One <c>statx</c> per
   /// process, on a path nothing else reads.
   /// </param>
+  /// <param name="wantSecurityStatus">
+  /// Whether anything on this run asked for the mitigation states, the umask, the tracer or the
+  /// descriptor-table size. The lines are in a file already open, so this buys no read — it buys
+  /// five more labels to recognise in a loop that runs fifty times per process, which measured a
+  /// real share of the sample when every run paid it (PRD §5.4, §20, §21).
+  /// </param>
   public static ISystemProbe? Create(
     string? probeRoot,
     bool useHelper = true,
@@ -98,7 +104,8 @@ internal static class ProbeFactory {
     bool wantPackageIdentity = false,
     bool wantPackageVerification = false,
     bool wantRuntime = false,
-    bool wantImageCreationTime = false
+    bool wantImageCreationTime = false,
+    bool wantSecurityStatus = false
   ) {
     if (OperatingSystem.IsLinux()) {
       // A recorded tree is somebody else's machine; asking a helper about pids in it would be asking
@@ -132,6 +139,7 @@ internal static class ProbeFactory {
             ReadPackageVerification = wantPackageVerification,
             ReadRuntime = wantRuntime,
             ReadImageCreationTime = wantImageCreationTime,
+            ReadSecurityStatus = wantSecurityStatus,
           }
           // A recorded tree was captured by somebody else, so the live user's id would refuse every
           // file in it. Root reads everything, which is what a replay wants (PRD §9.1).
@@ -164,6 +172,9 @@ internal static class ProbeFactory {
             ReadPackageVerification = false,
             ReadRuntime = wantRuntime,
             ReadImageCreationTime = false,
+            // The recorded tree carries each process's status verbatim, so these five lines
+            // replay exactly as they were captured.
+            ReadSecurityStatus = wantSecurityStatus,
           }
       );
     }
