@@ -93,10 +93,22 @@ internal static class SystemProcessInformationReader {
       record.WriteBytes = Counter.Of((ulong)Math.Max(0, entry.WriteTransferCount));
       record.OtherBytes = Counter.Of((ulong)Math.Max(0, entry.OtherTransferCount));
       record.HandleCount = Counter.Of(entry.HandleCount);
+      // Windows has all three object types and a handle table to count them in; walking it is not
+      // written, so this is a fact about us rather than about the machine (PRD §7, §20).
+      record.SocketCount = Counter.Unknown(UnknownReason.NotImplementedHere);
+      record.FileCount = Counter.Unknown(UnknownReason.NotImplementedHere);
+      record.PipeCount = Counter.Unknown(UnknownReason.NotImplementedHere);
       // Per-process context switches are per *thread* in this structure; summing every thread of
       // every process on every sample is not worth a column nobody sorts by. The threads carry it.
       record.ContextSwitches = Counter.NotSupported;
       record.MemoryLimitBytes = Counter.NotSupported;
+      // Windows has no cgroups; a job object can cap CPU, but it counts nothing that corresponds to
+      // a throttled period, so there is no figure here rather than a nought (PRD §5.3).
+      record.ThrottledPeriods = Counter.NotSupported;
+      // Affinity is the other case: GetProcessAffinityMask answers this perfectly well and we have
+      // not written it, which is a fact about us rather than about the machine (PRD §7).
+      record.CpuAffinity = null;
+      record.CpuAffinityReason = UnknownReason.NotImplementedHere;
 
       // Windows has no seccomp, no no_new_privs and no capability mask; it has integrity levels and
       // privileges instead, which are different things and get their own fields when they are built.
@@ -110,6 +122,11 @@ internal static class SystemProcessInformationReader {
       record.AmbientCapabilities = Counter.NotSupported;
       record.EffectiveUserId = -1;
       record.SecurityContextReason = UnknownReason.NotSupportedOnPlatform;
+      // Hashing an image is the same operation on any platform and nothing here asks for it yet,
+      // which is a fact about us rather than about Windows (PRD §7, §21).
+      record.ImageSha256 = null;
+      record.ImageSha1 = null;
+      record.ImageHashReason = UnknownReason.NotImplementedHere;
 
       // -1 rather than the zero a fresh struct carries, because zero is a real account on the
       // platform these fields come from: a record nobody filled would otherwise report every

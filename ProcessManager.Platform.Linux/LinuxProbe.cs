@@ -33,6 +33,14 @@ public sealed class LinuxProbe : ISystemProbe {
   private readonly Dictionary<ProcessKey, ProcessCache> _cache = [];
   private readonly List<ProcessKey> _stale = [];
   private readonly List<int> _pids = [];
+  // Reused for the descriptor numbers of one process at a time, when the per-kind tally is on.
+  private readonly List<int> _fdNumbers = [];
+  // One digest per image rather than per process, keyed by what the file was when it was read: the
+  // path alone would answer with the old bytes after an upgrade replaced the binary.
+  private readonly Dictionary<(string Path, long Size, long Modified), Query.FileDigest> _imageDigests = [];
+  // One cgroup's throttling counter, for the length of one sample. Several hundred processes share
+  // a few dozen groups, so this is the difference between a file per process and a file per group.
+  private readonly Dictionary<string, Counter> _throttling = [];
   // One buffer for every getdents64 call. 32 KiB holds about a thousand short names, so a process
   // with a few hundred descriptors is one syscall rather than one per entry.
   private readonly byte[] _directoryScratch = new byte[32 * 1024];
@@ -452,6 +460,9 @@ public sealed class LinuxProbe : ISystemProbe {
 
   private void ReadProcesses(SystemSnapshot snapshot) {
     this._pids.Clear();
+    // A cgroup's counters are read once per sample and shared by every process in the group; kept
+    // no longer than that, because the point of the column is that the number moves.
+    this._throttling.Clear();
     Span<byte> rootPath = stackalloc byte[ProcPath.MaxLength];
     this._procRootUtf8.CopyTo(rootPath);
     rootPath[this._procRootUtf8.Length] = 0;
@@ -730,6 +741,10 @@ public sealed class LinuxProbe : ISystemProbe {
     record.CommandLine = cache.CommandLine;
     record.ImagePath = cache.ImagePath;
     record.ContainerPath = cache.ContainerPath;
+    // After the cgroup path is known, because that is what says which group's counter to read.
+    this.ReadCpuThrottling(ref record);
+    // And after the image path, for the same reason.
+    this.ReadImageHashes(ref record);
     record.UserName = this._users.Resolve(record.UserId);
     // Almost always the same string, and taking it from the same cache costs a dictionary lookup
     // rather than an allocation. The handful of processes where the two differ are exactly the ones
@@ -837,8 +852,14 @@ public sealed class LinuxProbe : ISystemProbe {
     record.ReadBytes = Counter.NotSupported;
     record.WriteBytes = Counter.NotSupported;
     record.HandleCount = Counter.NotSupported;
+    record.SocketCount = Counter.NotSupported;
+    record.FileCount = Counter.NotSupported;
+    record.PipeCount = Counter.NotSupported;
     record.ContextSwitches = Counter.NotSupported;
     record.MemoryLimitBytes = Counter.NotSupported;
+    // Nobody has looked in the cgroup yet, and a nought here would say the group has never been
+    // held back — which is a claim, not an absence.
+    record.ThrottledPeriods = Counter.NotSupported;
     // Graphics is off unless asked for, so the default is "nobody looked" rather than "none" — and
     // stated here, because a record that left them alone would claim every process uses no GPU.
     LinuxGpuAccounting.NotCollected(ref record, UnknownReason.NotSampledYet);
@@ -902,6 +923,10 @@ public sealed class LinuxProbe : ISystemProbe {
     record.SupplementaryGroupsReason = this._options.ReadSupplementaryGroups
       ? UnknownReason.NotSupportedOnPlatform
       : UnknownReason.NotSampledYet;
+    record.CpuAffinity = null;
+    record.CpuAffinityReason = this._options.ReadCpuAffinity
+      ? UnknownReason.NotSupportedOnPlatform
+      : UnknownReason.NotSampledYet;
     // Linux confines processes with capabilities and LSMs, not with an integrity level.
     record.IntegrityLevel = Counter.NotSupported;
 
@@ -919,6 +944,7 @@ public sealed class LinuxProbe : ISystemProbe {
         record.BoundingCapabilities = Counter.NotPermitted;
         record.AmbientCapabilities = Counter.NotPermitted;
         record.SupplementaryGroupsReason = UnknownReason.NotPermitted;
+        record.CpuAffinityReason = UnknownReason.NotPermitted;
       }
 
       return;
@@ -965,6 +991,15 @@ public sealed class LinuxProbe : ISystemProbe {
           ? string.Empty
           : System.Text.Encoding.ASCII.GetString(groups);
         record.SupplementaryGroupsReason = UnknownReason.None;
+      } else if (this._options.ReadCpuAffinity && AsciiScanner.StartsWith(line, "Cpus_allowed_list:"u8)) {
+        // The list, not the mask two lines above it: "0-15" is readable on a machine where
+        // "ffff" is arithmetic and "00000000,00000000,...,ffffffff" is neither. Only when asked
+        // for, because it is the second line of status that has to become a string (PRD §5.4).
+        var allowed = line["Cpus_allowed_list:"u8.Length..].Trim(" \t"u8);
+        if (!allowed.IsEmpty) {
+          record.CpuAffinity = System.Text.Encoding.ASCII.GetString(allowed);
+          record.CpuAffinityReason = UnknownReason.None;
+        }
       } else if (TryValue(line, "Seccomp:"u8, out var flag))
         record.SeccompMode = Counter.Of(flag);
       else if (TryValue(line, "Seccomp_filters:"u8, out flag))
@@ -1180,18 +1215,185 @@ public sealed class LinuxProbe : ISystemProbe {
     }
   }
 
+  /// <summary>
+  /// How often the process's cgroup has been stopped for using up its CPU quota (PRD §15).
+  /// </summary>
+  /// <remarks>
+  /// Cached per cgroup for the length of one sample, which is what makes the column affordable: a
+  /// machine with six hundred processes has a few dozen groups, and the counter belongs to the
+  /// group rather than to any one of the processes in it. Nobody asking is
+  /// <see cref="UnknownReason.NotSampledYet"/> and never a nought — "we did not look" and "this has
+  /// never been throttled" are the two answers this column exists to keep apart.
+  /// </remarks>
+  private void ReadCpuThrottling(ref ProcessRecord record) {
+    if (!this._options.ReadCpuThrottling) {
+      record.ThrottledPeriods = Counter.NotSampledYet;
+      return;
+    }
+
+    if (record.ContainerPath is not { Length: > 0 } path) {
+      // A process outside any group has no such counter; a run with the cgroup read switched off
+      // has one nobody looked for. Different answers, and they are reported differently.
+      record.ThrottledPeriods = this._options.ReadCgroups ? Counter.NotSupported : Counter.NotSampledYet;
+      return;
+    }
+
+    if (this._throttling.TryGetValue(path, out var known)) {
+      record.ThrottledPeriods = known;
+      return;
+    }
+
+    var counter = this.ReadThrottleCounter(path);
+    this._throttling[path] = counter;
+    record.ThrottledPeriods = counter;
+  }
+
+  private Counter ReadThrottleCounter(string cgroupPath) {
+    // The path from /proc/[pid]/cgroup begins with a slash and is relative to the mount point, so
+    // it is trimmed rather than joined — joining it would read from the file-system root instead.
+    var file = $"{this._options.CgroupRoot}/{cgroupPath.TrimStart('/')}/cpu.stat";
+    if (!this._reader.TryRead(file, out var content, out var errno))
+      return errno is Native.EACCES or Native.EPERM ? Counter.NotPermitted : Counter.NotSupported;
+
+    // Widened rather than decoded: cpu.stat is ASCII by construction and a dozen short lines long,
+    // and the parser it goes to lives in Core so that it is exercised on every leg (PRD §9.2).
+    Span<char> text = content.Length <= 1024 ? stackalloc char[content.Length] : new char[content.Length];
+    for (var i = 0; i < content.Length; ++i)
+      text[i] = (char)content[i];
+
+    return CgroupCpuStatParser.Throttled(text);
+  }
+
+  /// <summary>
+  /// The digests of the image a process is running (PRD §21, §70).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Once per image, not once per process: a machine running three hundred processes of one runtime
+  /// has one binary between them, and hashing it three hundred times would read the same gigabyte
+  /// three hundred times. The key carries the size and the modification time as well as the path, so
+  /// an image replaced underneath a running process is hashed again rather than answered from a
+  /// cache describing bytes that are no longer there — which is exactly the case somebody looking at
+  /// this column is looking for (§23's "process with a changed executable").
+  /// </para>
+  /// <para>
+  /// A hash is not a verdict. It says what the bytes are and nothing about whether they are signed,
+  /// trusted or known (PRD §70).
+  /// </para>
+  /// </remarks>
+  private void ReadImageHashes(ref ProcessRecord record) {
+    if (!this._options.ReadImageHashes) {
+      record.ImageHashReason = UnknownReason.NotSampledYet;
+      return;
+    }
+
+    if (record.ImagePath is not { Length: > 0 } path) {
+      // Two different answers behind one null. A kernel thread runs no file at all, which is a fact
+      // about it rather than a failure — and somebody else's process has an image whose link this
+      // user may not follow, which is a failure and one the elevated helper could fix. Sending a
+      // reader after a privilege they already have is the mistake §72.3 exists to stop.
+      record.ImageHashReason = this.MayRead(record)
+        ? UnknownReason.NotSupportedOnPlatform
+        : UnknownReason.NotPermitted;
+
+      return;
+    }
+
+    long size = -1, modified = -1;
+    try {
+      var info = new FileInfo(path);
+      if (info.Exists) {
+        size = info.Length;
+        modified = info.LastWriteTimeUtc.Ticks;
+      }
+    } catch (IOException) {
+      // Left at -1, which is a key of its own: a file that cannot be stat'ed is hashed each time
+      // rather than remembered under a stamp nobody could read.
+    } catch (UnauthorizedAccessException) {
+      // As above.
+    }
+
+    var key = (path, size, modified);
+    if (!this._imageDigests.TryGetValue(key, out var digest)) {
+      digest = Query.FileDigest.Of(path);
+      this._imageDigests[key] = digest;
+    }
+
+    record.ImageSha256 = digest.Sha256;
+    record.ImageSha1 = digest.Sha1;
+    record.ImageHashReason = digest.Why;
+  }
+
   private void ReadFileDescriptorCount(ProcessCache cache, ref ProcessRecord record) {
-    if (!this._options.CountFileDescriptors) {
+    // Set before anything is read: a record nobody filled would claim the process holds no sockets,
+    // no files and no pipes, which of a browser is three wrong answers at once (PRD §72.3).
+    record.SocketCount = Counter.NotSampledYet;
+    record.FileCount = Counter.NotSampledYet;
+    record.PipeCount = Counter.NotSampledYet;
+
+    if (!this._options.CountFileDescriptors && !this._options.CountDescriptorKinds) {
       record.HandleCount = Counter.NotSampledYet;
       return;
     }
 
     if (!this.MayRead(record)) {
       record.HandleCount = Counter.NotPermitted;
+      record.SocketCount = Counter.NotPermitted;
+      record.FileCount = Counter.NotPermitted;
+      record.PipeCount = Counter.NotPermitted;
       return;
     }
 
-    record.HandleCount = this.CountDescriptors(cache.FdPath, this._directoryScratch);
+    if (!this._options.CountDescriptorKinds) {
+      record.HandleCount = this.CountDescriptors(cache.FdPath, this._directoryScratch);
+      return;
+    }
+
+    // One listing for both answers: the split walks the same directory the count does, so asking
+    // for either while the other is also wanted must not walk it twice.
+    this.ReadDescriptorKinds(cache, ref record);
+  }
+
+  /// <summary>
+  /// Splits one process's descriptors by what they point at (PRD §20).
+  /// </summary>
+  /// <remarks>
+  /// The listing gives the numbers and the link target gives the kind, which is a <c>readlink</c>
+  /// per descriptor — the reason this is opt-in and the reason §20 kept the per-type tallies out of
+  /// the sample loop until there was a switch for them. The classification is Core's, the same one
+  /// the handle view uses, so the column and the view cannot disagree (PRD §5.1).
+  /// </remarks>
+  private void ReadDescriptorKinds(ProcessCache cache, ref ProcessRecord record) {
+    this._fdNumbers.Clear();
+    // From zero, not from one: descriptor 0 is standard input and every process has one. The
+    // listing this shares with the pid scan stops at 1 by default, which is right for /proc and
+    // undercounts every process on the machine by one here.
+    if (!this._io.ListNumericEntries(cache.FdPath, this._directoryScratch, this._fdNumbers, minimum: 0)) {
+      // Which failure it was matters more than that there was one, and a listing that returns false
+      // does not say: another user's descriptor directory is 0500, and a process that exited between
+      // the pid scan and this call is simply gone. So the same directory is asked through the count,
+      // which does report errno, and every column carries that answer (PRD §72.3).
+      var counted = this.CountDescriptors(cache.FdPath, this._directoryScratch);
+      record.HandleCount = counted;
+      // A count that succeeded on the second attempt means the directory changed underneath the
+      // first: the split did not complete, and a partial tally is not one of the answers.
+      var kinds = counted.HasValue ? Counter.Unknown(UnknownReason.CounterInvalid) : counted;
+      record.SocketCount = kinds;
+      record.FileCount = kinds;
+      record.PipeCount = kinds;
+      return;
+    }
+
+    var tally = default(DescriptorTally);
+    foreach (var fd in this._fdNumbers)
+      // The flags are deliberately not read: they would be a second file per descriptor and the one
+      // distinction they buy — a directory from a file — is not one this tally draws.
+      tally.Add(this._reader.TryReadLink($"{this._procRoot}/{cache.Pid}/fd/{fd}"), Counter.NotSampledYet);
+
+    record.HandleCount = Counter.Of((ulong)this._fdNumbers.Count);
+    record.SocketCount = tally.Sockets;
+    record.FileCount = tally.Files;
+    record.PipeCount = tally.Pipes;
   }
 
   private Counter CountDescriptors(scoped ReadOnlySpan<byte> fdPath, Span<byte> scratch) {

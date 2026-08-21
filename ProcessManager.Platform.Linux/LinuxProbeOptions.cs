@@ -26,6 +26,27 @@ public sealed record LinuxProbeOptions {
   /// </remarks>
   public bool ReadSupplementaryGroups { get; init; }
 
+  /// <summary>
+  /// Keep the <c>Cpus_allowed_list:</c> line of <c>status</c> as text (PRD §15).
+  /// </summary>
+  /// <remarks>
+  /// Off for exactly the reason the group list is off: the line costs no extra read — it is in a
+  /// file the sampler already has open — but turning it into a string is one allocation per process
+  /// per sample against a budget of zero (PRD §4).
+  /// </remarks>
+  public bool ReadCpuAffinity { get; init; }
+
+  /// <summary>
+  /// Read <c>cpu.stat</c> from each process's cgroup, for the throttling column (PRD §15, §38).
+  /// </summary>
+  /// <remarks>
+  /// Off by default: it is a file outside <c>/proc</c> per <em>cgroup</em> per sample. Per cgroup
+  /// rather than per process because the answer belongs to the group — a machine's six hundred
+  /// processes live in a few dozen of them, and reading it once each is what makes the column
+  /// affordable at all when somebody does ask for it (PRD §5.4).
+  /// </remarks>
+  public bool ReadCpuThrottling { get; init; }
+
   /// <summary>Where the running kernel publishes its own processes.</summary>
   public const string LiveProcRoot = "/proc";
 
@@ -103,6 +124,29 @@ public sealed record LinuxProbeOptions {
   /// (PRD §3.5). Turn this on only for a one-shot dump where the whole table is the output.
   /// </remarks>
   public bool CountFileDescriptors { get; init; }
+
+  /// <summary>
+  /// Split each process's descriptors by what they point at — sockets, files, pipes (PRD §20).
+  /// </summary>
+  /// <remarks>
+  /// Off, and the most expensive thing in this file. It is the descriptor scan of
+  /// <see cref="CountFileDescriptors"/> plus a link to resolve for every descriptor found, which is
+  /// a syscall and a string each. §20 says the per-type tallies must not move into the sample loop,
+  /// and this is how they do not: nothing turns it on but somebody naming one of the three columns
+  /// (PRD §5.4).
+  /// </remarks>
+  public bool CountDescriptorKinds { get; init; }
+
+  /// <summary>
+  /// Hash the image each process is running — SHA-256 and SHA-1 (PRD §21, §70).
+  /// </summary>
+  /// <remarks>
+  /// Off, and the one read here whose cost is the size of a file rather than a syscall. Hashed once
+  /// per image rather than once per process — three hundred processes of one runtime share one
+  /// binary — and again only when that file is replaced underneath them, which is what makes it
+  /// affordable for somebody who does ask for the column (PRD §5.4).
+  /// </remarks>
+  public bool ReadImageHashes { get; init; }
 
   /// <summary>
   /// Account for what each process is doing to the graphics adapters (PRD §19).

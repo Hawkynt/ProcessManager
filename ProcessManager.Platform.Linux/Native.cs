@@ -229,7 +229,17 @@ internal static partial class Native {
   /// Same reasoning as <see cref="CountDirectoryEntries"/>: one syscall for the whole directory, and
   /// the pid is parsed out of the buffer rather than out of a string that had to be allocated first.
   /// </remarks>
-  public static bool ListNumericEntries(ReadOnlySpan<byte> nulTerminatedPath, Span<byte> scratch, List<int> pids) {
+  /// <param name="minimum">
+  /// The smallest name worth keeping. 1 for process ids, where there is no pid 0; 0 for the
+  /// descriptors under <c>fd</c>, where 0 is standard input and dropping it undercounts every
+  /// process on the machine by one.
+  /// </param>
+  public static bool ListNumericEntries(
+    ReadOnlySpan<byte> nulTerminatedPath,
+    Span<byte> scratch,
+    List<int> pids,
+    int minimum = 1
+  ) {
     var fd = OpenCore(ref MemoryMarshal.GetReference(nulTerminatedPath), O_RDONLY | O_CLOEXEC | O_DIRECTORY);
     if (fd < 0)
       return false;
@@ -254,6 +264,7 @@ internal static partial class Native {
 
           var name = scratch[(offset + 19)..];
           var pid = 0;
+          var digits = 0;
           var valid = true;
           for (var i = 0; i < name.Length && name[i] != 0; ++i) {
             var digit = (uint)(name[i] - (byte)'0');
@@ -262,10 +273,13 @@ internal static partial class Native {
               break;
             }
 
+            ++digits;
             pid = pid * 10 + (int)digit;
           }
 
-          if (valid && pid > 0)
+          // At least one digit, or a nameless entry would be added as a zero the moment a caller
+          // allows one.
+          if (valid && digits > 0 && pid >= minimum)
             pids.Add(pid);
 
           offset += recordLength;

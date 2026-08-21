@@ -40,6 +40,25 @@ internal static class ProbeFactory {
   /// costs a scan of every process's descriptors and a library call per card, so it is collected
   /// only when a column, a filter or <c>--gpu</c> names it — §5.4 enforced rather than stated.
   /// </param>
+  /// <param name="wantCpuAffinity">
+  /// Whether anything on this run asked which processors each process may use. The line is free and
+  /// keeping it is a string per process per sample, so it is kept only when a column or a filter
+  /// names it (PRD §5.4, §15).
+  /// </param>
+  /// <param name="wantCpuThrottling">
+  /// Whether anything on this run asked how often each process's cgroup has been held back. It
+  /// costs a file per cgroup per sample, so it is read only when a column or a filter names it.
+  /// </param>
+  /// <param name="wantImageHashes">
+  /// Whether anything on this run asked for the digest of each process's image. Its cost is the
+  /// size of the files rather than a syscall, so it happens only when a column or a filter names
+  /// one of the two digests (PRD §5.4, §21).
+  /// </param>
+  /// <param name="wantDescriptorKinds">
+  /// Whether anything on this run asked how many sockets, files or pipes each process holds. It
+  /// costs the descriptor scan plus a link resolved per descriptor, which is the most expensive
+  /// read there is, so it is done only when a column or a filter names one of the three (PRD §20).
+  /// </param>
   public static ISystemProbe? Create(
     string? probeRoot,
     bool useHelper = true,
@@ -47,7 +66,11 @@ internal static class ProbeFactory {
     bool wantProportionalSetSize = false,
     bool wantSupplementaryGroups = false,
     bool wantGpuUsage = false,
-    bool wantHandleCount = false
+    bool wantHandleCount = false,
+    bool wantCpuAffinity = false,
+    bool wantCpuThrottling = false,
+    bool wantDescriptorKinds = false,
+    bool wantImageHashes = false
   ) {
     if (OperatingSystem.IsLinux()) {
       // A recorded tree is somebody else's machine; asking a helper about pids in it would be asking
@@ -72,6 +95,10 @@ internal static class ProbeFactory {
             ReadSupplementaryGroups = wantSupplementaryGroups,
             ReadGpuUsage = wantGpuUsage,
             CountFileDescriptors = wantHandleCount,
+            ReadCpuAffinity = wantCpuAffinity,
+            CountDescriptorKinds = wantDescriptorKinds,
+            ReadImageHashes = wantImageHashes,
+            ReadCpuThrottling = wantCpuThrottling,
           }
           // A recorded tree was captured by somebody else, so the live user's id would refuse every
           // file in it. Root reads everything, which is what a replay wants (PRD §9.1).
@@ -87,6 +114,12 @@ internal static class ProbeFactory {
             // point of having captured them.
             ReadGpuUsage = false,
             CountFileDescriptors = wantHandleCount,
+            ReadCpuAffinity = wantCpuAffinity,
+            CountDescriptorKinds = wantDescriptorKinds,
+            ReadImageHashes = wantImageHashes,
+            // The recorded tree carries the process's cgroup path, but the group it names lives on
+            // the machine that was recorded and its counters are not in the capture.
+            ReadCpuThrottling = false,
           }
       );
     }

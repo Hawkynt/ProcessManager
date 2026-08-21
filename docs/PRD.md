@@ -637,7 +637,10 @@ term all use it, and it never changes even when the display name differs per pla
 
 - [x] `cpu.percent` — normalised 0–100 % utilisation
 - [x] `cpu.percent.raw` — multi-core cumulative
-- [ ] `cpu.delta` — change since prior sample
+- [x] `cpu.delta` — change since prior sample, in percentage points and signed. The difference
+      between two intervals rather than between two samples, so it needs three of them: a process
+      one interval old has a share and nothing to compare it against, and says so rather than
+      reading as steady. `--list` takes the third sample only when the column is asked for
 - [x] `cpu.time` — total processor time
 - [x] `cpu.time.user`
 - [x] `cpu.time.kernel`
@@ -647,20 +650,41 @@ term all use it, and it never changes even when the display name differs per pla
 - [x] `ctx.switches.delta`
 - [x] `ctx.switches.rate`
 - [x] `threads` — current thread count
-- [ ] `threads.peak`
+- [ ] `threads.peak` — **no Linux source.** The kernel keeps the current thread count in `status`
+      and no high-water mark of it anywhere. The only figure this program could offer is the largest
+      it happened to see while it was running, which is a fact about the observer rather than about
+      the process (§9.2)
 - [x] `priority.base`
 - [x] 🟡 `priority.dynamic` — Linux only; `stat` field 18, the kernel's own number rather than the
       nice value
 - [x] `nice` — the politeness a process was started with, backwards on purpose
-- [ ] `priority.class` — idle/below normal/normal/… (`GetPriorityClass`)
+- [ ] `priority.class` — idle/below normal/normal/… (`GetPriorityClass`). **Windows only.** Linux
+      has no such band: nice orders tasks inside `SCHED_OTHER` and the class is `sched.class`, and
+      folding either into a Windows priority class would be the false equivalence §5.3 forbids
 - [x] `nice`
-- [ ] `cpu.affinity` — `sched_getaffinity` / `GetProcessAffinityMask`
-- [ ] `cpu.set` — Windows CPU sets
-- [ ] `numa.node`
+- [x] 🟡 `cpu.affinity` — Linux only, and opt-in. `Cpus_allowed_list` from the `status` the sampler
+      already has open, in the kernel's own notation (`0-15`, `2,3`), which is what `taskset -pc`
+      prints; the list rather than the mask, because on a 128-way machine the mask is unreadable.
+      Not `sched_getaffinity`: that is a syscall per process for a line already in front of us.
+      Windows' `GetProcessAffinityMask` is not written
+- [ ] `cpu.set` — Windows CPU sets. **Windows only**; the Linux near-relative is the cgroup `cpuset`,
+      which is already reflected in `cpu.affinity` — the kernel narrows `Cpus_allowed` to it
+- [ ] `numa.node` — **not answerable honestly here.** `Mems_allowed_list` says which nodes a process
+      may allocate from, which is a different question from which node it is running on, and this
+      machine has one node — an implementation could not be told from a broken one (§9.2)
 - [x] `cpu.last` — field 39, which sits behind fourteen fields nothing else reads
-- [ ] `sched.class` — `sched_getscheduler`
-- [ ] `qos` — OS energy/performance state
-- [ ] `throttled` — cgroup `cpu.stat` `nr_throttled`
+- [x] `sched.class` — `SCHED_OTHER`, `_FIFO`, `_RR`, `_BATCH`, `_IDLE`, `_DEADLINE`, `_EXT`, under
+      the kernel's own names. From `stat` field 41 rather than `sched_getscheduler`, which would be a
+      syscall per process for a number already in the line being parsed. Verified against `chrt -p`.
+      A class the kernel adds later is left unknown rather than folded into the ordinary one, and a
+      `stat` that stops short says nothing rather than claiming `SCHED_OTHER`
+- [ ] `qos` — OS energy/performance state. **Windows and macOS only.** Linux has no per-process
+      quality-of-service class; `uclamp` is a utilisation hint on a task, not a state the OS assigns,
+      and reporting one as the other would invent a concept the kernel does not have
+- [x] `throttled` — cgroup `cpu.stat` `nr_throttled`, opt-in. The group's counter and not the
+      process's, which the column says: everything in one cgroup shows the same figure. Read once per
+      cgroup per sample rather than once per process. A group whose CPU controller is off has no such
+      line and reports unknown — a real nought there means "has a quota and never reached it"
 
 Required of the CPU percentage:
 
@@ -828,51 +852,81 @@ every eighth sample, staggered by pid, with its known graphics descriptors read 
 # 20. Process table — object and resource fields
 
 - [x] `handles` — handle count (W) / fd count (L)
-- [ ] `handles.peak`
+- [ ] `handles.peak` — **no Linux source.** The kernel publishes the current descriptor count and no
+      high-water mark of it; `RLIMIT_NOFILE` is the ceiling it was allowed, which is a different
+      number. Same reasoning as `threads.peak` in §15
 - [x] `fd.count`
-- [ ] 🟡 `socket.count` — counted, and shown in the handles view of §32 rather than as a column here.
-      A column would have to be filled every sample, and the fd scan behind it is the 85 µs per
-      process that had to leave the sample loop in the first place
-- [ ] 🟡 `file.count` — as above
-- [ ] 🟡 `pipe.count` — as above
-- [ ] `event.count` — Windows handle-type tally
-- [ ] `semaphore.count`
-- [ ] `mutex.count`
-- [ ] `section.count`
-- [ ] `regkey.count`
-- [ ] `user.objects` — `GetGuiResources(GR_USEROBJECTS)`
-- [ ] `gdi.objects` — `GetGuiResources(GR_GDIOBJECTS)`
-- [ ] `mach.ports` — macOS
-- [ ] `ipc.count`
+- [x] `socket.count` — Linux, opt-in. One pass over the descriptor table, classified by the same
+      Core function the handles view of §32 uses, so the column and the view cannot disagree about
+      what a socket is. §5.4 is what resolved the objection below: naming the column is the request,
+      and nothing else turns the scan on
+- [x] `file.count` — as above. Descriptors on a name in the file system, directories included:
+      separating those two needs the open flags out of `fdinfo`, which is a second file per
+      descriptor. A device, a `memfd` and an anonymous inode are each their own kind and none of
+      them is a file
+- [x] `pipe.count` — as above. Both ends of one pipe are a descriptor each
+- [ ] `event.count` — Windows handle-type tally. **Windows only.** Linux's nearest equivalent is an
+      `eventfd`, which is a descriptor and is already counted as one
+- [ ] `semaphore.count` — **Windows only**; a POSIX semaphore is a mapped file and a System V one
+      belongs to no process at all, so neither is countable per process
+- [ ] `mutex.count` — **Windows only**; a futex has no kernel object to count
+- [ ] `section.count` — **Windows only**; the Linux equivalent is a mapping and lives in §34
+- [ ] `regkey.count` — **Windows only**; there is no registry
+- [ ] `user.objects` — `GetGuiResources(GR_USEROBJECTS)`. **Windows only**
+- [ ] `gdi.objects` — `GetGuiResources(GR_GDIOBJECTS)`. **Windows only**
+- [ ] `mach.ports` — **macOS only**
+- [ ] `ipc.count` — **not answerable per process on Linux.** System V queues, semaphores and shared
+      memory belong to the kernel rather than to a process: `ipcs` lists them by creator, and a
+      segment stays after everything that attached it has exited. Attached shared memory is visible
+      in `maps` and belongs in §34, not in a count of things a process holds
 
-The per-type tallies are one pass over a handle table that already exists — but they must **not**
-move into the sample loop before that cost is measured against §71. Handle enumeration is currently
-on-demand precisely because it is expensive.
+The remaining per-type tallies are one pass over a handle table that already exists — but they must
+**not** move into the sample loop before that cost is measured against §71. The three that are
+ticked are how that is done rather than an exception to it: the pass costs a `readlink` per
+descriptor on top of the listing that was already the most expensive read in the sampler, so it
+happens only for a run that named one of the three columns, and the whole table is never scanned for
+a column nobody opened (§5.4).
 
 # 21. Process table — security fields
 
 - [x] `elevated` — the effective uid on Linux, `TokenElevation` on Windows
 - [x] `integrity` — the last sub-authority of the token's mandatory label: untrusted, low, medium,
       medium+, high or system, and the raw number for anything Microsoft adds later
-- [ ] `protected` — protected-process status
-- [ ] `protection.level`
-- [ ] `signature.status` — see §70's vocabulary
-- [ ] `signer` — verified publisher
-- [ ] `cert.subject`
-- [ ] `cert.issuer`
-- [ ] `signature.timestamp`
-- [ ] `hash.sha256` — on demand only
-- [ ] `hash.sha1`
-- [ ] `reputation` — opt-in, see §70
-- [ ] `dep`
-- [ ] `aslr`
-- [ ] `cfg`
-- [ ] `cet`
-- [ ] `acg`
-- [ ] `cig`
-- [ ] `sandbox`
-- [ ] `appcontainer`
-- [ ] `capabilities`
+- [ ] `protected` — protected-process status. **Windows only**
+- [ ] `protection.level` — **Windows only**
+- [ ] `signature.status` — see §70's vocabulary. **Windows and macOS**: Linux binaries carry no
+      embedded signature to verify. What signs a Linux program is its package, which is a different
+      question with a different answer and belongs to §42's provenance rather than to this column
+- [ ] `signer` — verified publisher. **Windows and macOS**
+- [ ] `cert.subject` — **Windows and macOS**
+- [ ] `cert.issuer` — **Windows and macOS**
+- [ ] `signature.timestamp` — **Windows and macOS**
+- [x] `hash.sha256` — on demand only, and on every platform that has a file to hash: the digest of
+      the running image, which is neither a signature nor a verdict (§70). Hashed once per image
+      rather than once per process — three hundred processes of one runtime share one binary — and
+      again when that file is replaced underneath them, which is the case somebody watching this
+      column is watching for. Linux fills it; the Windows probe does not call it yet and says so.
+      Verified against `sha256sum`
+- [x] `hash.sha1` — the same bytes under the older digest, from the same single read of them. Kept
+      because so many package manifests and threat feeds are still keyed by it, and collidable since
+      2017: on its own it is evidence of nothing. Verified against `sha1sum`
+- [ ] `reputation` — opt-in, see §70. **Not implemented on any platform**; it is a network service
+      rather than an OS reading
+- [ ] `dep` — **Windows only.** Linux has NX on every mapping and no per-process policy to report
+- [ ] `aslr` — **Windows only** as a per-process mitigation policy. Linux's is the machine-wide
+      `kernel.randomize_va_space` plus whether the image is a PIE, which is §53's business
+- [ ] `cfg` — **Windows only**
+- [ ] `cet` — **Windows only** as a policy field. The CPU's own shadow-stack support is a machine
+      capability and is already in §46
+- [ ] `acg` — **Windows only**
+- [ ] `cig` — **Windows only**
+- [ ] `sandbox` — **Windows (AppContainer) and macOS (Seatbelt).** Linux has no single sandbox flag:
+      what confines a process here is the seccomp mode, the LSM label and the namespace set, and all
+      three are already their own fields. One "sandboxed: yes" over them would answer less than any
+      of them does (§5.3)
+- [ ] `appcontainer` — **Windows only**
+- [ ] `capabilities` — the AppContainer capability list. **Windows only**; Linux capabilities are
+      `caps.linux` below and are a different thing wearing the same word
 - [x] `selinux.context` — `/proc/pid/attr/current`, opt-in
 - [x] `apparmor.profile` — same file, same field: the LSM label is one value whichever module wrote it
 - [x] `seccomp` — off, strict or filter
@@ -893,16 +947,23 @@ on-demand precisely because it is expensive.
 - [x] 🟡 `groups` — the supplementary groups as the kernel numbers them; opt-in, because the line is
       free to read and costs one string per process per sample to keep (§5.4). Not resolved to
       names: that would need a second name service beside the passwd one
-- [ ] macOS: code-sign identity, entitlements, hardened runtime, sandbox
+- [ ] macOS: code-sign identity, entitlements, hardened runtime, sandbox. **macOS only**, and the
+      macOS probe is a stub (§6.3)
 
 - [ ] **Online reputation checking is opt-in, and the program states exactly what is transmitted
       before the first time it happens** — at the point of use, not buried in a settings page
 
-Everything still unticked here — protected-process status, signatures and certificates, hashes,
-reputation, the Windows mitigation policies, AppContainer, and the macOS line — is Windows or macOS.
-None of it is work that can be written honestly from a Linux machine: a signature verifier or a
+Everything still unticked here is **Windows-only or macOS-only**, and each line above now says
+which. Protected-process status, the certificate and signature fields, the mitigation policies
+(`dep`, `aslr`, `cfg`, `cet`, `acg`, `cig`), AppContainer with its capability list, and the macOS
+line are not work that can be written honestly from a Linux machine: a signature verifier or a
 mitigation-policy reader that nobody can run against the OS it describes is a plausible
-implementation, which is worse than an empty one (§9.2).
+implementation, which is worse than an empty one (§9.2). Reputation is the one exception to the
+pattern — it is a network service rather than an OS reading, and it is unbuilt everywhere.
+
+The hashes were in that list until they were read properly: hashing a file is the same operation on
+every operating system, is verifiable here against `sha256sum`, and says nothing about signatures or
+trust — which is precisely why it could be built while the fields around it could not.
 
 # 22. Process table — energy fields
 

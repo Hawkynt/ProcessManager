@@ -76,6 +76,17 @@ public static class FieldRegistry {
     new(ProcessField.LastCpu, "cpu.last", "Last CPU", "CPU#",
       "The logical processor this last ran on. A process pinned to one core looks different from one the scheduler is moving around.",
       FieldKind.Identifier, FieldUnit.None, _LINUX, FieldCost.Free, 80, 5, true, false),
+    new(ProcessField.SchedulingClass, "sched.class", "Scheduler class", "Sched",
+      "Which class of the scheduler runs the process. A real-time class is not a high priority — an ordinary task cannot preempt SCHED_FIFO at all, however busy it is, and no priority number says that.",
+      FieldKind.State, FieldUnit.None, _LINUX, FieldCost.Free, 132, 14, false, true,
+      Aliases: "sched policy"),
+    new(ProcessField.CpuAffinity, "cpu.affinity", "CPU affinity", "Affinity",
+      "Which processors the process is allowed to run on, in the kernel's own list notation: 0-15 on a sixteen-way machine is all of them, and 15 is one pinned to the last.",
+      FieldKind.Text, FieldUnit.None, _LINUX, FieldCost.High, 126, 12, false, false,
+      Aliases: "affinity"),
+    new(ProcessField.CpuThrottled, "throttled", "Throttled", "Thrtl",
+      "How many times the process's cgroup has been stopped for using its whole CPU quota — the number that turns \"it is slow\" into \"it is being throttled\". A property of the group rather than of the process, so everything in the same cgroup shows the same figure.",
+      FieldKind.Cumulative, FieldUnit.Count, _LINUX, FieldCost.High, 92, 6, true, true),
     new(ProcessField.CpuHistory, "cpu.history", "CPU history", "CPU hist",
       "The last sixty seconds of processor use.",
       FieldKind.Graph, FieldUnit.Percent, _ALL, FieldCost.Derived, 90, 12, false, false,
@@ -294,6 +305,18 @@ public static class FieldRegistry {
       "Every other group the process belongs to, as the kernel numbers them. Empty is a real answer — a kernel thread is in none.",
       FieldKind.Text, FieldUnit.None, _LINUX, FieldCost.High, 200, 24, false, false),
 
+    // PRD §21, §70. What the bytes are, and nothing about whether anybody trusts them: a hash is
+    // not a verdict, and this program never lets one stand in for a signature. Read on demand only —
+    // the cost of hashing is the size of the file (PRD §5.4).
+    new(ProcessField.ImageSha256, "hash.sha256", "SHA-256", "SHA-256",
+      "The SHA-256 of the running image, computed on request. It says what the bytes are and nothing about whether they are signed, trusted or known — those are separate questions and this is not an answer to any of them.",
+      FieldKind.Text, FieldUnit.None, _LINUX, FieldCost.High, 460, 64, false, false,
+      Aliases: "sha256 hash"),
+    new(ProcessField.ImageSha1, "hash.sha1", "SHA-1", "SHA-1",
+      "The SHA-1 of the running image. Collidable since 2017 and kept only because so many package manifests and threat feeds are still keyed by it; on its own it is evidence of nothing.",
+      FieldKind.Text, FieldUnit.None, _LINUX, FieldCost.High, 300, 40, false, false,
+      Aliases: "sha1"),
+
     new(ProcessField.ThreadCount, "threads", "Threads", "Thr",
       "How many threads the process currently has.",
       FieldKind.Instant, FieldUnit.Count, _ALL, FieldCost.Free, 64, 4, true, true),
@@ -301,6 +324,22 @@ public static class FieldRegistry {
       "Open handles on Windows, open file descriptors on Unix.",
       FieldKind.Instant, FieldUnit.Count, _ALL, FieldCost.High, 66, 5, true, true,
       Aliases: "fds fd"),
+    // PRD §20. One pass over the descriptor table, and the same classification the handle view of
+    // §32 uses. Expensive without exception — a link to resolve per descriptor on top of the
+    // directory listing that was already the most costly read in the sampler — so all three are
+    // High and none is default-visible (PRD §5.4).
+    new(ProcessField.SocketCount, "socket.count", "Open sockets", "Sock",
+      "How many of the process's descriptors are sockets. A server leaking connections shows it here long before the machine runs out of them.",
+      FieldKind.Instant, FieldUnit.Count, _LINUX, FieldCost.High, 106, 6, true, true,
+      Aliases: "sockets"),
+    new(ProcessField.FileCount, "file.count", "Open files", "Files",
+      "How many descriptors are open on a name in the file system, directories included. Not the same as the handle count, most of which is usually anything but a file.",
+      FieldKind.Instant, FieldUnit.Count, _LINUX, FieldCost.High, 96, 6, true, true,
+      Aliases: "files"),
+    new(ProcessField.PipeCount, "pipe.count", "Open pipes", "Pipes",
+      "How many descriptors are pipes. Both ends of one pipe are a descriptor each, so a shell pipeline holds two of them per process.",
+      FieldKind.Instant, FieldUnit.Count, _LINUX, FieldCost.High, 96, 6, true, true,
+      Aliases: "pipes"),
     new(ProcessField.Nice, "nice", "Nice", "NI",
       "The politeness a process was started with. Backwards on purpose: -20 gets the most processor and 19 the least.",
       FieldKind.Instant, FieldUnit.None, _LINUX, FieldCost.Free, 66, 4, true, true),

@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Security.Cryptography;
+using Hawkynt.ProcessManager.Model;
 
 namespace Hawkynt.ProcessManager.Query;
 
@@ -92,28 +93,64 @@ public readonly record struct FileFacts(
 /// them (PRD §70).
 /// </para>
 /// </remarks>
-public readonly record struct FileDigest(string? Sha256, string? Reason) {
+/// <param name="Sha1">
+/// The same bytes under the older digest, because that is what a great many vulnerability
+/// databases, package manifests and threat feeds are still keyed by. Collidable since 2017 and
+/// therefore not evidence of anything on its own — which is one more reason a hash is not a verdict.
+/// </param>
+/// <param name="Why">
+/// The same failure as <paramref name="Reason"/> in the form a column can render: prose belongs in
+/// a properties box and a table cell needs the mark and the reason behind it (PRD §72.3).
+/// </param>
+public readonly record struct FileDigest(string? Sha256, string? Sha1, string? Reason, UnknownReason Why) {
 
+  /// <summary>
+  /// Both digests of one file, in a single read of it.
+  /// </summary>
+  /// <remarks>
+  /// One pass rather than two: the cost of hashing is the disk, not the arithmetic, and reading a
+  /// 300 MB image twice to answer two questions about the same bytes would double the only part
+  /// that is expensive.
+  /// </remarks>
   public static FileDigest Of(string? path) {
     if (string.IsNullOrWhiteSpace(path))
-      return new(null, "there is no path to hash");
+      return Failed("there is no path to hash", UnknownReason.NotSupportedOnPlatform);
 
     try {
       // Streamed rather than read whole: the point of hashing a large image is not to hold it in
       // memory first.
       using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-      var digest = SHA256.HashData(stream);
-      return new(Convert.ToHexStringLower(digest), null);
+      using var sha256 = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+      using var sha1 = IncrementalHash.CreateHash(HashAlgorithmName.SHA1);
+
+      var buffer = new byte[128 * 1024];
+      while (true) {
+        var read = stream.Read(buffer);
+        if (read <= 0)
+          break;
+
+        sha256.AppendData(buffer, 0, read);
+        sha1.AppendData(buffer, 0, read);
+      }
+
+      return new(
+        Convert.ToHexStringLower(sha256.GetHashAndReset()),
+        Convert.ToHexStringLower(sha1.GetHashAndReset()),
+        null,
+        UnknownReason.None
+      );
     } catch (UnauthorizedAccessException) {
-      return new(null, "this file may not be read as this user");
+      return Failed("this file may not be read as this user", UnknownReason.NotPermitted);
     } catch (FileNotFoundException) {
-      return new(null, "the file is gone");
+      return Failed("the file is gone", UnknownReason.SourceGone);
     } catch (DirectoryNotFoundException) {
-      return new(null, "the file is gone");
+      return Failed("the file is gone", UnknownReason.SourceGone);
     } catch (IOException e) {
-      return new(null, e.Message);
+      return Failed(e.Message, UnknownReason.CounterInvalid);
     }
   }
+
+  private static FileDigest Failed(string reason, UnknownReason why) => new(null, null, reason, why);
 
   /// <summary>The hash in groups of eight, which is how a person compares two of them by eye.</summary>
   public string Display {

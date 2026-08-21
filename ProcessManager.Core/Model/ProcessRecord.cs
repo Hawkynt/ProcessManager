@@ -129,6 +129,36 @@ public struct ProcessRecord {
   /// </remarks>
   public int LastCpu;
 
+  /// <summary>
+  /// The processors the process is allowed to run on, in the kernel's own list notation
+  /// (<c>0-7,15</c>), or <see langword="null"/> when nobody asked or nobody could tell.
+  /// </summary>
+  /// <remarks>
+  /// The list rather than a mask, for the same reason <see cref="ThreadRecord.Affinity"/> is: on a
+  /// 128-way machine the list is the readable form and thirty-two hex digits are not. Text and
+  /// therefore an allocation per process per sample, so it is kept only when asked for (PRD §5.4) —
+  /// the line itself is free, being in the <c>status</c> the sampler already has open.
+  /// </remarks>
+  public string? CpuAffinity;
+
+  /// <summary>
+  /// Why <see cref="CpuAffinity"/> is <see langword="null"/>: not asked for, not readable, or a
+  /// platform whose affinity we do not read yet. A string cannot carry its own reason the way a
+  /// <see cref="Counter"/> does, and "no answer" needs one just as much (PRD §72.3).
+  /// </summary>
+  public UnknownReason CpuAffinityReason;
+
+  /// <summary>
+  /// How many times the process's cgroup has been stopped for exhausting its CPU quota.
+  /// </summary>
+  /// <remarks>
+  /// The cgroup's counter, not the process's: everything in one group shares it, and the column says
+  /// so. A group with a quota it never reaches reports a real nought here, which is why an absent
+  /// controller has to report unknown instead — the two would otherwise be the same cell with
+  /// opposite meanings (PRD §72.3).
+  /// </remarks>
+  public Counter ThrottledPeriods;
+
   /// <summary>Total CPU consumed since start, in nanoseconds.</summary>
   public Counter CpuTimeNs;
 
@@ -255,6 +285,25 @@ public struct ProcessRecord {
 
   /// <summary>Open handles (Windows) or file descriptors (Unix).</summary>
   public Counter HandleCount;
+
+  /// <summary>
+  /// The same descriptors split by what they point at: sockets, names in the file system, pipes
+  /// (PRD §20).
+  /// </summary>
+  /// <remarks>
+  /// A count each rather than one number, because they answer different questions: a server leaking
+  /// connections and an indexer holding a thousand files both show a large handle count and nothing
+  /// else in common. Each carries its own reason, because the scan can fail for a process whose
+  /// descriptor directory this user may not open — which is most of a machine's process table.
+  /// <para>
+  /// Filled only when asked for: the split needs the target of every descriptor resolved, which is
+  /// a link to read on top of the directory listing that was already the most expensive thing in
+  /// the sampler (PRD §5.4).
+  /// </para>
+  /// </remarks>
+  public Counter SocketCount;
+  public Counter FileCount;
+  public Counter PipeCount;
 
   public Counter ContextSwitches;
 
@@ -474,6 +523,25 @@ public struct ProcessRecord {
 
   /// <summary>Linux ambient capability set — what survives an exec of an unprivileged file.</summary>
   public Counter AmbientCapabilities;
+
+  /// <summary>
+  /// The digests of the image the process is running, or <see langword="null"/> (PRD §21, §70).
+  /// </summary>
+  /// <remarks>
+  /// What the bytes are, and nothing else: a hash is not a verdict, and neither of these says
+  /// anything about whether the image is signed, trusted or known. Computed only when asked for and
+  /// once per image rather than once per process — the cost of hashing is the size of the file, and
+  /// three hundred processes of one runtime share one image between them (PRD §5.4).
+  /// </remarks>
+  public string? ImageSha256;
+  public string? ImageSha1;
+
+  /// <summary>
+  /// Why the two digests are <see langword="null"/>: not asked for, no image to hash — a kernel
+  /// thread has none — the file replaced since the process started, or a file this user may not
+  /// read.
+  /// </summary>
+  public UnknownReason ImageHashReason;
 
   /// <summary>
   /// The LSM label — an SELinux context or an AppArmor profile — or <see langword="null"/>.

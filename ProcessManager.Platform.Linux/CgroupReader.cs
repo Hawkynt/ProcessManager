@@ -83,25 +83,12 @@ internal static class CgroupReader {
   /// How many times this cgroup has been stopped for exceeding its CPU quota.
   /// </summary>
   /// <remarks>
-  /// The number that turns "it is slow" into "it is being throttled". A cgroup with a quota it never
-  /// reaches reports nought here, which is a real and useful nought — unlike an absent counter,
-  /// which reports that the controller is not enabled.
+  /// The number that turns "it is slow" into "it is being throttled". Parsed in Core rather than
+  /// here, because the column of §15 reads the same line for the same reason and the panel and the
+  /// column must not be able to disagree about it (PRD §5.1).
   /// </remarks>
-  private static Counter Throttled(string? text) {
-    if (text is not { Length: > 0 })
-      return Counter.NotSupported;
-
-    foreach (var line in text.Split('\n')) {
-      if (!line.StartsWith("nr_throttled ", StringComparison.Ordinal))
-        continue;
-
-      return ulong.TryParse(line[13..].Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var value)
-        ? Counter.Of(value)
-        : Counter.Unknown(UnknownReason.CounterInvalid);
-    }
-
-    return Counter.NotSupported;
-  }
+  private static Counter Throttled(string? text)
+    => text is { Length: > 0 } ? CgroupCpuStatParser.Throttled(text) : Counter.NotSupported;
 
   /// <summary>
   /// A byte figure, where <c>max</c> means no limit.

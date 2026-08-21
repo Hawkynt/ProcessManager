@@ -24,5 +24,8 @@ VmData:	  95000 kB
 RssShmem:	  0 kB
 VmSwap:	  0 kB
 Threads:	8
+Cpus_allowed:	000c
+Cpus_allowed_list:	2-3
+Mems_allowed_list:	0
 voluntary_ctxt_switches:	90
 nonvoluntary_ctxt_switches:	900
