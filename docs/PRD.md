@@ -2708,8 +2708,12 @@ Endpoints are enumerated on both platforms and attributed to processes.
       only the path is platform-specific and the parser is shared and tested on every leg. A probe
       that has not learnt to look answers with an empty table, so a port keeps its number rather
       than acquiring an invented name. Amber because macOS, whose probe is a stub, is on that
-      default. One test renders the same socket through both front-ends and holds their cells
-      together, which is what §58 asks for rather than a promise in prose
+      default. Four surfaces show an endpoint and all four were found by grep rather than by memory:
+      the lower pane's network tab, the machine-wide network view behind the rail, the descriptor
+      list's socket summary — a socket described as `:631` on one tab and `:ipp` on the next is one
+      window disagreeing with itself — and the terminal's own tab. One test renders the same socket
+      through two front-ends and holds their cells together, which is what §58 asks for rather than a
+      promise in prose
 - [x] 🟡 Interface — Linux, from the address the socket is bound to. `/proc/net/if_inet6` names it
       outright for IPv6; an IPv4 address is on the interface whose on-link subnet contains it, longest
       prefix first. A socket on the wildcard address is on all of them and shows `*`; an address no
@@ -4205,8 +4209,9 @@ GUI:
       the next time somebody adds one: a plot takes its name from the caption it paints, a tab's
       content takes the tab's title, and a record table is told what it is a list of when it is
       built. A sweep of the real control tree of all four windows fails on a new textless control, and
-      a second test refuses a name that merely repeats the role. **The rows do not name themselves.** The toolkit has no per-item accessibility —
-      no object per row, no way to say "firefox, 4 % CPU" as the selection moves — so a reader lands
+      a second test refuses a name that merely repeats the role. **The rows do not name themselves.**
+      The toolkit has no per-item accessibility — no object per row, no way to say "firefox, 4 %
+      CPU" as the selection moves — so a reader lands
       on the process list, is told it is a tree, and finds nothing inside it. That is a gap in
       NativeForms rather than here, and this box stays open until it is closed there
 - [ ] Scalable text — **and this is a refusal rather than an omission.** Scaling only this program's
@@ -4669,7 +4674,7 @@ a naive parser hands the attacker the parse.
 
 # 99. Testing strategy
 
-**1894 tests pass on every leg, under both a UTF-8 and a `C` locale.**
+**1896 tests pass on every leg, under both a UTF-8 and a `C` locale.**
 
 ## Unit tests
 
@@ -4752,9 +4757,9 @@ Windows parsing on Linux.
       column wants it pinned whatever else the table shows. Amber because there is still no way to
       *save* the current columns as a set from either front-end — a set is written by hand into the
       file
-- [x] Accessibility — a sweep of the real control tree of all three windows rather than a checklist
+- [x] Accessibility — a sweep of the real control tree of all four windows rather than a checklist
       written out by hand, so a control added tomorrow and left unnamed fails it. It found every
-      table, every plot, the rail, the filter box and both strips unnamed (§74)
+      table, every plot, both rails, the filter box, the composition bar and every strip unnamed (§74)
 - [x] 🟡 Keyboard operation — the window's twenty-two accelerators, read for the first time. The
       terminal's bindings have been under test since they were written; the window's were lines in a
       builder that compiled whatever it was given, so two items claiming one chord — of which one

@@ -1125,10 +1125,13 @@ public sealed class DetailPane : IDisposable {
     // read whole either way, and a per-row lookup would read them once per socket the process holds.
     this._endpoints.Clear();
     this._socketReferences.Clear();
+    // The same named ports the network tab shows. A socket described as :631 on one tab and :ipp on
+    // the next is one window disagreeing with itself about one socket (PRD §40).
+    var services = this._probe.DescribePortNames();
     foreach (var connection in this._probe.GetConnections(this._key)) {
       this._endpoints[connection.Inode] = connection.RemotePort == 0
-        ? $"{Humanize.LocalEndpoint(connection)} {connection.State}"
-        : $"{Humanize.LocalEndpoint(connection)} → {Humanize.RemoteEndpoint(connection)}";
+        ? $"{Humanize.LocalEndpoint(connection, services, null)} {connection.State}"
+        : $"{Humanize.LocalEndpoint(connection, services, null)} → {Humanize.RemoteEndpoint(connection, services, null)}";
       this._socketReferences[connection.Inode] = connection.References;
     }
 

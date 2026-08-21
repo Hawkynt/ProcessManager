@@ -27,6 +27,14 @@ public sealed class ShellWindowTests {
     public IReadOnlyList<ModuleRecord> GetModules(ProcessKey key) => [];
     public IReadOnlyList<HandleRecord> GetHandles(ProcessKey key) => [];
     public IReadOnlyList<ConnectionRecord> GetConnections(ProcessKey key) => [];
+    public IReadOnlyList<ConnectionRecord> GetConnections() => this.Connections;
+    public Query.ServiceNames DescribePortNames() => this.PortNames;
+
+    /// <summary>Every socket on the machine, for the rail's own network view.</summary>
+    public IReadOnlyList<ConnectionRecord> Connections { get; set; } = [];
+
+    /// <summary>What this machine would call its ports. Empty is a machine with no such file.</summary>
+    public Query.ServiceNames PortNames { get; set; } = Query.ServiceNames.Empty;
     public IReadOnlyList<KeyValuePair<string, string>> GetEnvironment(ProcessKey key) => [];
     public IReadOnlyList<StartupEntry> GetStartupEntries() => this.Startup;
     public IReadOnlyList<SessionRecord> GetSessions() => [];
@@ -57,6 +65,35 @@ public sealed class ShellWindowTests {
     Assert.That(window.ViewTitles, Is.EqualTo(new[] {
       "Processes", "Performance", "Startup", "Users", "Services", "Network", "Find resources",
     }));
+  }
+
+  /// <summary>
+  /// The rail's own network view names a port, which is the fourth surface that shows an endpoint
+  /// and the one it is easiest to forget: the lower pane, the terminal and the command line were all
+  /// fixed together and this one reads its cells in a different file (PRD §40, §58).
+  /// </summary>
+  [Test]
+  public void TheNetworkViewNamesAPort() {
+    var probe = new StubProbe {
+      PortNames = Query.ServiceNames.Parse("https 443/tcp"),
+      Connections = [
+        new(
+          ConnectionProtocol.Tcp, SocketKind.Stream,
+          "192.168.1.5", 38658, "93.184.216.34", 443,
+          "ESTABLISHED", 77, 4242, 1000, "alice", "wlp1s0",
+          Counter.Of(0ul), Counter.Of(0ul), Counter.Of(0ul),
+          SocketStatistics.NotSupported, Rate.NotSampledYet, Rate.NotSampledYet,
+          null, null, Counter.NotSupported
+        ),
+      ],
+    };
+
+    var window = Window(probe);
+    Assert.That(window.ShowView("Network"), Is.True);
+
+    var shown = window.DescribeView("Network");
+    Assert.That(shown, Does.Contain("93.184.216.34:https"));
+    Assert.That(shown, Does.Not.Contain(":443"));
   }
 
   [Test]

@@ -254,6 +254,11 @@ internal sealed class ShellViews(ISystemProbe probe) {
       if (connection.Pid > 0)
         ++attributed;
 
+    // Named ports, as --connections names them and as ss does by default. The same table the lower
+    // pane's network tab and the terminal both ask the probe for, so all three say https where this
+    // one used to say 443 (PRD §40, §58).
+    var services = this._probe.DescribePortNames();
+
     this._network.Fill(
       connections.Count == 0
         ? "No sockets came back — /proc/net is empty, or this build does not read the connection tables here."
@@ -261,8 +266,8 @@ internal sealed class ShellViews(ISystemProbe probe) {
       connections.Count,
       i => [
         connections[i].Protocol.ToString(),
-        Humanize.LocalEndpoint(connections[i]),
-        Humanize.RemoteEndpoint(connections[i]),
+        Humanize.LocalEndpoint(connections[i], services, null),
+        Humanize.RemoteEndpoint(connections[i], services, null),
         connections[i].State,
         // A socket whose owner this account may not see is not a socket belonging to pid 0. Saying
         // "—" is the difference between "nobody owns it" and "you may not ask" (PRD §72.3).
