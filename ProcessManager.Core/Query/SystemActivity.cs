@@ -101,11 +101,18 @@ public static class SystemActivity {
     var elapsed = delta?.ElapsedNanoseconds ?? double.NaN;
     var perSecond = double.IsNaN(elapsed) || elapsed <= 0 ? double.NaN : 1_000_000_000d / elapsed;
 
+    var (received, sent) = NetworkActivity(snapshot, delta);
     return [
       new("Processes started", PerSecond(delta?.StartedCount, perSecond)),
       new("Processes ended", PerSecond(delta?.Exited.Count, perSecond)),
       new("Context switches", Humanize.Rate(delta?.SystemContextSwitchesPerSecond ?? Rate.NotSampledYet)),
       new("Threads", Humanize.Count(Counter.Of((ulong)Math.Max(0, snapshot.System.TotalThreads)))),
+      // The machine's traffic, not any process's. §18 refuses per-process byte counters because no
+      // portable source for them exists, and that refusal says nothing about the machine as a whole,
+      // whose interfaces have counted every byte since boot. A reader looking at a saturated link
+      // and an idle process table has learnt something — that whatever is using it is not here.
+      new("Network in", Humanize.Rate(received)),
+      new("Network out", Humanize.Rate(sent)),
     ];
   }
 
@@ -117,6 +124,63 @@ public static class SystemActivity {
   /// set to five seconds would otherwise report five seconds of forks as a per-second rate and
   /// quintuple everything.
   /// </remarks>
+  /// <summary>
+  /// What the machine is sending and receiving, summed across its real interfaces.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Loopback is left out. Traffic a machine sends to itself crosses no wire and counts twice — once
+  /// out and once in — so including it would report a database and its client on one host as heavy
+  /// network users when nothing has left the box.
+  /// </para>
+  /// <para>
+  /// An interface whose rate has not been sampled contributes nothing and does not make the total
+  /// unknown; a total that is unknown until every interface has been seen twice would be unknown on
+  /// any machine with a device that comes and goes. But if <em>no</em> interface has a rate, the
+  /// total is unknown rather than nought — nought is a measurement and this would not be one
+  /// (PRD §72.3).
+  /// </para>
+  /// </remarks>
+  private static (Rate Received, Rate Sent) NetworkActivity(SystemSnapshot snapshot, SnapshotDelta? delta) {
+    if (delta is null)
+      return (Rate.NotSampledYet, Rate.NotSampledYet);
+
+    double received = 0, sent = 0;
+    var seen = 0;
+    foreach (var network in snapshot.Networks) {
+      if (network.Name is not { Length: > 0 } name || IsLoopback(name))
+        continue;
+
+      var rates = delta.NetworkRatesOf(name);
+      if (rates.ReceivedBytesPerSecond.HasValue) {
+        received += rates.ReceivedBytesPerSecond.Value;
+        ++seen;
+      }
+
+      if (rates.SentBytesPerSecond.HasValue) {
+        sent += rates.SentBytesPerSecond.Value;
+        ++seen;
+      }
+    }
+
+    return seen == 0
+      ? (Rate.NotSampledYet, Rate.NotSampledYet)
+      : (Rate.Of(received), Rate.Of(sent));
+  }
+
+  /// <summary>
+  /// Whether an interface is the machine talking to itself.
+  /// </summary>
+  /// <remarks>
+  /// By name, which is the one thing the counter file gives. Every kernel this runs on calls it
+  /// <c>lo</c>; Windows names its loopback differently and reports no counters for it at all, so the
+  /// prefix covers what there is to cover and a miss costs a doubled figure rather than a wrong one.
+  /// </remarks>
+  private static bool IsLoopback(string name)
+    => name.Equals("lo", StringComparison.OrdinalIgnoreCase)
+    || name.StartsWith("lo:", StringComparison.OrdinalIgnoreCase)
+    || name.Contains("Loopback", StringComparison.OrdinalIgnoreCase);
+
   private static string PerSecond(int? count, double perSecond) {
     if (count is not { } value || double.IsNaN(perSecond))
       return Humanize.Placeholder(UnknownReason.NotSampledYet);

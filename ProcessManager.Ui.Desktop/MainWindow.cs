@@ -3728,6 +3728,24 @@ public sealed class MainWindow : Form {
     if (this._settings.CompactPerformancePage)
       window.SetDensity(compact: true);
 
+    // Clicking a top-five entry brings the table to that process (PRD §51). The identity pair is
+    // re-checked here rather than trusted: that window is modeless and a process named in it a
+    // second ago may be gone, and a pid alone would then take somebody to whatever inherited the
+    // number (PRD §8.2).
+    window.ProcessChosen += (_, key) => {
+      if (!this._sampler.Current.TryGetProcess(key, out var process)) {
+        MessageBox.Show("That process has ended since the page was drawn.", "Process Manager");
+        return;
+      }
+
+      this.ShowView("Processes");
+      if (!this.SelectPid(key.Pid))
+        MessageBox.Show(
+          $"{process.Name} (PID {process.Pid}) is not in the list — the current filter hides it.",
+          "Process Manager"
+        );
+    };
+
     // Forgetting it on close is what keeps the tick from refreshing a window that is gone.
     window.FormClosed += (_, _) => this._performance = null;
     this._performance = window;

@@ -43,8 +43,19 @@ public enum PerformanceRowLevel {
 public readonly record struct PerformanceRow(
   string Label,
   string Value,
-  PerformanceRowLevel Level = PerformanceRowLevel.Live
+  PerformanceRowLevel Level = PerformanceRowLevel.Live,
+  ProcessKey Subject = default
 ) {
+
+  /// <summary>
+  /// Whether this row is about one process, and which.
+  /// </summary>
+  /// <remarks>
+  /// Only the top-five entries on the activity page carry one. The identity pair rather than a pid,
+  /// so a row read a second after it was drawn cannot navigate to whatever has since been given that
+  /// number (PRD §8.2) — the same reason every action re-validates it before acting.
+  /// </remarks>
+  public bool IsAboutAProcess => this.Subject.Pid != 0;
 
   /// <summary>Whether this describes the hardware rather than what it is doing.</summary>
   public bool IsHardware => this.Level == PerformanceRowLevel.Hardware;
@@ -848,7 +859,11 @@ public static class PerformanceReport {
       }
 
       for (var i = 0; i < top.Count; ++i)
-        rows.Add(new(i == 0 ? heading : string.Empty, $"{top[i].Name}  ({top[i].Value})"));
+        rows.Add(new(
+          i == 0 ? heading : string.Empty,
+          $"{top[i].Name}  ({top[i].Value})",
+          Subject: top[i].Key
+        ));
     }
 
     rows.AddRange(SystemActivity.Rates(snapshot, delta));

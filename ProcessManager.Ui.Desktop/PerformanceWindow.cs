@@ -995,11 +995,42 @@ public sealed class PerformanceWindow : Form {
     while (labels.Count < wanted) {
       var label = new Label();
       var value = new Label();
+      // The value carries the click because it is the half naming the process; the label beside it
+      // says "Processor" or nothing at all. Which process, if any, is filled in when the row is
+      // written and cleared when it is not, so a pooled control cannot keep the identity of whatever
+      // it last displayed (PRD §8.2).
+      var slot = values.Count;
+      value.Click += (_, _) => this.RowClicked(slot);
       labels.Add(label);
       values.Add(value);
       this.Controls.Add(label);
       this.Controls.Add(value);
     }
+
+    while (this._subjects.Count < wanted)
+      this._subjects.Add(default);
+  }
+
+  /// <summary>Which process each value label is currently naming, or nothing.</summary>
+  private readonly List<ProcessKey> _subjects = [];
+
+  /// <summary>
+  /// Somebody asked to see the process a top-five entry names (PRD §51).
+  /// </summary>
+  /// <remarks>
+  /// An event rather than this window reaching into the main one. It is modeless and outlives any
+  /// particular selection over there, so it says what was asked for and lets the window that owns
+  /// the table decide whether the process is still in it.
+  /// </remarks>
+  public event EventHandler<ProcessKey>? ProcessChosen;
+
+  private void RowClicked(int slot) {
+    if (slot < 0 || slot >= this._subjects.Count)
+      return;
+
+    var subject = this._subjects[slot];
+    if (subject.Pid != 0)
+      this.ProcessChosen?.Invoke(this, subject);
   }
 
   /// <summary>
@@ -1219,6 +1250,7 @@ public sealed class PerformanceWindow : Form {
 
           this._labels[perColumn + hardware].Text = row.Label;
           this._values[perColumn + hardware].Text = row.Value;
+          this._subjects[perColumn + hardware] = row.Subject;
           ++hardware;
           continue;
         }
@@ -1231,6 +1263,7 @@ public sealed class PerformanceWindow : Form {
 
           this._labels[live].Text = row.Label;
           this._values[live].Text = row.Value;
+          this._subjects[live] = row.Subject;
           ++live;
           continue;
         }
@@ -1240,11 +1273,13 @@ public sealed class PerformanceWindow : Form {
     for (var i = live; i < perColumn; ++i) {
       this._labels[i].Text = string.Empty;
       this._values[i].Text = string.Empty;
+      this._subjects[i] = default;
     }
 
     for (var i = perColumn + hardware; i < this._labels.Count; ++i) {
       this._labels[i].Text = string.Empty;
       this._values[i].Text = string.Empty;
+      this._subjects[i] = default;
     }
 
     var shownDiagnostics = this._diagnosticsOpen ? Math.Min(diagnostics, this._diagnosticLabels.Count) : 0;
