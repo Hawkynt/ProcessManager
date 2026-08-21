@@ -5140,7 +5140,17 @@ ProcessManager may claim to replace the named applications only when all ten are
       need for System Informer
 - [ ] Performance dashboards are at least as approachable as DBC's or modern Task Manager's
 - [x] GUI and TUI expose the same canonical information
-- [ ] 🟡 Every unsupported platform-specific feature explicitly communicates why
+- [x] Every unsupported platform-specific feature explicitly communicates why — **checked over the
+      registry rather than field by field**, which is how it kept going wrong: `app.name` read "none"
+      on Windows, which is a Linux finding meaning the machine has no desktop entry for the program;
+      `runtime` rendered an empty placeholder; two counters read as a confident nought. Every one of
+      those sat inside a box that was already ticked. Now every field the registry declares as
+      belonging to another platform is sampled here and has to come back as one of the eight marks
+      that mean "no answer" — never a number, never a name, and never an empty cell, because a reader
+      cannot tell "nothing to report" from "nobody asked" and one of those is a finding. Forty-one
+      Windows-only fields are covered, and the assertion was mutated to confirm it sees all forty-one
+      rather than passing over an empty loop. The same fields export as nothing rather than as a mark
+      meant for a person, and no mark parses as a number or is wide enough to be mistaken for one
 - [x] Common actions work without running the whole program elevated
 - [ ] 🟡 Recovery/minimal mode remains functional under significant load
 - [x] Data can be copied, exported and scripted — six formats over every field the registry holds
