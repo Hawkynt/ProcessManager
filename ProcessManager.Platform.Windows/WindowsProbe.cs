@@ -42,6 +42,7 @@ public sealed class WindowsProbe : ISystemProbe {
   private readonly Dictionary<int, ObjectTally> _objects = [];
   private readonly HashSet<string> _liveImages = new(StringComparer.OrdinalIgnoreCase);
   private ObjectTypeIndices _objectTypes = ObjectTypeIndices.None;
+  private readonly HashSet<ushort> _askedTypes = [];
   private int _bufferLength;
 
   public WindowsProbe() : this(new()) { }
@@ -355,9 +356,7 @@ public sealed class WindowsProbe : ISystemProbe {
 
         unsafe {
           var table = new ReadOnlySpan<byte>((void*)memory, size);
-          if (this._objectTypes.IsEmpty)
-            this._objectTypes = NameObjectTypes(table);
-
+          this.NameObjectTypes(table);
           WindowsObjectTally.Tally(table, in this._objectTypes, this._objects);
         }
 
@@ -372,25 +371,50 @@ public sealed class WindowsProbe : ISystemProbe {
   /// Works out which type index means which object type, by asking one handle of each.
   /// </summary>
   /// <remarks>
+  /// <para>
   /// A few dozen duplications rather than one per handle: the table has a million rows and a few
   /// dozen distinct type indices in it, so one sample of each index is the whole of what is needed.
   /// A handle whose owner will not open for duplication simply leaves that index unnamed, which
   /// means the count for that type is missing rather than wrong.
+  /// </para>
+  /// <para>
+  /// Repeated across samples until all five are known, and this is not belt and braces. A type is
+  /// only discoverable while some process on the machine holds a handle of it, so a sample taken
+  /// when nothing happens to hold a semaphore teaches nothing about semaphores — and doing the pass
+  /// once would leave that column permanently unknown for the life of the program. Which is exactly
+  /// what happened when this was written: two runs a minute apart, one of which learnt the semaphore
+  /// index and one of which did not.
+  /// </para>
+  /// <para>
+  /// It converges rather than repeating work: an index is asked about once ever, whether or not it
+  /// turned out to be one of the five, and the pass stops entirely once all five are known.
+  /// </para>
   /// </remarks>
-  private static ObjectTypeIndices NameObjectTypes(ReadOnlySpan<byte> table) {
+  private void NameObjectTypes(ReadOnlySpan<byte> table) {
+    if (this._objectTypes.IsComplete)
+      return;
+
     var self = Native.GetCurrentProcess();
-    var found = ObjectTypeIndices.None;
     foreach (var (index, pid, handle) in WindowsObjectTally.SampleTypes(table)) {
-      var owner = Native.OpenProcess(Native.PROCESS_DUP_HANDLE, false, pid);
-      if (owner == 0)
+      if (!this._askedTypes.Add(index))
         continue;
 
+      var owner = Native.OpenProcess(Native.PROCESS_DUP_HANDLE, false, pid);
+      if (owner == 0) {
+        // Nothing was learnt, so the index must be asked about again next time — a handle of it held
+        // by a process this user can open may turn up in any later sample.
+        this._askedTypes.Remove(index);
+        continue;
+      }
+
       try {
-        if (!Native.DuplicateHandle(owner, handle, self, out var copy, 0, false, Native.DUPLICATE_SAME_ACCESS))
+        if (!Native.DuplicateHandle(owner, handle, self, out var copy, 0, false, Native.DUPLICATE_SAME_ACCESS)) {
+          this._askedTypes.Remove(index);
           continue;
+        }
 
         try {
-          found = found.With(HandleNameResolver.QueryType(copy), index);
+          this._objectTypes = this._objectTypes.With(HandleNameResolver.QueryType(copy), index);
         } finally {
           Native.CloseHandle(copy);
         }
@@ -398,8 +422,6 @@ public sealed class WindowsProbe : ISystemProbe {
         Native.CloseHandle(owner);
       }
     }
-
-    return found;
   }
 
   /// <summary>
@@ -468,7 +490,10 @@ public sealed class WindowsProbe : ISystemProbe {
     if (count != 0)
       return Counter.Of(count);
 
-    return Marshal.GetLastWin32Error() == 0 ? Counter.Of(0ul) : Counter.NotPermitted;
+    // Nought and no error is a process holding no such objects, which is every console program on
+    // the machine and is a measurement. Nought with an error is not an answer at all, and which
+    // error it is decides whether a reader should try again with more privilege or stop asking.
+    return Marshal.GetLastWin32Error() == 0 ? Counter.Of(0ul) : Native.WhyItFailed();
   }
 
   #endregion

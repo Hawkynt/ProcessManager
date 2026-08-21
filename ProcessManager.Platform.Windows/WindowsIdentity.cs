@@ -358,7 +358,7 @@ internal sealed class WindowsIdentityResolver {
     try {
       return Native.GetProcessInformation(process, Native.ProcessProtectionLevelInfo, buffer, sizeof(uint))
         ? Counter.Of((uint)Marshal.ReadInt32(buffer))
-        : Counter.NotPermitted;
+        : Native.WhyItFailed();
     } finally {
       Marshal.FreeHGlobal(buffer);
     }
@@ -433,7 +433,7 @@ internal sealed class WindowsIdentityResolver {
       Marshal.WriteInt32(buffer, 0);
       return Native.GetProcessMitigationPolicy(process, policy, buffer, sizeof(uint))
         ? Counter.Of((uint)Marshal.ReadInt32(buffer))
-        : Counter.NotPermitted;
+        : Native.WhyItFailed();
     } finally {
       Marshal.FreeHGlobal(buffer);
     }
@@ -452,7 +452,7 @@ internal sealed class WindowsIdentityResolver {
     try {
       Marshal.WriteInt64(buffer, 0);
       if (!Native.GetProcessMitigationPolicy(process, Native.ProcessDEPPolicy, buffer, 8))
-        return Counter.NotPermitted;
+        return Native.WhyItFailed();
 
       var flags = (uint)Marshal.ReadInt32(buffer);
       var permanent = Marshal.ReadByte(buffer, 4) != 0;

@@ -60,6 +60,19 @@ internal readonly record struct ObjectTypeIndices(
     && this.Section == Unknown
     && this.Key == Unknown;
 
+  /// <summary>
+  /// Whether all five are known, so the discovery pass has nothing left to do.
+  /// </summary>
+  /// <remarks>
+  /// A type is only discoverable while some process holds a handle of it, so the pass has to be
+  /// repeated across samples until this is true rather than run once and trusted.
+  /// </remarks>
+  public bool IsComplete => this.Event != Unknown
+    && this.Semaphore != Unknown
+    && this.Mutant != Unknown
+    && this.Section != Unknown
+    && this.Key != Unknown;
+
 }
 
 /// <summary>

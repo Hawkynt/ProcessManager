@@ -390,6 +390,20 @@ internal sealed record CommandLineOptions {
   /// it (PRD §5.4).
   /// </remarks>
   /// <summary>
+  /// Whether this run is the self-test, which asks for every Windows-only reading there is.
+  /// </summary>
+  /// <remarks>
+  /// The four switches below are what §5.4 asks for: nothing pays for a reading unless a column or a
+  /// filter names it. The consequence, though, is that the interop behind those columns would never
+  /// run anywhere — <c>--self-test</c> names no columns, and it is the only thing in the whole
+  /// pipeline that executes the Windows probe against a real kernel (PRD §9.4). So the self-test
+  /// names all of them. It costs a walk of the handle table and a file read per image, once, in a
+  /// diagnostic that already takes two samples a second apart; and on any other platform these four
+  /// switches are read by nothing at all.
+  /// </remarks>
+  private bool WantsEverythingWindowsCanAnswer => this.Mode == RunMode.SelfTest;
+
+  /// <summary>
   /// Whether anything this run asked for needs the Windows mitigation policies (PRD §5.4, §21).
   /// </summary>
   /// <remarks>
@@ -399,7 +413,8 @@ internal sealed record CommandLineOptions {
   /// do for a column nobody opened.
   /// </remarks>
   public bool WantsWindowsMitigations
-    => this.Wants(ProcessField.DataExecutionPrevention)
+    => this.WantsEverythingWindowsCanAnswer
+    || this.Wants(ProcessField.DataExecutionPrevention)
     || this.Wants(ProcessField.AddressSpaceRandomisation)
     || this.Wants(ProcessField.ControlFlowGuard)
     || this.Wants(ProcessField.ShadowStackPolicy)
@@ -416,7 +431,8 @@ internal sealed record CommandLineOptions {
   /// table per sample. Naming any of the five buys all five: they come out of one pass.
   /// </remarks>
   public bool WantsObjectCounts
-    => this.Wants(ProcessField.EventObjectCount)
+    => this.WantsEverythingWindowsCanAnswer
+    || this.Wants(ProcessField.EventObjectCount)
     || this.Wants(ProcessField.SemaphoreObjectCount)
     || this.Wants(ProcessField.MutexObjectCount)
     || this.Wants(ProcessField.SectionObjectCount)
@@ -431,7 +447,9 @@ internal sealed record CommandLineOptions {
   /// the number moves.
   /// </remarks>
   public bool WantsGuiObjectCounts
-    => this.Wants(ProcessField.UserObjectCount) || this.Wants(ProcessField.GdiObjectCount);
+    => this.WantsEverythingWindowsCanAnswer
+    || this.Wants(ProcessField.UserObjectCount)
+    || this.Wants(ProcessField.GdiObjectCount);
 
   /// <summary>
   /// Whether anything this run asked for needs each image's version resource read (PRD §5.4, §14).
@@ -442,7 +460,8 @@ internal sealed record CommandLineOptions {
   /// pass that answers all of them.
   /// </remarks>
   public bool WantsImageVersions
-    => this.Wants(ProcessField.ImageDescription)
+    => this.WantsEverythingWindowsCanAnswer
+    || this.Wants(ProcessField.ImageDescription)
     || this.Wants(ProcessField.ImageCompany)
     || this.Wants(ProcessField.ImageProduct)
     || this.Wants(ProcessField.ImageProductVersion)

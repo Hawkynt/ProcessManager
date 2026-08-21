@@ -334,6 +334,39 @@ internal static partial class Native {
 
   public const int ERROR_ACCESS_DENIED = 5;
   public const int ERROR_INVALID_PARAMETER = 87;
+  public const int ERROR_INVALID_HANDLE = 6;
+  public const int ERROR_CALL_NOT_IMPLEMENTED = 120;
+  public const int ERROR_NOT_SUPPORTED = 50;
+
+  /// <summary>
+  /// <c>ERROR_INVALID_FUNCTION</c>, whose message is "Incorrect function".
+  /// </summary>
+  /// <remarks>
+  /// Which is what an information class this Windows does not implement comes back as, and what Wine
+  /// returns for a call it has not reimplemented — so it belongs with the "there is no such thing
+  /// here" answers rather than with the refusals.
+  /// </remarks>
+  public const int ERROR_INVALID_FUNCTION = 1;
+
+  /// <summary>
+  /// Why the call that has just failed did, as a reading rather than as a number (PRD §72.3).
+  /// </summary>
+  /// <remarks>
+  /// "You may not look at this process" and "this Windows has no such information class" are
+  /// opposite findings and would otherwise be the same empty cell. The second is not hypothetical:
+  /// an information class or a mitigation policy added in a later Windows fails outright on an
+  /// earlier one, and so does a call that Wine has not reimplemented — and reporting either as a
+  /// refusal sends a reader off to run the program as an administrator, which would not help.
+  /// <para>
+  /// Anything unrecognised is treated as a refusal, which is the answer that asks the reader to look
+  /// again rather than the one that tells them to stop.
+  /// </para>
+  /// </remarks>
+  public static Model.Counter WhyItFailed() => Marshal.GetLastWin32Error() switch {
+    ERROR_INVALID_FUNCTION or ERROR_INVALID_PARAMETER or ERROR_NOT_SUPPORTED or ERROR_CALL_NOT_IMPLEMENTED
+      => Model.Counter.NotSupported,
+    _ => Model.Counter.NotPermitted,
+  };
 
   public const uint IDLE_PRIORITY_CLASS = 0x00000040;
   public const uint BELOW_NORMAL_PRIORITY_CLASS = 0x00004000;
