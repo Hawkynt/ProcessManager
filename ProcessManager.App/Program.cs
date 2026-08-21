@@ -70,6 +70,7 @@ internal static class Program {
         RunMode.Startup => StartupReport.Run(probe, options),
         RunMode.Users => UsersReport.Run(sampler, probe),
         RunMode.Services => ServicesReport.Run(probe, options),
+        RunMode.Connections => ConnectionsReport.Run(sampler, probe, options),
         RunMode.SelfTest => SelfTest.Run(sampler, probe.Description, probe),
         RunMode.HelperCheck => HelperCheck.Run(),
         RunMode.Terminal => RunTerminal(sampler, probe, actions, options),

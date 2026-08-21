@@ -44,6 +44,8 @@ public sealed class MacOsProbe : ISystemProbe {
 
   public IReadOnlyList<ConnectionRecord> GetConnections(ProcessKey key) => throw new PlatformNotSupportedException(_Message);
 
+  public IReadOnlyList<ConnectionRecord> GetConnections() => throw new PlatformNotSupportedException(_Message);
+
   public IReadOnlyList<KeyValuePair<string, string>> GetEnvironment(ProcessKey key)
     => throw new PlatformNotSupportedException(_Message);
 

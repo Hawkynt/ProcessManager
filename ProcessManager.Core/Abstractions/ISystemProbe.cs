@@ -61,6 +61,20 @@ public interface ISystemProbe : IDisposable {
   IReadOnlyList<ConnectionRecord> GetConnections(ProcessKey key);
 
   /// <summary>
+  /// Every socket on the machine, for the network view and <c>--connections</c> (PRD §40, §59).
+  /// </summary>
+  /// <remarks>
+  /// Not the per-process call in a loop: the socket tables are machine-wide and reading them once
+  /// per process would read the same few files several hundred times. Costly enough to be asked for
+  /// rather than sampled (PRD §5.4).
+  /// <para>
+  /// The default is no sockets, which is what a probe that has not learnt to look yet honestly
+  /// knows — a caller must not read it as a machine with nothing connected.
+  /// </para>
+  /// </remarks>
+  IReadOnlyList<ConnectionRecord> GetConnections() => [];
+
+  /// <summary>
   /// The machine's services (PRD §41), or an empty list where they are not read yet.
   /// </summary>
   IReadOnlyList<ServiceRecord> GetServices();

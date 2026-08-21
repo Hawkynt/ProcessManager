@@ -1385,7 +1385,9 @@ Endpoints are enumerated on both platforms and attributed to processes.
 
 - [x] Process
 - [x] PID
-- [ ] User
+- [ ] 🟡 User — Linux reads the uid the kernel charges the socket to, which is the socket's own owner
+      rather than the owning process's; they differ for a descriptor passed between processes. The
+      Windows owner table carries no uid at all
 - [x] Protocol
 - [x] Address family
 - [x] State
@@ -1396,17 +1398,41 @@ Endpoints are enumerated on both platforms and attributed to processes.
 - [x] Remote port
 - [ ] Remote hostname
 - [ ] Service name
-- [ ] Interface
+- [ ] 🟡 Interface — Linux, from the address the socket is bound to. `/proc/net/if_inet6` names it
+      outright for IPv6; an IPv4 address is on the interface whose on-link subnet contains it, longest
+      prefix first. A socket on the wildcard address is on all of them and shows `*`; an address no
+      route claims — a multicast group, a point-to-point peer — is left unknown rather than guessed at
 - [ ] Connection creation time
 - [ ] Connection age
 - [ ] Bytes sent / received
 - [ ] Send rate / receive rate
 - [ ] Packets sent / received
-- [ ] Retransmissions
+- [ ] 🟡 Retransmissions — Linux reports how often the segment currently awaiting acknowledgement has
+      been sent again, which is the useful half: non-zero means this connection is losing packets
+      *now*. The cumulative count over the connection's life needs the netlink socket diagnostics and
+      is not read
 - [ ] Latency / RTT
+- [x] **Send / receive queue depth** — bytes written and not yet acknowledged by the peer, and bytes
+      received and not yet read by the process. The pair is what says which end of a stalled
+      connection is the slow one, and it is what `ss` puts in Send-Q and Recv-Q
 - [ ] Owning service
 - [ ] Container / cgroup
 - [ ] Firewall / security context
+
+**The kernel writes zeros where it has nothing to say, and they are not readings.** A listening TCP
+socket's two queue columns hold the Fast Open queue length and the accept backlog rather than byte
+counts; a socket in `TIME_WAIT` has no socket structure left to ask, so its owner, its queues and its
+retransmit count are all literal zeros; a UDP row has a retransmission column that is always zero
+because the protocol has no such concept. Each of those is reported as unknown, because passing them
+on would say "owned by root, nothing queued, never retransmitted" about something nobody measured
+(§72.3).
+
+**Connection creation time is not available on Linux and the box stays empty.** The obvious place to
+look is the descriptor — `/proc/[pid]/fd/[n]` has timestamps — and they are the time the `/proc`
+inode was materialised, which is when something last looked, not when the socket was opened. A
+process fourteen seconds old and a descriptor seven seconds old both stamp as *now* the moment they
+are read. Reporting either as the connection's age would produce a number that moves when you look
+at it.
 
 Protocols:
 
@@ -1414,7 +1440,11 @@ Protocols:
 - [x] UDP
 - [x] IPv4
 - [x] IPv6
-- [ ] Unix / local sockets as a separate native category
+- [x] **Unix / local sockets as a separate native category** — read from `/proc/net/unix`, which
+      describes a different thing and is carried as one: a Unix socket is named by a filesystem path
+      instead of an address and a port, is a stream, datagram or seqpacket endpoint, and has a peer
+      the kernel keeps but does not publish. The listening ones are found in the flags column and not
+      the state column, where a server and an unbound socket both read "unconnected" (§5.3)
 
 Actions:
 
@@ -2251,7 +2281,8 @@ drag and drop.
 - [x] `procman suspend 1234`
 - [x] `procman resume 1234`
 - [x] `procman service list` — as `--services`
-- [ ] `procman net`
+- [x] `procman net` — as `--connections`, with `=unix` and `=all` for the local sockets, which a
+      desktop has seventeen hundred of against a dozen internet ones
 - [x] `procman --host` — the §96 summary, which is `perf cpu` without the graph
 - [x] `procman --startup` — what will run at login
 - [x] `procman --users` — who is logged in, and what their processes cost

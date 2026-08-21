@@ -140,14 +140,20 @@ public sealed class DetailView(ISystemProbe probe) {
       }
 
       case DetailTab.Network: {
-        this._headers = ["Proto", "Local", "Remote", "State"];
-        this._widths = [7, 26, 26, 14];
+        this._headers = ["Proto", "Type", "Local", "Remote", "State", "User", "If", "Send-Q", "Recv-Q", "Retx"];
+        this._widths = [6, 9, 24, 24, 12, 9, 8, 7, 7, 5];
         foreach (var connection in probe.GetConnections(this._key))
           this._rows.Add([
             connection.Protocol.ToString(),
-            $"{connection.LocalAddress}:{connection.LocalPort}",
-            connection.RemotePort == 0 ? "—" : $"{connection.RemoteAddress}:{connection.RemotePort}",
+            Humanize.SocketKindName(connection.Kind),
+            Humanize.LocalEndpoint(connection),
+            Humanize.RemoteEndpoint(connection),
             connection.State,
+            Humanize.SocketUser(connection),
+            connection.Interface ?? "—",
+            Humanize.Bytes(connection.SendQueueBytes),
+            Humanize.Bytes(connection.ReceiveQueueBytes),
+            Humanize.Count(connection.Retransmits),
           ]);
 
         break;

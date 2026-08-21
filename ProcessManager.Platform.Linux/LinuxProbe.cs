@@ -1130,107 +1130,158 @@ public sealed class LinuxProbe : ISystemProbe {
   };
 
   public IReadOnlyList<ConnectionRecord> GetConnections(ProcessKey key) {
-    // The socket inodes this process holds, joined against the four network tables. The join runs
+    // The socket inodes this process holds, joined against the five network tables. The join runs
     // once per request rather than once per process, which is what keeps it off the sampling path
     // (PRD §5.1).
     var inodes = new HashSet<ulong>();
-    foreach (var handle in this.GetHandles(key)) {
-      if (handle.Kind != HandleKind.Socket || handle.Name is null)
-        continue;
-
-      var open = handle.Name.IndexOf('[', StringComparison.Ordinal);
-      var close = handle.Name.IndexOf(']', StringComparison.Ordinal);
-      if (open >= 0 && close > open && ulong.TryParse(handle.Name.AsSpan(open + 1, close - open - 1), out var inode))
+    foreach (var handle in this.GetHandles(key))
+      if (handle.Name is { } target && ProcNetParser.TryParseSocketInode(target, out var inode))
         inodes.Add(inode);
-    }
 
     var result = new List<ConnectionRecord>();
     if (inodes.Count == 0)
       return result;
 
-    this.CollectSockets("/net/tcp", ConnectionProtocol.Tcp, inodes, result);
-    this.CollectSockets("/net/tcp6", ConnectionProtocol.Tcp6, inodes, result);
-    this.CollectSockets("/net/udp", ConnectionProtocol.Udp, inodes, result);
-    this.CollectSockets("/net/udp6", ConnectionProtocol.Udp6, inodes, result);
+    this.CollectSockets(inodes, result);
+    for (var i = 0; i < result.Count; ++i)
+      // Every row came back because this process holds a descriptor on it, so the owner is known
+      // without the machine-wide scan the unfiltered listing has to do.
+      result[i] = result[i] with {
+        Pid = key.Pid,
+        UserName = this._users.Resolve(result[i].UserId),
+      };
+
     return result;
   }
 
-  private void CollectSockets(
+  /// <summary>
+  /// Every socket on the machine, each attributed to a process where a descriptor names it.
+  /// </summary>
+  /// <remarks>
+  /// The attribution is the expensive half: the tables are five files, and finding out who holds
+  /// each socket means reading every process's descriptors, which is the 85 µs-per-process read
+  /// that is kept off the sampling path (PRD §5.4). Sockets belonging to another user's processes
+  /// stay unattributed rather than being left out, because "port 22 is listening and I may not see
+  /// whose it is" is a different statement from "nothing is listening on port 22".
+  /// </remarks>
+  public IReadOnlyList<ConnectionRecord> GetConnections() {
+    var owners = this.SocketOwners();
+    var result = new List<ConnectionRecord>();
+    this.CollectSockets(null, result);
+    for (var i = 0; i < result.Count; ++i)
+      result[i] = result[i] with {
+        Pid = owners.TryGetValue(result[i].Inode, out var pid) ? pid : 0,
+        UserName = this._users.Resolve(result[i].UserId),
+      };
+
+    return result;
+  }
+
+  /// <summary>
+  /// Which process holds each socket, by walking every readable <c>/proc/[pid]/fd</c>.
+  /// </summary>
+  /// <remarks>
+  /// One entry per socket rather than a list: a socket inherited across a <c>fork</c> is held by
+  /// several processes at once and this reports the first one found, which is the same compromise
+  /// <c>ss -p</c> makes when a listener has been passed to a pool of workers.
+  /// <para>
+  /// Deliberately not routed through <see cref="GetHandles"/>: that falls back to the privileged
+  /// helper for every process it may not read, which on a shared machine is several hundred
+  /// round-trips to answer a question the caller asked once.
+  /// </para>
+  /// </remarks>
+  private Dictionary<ulong, int> SocketOwners() {
+    var owners = new Dictionary<ulong, int>();
+    string[] processes;
+    try {
+      processes = Directory.GetDirectories(this._procRoot);
+    } catch (IOException) {
+      return owners;
+    } catch (UnauthorizedAccessException) {
+      return owners;
+    }
+
+    foreach (var process in processes) {
+      if (!int.TryParse(Path.GetFileName(process), out var pid))
+        continue;
+
+      string[] descriptors;
+      try {
+        descriptors = Directory.GetFiles(process + "/fd");
+      } catch (IOException) {
+        continue;                                          // it exited, or it is not a process at all
+      } catch (UnauthorizedAccessException) {
+        continue;                                          // somebody else's, and no helper for this
+      }
+
+      foreach (var descriptor in descriptors)
+        if (this._reader.TryReadLink(descriptor) is { } target
+          && ProcNetParser.TryParseSocketInode(target, out var inode))
+          owners.TryAdd(inode, pid);
+    }
+
+    return owners;
+  }
+
+  /// <summary>
+  /// Reads the five tables into <paramref name="result"/>, keeping only <paramref name="inodes"/>
+  /// when one is given.
+  /// </summary>
+  private void CollectSockets(HashSet<ulong>? inodes, List<ConnectionRecord> result) {
+    var interfaces = this.ReadInterfaces();
+    this.CollectInet("/net/tcp", ConnectionProtocol.Tcp, interfaces, inodes, result);
+    this.CollectInet("/net/tcp6", ConnectionProtocol.Tcp6, interfaces, inodes, result);
+    this.CollectInet("/net/udp", ConnectionProtocol.Udp, interfaces, inodes, result);
+    this.CollectInet("/net/udp6", ConnectionProtocol.Udp6, interfaces, inodes, result);
+    if (this.ReadText("/net/unix") is { } unix)
+      ProcNetParser.ParseUnix(unix, inodes, result);
+  }
+
+  private void CollectInet(
     string relativePath,
     ConnectionProtocol protocol,
-    HashSet<ulong> inodes,
+    NetworkInterfaceMap interfaces,
+    HashSet<ulong>? inodes,
     List<ConnectionRecord> result
   ) {
-    if (!this._reader.TryRead(this._procRoot + relativePath, out var content, out _))
-      return;
-
-    var scanner = new AsciiScanner(content);
-    scanner.NextLine();                                    // header
-    while (!scanner.IsEmpty) {
-      var line = scanner.NextLine();
-      if (line.IsEmpty)
-        continue;
-
-      var lineScanner = new AsciiScanner(line);
-      lineScanner.NextField();                             // slot
-      var local = lineScanner.NextField();
-      var remote = lineScanner.NextField();
-      var state = lineScanner.NextField();
-      lineScanner.Skip(4);                                 // tx/rx queue, tr/when, retransmits, uid
-      lineScanner.Skip(1);                                 // timeout
-      var inode = lineScanner.NextUInt64();
-      if (!inodes.Contains(inode))
-        continue;
-
-      var (localAddress, localPort) = SplitEndpoint(local);
-      var (remoteAddress, remotePort) = SplitEndpoint(remote);
-      result.Add(new(
-        protocol,
-        localAddress,
-        localPort,
-        remoteAddress,
-        remotePort,
-        TcpStateName((int)ParseHex(state)),
-        inode
-      ));
-    }
+    if (this.ReadText(relativePath) is { } content)
+      ProcNetParser.ParseInet(content, protocol, interfaces, inodes, result);
   }
 
-  private static (string Address, int Port) SplitEndpoint(ReadOnlySpan<byte> field) {
-    var colon = field.LastIndexOf((byte)':');
-    if (colon < 0)
-      return (string.Empty, 0);
-
-    var address = field[..colon];
-    var port = (int)ParseHex(field[(colon + 1)..]);
-    return (FormatHexAddress(address), port);
+  /// <summary>
+  /// The address-to-interface map, read fresh for each request.
+  /// </summary>
+  /// <remarks>
+  /// Not cached: an interface comes up, a lease is renewed, a VPN connects, and a cached map would
+  /// then name the wrong card for the rest of the program's life. Two small files against a request
+  /// somebody made by opening a tab is a trade worth making.
+  /// </remarks>
+  private NetworkInterfaceMap ReadInterfaces() {
+    // Both files are turned into strings before either is parsed: the reader hands back a view of
+    // one shared buffer, so reading the second invalidates the first.
+    var routes = this.ReadText("/net/route");
+    var addresses = this.ReadText("/net/if_inet6");
+    return routes is null && addresses is null
+      ? NetworkInterfaceMap.Empty
+      : NetworkInterfaceMap.Parse(routes ?? string.Empty, addresses ?? string.Empty);
   }
 
-  private static string FormatHexAddress(ReadOnlySpan<byte> hex) {
-    // IPv4 arrives as eight hex digits in host byte order, IPv6 as thirty-two in four host-order
-    // words. Anything else is not ours to guess at, so it is handed back as written.
-    if (hex.Length == 8) {
-      var value = ParseHex(hex);
-      return $"{value & 0xFF}.{(value >> 8) & 0xFF}.{(value >> 16) & 0xFF}.{(value >> 24) & 0xFF}";
-    }
-
-    return Encoding.ASCII.GetString(hex);
-  }
-
-  private static string TcpStateName(int state) => state switch {
-    1 => "ESTABLISHED",
-    2 => "SYN_SENT",
-    3 => "SYN_RECV",
-    4 => "FIN_WAIT1",
-    5 => "FIN_WAIT2",
-    6 => "TIME_WAIT",
-    7 => "CLOSE",
-    8 => "CLOSE_WAIT",
-    9 => "LAST_ACK",
-    10 => "LISTEN",
-    11 => "CLOSING",
-    _ => "UNKNOWN",
-  };
+  /// <summary>
+  /// One of the machine-wide <c>/proc/net</c> files as text, or null when it is not there.
+  /// </summary>
+  /// <remarks>
+  /// UTF-8 rather than ASCII, because a Unix socket's path is a filename and a filename may be
+  /// anything the filesystem allows.
+  /// <para>
+  /// Read whole rather than to the first short read: these are the <c>/proc</c> files that run to
+  /// hundreds of kilobytes, and the usual reader would stop at the first page and report a machine
+  /// with fifty Unix sockets on it rather than seventeen hundred.
+  /// </para>
+  /// </remarks>
+  private string? ReadText(string relativePath)
+    => this._reader.TryReadWhole(this._procRoot + relativePath, out var content, out _)
+      ? Encoding.UTF8.GetString(content)
+      : null;
 
   private static ulong ParseHex(ReadOnlySpan<byte> field) {
     ulong value = 0;

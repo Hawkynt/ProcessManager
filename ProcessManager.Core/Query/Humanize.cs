@@ -224,6 +224,53 @@ public static class Humanize {
     _ => "—",
   };
 
+  /// <summary>
+  /// The end a socket is bound to (PRD §40).
+  /// </summary>
+  /// <remarks>
+  /// A Unix socket is named by a path and has no port, so it is not given a <c>:0</c> that would
+  /// read as one. An unnamed one is what both halves of a <c>socketpair</c> look like: real,
+  /// connected, and bound to nothing anybody can name.
+  /// </remarks>
+  public static string LocalEndpoint(in ConnectionRecord connection)
+    => connection.Protocol != ConnectionProtocol.Unix
+      ? Endpoint(connection.LocalAddress, connection.LocalPort)
+      : connection.LocalAddress.Length > 0 ? connection.LocalAddress : "<unnamed>";
+
+  /// <summary>
+  /// The end a socket is talking to, where there is one.
+  /// </summary>
+  /// <remarks>
+  /// The kernel keeps a Unix socket's peer but does not publish it in the table this is read from,
+  /// so that column says "no such thing here" rather than "not connected" — one is a fact about the
+  /// interface, the other a claim about the socket (PRD §5.3).
+  /// </remarks>
+  public static string RemoteEndpoint(in ConnectionRecord connection)
+    => connection.Protocol == ConnectionProtocol.Unix
+      ? "n/a"
+      : connection.RemotePort == 0 ? "—" : Endpoint(connection.RemoteAddress, connection.RemotePort);
+
+  /// <summary>
+  /// An address and a port.
+  /// </summary>
+  /// <remarks>
+  /// The brackets are not decoration: an IPv6 address is full of colons, so <c>fe80::1:22</c> could
+  /// be port 22 on <c>fe80::1</c> or no port at all on <c>fe80::1:22</c>. Everything that writes
+  /// these — the URL syntax, ss, netstat — brackets the address for that reason.
+  /// </remarks>
+  private static string Endpoint(string address, int port)
+    => address.Contains(':', StringComparison.Ordinal)
+      ? $"[{address}]:{port}"
+      : $"{address}:{port}";
+
+  /// <summary>Who the kernel charges a socket to, by name where the machine knows one.</summary>
+  public static string SocketUser(in ConnectionRecord connection)
+    => connection.UserName
+      ?? (connection.UserId >= 0 ? connection.UserId.ToString(CultureInfo.InvariantCulture) : "n/a");
+
+  /// <summary>What a socket delivers, or a dash where the platform did not say.</summary>
+  public static string SocketKindName(SocketKind kind) => kind == SocketKind.Unknown ? "—" : kind.ToString();
+
   public static string State(ProcessState state) => state switch {
     ProcessState.Running => "run",
     ProcessState.Sleeping => "sleep",

@@ -90,7 +90,25 @@ public sealed class ResourceSearchTests {
     var probe = new StubProbe();
     probe.Handles[200] = [new(42, HandleKind.File, "/home/alice/report.txt", "rw")];
     probe.Modules[100] = [new("/usr/lib/libssl.so.3", 0x1000, 4096, "r-xp")];
-    probe.Connections[100] = [new(ConnectionProtocol.Tcp, "0.0.0.0", 443, "10.0.0.5", 51234, "ESTABLISHED", 7)];
+    probe.Connections[100] = [
+      new(
+        ConnectionProtocol.Tcp,
+        SocketKind.Stream,
+        "0.0.0.0",
+        443,
+        "10.0.0.5",
+        51234,
+        "ESTABLISHED",
+        7,
+        100,
+        0,
+        "root",
+        "*",
+        Counter.Of(0ul),
+        Counter.Of(0ul),
+        Counter.Of(0ul)
+      ),
+    ];
     probe.Services.Add(new("systemd-journald.service", "Journal Service", ServiceState.Running, true, false, 300, null, "/x", null));
     return (probe, Snapshot());
   }
