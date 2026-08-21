@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using Hawkynt.ProcessManager.Model;
 
 namespace Hawkynt.ProcessManager.Query;
@@ -491,6 +492,92 @@ public static class Humanize {
     HandleKind.AnonInode => "kernel object",
     _ => "—",
   };
+
+  /// <summary>
+  /// A speculation mitigation state in the kernel's own words (PRD §21).
+  /// </summary>
+  /// <remarks>
+  /// Not paraphrased. "thread vulnerable" is what <c>status</c> writes and what every write-up of
+  /// the mitigation calls it, so it is what somebody will search the machine for; "unmitigated"
+  /// would be this program's word and nobody else's (PRD §5.3).
+  /// </remarks>
+  public static string SpeculationState(Model.SpeculationState state) => state switch {
+    Model.SpeculationState.Unknown => "unknown",
+    Model.SpeculationState.NotVulnerable => "not vulnerable",
+    Model.SpeculationState.GloballyMitigated => "globally mitigated",
+    Model.SpeculationState.ThreadForceMitigated => "thread force mitigated",
+    Model.SpeculationState.ThreadMitigated => "thread mitigated",
+    Model.SpeculationState.ThreadVulnerable => "thread vulnerable",
+    Model.SpeculationState.Vulnerable => "vulnerable",
+    // Never rounded to the nearest word we happen to know: a mitigation state this build cannot
+    // name might be anything, and towards safe is the one direction it must not be guessed.
+    _ => "unrecognised",
+  };
+
+  /// <summary>The indirect-branch line, the same way and for the same reason.</summary>
+  public static string IndirectBranchState(Model.IndirectBranchState state) => state switch {
+    Model.IndirectBranchState.Unknown => "unknown",
+    Model.IndirectBranchState.Unsupported => "unsupported",
+    Model.IndirectBranchState.NotAffected => "not affected",
+    Model.IndirectBranchState.AlwaysDisabled => "always disabled",
+    Model.IndirectBranchState.ConditionalForceDisabled => "conditional force disabled",
+    Model.IndirectBranchState.ConditionalDisabled => "conditional disabled",
+    Model.IndirectBranchState.ConditionalEnabled => "conditional enabled",
+    Model.IndirectBranchState.AlwaysEnabled => "always enabled",
+    _ => "unrecognised",
+  };
+
+  /// <summary>
+  /// The hardware protections switched on for a task, by the kernel's own token (PRD §21).
+  /// </summary>
+  /// <remarks>
+  /// "none" is a real answer and the ordinary one — most processes on most machines have no shadow
+  /// stack — and reads as a finding rather than as a hole, the same way the group list does. A
+  /// feature the kernel named and this build cannot is reported as being there, because dropping it
+  /// would under-report a protection.
+  /// </remarks>
+  public static string ThreadFeatures(ThreadSecurityFeatures features) {
+    if (features == ThreadSecurityFeatures.None)
+      return "none";
+
+    var text = new StringBuilder();
+    if ((features & ThreadSecurityFeatures.ShadowStack) != 0)
+      text.Append("shstk");
+
+    if ((features & ThreadSecurityFeatures.WriteableShadowStack) != 0)
+      text.Append(text.Length > 0 ? ",wrss" : "wrss");
+
+    if ((features & ThreadSecurityFeatures.Unnamed) != 0)
+      text.Append(text.Length > 0 ? ",unnamed" : "unnamed");
+
+    return text.ToString();
+  }
+
+  /// <summary>How hard a security module is applying a profile (PRD §21).</summary>
+  /// <remarks>
+  /// AppArmor's own vocabulary, so that a reader can put the word straight into <c>aa-complain</c>
+  /// or search the machine's logs for it.
+  /// </remarks>
+  public static string ConfinementMode(LsmConfinementMode mode) => mode switch {
+    LsmConfinementMode.Unconfined => "unconfined",
+    LsmConfinementMode.Complain => "complain",
+    LsmConfinementMode.Prompt => "prompt",
+    LsmConfinementMode.Enforce => "enforce",
+    LsmConfinementMode.Kill => "kill",
+    _ => "unrecognised",
+  };
+
+  /// <summary>
+  /// A file-creation mask the way it is written everywhere else: four octal digits (PRD §21).
+  /// </summary>
+  /// <remarks>
+  /// Base eight, with the leading zero, because that is the form <c>umask</c> prints, the form every
+  /// shell profile sets and the only form in which the bits are readable at a glance. The decimal
+  /// eighteen is the same number and says nothing.
+  /// </remarks>
+  public static string Umask(Counter mask) => mask.HasValue
+    ? "0" + Convert.ToString((long)mask.Value, 8).PadLeft(3, '0')
+    : Placeholder(mask.Reason);
 
   public static string State(ProcessState state) => state switch {
     ProcessState.Running => "run",

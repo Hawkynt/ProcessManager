@@ -133,8 +133,15 @@ internal sealed record CommandLineOptions {
   /// Inferred rather than flagged: naming the field in --columns or in --filter is already a clear
   /// request for it, and a separate --security switch would only be a way to get an empty column
   /// by forgetting it (PRD §5.4).
+  /// <para>
+  /// The confinement mode is here rather than in a switch of its own because it is the same read:
+  /// the bracketed word comes out of the label the file already carries, so asking for either buys
+  /// both. Leaving it out is how a field ships whose read nothing ever turns on, and the column is
+  /// then permanently empty while the document claims it works.
+  /// </para>
   /// </remarks>
-  public bool WantsSecurityContext => this.Wants(ProcessField.SecurityContext);
+  public bool WantsSecurityContext
+    => this.Wants(ProcessField.SecurityContext) || this.Wants(ProcessField.ConfinementMode);
 
   /// <summary>
   /// Whether the proportional set size is worth the file read it costs (PRD §5.4).

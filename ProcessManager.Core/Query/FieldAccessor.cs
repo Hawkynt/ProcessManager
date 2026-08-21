@@ -133,6 +133,34 @@ public static class FieldAccessor {
 
       case ProcessField.SecurityContext:
         return process.SecurityContext ?? Humanize.Placeholder(process.SecurityContextReason);
+      case ProcessField.ConfinementMode:
+        return process.ConfinementMode.HasValue
+          ? Humanize.ConfinementMode((LsmConfinementMode)process.ConfinementMode.Value)
+          : Humanize.Placeholder(process.ConfinementMode.Reason);
+
+      case ProcessField.SpeculationStoreBypass:
+        return process.SpeculationStoreBypass.HasValue
+          ? Humanize.SpeculationState((SpeculationState)process.SpeculationStoreBypass.Value)
+          : Humanize.Placeholder(process.SpeculationStoreBypass.Reason);
+      case ProcessField.SpeculationIndirectBranch:
+        return process.SpeculationIndirectBranch.HasValue
+          ? Humanize.IndirectBranchState((IndirectBranchState)process.SpeculationIndirectBranch.Value)
+          : Humanize.Placeholder(process.SpeculationIndirectBranch.Reason);
+      case ProcessField.ThreadFeatures:
+        // "none" is the answer for nearly every process there is, and it is an answer: the line was
+        // read and no protection is switched on. The line being absent is the placeholder instead.
+        return process.ThreadFeatures.HasValue
+          ? Humanize.ThreadFeatures((ThreadSecurityFeatures)process.ThreadFeatures.Value)
+          : Humanize.Placeholder(process.ThreadFeatures.Reason);
+      case ProcessField.Umask: return Humanize.Umask(process.Umask);
+      case ProcessField.TracerPid:
+        // Zero is nobody, and saying so beats a column of noughts that look like unfilled cells.
+        if (!process.TracerPid.HasValue)
+          return Humanize.Placeholder(process.TracerPid.Reason);
+
+        return process.TracerPid.Value == 0
+          ? "none"
+          : process.TracerPid.Value.ToString(CultureInfo.InvariantCulture);
 
       case ProcessField.ImageSha256:
         return process.ImageSha256 ?? Humanize.Placeholder(process.ImageHashReason);
@@ -195,6 +223,7 @@ public static class FieldAccessor {
       case ProcessField.SocketCount: return Humanize.Count(process.SocketCount);
       case ProcessField.FileCount: return Humanize.Count(process.FileCount);
       case ProcessField.PipeCount: return Humanize.Count(process.PipeCount);
+      case ProcessField.DescriptorTableSize: return Humanize.Count(process.DescriptorTableSize);
       case ProcessField.TcpConnectionCount: return Humanize.Count(process.TcpSocketCount);
       case ProcessField.UdpSocketCount: return Humanize.Count(process.UdpSocketCount);
       case ProcessField.ListeningSocketCount: return Humanize.Count(process.ListeningSocketCount);
@@ -266,6 +295,18 @@ public static class FieldAccessor {
       case ProcessField.Seccomp: return Number(process.SeccompMode);
       case ProcessField.SeccompFilters: return Number(process.SeccompFilters);
       case ProcessField.NoNewPrivileges: return Number(process.NoNewPrivileges);
+      // The states as their own ordinals, which are ordered by exposure: sorting the column
+      // descending brings the unmitigated processes to the top, which is the only reason anybody
+      // sorts a mitigation column.
+      case ProcessField.SpeculationStoreBypass: return Number(process.SpeculationStoreBypass);
+      case ProcessField.SpeculationIndirectBranch: return Number(process.SpeculationIndirectBranch);
+      case ProcessField.ThreadFeatures: return Number(process.ThreadFeatures);
+      case ProcessField.ConfinementMode: return Number(process.ConfinementMode);
+      // The mask as the number it is, so "umask < 0022" finds the processes withholding less than
+      // the machine's default.
+      case ProcessField.Umask: return Number(process.Umask);
+      case ProcessField.TracerPid: return Number(process.TracerPid);
+      case ProcessField.DescriptorTableSize: return Number(process.DescriptorTableSize);
       // The mask as a magnitude. Not a quantity anybody adds up, but ordering by it groups the
       // privileged rows together, which is what sorting a security column is for.
       case ProcessField.Capabilities:
@@ -388,6 +429,25 @@ public static class FieldAccessor {
       ? process.SeccompMode.Value switch { 0 => "off", 1 => "strict", 2 => "filter", _ => null }
       : null,
     ProcessField.SecurityContext => process.SecurityContext,
+    // The kernel's own words, so that "spec.ssb:vulnerable" reads the way it would be said and
+    // matches both of the states that contain it. Textual at all because the exporter asks only for
+    // raw text on a field of state kind, and a state that renders a word and exports an empty cell
+    // is exactly what §103's invariant catches.
+    ProcessField.SpeculationStoreBypass => process.SpeculationStoreBypass.HasValue
+      ? Humanize.SpeculationState((SpeculationState)process.SpeculationStoreBypass.Value)
+      : null,
+    ProcessField.SpeculationIndirectBranch => process.SpeculationIndirectBranch.HasValue
+      ? Humanize.IndirectBranchState((IndirectBranchState)process.SpeculationIndirectBranch.Value)
+      : null,
+    ProcessField.ThreadFeatures => process.ThreadFeatures.HasValue
+      ? Humanize.ThreadFeatures((ThreadSecurityFeatures)process.ThreadFeatures.Value)
+      : null,
+    ProcessField.ConfinementMode => process.ConfinementMode.HasValue
+      ? Humanize.ConfinementMode((LsmConfinementMode)process.ConfinementMode.Value)
+      : null,
+    // The four octal digits, because that is how somebody has the number: read off a unit file, a
+    // shell profile or the output of umask itself.
+    ProcessField.Umask => process.Umask.HasValue ? Humanize.Umask(process.Umask) : null,
     // The hex as it is, so a filter can be handed a digest from somewhere else and match on it.
     ProcessField.ImageSha256 => process.ImageSha256,
     ProcessField.ImageSha1 => process.ImageSha1,

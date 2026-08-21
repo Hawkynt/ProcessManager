@@ -461,6 +461,30 @@ public sealed class LinuxProbe : ISystemProbe {
   }
 
   /// <summary>
+  /// The <c>Umask:</c> line, as the mask it spells rather than as the digits.
+  /// </summary>
+  /// <remarks>
+  /// Base eight, because that is what the kernel writes and what every tool that sets one accepts.
+  /// Reading <c>0022</c> as the decimal twenty-two would name a mask that withholds nothing a reader
+  /// expects and grants two things they do not, and no other column on the row would contradict it.
+  /// </remarks>
+  private static bool TryOctal(ReadOnlySpan<byte> line, ReadOnlySpan<byte> key, out ulong value) {
+    value = 0;
+    if (!AsciiScanner.StartsWith(line, key))
+      return false;
+
+    var digits = line[key.Length..].Trim(" \t"u8);
+    foreach (var digit in digits) {
+      if (digit is < (byte)'0' or > (byte)'7')
+        break;
+
+      value = (value << 3) | (byte)(digit - (byte)'0');
+    }
+
+    return true;
+  }
+
+  /// <summary>
   /// Pressure stall information (PRD §46).
   /// </summary>
   /// <remarks>
@@ -1022,6 +1046,12 @@ public sealed class LinuxProbe : ISystemProbe {
     record.InheritableCapabilities = Counter.NotSupported;
     record.BoundingCapabilities = Counter.NotSupported;
     record.AmbientCapabilities = Counter.NotSupported;
+    record.SpeculationStoreBypass = Counter.NotSupported;
+    record.SpeculationIndirectBranch = Counter.NotSupported;
+    record.ThreadFeatures = Counter.NotSupported;
+    record.Umask = Counter.NotSupported;
+    record.TracerPid = Counter.NotSupported;
+    record.DescriptorTableSize = Counter.NotSupported;
     record.EffectiveUserId = -1;
     record.SavedUserId = -1;
     record.FilesystemUserId = -1;
@@ -1053,6 +1083,12 @@ public sealed class LinuxProbe : ISystemProbe {
         record.InheritableCapabilities = Counter.NotPermitted;
         record.BoundingCapabilities = Counter.NotPermitted;
         record.AmbientCapabilities = Counter.NotPermitted;
+        record.SpeculationStoreBypass = Counter.NotPermitted;
+        record.SpeculationIndirectBranch = Counter.NotPermitted;
+        record.ThreadFeatures = Counter.NotPermitted;
+        record.Umask = Counter.NotPermitted;
+        record.TracerPid = Counter.NotPermitted;
+        record.DescriptorTableSize = Counter.NotPermitted;
         record.SupplementaryGroupsReason = UnknownReason.NotPermitted;
         record.CpuAffinityReason = UnknownReason.NotPermitted;
       }
@@ -1131,7 +1167,36 @@ public sealed class LinuxProbe : ISystemProbe {
           record.BoundingCapabilities = Counter.Of(mask);
         else if (TryMask(line, "CapAmb:"u8, out mask))
           record.AmbientCapabilities = Counter.Of(mask);
-      } else if (TryValue(line, "RssAnon:"u8, out var value)) {
+      } else if (AsciiScanner.StartsWith(line, "Spec"u8)) {
+        // The two mitigation lines, taken out of the way of the fifty others by one test the way the
+        // capability group is. Words rather than numbers, decoded in Core so that a recorded status
+        // is read the same on every CI leg (PRD §9.2).
+        if (AsciiScanner.StartsWith(line, "Speculation_Store_Bypass:"u8))
+          record.SpeculationStoreBypass = Counter.Of(
+            (ulong)SecurityStatusParser.StoreBypass(line["Speculation_Store_Bypass:"u8.Length..])
+          );
+        else if (AsciiScanner.StartsWith(line, "SpeculationIndirectBranch:"u8))
+          record.SpeculationIndirectBranch = Counter.Of(
+            (ulong)SecurityStatusParser.IndirectBranch(line["SpeculationIndirectBranch:"u8.Length..])
+          );
+      } else if (AsciiScanner.StartsWith(line, "x86_Thread_features:"u8))
+        // The colon is what keeps this off x86_Thread_features_locked, which is the very next line
+        // and would otherwise be read as this one — the same shape of mistake that once read
+        // Seccomp_filters as the seccomp mode.
+        record.ThreadFeatures = Counter.Of(
+          (ulong)SecurityStatusParser.ThreadFeatures(line["x86_Thread_features:"u8.Length..])
+        );
+      else if (TryOctal(line, "Umask:"u8, out var octal))
+        // Octal, because the kernel writes it that way and because reading 0022 as twenty-two would
+        // describe a mask nobody holds.
+        record.Umask = Counter.Of(octal);
+      else if (TryValue(line, "TracerPid:"u8, out var tracer))
+        // Zero is a real answer and the usual one: nothing is attached. The counter's business is
+        // the line being absent, not the nought.
+        record.TracerPid = Counter.Of(tracer);
+      else if (TryValue(line, "FDSize:"u8, out var slots))
+        record.DescriptorTableSize = Counter.Of(slots);
+      else if (TryValue(line, "RssAnon:"u8, out var value)) {
         rssAnon = value * 1024;
         haveRssAnon = true;
       } else if (TryValue(line, "RssFile:"u8, out value)) {
@@ -1186,8 +1251,10 @@ public sealed class LinuxProbe : ISystemProbe {
 
     if (this._options.ReadSecurityContext)
       this.ReadSecurityContext(cache, ref record);
-    else
+    else {
       record.SecurityContextReason = UnknownReason.NotSampledYet;
+      record.ConfinementMode = Counter.NotSampledYet;
+    }
 
     if (!this._options.UseProportionalSetSize) {
       // Nobody asked for it, which is not the same as the machine having none.
@@ -1214,6 +1281,7 @@ public sealed class LinuxProbe : ISystemProbe {
   /// the same order of cost as the file-descriptor scan that had to leave the sample loop (PRD §4).
   /// </remarks>
   private void ReadSecurityContext(ProcessCache cache, ref ProcessRecord record) {
+    record.ConfinementMode = Counter.NotSupported;
     if (!this._reader.TryRead(cache.SecurityContextPath, out var content, out var errno)) {
       // A kernel with no LSM loaded fails this read with EINVAL rather than leaving the file empty,
       // so "no security module here" and "not allowed to look" are different answers and are
@@ -1221,6 +1289,7 @@ public sealed class LinuxProbe : ISystemProbe {
       record.SecurityContextReason = errno is Native.EACCES or Native.EPERM
         ? UnknownReason.NotPermitted
         : UnknownReason.NotSupportedOnPlatform;
+      record.ConfinementMode = Counter.Unknown(record.SecurityContextReason);
 
       return;
     }
@@ -1240,6 +1309,14 @@ public sealed class LinuxProbe : ISystemProbe {
     // "unconfined" is what AppArmor says when there is no profile. It is a real answer, not a
     // missing one, so it is kept rather than blanked.
     record.SecurityContext = text;
+
+    // The bracketed word out of the same string, so that "which of these are only being watched"
+    // is a sort rather than a read of six hundred labels. A context that states no mode — every
+    // SELinux one — stays unknown rather than being given a mode it never claimed (PRD §5.3).
+    var mode = SecurityStatusParser.ConfinementMode(text);
+    record.ConfinementMode = mode == LsmConfinementMode.Unknown
+      ? Counter.NotSupported
+      : Counter.Of((ulong)mode);
   }
 
   /// <summary>
