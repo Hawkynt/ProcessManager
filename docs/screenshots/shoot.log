@@ -11,7 +11,7 @@ command bar:  {X=0,Y=26,Width=1240,Height=30}, 7 items
 content:      {X=168,Y=160,Width=1072,Height=638} showing Processes
 plots:        cpu {X=6,Y=6,Width=392,Height=92}, memory {X=404,Y=6,Width=392,Height=92}, cores {X=802,Y=6,Width=432,Height=92}
 topology:     16 logical, 1 socket(s), hybrid False
-status:       20 of 20 processes  ·  CPU 82.5% (normalized)  ·  memory 125G total, 86.7G free  ·  sample 1.2 ms
+status:       20 of 20 processes  ·  CPU 100% (normalized)  ·  memory 125G total, 82.8G free  ·  sample 1.5 ms
 capture:      1240x820 -> docs/screenshots/desktop.png
 page rail:    22 resources, showing 'Memory'
 page header:  Memory / 125G
@@ -53,16 +53,16 @@ page expanded: 1180x780 -> docs/screenshots/performance-expanded.png
 shell views:
   Processes        20 row(s) — 20 rows
   Performance      (opens a window of its own)
-  Startup          23 row(s) — 23 entries, 13 of which will run.  As of 17:36:12.
-  Users            4 row(s) — 4 records, 1 of them somebody logged in.  As of 17:36:12.
-  Services         372 row(s) — 372 units, 1 running.  As of 17:36:12.  Starting and stopping them is not implemented yet.
-  Network          1668 row(s) — 1668 sockets, 10 of them traceable to a process from this account.  As of 17:36:13.
+  Startup          23 row(s) — 23 entries, 13 of which will run.  As of 17:53:38.
+  Users            4 row(s) — 4 records, 1 of them somebody logged in.  As of 17:53:38.
+  Services         372 row(s) — 372 units, 1 running.  As of 17:53:38.  Starting and stopping them is not implemented yet.
+  Network          1423 row(s) — 1423 sockets, 10 of them traceable to a process from this account.  As of 17:53:38.
   Find resources   (opens a window of its own)
 properties:   12 tabs, 26 facts on General
 properties general: 1280x640 -> docs/screenshots/properties.png
 span:         60 s over 17 retained samples
-  CPU         {X=8,Y=40,Width=627,Height=169}  0.0 %
-  Memory      {X=643,Y=40,Width=627,Height=169}  16.8M
+  CPU         {X=8,Y=40,Width=627,Height=169}  0.1 %
+  Memory      {X=643,Y=40,Width=627,Height=169}  17.9M
   Disk        {X=8,Y=217,Width=627,Height=169}  0 B/s
   GPU         {X=643,Y=217,Width=627,Height=169}  …
   Descriptors {X=8,Y=394,Width=627,Height=169}  10
