@@ -120,6 +120,34 @@ internal sealed class RecordTable {
   /// <summary>The selected row's cells, or null when nothing is selected.</summary>
   public string[]? Selected => this._list.SelectedNode?.Tag as string[];
 
+  /// <summary>
+  /// Selects the row whose first cell is <paramref name="name"/> (PRD §25.3).
+  /// </summary>
+  /// <remarks>
+  /// The first cell rather than a row number, because the number is the collection order and a caller
+  /// that has one has already had to agree with this table about sorting. The name is what the caller
+  /// actually holds — a unit, a user, an interface — and it is what the reader sees.
+  /// </remarks>
+  /// <returns>Whether there was such a row. False is an answer and not a failure: a navigation that
+  /// lands nowhere has to say so rather than leaving the previous selection looking like the
+  /// destination.</returns>
+  public bool Select(string name) {
+    ArgumentNullException.ThrowIfNull(name);
+
+    foreach (var node in this._list.Nodes) {
+      if (node.Tag is not string[] cells || cells.Length == 0)
+        continue;
+
+      if (!string.Equals(cells[0], name, StringComparison.Ordinal))
+        continue;
+
+      this._list.SelectedNode = node;
+      return true;
+    }
+
+    return false;
+  }
+
   /// <summary>Hangs a menu on the rows, for the views that have something to offer.</summary>
   public ContextMenuStrip? ContextMenuStrip {
     get => this._list.ContextMenuStrip;

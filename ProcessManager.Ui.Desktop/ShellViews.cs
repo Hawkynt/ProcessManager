@@ -197,6 +197,21 @@ internal sealed class ShellViews(ISystemProbe probe) {
     );
   }
 
+  /// <summary>
+  /// Puts the cursor on one unit, for a navigation that came from a process (PRD §25.3).
+  /// </summary>
+  /// <remarks>
+  /// By name, because the name is what the cgroup gives up and a row number would be this list's
+  /// collection order — a second place that had to agree with it. False when the machine's unit files
+  /// hold no such unit, which is a real outcome rather than a fault: a transient scope systemd made at
+  /// runtime is in the cgroup tree and on no disk.
+  /// </remarks>
+  public bool SelectService(string unit) => this._services.Select(unit);
+
+  /// <summary>The unit the cursor is on, or null when it is on nothing.</summary>
+  public string? SelectedService
+    => this._services.Selected is { Length: > 0 } cells && cells[0].Length > 0 ? cells[0] : null;
+
   #endregion
 
   #region what is on the network (PRD §40)

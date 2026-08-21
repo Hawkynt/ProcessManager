@@ -1,8 +1,43 @@
 using System.Runtime.InteropServices;
 using System.Text;
+using Hawkynt.ProcessManager.Abstractions;
 using Hawkynt.ProcessManager.Model;
 
 namespace Hawkynt.ProcessManager.Platform.Linux;
+
+/// <summary>
+/// What became of a request to a window (PRD §39).
+/// </summary>
+/// <remarks>
+/// Six answers and not a boolean, because five of them are different things to tell somebody and only
+/// one of them is a fault. "There is no window manager here" and "that window belongs to another
+/// program now" both mean nothing happened, and they mean it for reasons a reader needs to tell apart
+/// (PRD §5.3, §72.3).
+/// </remarks>
+internal enum WindowCommandResult : byte {
+
+  /// <summary>The request went to the desktop. Whether it is granted is the window manager's to say.</summary>
+  Sent,
+
+  /// <summary>There is no X11 session to ask — a server, or a program run over ssh.</summary>
+  NoSession,
+
+  /// <summary>No window of that id is a top-level of this session. It has closed, or it never was one.</summary>
+  NotListed,
+
+  /// <summary>The window is here and says it belongs to a different process.</summary>
+  NotThisProcess,
+
+  /// <summary>The window does not list <c>WM_DELETE_WINDOW</c>: it has said it does not handle being asked.</summary>
+  NotHandled,
+
+  /// <summary>Nothing on this session manages windows, so there is nobody to grant the request.</summary>
+  NoWindowManager,
+
+  /// <summary>The server refused the request itself.</summary>
+  Failed,
+
+}
 
 /// <summary>
 /// The desktop's windows, and which process owns each (PRD §39).
@@ -76,6 +111,9 @@ internal static partial class X11Windows {
 
   [LibraryImport(_Library, EntryPoint = "XFlush")]
   private static partial int Flush(nint display);
+
+  [LibraryImport(_Library, EntryPoint = "XMapRaised")]
+  private static partial int MapRaised(nint display, nint window);
 
   /// <summary>
   /// <c>XClientMessageEvent</c>, padded to the size of the whole <c>XEvent</c> union.
@@ -289,6 +327,193 @@ internal static partial class X11Windows {
     } finally {
       CloseDisplay(display);
     }
+  }
+
+  /// <summary>
+  /// Asks one window to come forward, go away, grow, shrink or close (PRD §39).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Four of the five go to the <em>root</em> window and not to the target, which is what EWMH
+  /// specifies and is not an accident of this code: a client asking for a window to be raised or
+  /// maximised is asking the window manager, and the window manager is the thing selecting
+  /// <c>SubstructureRedirect</c> on the root. Sending them to the window itself delivers them to the
+  /// application, which has no handler for them and drops them in silence — which is exactly what a
+  /// menu item that appears to work and does nothing looks like.
+  /// </para>
+  /// <para>
+  /// The fifth, <see cref="WindowCommand.Close"/>, goes to the window, for the reason
+  /// <see cref="AskToClose"/> records: <c>WM_DELETE_WINDOW</c> arrives whether or not there is a
+  /// window manager to forward it, and it is the message a toolkit's own close handler is written
+  /// for. A window that does not list the protocol has said it does not handle being asked, and is
+  /// told so rather than being severed with <c>XKillClient</c>.
+  /// </para>
+  /// <para>
+  /// The window is checked to be a listed top-level of this session <em>and</em> to still name the
+  /// process it is being commanded on behalf of. A window id is a number in a space the server
+  /// reuses, so a stale one may name a live window of another program — the same hazard a stale tid
+  /// carries and checked the same way (PRD §8.2).
+  /// </para>
+  /// </remarks>
+  public static WindowCommandResult Command(int pid, ulong window, WindowCommand command) {
+    if (command == WindowCommand.None)
+      return WindowCommandResult.Failed;
+
+    if (!Available)
+      return WindowCommandResult.NoSession;
+
+    var display = OpenDisplay(null);
+    if (display == 0)
+      return WindowCommandResult.NoSession;
+
+    try {
+      var handle = (nint)window;
+      var listed = false;
+      foreach (var candidate in TopLevels(display, DefaultRootWindow(display)))
+        if (candidate == handle) {
+          listed = true;
+          break;
+        }
+
+      if (!listed)
+        return WindowCommandResult.NotListed;
+
+      // The window's own claim about who owns it, checked after the caller has already re-validated
+      // the process key. A window that has been recycled onto another program answers with another
+      // pid, and that is a refusal rather than a command sent to the wrong desktop.
+      if (pid > 0 && ReadCardinal(display, handle, "_NET_WM_PID") != pid)
+        return WindowCommandResult.NotThisProcess;
+
+      var result = command == WindowCommand.Close
+        ? Close(display, handle)
+        : Manage(display, handle, command);
+
+      // Xlib buffers requests. Without this they sit in the client's queue until something else
+      // happens to flush, and the display is closed underneath them.
+      Flush(display);
+      return result;
+    } finally {
+      CloseDisplay(display);
+    }
+  }
+
+  private static WindowCommandResult Close(nint display, nint handle) {
+    var protocols = InternAtom(display, "WM_PROTOCOLS", onlyIfExists: false);
+    var deleteWindow = InternAtom(display, "WM_DELETE_WINDOW", onlyIfExists: false);
+    if (protocols == 0 || deleteWindow == 0)
+      return WindowCommandResult.Failed;
+
+    if (!Handles(display, handle, protocols, deleteWindow))
+      return WindowCommandResult.NotHandled;
+
+    var message = new XClientMessageEvent {
+      Type = _ClientMessage,
+      Window = handle,
+      MessageType = protocols,
+      Format = _LongFormat,
+      Data0 = deleteWindow,
+      // CurrentTime, as AskToClose sends: this program selects no events, so it has never seen a
+      // timestamp the server issued.
+      Data1 = 0,
+    };
+
+    return SendEvent(display, handle, propagate: false, 0, ref message) != 0
+      ? WindowCommandResult.Sent
+      : WindowCommandResult.Failed;
+  }
+
+  /// <summary>
+  /// The four requests that are the window manager's to grant.
+  /// </summary>
+  /// <remarks>
+  /// Refused outright where there is no window manager, rather than sent into a session with nothing
+  /// listening. <c>_NET_SUPPORTING_WM_CHECK</c> on the root is how EWMH says to ask, and a bare X
+  /// server or a minimal window manager answers nothing — in which case there is no one to raise or
+  /// minimise anything and saying so beats a message that vanishes (PRD §5.3, §72.3).
+  /// </remarks>
+  private static WindowCommandResult Manage(nint display, nint handle, WindowCommand command) {
+    var root = DefaultRootWindow(display);
+    var check = InternAtom(display, "_NET_SUPPORTING_WM_CHECK", onlyIfExists: true);
+    if (check == 0 || ReadWindowList(display, root, check).Count == 0)
+      return WindowCommandResult.NoWindowManager;
+
+    switch (command) {
+      case WindowCommand.Foreground: {
+        var active = InternAtom(display, "_NET_ACTIVE_WINDOW", onlyIfExists: false);
+        // Source 2 is "a pager", which is what this program is here: window managers apply their
+        // focus-stealing prevention to source 1 (an application asking for itself) and let a pager
+        // through, because a pager is acting for the person at the keyboard.
+        return SendToRoot(display, root, handle, active, 2, 0, 0);
+      }
+
+      case WindowCommand.Minimize: {
+        // ICCCM's, not EWMH's: there is no _NET_WM_STATE_MINIMIZED, and iconifying is still done by
+        // asking for IconicState the way XIconifyWindow has since X11R4.
+        var changeState = InternAtom(display, "WM_CHANGE_STATE", onlyIfExists: false);
+        return SendToRoot(display, root, handle, changeState, _IconicState, 0, 0);
+      }
+
+      case WindowCommand.Maximize:
+      case WindowCommand.Restore: {
+        var state = InternAtom(display, "_NET_WM_STATE", onlyIfExists: false);
+        // Both axes in one message, which _NET_WM_STATE allows and which matters: sent one at a time
+        // a window would be drawn once half-maximised, and a window manager that animates would
+        // animate twice.
+        var vertical = InternAtom(display, "_NET_WM_STATE_MAXIMIZED_VERT", onlyIfExists: false);
+        var horizontal = InternAtom(display, "_NET_WM_STATE_MAXIMIZED_HORZ", onlyIfExists: false);
+        var action = command == WindowCommand.Maximize ? _StateAdd : _StateRemove;
+        var sent = SendToRoot(display, root, handle, state, action, vertical, horizontal);
+        // Restoring is two undoings and not one. A minimised window is not maximised, so removing the
+        // two states does nothing for it; mapping it is what ICCCM says takes a window out of
+        // IconicState, and doing both is what "restore" means to the person who pressed it.
+        if (command == WindowCommand.Restore)
+          MapRaised(display, handle);
+
+        return sent;
+      }
+
+      default:
+        return WindowCommandResult.Failed;
+    }
+  }
+
+  /// <summary>IconicState, from ICCCM's WM_STATE — the value WM_CHANGE_STATE asks for.</summary>
+  private const int _IconicState = 3;
+
+  private const int _StateRemove = 0;
+  private const int _StateAdd = 1;
+
+  /// <summary>
+  /// SubstructureNotify | SubstructureRedirect, which is the mask EWMH names for a root message.
+  /// </summary>
+  /// <remarks>
+  /// A zero mask, which is what the close message uses, delivers only to a client that selected the
+  /// event on the window itself. The window manager selects <c>SubstructureRedirect</c> on the root
+  /// and nothing else, so a root message sent with no mask reaches nobody at all.
+  /// </remarks>
+  private const long _SubstructureMask = (1L << 19) | (1L << 20);
+
+  private static WindowCommandResult SendToRoot(
+    nint display, nint root, nint handle, nint messageType, nint data0, nint data1, nint data2
+  ) {
+    if (messageType == 0)
+      return WindowCommandResult.Failed;
+
+    var message = new XClientMessageEvent {
+      Type = _ClientMessage,
+      // The window the request is *about*, even though the event is delivered to the root. This is
+      // the field the window manager reads to know which window was meant.
+      Window = handle,
+      MessageType = messageType,
+      Format = _LongFormat,
+      Data0 = data0,
+      Data1 = data1,
+      Data2 = data2,
+    };
+
+    return SendEvent(display, root, propagate: false, _SubstructureMask, ref message) != 0
+      ? WindowCommandResult.Sent
+      : WindowCommandResult.Failed;
   }
 
   /// <summary>Whether a window lists <paramref name="protocol"/> among the ones it handles.</summary>

@@ -52,6 +52,7 @@ public sealed class ProcessPropertiesWindow : Form {
   private const string _MemoryMapTab = "Memory map";
   private const string _SecurityTab = "Security";
   private const string _ServicesTab = "Services";
+  private const string _WindowsTab = "Windows";
   // The kernel's own word for it. "Jobs" is a Windows object and "container" is a convention built on
   // top of this one; naming the tab after either would be the false equivalence §5.3 forbids.
   private const string _CgroupTab = "cgroup";
@@ -207,10 +208,21 @@ public sealed class ProcessPropertiesWindow : Form {
 
   private readonly ProcessMemoryMapPage _map;
 
+  /// <summary>
+  /// What this process has on screen, and what may be asked of it (PRD §39).
+  /// </summary>
+  /// <remarks>
+  /// The list and the row menu arrived together on purpose: §26 refused this page for as long as it
+  /// would have been a list with nothing behind it, on the ground that a page which can show a window
+  /// and not close it is half a feature.
+  /// </remarks>
+  private readonly ProcessWindowsPage _windows;
+
   private TabPage? _gpuPage;
   private TabPage? _mapPage;
   private TabPage? _cgroupPage;
   private TabPage? _servicesPage;
+  private TabPage? _windowsPage;
   private ImageInfo? _image;
   private FileFacts? _imageFacts;
   private bool _imageRead;
@@ -245,6 +257,7 @@ public sealed class ProcessPropertiesWindow : Form {
     this.Unavailable = unavailable;
     this._pane = new(probe) { Actions = actions };
     this._map = new(probe, actions) { Key = key };
+    this._windows = new(probe, actions) { Key = key, Name = name };
 
     this.Text = $"{name} ({key.Pid})";
     // A secondary window closing must not take the program with it. Form.QuitsOnClose defaults to
@@ -281,6 +294,7 @@ public sealed class ProcessPropertiesWindow : Form {
       AddPage(this._tabs, _SecurityTab, this._security.Control);
       this._cgroupPage = AddPage(this._tabs, _CgroupTab, this._cgroup.Control);
       this._servicesPage = AddPage(this._tabs, _ServicesTab, this._services.Control);
+      this._windowsPage = AddPage(this._tabs, _WindowsTab, this._windows.Control);
       this._tabs.SelectedTab = this.PageNamed(_GeneralTab);
       // The map is the one page whose cost is the size of the process, so it is filled when somebody
       // asks for it rather than when the window opens. The tick fills it too, for the same reason and
@@ -364,6 +378,12 @@ public sealed class ProcessPropertiesWindow : Form {
 
   /// <summary>How many mappings the memory map is showing (PRD §34).</summary>
   public int MemoryMapRows => this._map.RowCount;
+
+  /// <summary>The sentence above the window list — the half that explains an empty one (PRD §39).</summary>
+  public string WindowsHeading => this._windows.Heading;
+
+  /// <summary>How many windows this process has on screen, as the page last read them (PRD §39).</summary>
+  public int WindowRows => this._windows.RowCount;
 
   /// <summary>How wide the graphs' axis is, in seconds (PRD §28).</summary>
   public int SpanSeconds => this._performance.SpanSeconds;
@@ -909,9 +929,39 @@ public sealed class ProcessPropertiesWindow : Form {
       return;
     }
 
-    if (string.Equals(page.Text, _ServicesTab, StringComparison.Ordinal))
+    if (string.Equals(page.Text, _ServicesTab, StringComparison.Ordinal)) {
       this.UpdateServices();
+      return;
+    }
+
+    if (string.Equals(page.Text, _WindowsTab, StringComparison.Ordinal)) {
+      this._windows.EnsureFilled();
+      this.SettleWindowsTab();
+    }
   }
+
+  /// <summary>
+  /// Takes the Windows tab off the strip once, where the platform does not read windows at all.
+  /// </summary>
+  /// <remarks>
+  /// On <see cref="WindowSourceState.NotImplemented"/> alone, which is the only one of the four that
+  /// is a statement about this build. A Wayland session refusing and a machine with no display are
+  /// facts about the machine and keep their tab, saying which — collapsing them would make "this
+  /// desktop will not tell you" and "this build cannot ask" the same answer (PRD §5.3, §26).
+  /// </remarks>
+  private void SettleWindowsTab() {
+    if (this._windowsSettled || this._windows.State != WindowSourceState.NotImplemented)
+      return;
+
+    this._windowsSettled = true;
+    if (this.Unavailable != UnavailableTabs.Hidden || this._windowsPage is not { } page || this._tabs is null)
+      return;
+
+    this._tabs.TabPages.Remove(page);
+    this._windowsPage = null;
+  }
+
+  private bool _windowsSettled;
 
   /// <summary>The last sample's row, for the pages that are filled only while they are showing.</summary>
   private ProcessRow? _row;
@@ -1093,7 +1143,16 @@ public sealed class ProcessPropertiesWindow : Form {
       extra.Add(new("directory", image.WorkingDirectory ?? "—"));
     }
 
-    new FilePropertiesDialog(path, extra, this._actions).ShowDialog();
+    // With the verify delegate, so §27's missing Verify button is the hash button rather than a
+    // second one: the same read of the file answers what the bytes are, whether the package that
+    // shipped them still recognises them and whether anybody signed for that package. Three separate
+    // statements from one read, and never one word standing for all of them (PRD §25.6, §70).
+    new FilePropertiesDialog(
+      path,
+      extra,
+      this._actions,
+      image => this._probe.DescribeImage(image, verify: true)
+    ).ShowDialog();
   }
 
   #endregion
@@ -1126,6 +1185,7 @@ public sealed class ProcessPropertiesWindow : Form {
       page.Stretch();
 
     this._map.Stretch();
+    this._windows.Stretch();
     this._performance.Refresh();
   }
 

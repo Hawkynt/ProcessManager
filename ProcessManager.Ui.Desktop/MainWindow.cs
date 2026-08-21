@@ -255,6 +255,17 @@ public sealed class MainWindow : Form {
     }
   }
 
+  /// <summary>
+  /// Takes one sample and binds it, without starting the clock.
+  /// </summary>
+  /// <remarks>
+  /// <see cref="Start"/> does this and then starts a timer, which is right for a window somebody is
+  /// looking at and wrong for anything that wants a single frame: a capture, or a test with no
+  /// message loop to run the timer in. Every route into this window that begins with "the selected
+  /// row" needs a sample to have happened first, and this is the only way to say so.
+  /// </remarks>
+  public void RefreshOnce() => this.Refresh();
+
   public void Start() {
     this._binder.CurrentUserId = CurrentUserId();
     // Read once, before the first paint: the machine will not rearrange its cores while we watch.
@@ -1047,6 +1058,7 @@ public sealed class MainWindow : Form {
     var menu = new ToolStripMenuItem("Go to");
     menu.DropDownItems.Add(Item("Parent process", this.GoToParent));
     menu.DropDownItems.Add(Item("Child processes", this.GoToChildren));
+    menu.DropDownItems.Add(Item("Owning service", this.GoToOwningService));
     menu.DropDownItems.Add(new ToolStripSeparator());
     menu.DropDownItems.Add(Item("Executable folder", this.RevealExecutable));
     menu.DropDownItems.Add(Item("Executable properties…", this.ShowExecutableProperties));
@@ -1081,6 +1093,12 @@ public sealed class MainWindow : Form {
       ("Network connections…", "Network"),
       ("Security context…", "Security"),
       ("cgroup and limits…", "cgroup"),
+      // "Service unit" rather than "owning service", which is the caption of the item beside it on
+      // the Go to menu: that one leaves for the machine's list of services, and this one stays on the
+      // process and shows the unit it is in. Two items with one name would be two answers to one
+      // question (PRD §5.3).
+      ("Service unit…", "Services"),
+      ("Windows…", "Windows"),
     ]) {
       // Copied out of the span before the closure captures it: a ref struct's element cannot be
       // captured, and a loop variable that could would be the same one for every item.
@@ -1088,7 +1106,77 @@ public sealed class MainWindow : Form {
       menu.DropDownItems.Add(Item(label, () => this.ShowProperties(target)));
     }
 
+    // Not a page, and so not in the list above: a stack belongs to a thread rather than to a process,
+    // and there are as many of them as the process has threads (PRD §30).
+    menu.DropDownItems.Add(Item("Stacks…", this.InspectStacks));
     return menu;
+  }
+
+  /// <summary>
+  /// Opens the stack of the selected process's first thread, and the list of the rest (PRD §25.4, §30).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A stack is a thread's and not a process's, so "inspect stacks" cannot be one window: it lands on
+  /// the Threads page — where every row has the same viewer on its own menu — and opens the leader's
+  /// stack, which is the one somebody asking this question about a process means. Opening every
+  /// thread's would be forty windows for a browser and a page-table walk each.
+  /// </para>
+  /// <para>
+  /// The leader is the thread whose tid is the pid, which is what makes it the process's own. It is
+  /// looked for rather than assumed: a leader that has exited while its threads run on leaves a
+  /// process with no thread of that number, and the first thread there is is a better answer than a
+  /// window reading "no such thread".
+  /// </para>
+  /// <para>
+  /// Symbols are not resolved on opening. Resolving them opens every image the frames fall in and
+  /// walks its symbol tables, which is the expensive half and is a button in the window (PRD §5.4).
+  /// </para>
+  /// </remarks>
+  private void InspectStacks() {
+    if (this._binder.SelectedRow is not { } row)
+      return;
+
+    // The key, not the pid, and before anything is read: a stale one would show somebody another
+    // process's threads under the name they clicked (PRD §8.2).
+    if (!this._sampler.Current.TryGetProcess(row.Key, out _)) {
+      MessageBox.Show($"{row.Name} (PID {row.Pid}) has ended.", "Process Manager");
+      return;
+    }
+
+    this.ShowProperties("Threads");
+    if (this.PropertiesFor(row.Key) is not { } window)
+      return;
+
+    var threads = this._probe.GetThreads(row.Key);
+    if (threads.Count == 0) {
+      MessageBox.Show(
+        $"No threads of {row.Name} (PID {row.Pid}) could be read. Another user's are not listed without "
+        + "privilege, and a process that ended between the click and the read has none left.",
+        "Process Manager"
+      );
+
+      return;
+    }
+
+    var leader = row.Pid;
+    var found = false;
+    foreach (var thread in threads)
+      if (thread.Tid == leader) {
+        found = true;
+        break;
+      }
+
+    window.Pane.OpenStack(found ? leader : threads[0].Tid, resolveSymbols: false);
+  }
+
+  /// <summary>The open properties window for one process, or null when there is none.</summary>
+  private ProcessPropertiesWindow? PropertiesFor(ProcessKey key) {
+    foreach (var open in this._properties)
+      if (open.Key == key)
+        return open;
+
+    return null;
   }
 
   /// <summary>
@@ -1158,6 +1246,78 @@ public sealed class MainWindow : Form {
         + "none of which the current filter shows.",
         "Process Manager"
       );
+  }
+
+  /// <summary>
+  /// Goes to the systemd unit the selected process belongs to (PRD §25.3, §41).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The unit comes from the cgroup, because a systemd unit <em>is</em> a cgroup — the same join §40's
+  /// owning-service column and §26's Services page make, through the same code, so no two of the three
+  /// can disagree. The innermost unit wins: a desktop application sits inside its user's session
+  /// manager, which is itself a unit, and naming the outer one would report every program somebody
+  /// starts as belonging to the manager that started it.
+  /// </para>
+  /// <para>
+  /// The key is re-validated against the current sample before anything is looked up. A navigation
+  /// that acted on a stale key would open a service list on whatever the kernel gave that pid to next,
+  /// under the name somebody clicked (PRD §8.2).
+  /// </para>
+  /// <para>
+  /// Three of the four outcomes are sentences rather than a silent no-op, because "nothing happened"
+  /// is what a broken menu item looks like: a process in no unit, a unit with no file on disk, and a
+  /// machine that publishes no services at all are different findings and only one of them is about
+  /// this build (PRD §5.3, §72.3).
+  /// </para>
+  /// </remarks>
+  private void GoToOwningService() {
+    if (this.GoToOwningService(out var refusal) is null && refusal is { Length: > 0 })
+      MessageBox.Show(refusal, "Process Manager");
+  }
+
+  /// <param name="refusal">
+  /// Why it did not land, in a sentence, or null when it did — and null too when nothing was
+  /// selected, which is not a refusal and not worth a dialog.
+  /// </param>
+  /// <returns>The unit it went to, or null.</returns>
+  /// <remarks>
+  /// Split out from the menu handler so that a test with no display can follow the navigation. A
+  /// dialog cannot be shown here and the outcome is the interesting half anyway: what this has to get
+  /// right is which unit it chose and whether the row it selected is that unit's.
+  /// </remarks>
+  public string? GoToOwningService(out string? refusal) {
+    refusal = null;
+    if (this._binder.SelectedRow is not { } row)
+      return null;
+
+    if (!this._sampler.Current.TryGetProcess(row.Key, out var process)) {
+      refusal = $"{row.Name} (PID {row.Pid}) has ended.";
+      return null;
+    }
+
+    if (CgroupUnit.Of(process.ContainerPath) is not { } unit) {
+      refusal = process.ContainerPath is { Length: > 0 } path
+        ? $"{row.Name} (PID {row.Pid}) is under no systemd unit. Its cgroup is {path}, and no segment "
+          + "of that is a service, a scope or a socket unit — a slice holds no processes of its own."
+        : $"{row.Name} (PID {row.Pid}) has no readable cgroup, so there is nothing to look a unit up by.";
+
+      return null;
+    }
+
+    // Switched first and selected afterwards: choosing the view is what collects its rows, and a
+    // selection made before them would be made against the list as it was last time.
+    this.ShowView("Services");
+    if (this._shell.SelectService(unit))
+      return unit;
+
+    refusal = this._shell.ServicesRows == 0
+      ? $"{row.Name} (PID {row.Pid}) is in {unit}, and no service list came back to go to. Only systemd "
+        + "is read here, from the unit files and the cgroup tree rather than over D-Bus."
+      : $"{row.Name} (PID {row.Pid}) is in {unit}, which has no unit file on this machine — a transient "
+        + "unit, created at runtime and never written out. The name is still what the cgroup says.";
+
+    return null;
   }
 
   /// <summary>The executable of the selected process, or null when there is none to be had.</summary>
@@ -1236,7 +1396,12 @@ public sealed class MainWindow : Form {
       extra.Add(new("directory", image.WorkingDirectory ?? "—"));
     }
 
-    return new(path, extra, this._actions);
+    // The verify delegate is what turns the hash button into §25.6's signature check: one read of the
+    // image answers "what are these bytes", "does whoever shipped them still recognise them" and "did
+    // anybody this machine trusts sign for them", and none of the three is paid for until it is
+    // pressed. An ELF carries no signature to verify, so this is the packaging system's own record —
+    // the comparison `pacman -Qkk` and `dpkg --verify` make (PRD §5.4, §70).
+    return new(path, extra, this._actions, image => this._probe.DescribeImage(image, verify: true));
   }
 
   /// <summary>
@@ -1440,6 +1605,16 @@ public sealed class MainWindow : Form {
 
   /// <summary>Which view is in the content region.</summary>
   public string ShownView => this._shown?.Title ?? string.Empty;
+
+  /// <summary>
+  /// Which unit the services view has its cursor on, or null when it has none (PRD §25.3, §41).
+  /// </summary>
+  /// <remarks>
+  /// How a navigation is checked to have <em>landed</em> rather than merely to have opened the right
+  /// view. A menu item that shows the service list with the cursor on the wrong row is worse than one
+  /// that says it cannot go anywhere.
+  /// </remarks>
+  public string? SelectedServiceUnit => this._shell.SelectedService;
 
   /// <summary>Chooses a view by name, the way clicking the rail does. False for a name it has not got.</summary>
   public bool ShowView(string title) {
@@ -1733,6 +1908,10 @@ public sealed class MainWindow : Form {
     process.DropDownItems.Add(Item("Send signal…", this.SendSignal));
     process.DropDownItems.Add(this.FreezerMenu());
     process.DropDownItems.Add(new ToolStripSeparator());
+    // Both submenus, not only the second. "Go to" was reachable from the right-hand button and from
+    // nowhere on the menu bar, which for somebody who works from the bar is the same as not existing —
+    // the complaint §9 makes about every view that was collected and unreachable (PRD §25.3).
+    process.DropDownItems.Add(this.NavigationMenu());
     process.DropDownItems.Add(this.InspectMenu());
     process.DropDownItems.Add(Item("Limits…", this.ShowLimits));
     process.DropDownItems.Add(Item("Read handle count", this.FillHandleCounts));

@@ -812,6 +812,88 @@ public sealed class LinuxProcessActions(LinuxProbeOptions? options = null) : IPr
   }
 
   /// <summary>
+  /// Asks one of the process's windows to come forward, go away, grow, shrink or close (PRD §39).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The key is re-validated first and the platform is asked second, which is the order every action
+  /// here follows: a stale key must be refused before anything touches the display, or a recycled pid
+  /// would have this program commanding the windows of whatever now holds that number. X11 then
+  /// checks the window's own <c>_NET_WM_PID</c> against the same pid, because a window id is reused
+  /// the way a tid is (PRD §8.2).
+  /// </para>
+  /// <para>
+  /// Only against the machine's own processes, for the reason <see cref="EndTask"/> gives: a fixture
+  /// replay's pid 1000 is a recording, while the windows on this display belong to whatever this
+  /// machine's pid 1000 happens to be (PRD §9.1).
+  /// </para>
+  /// <para>
+  /// Success here means the request was delivered and nothing more. A window manager may decline any
+  /// of these, and a program asked to close may put up a dialog and carry on — which is the correct
+  /// outcome rather than a failure, and the reason the detail says "asked" rather than "closed"
+  /// (PRD §72.3).
+  /// </para>
+  /// </remarks>
+  public ActionResult CommandWindow(ProcessKey key, ulong window, WindowCommand command) {
+    var check = this.Verify(key);
+    if (!check.Succeeded)
+      return check;
+
+    if (command == WindowCommand.None)
+      return ActionResult.Fail(ActionOutcome.Refused, "no window command was named");
+
+    if (this._options.ProcRoot != LinuxProbeOptions.LiveProcRoot)
+      return ActionResult.Fail(
+        ActionOutcome.Refused,
+        "this is a recorded process tree; the windows on this display belong to other programs"
+      );
+
+    return X11Windows.Command(key.Pid, window, command) switch {
+      WindowCommandResult.Sent => new(ActionOutcome.Succeeded, Asked(command)),
+      WindowCommandResult.NoSession => ActionResult.Fail(
+        ActionOutcome.NotSupportedOnPlatform,
+        "there is no X11 session to ask. A Wayland client cannot be told about other clients' surfaces, "
+        + "and a machine with no display has none to command"
+      ),
+      WindowCommandResult.NotListed => ActionResult.Fail(
+        ActionOutcome.Refused,
+        $"window {window:x} is no longer a top-level window of this session; it has closed since the list was taken"
+      ),
+      WindowCommandResult.NotThisProcess => ActionResult.Fail(
+        ActionOutcome.IdentityMismatch,
+        $"window {window:x} now names a different process; window ids are reused the way pids are"
+      ),
+      WindowCommandResult.NotHandled => ActionResult.Fail(
+        ActionOutcome.Refused,
+        "this window does not list WM_DELETE_WINDOW, which is a program saying it does not handle being "
+        + "asked to close. The only thing left is severing its connection, which is not a polite close"
+      ),
+      WindowCommandResult.NoWindowManager => ActionResult.Fail(
+        ActionOutcome.Refused,
+        "nothing on this session manages windows, so there is nobody to grant the request. Closing a "
+        + "window goes to the window itself and still works"
+      ),
+      _ => ActionResult.Fail(ActionOutcome.Failed, "the display server refused the request"),
+    };
+  }
+
+  /// <summary>
+  /// What was asked, in the past tense of a request rather than of a result.
+  /// </summary>
+  /// <remarks>
+  /// Every one of these is a request the window manager may decline, so none of them claims the thing
+  /// happened. "Asked to close" and "closed" are the same distinction §25.1 draws between ending a
+  /// task and terminating one, and it is the same reason: only one of the two can still be refused.
+  /// </remarks>
+  private static string Asked(WindowCommand command) => command switch {
+    WindowCommand.Foreground => "the desktop was asked to bring the window forward",
+    WindowCommand.Minimize => "the desktop was asked to minimise the window",
+    WindowCommand.Maximize => "the desktop was asked to maximise the window",
+    WindowCommand.Restore => "the desktop was asked to restore the window",
+    _ => "the window was asked to close; whether it does is the program's own decision",
+  };
+
+  /// <summary>
   /// The process is what the key says, and the thread belongs to it.
   /// </summary>
   /// <remarks>
