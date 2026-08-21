@@ -81,6 +81,10 @@ internal static class Program {
         RunMode.EndTask => RunEndTask(sampler, actions, options),
         RunMode.Restart => RunRestart(sampler, actions, options),
         RunMode.Scheduling => RunScheduling(sampler, actions, options),
+        RunMode.Signal => RunSignal(sampler, actions, options),
+        RunMode.ResourceLimit => RunResourceLimit(sampler, actions, options),
+        RunMode.OutOfMemory => RunOutOfMemory(sampler, actions, options),
+        RunMode.Freezer => RunFreezer(sampler, actions, options),
         RunMode.Host => HostReport.Run(sampler, probe),
         RunMode.Limits => LimitsReport.Run(sampler, probe, options.TargetPid),
         RunMode.Run => LaunchCommand.Run(actions, options),
@@ -393,6 +397,94 @@ internal static class Program {
     }
 
     Console.WriteLine($"{target.Pid} now runs under {Humanize.SchedulingPolicy(options.SchedulingClass)}");
+    return _ExitOk;
+  }
+
+  /// <summary>
+  /// <c>--signal</c>: any signal the kernel has, not only the three with menu items (PRD §25.1).
+  /// </summary>
+  /// <remarks>
+  /// The line printed on success names what was sent rather than saying "done", because the default
+  /// action of most signals is to end the process and somebody who typed <c>USR1</c> to poke a
+  /// program should see which signal actually went.
+  /// </remarks>
+  private static int RunSignal(Sampler sampler, IProcessActions? actions, CommandLineOptions options) {
+    if (!TryResolve(sampler, actions, options.TargetPid, out var target, out var exit))
+      return exit;
+
+    var result = actions!.SendSignal(target, options.Signal);
+    if (!result.Succeeded) {
+      Console.Error.WriteLine($"procman: {target.Pid}: {result.Detail ?? result.Outcome.ToString()}");
+      return _ExitError;
+    }
+
+    Console.WriteLine($"sent {Signals.Describe(options.Signal)} to {target.Pid}");
+    return _ExitOk;
+  }
+
+  /// <summary>
+  /// <c>--rlimit</c>: one of the kernel's per-process ceilings (PRD §25.2).
+  /// </summary>
+  private static int RunResourceLimit(Sampler sampler, IProcessActions? actions, CommandLineOptions options) {
+    if (!TryResolve(sampler, actions, options.TargetPid, out var target, out var exit))
+      return exit;
+
+    var result = actions!.SetResourceLimit(target, options.LimitKind, options.LimitSoft, options.LimitHard);
+    if (!result.Succeeded) {
+      Console.Error.WriteLine($"procman: {target.Pid}: {result.Detail ?? result.Outcome.ToString()}");
+      return _ExitError;
+    }
+
+    var unit = ResourceLimits.Of(options.LimitKind)?.Unit ?? ResourceLimitUnit.Count;
+    Console.WriteLine(
+      $"{target.Pid}: {ResourceLimits.Name(options.LimitKind)} is now "
+      + $"{ResourceLimits.Format(unit, options.LimitSoft)} of {ResourceLimits.Format(unit, options.LimitHard)}"
+    );
+
+    return _ExitOk;
+  }
+
+  /// <summary>
+  /// <c>--oom</c>: which process the kernel picks when the machine runs out of memory (PRD §25.5).
+  /// </summary>
+  /// <remarks>
+  /// The line says what it does <em>not</em> do, because that is the part people get wrong: it
+  /// reserves nothing and limits nothing, it only moves this process up or down a queue that
+  /// somebody else is also in.
+  /// </remarks>
+  private static int RunOutOfMemory(Sampler sampler, IProcessActions? actions, CommandLineOptions options) {
+    if (!TryResolve(sampler, actions, options.TargetPid, out var target, out var exit))
+      return exit;
+
+    var result = actions!.SetOomScoreAdjustment(target, options.OomAdjustment);
+    if (!result.Succeeded) {
+      Console.Error.WriteLine($"procman: {target.Pid}: {result.Detail ?? result.Outcome.ToString()}");
+      return _ExitError;
+    }
+
+    Console.WriteLine(
+      $"{target.Pid}: out-of-memory adjustment is now {options.OomAdjustment.ToString(CultureInfo.InvariantCulture)}. "
+      + "This changes which process is killed when memory runs out, not how much it may use."
+    );
+
+    return _ExitOk;
+  }
+
+  /// <summary>
+  /// <c>--freeze</c> and <c>--thaw</c>: the whole cgroup, which is what stopping a unit means on
+  /// Linux (PRD §25.1, §38).
+  /// </summary>
+  private static int RunFreezer(Sampler sampler, IProcessActions? actions, CommandLineOptions options) {
+    if (!TryResolve(sampler, actions, options.TargetPid, out var target, out var exit))
+      return exit;
+
+    var result = actions!.FreezeCgroup(target, options.Freeze);
+    if (!result.Succeeded) {
+      Console.Error.WriteLine($"procman: {target.Pid}: {result.Detail ?? result.Outcome.ToString()}");
+      return _ExitError;
+    }
+
+    Console.WriteLine(result.Detail ?? (options.Freeze ? "frozen" : "thawed"));
     return _ExitOk;
   }
 

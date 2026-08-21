@@ -1131,6 +1131,10 @@ guessing: a colour claiming "unsigned" without having checked a signature is wor
 - [x] Restart
 - [x] Suspend
 - [x] Resume
+- [x] **Send any signal** — the whole of `kill -l` and not the three that have menu items, offered
+      from a list that says what each one *does* rather than only what it is called
+- [x] **Freeze / thaw the whole cgroup** — what stopping a unit means on Linux, and deliberately not
+      described as a suspend
 
 - [x] "End task" and "Terminate" remain semantically distinct — the first asks, the second does not.
       A UI that blurs them loses somebody's unsaved work.
@@ -1158,11 +1162,65 @@ The replacement inherits *this* program's environment and not the old process's,
 called `setenv` it is stale, and nothing outside can tell a stale block from a current one. Copying
 it would produce a restart that quietly differs from the process it replaced (§5.3).
 
+**The default action of most signals is to end the process, and that is the sentence the chooser
+leads with.** `SIGUSR1` sent to a program that never installed a handler for it kills the program;
+so does `SIGALRM`, `SIGPIPE` and `SIGHUP`. A menu offering thirty-one names and no consequences
+would be offering to kill something under the label of poking it, so each row says what the kernel
+does with it when nobody handled it, and the confirmation repeats it for the one that was chosen
+(§5.5, §90). Only `SIGKILL` and `SIGSTOP` cannot be declined, and only those two say so.
+
+**The numbers are not universal, so they are not assumed.** Linux uses one layout on x86, ARM,
+RISC-V and LoongArch and another on Alpha, SPARC, MIPS and PA-RISC, where `SIGUSR1` is 30 and 10 is
+`SIGBUS`. An architecture whose layout is not known refuses to offer any name at all rather than
+sending a number that means something else there — the same rule the I/O priority syscalls follow,
+and for a worse failure: a signal sent by the wrong number is not a failed action but a successful
+one performed on the wrong thing (§5.3).
+
+**Real-time signals are reachable by number and not by name.** There is no true number for
+`SIGRTMIN`: it is whatever the C library the *target* was linked against reserved for itself — 34
+with glibc, 35 with musl — and a sender cannot see which. Computing `SIGRTMIN+3` from this program's
+own library and sending it to a process linked against another would deliver a different signal from
+the one that process's own header names, so the number, which is unambiguous, is the half that is
+offered.
+
+**Freezing is an action on the cgroup and is never called a suspend.** `SIGSTOP` stops one process
+and leaves everything it started running; the freezer stops the cgroup, every cgroup below it, and
+anything either of them starts while it is frozen. That is what pausing a container or a service
+actually means here, and the confirmation therefore names the cgroup and counts what is in it rather
+than naming the row that happened to be selected — which is one member of it and usually not the
+interesting one.
+
+Two things about a frozen process were checked against a running kernel rather than written from
+memory, and both were the opposite of the obvious guess. **A frozen task still reports itself as
+sleeping**: there is no process state for frozen, so a task shows `S` in `/proc/[pid]/stat` whether
+it was running or sleeping when the freeze landed, and nothing in a process table distinguishes a
+frozen program from an idle one — only the cgroup's own `cgroup.events` will say. And **a fatal
+signal still reaches it**: unlike the cgroup v1 freezer, v2 breaks a frozen task out for anything
+that would end it, so a frozen process is not one that has to be thawed before it can be stopped.
+
+**Freezing the cgroup this program is in is refused**, which is the one place the honest answer is
+to decline what was asked: it would stop the window that is asking and leave nothing able to thaw
+it. The root cgroup is refused for the same reason at machine scale.
+
 A tree is ended deepest first, and every key in it is re-validated on its own before it is signalled:
 a pid recycled halfway through a large tree is refused rather than acted on (§8.2). A member that has
 already gone counts as ended, because killing a parent routinely takes its children with it and
 reporting that race as a failure would make the ordinary case look broken. The refusal names how much
 of the tree went.
+
+- ∅ **Sending a signal to one thread.** `tgkill` will address a tid, and almost nothing useful
+  follows from it: every fatal signal is acted on by the whole thread group whichever thread it was
+  delivered to, and `SIGSTOP` and `SIGCONT` are group-wide by definition. What is left is delivering
+  a handled signal to a chosen thread, which means something only to a program that has arranged its
+  signal masks for it — and such a program has already made that choice itself. An item whose only
+  honest description is "this may do what the whole-process one does" is a worse offer than no item,
+  and it is the same ground on which per-thread suspend, resume and terminate were refused (§29).
+
+- ∅ **Waiting for a process to exit.** Nothing here is the process's parent, so there is no `wait`
+  to make: the only way to answer from outside is to poll `/proc` until the directory goes, which is
+  what a shell loop already does without needing a menu item. Where this program needs it internally
+  — a restart, which must not start a second copy beside a first that is still running — it polls,
+  says so, and refuses rather than escalating when the time is up.
 
 ## 25.2 Scheduling
 
@@ -1180,6 +1238,8 @@ of the tree went.
       keeps running at full speed and yields the disk whenever anything else wants it
 - [ ] Set page priority
 - [ ] Enable/disable efficiency mode or platform QoS
+- [x] **Set resource limits** — all sixteen of the kernel's per-process ceilings, read and set, each
+      shown beside what running into it actually does
 - [x] **Per-thread priority and affinity** — from the Threads tab
 
 All of it was unreachable until now: priority and affinity had been implemented in the actions layer
@@ -1213,6 +1273,27 @@ the refusal says so. The kernel scores `SCHED_IDLE` as nice 20, so moving out of
 and is permitted only where `RLIMIT_NICE` reaches that far — at the default limit of 0 it never does.
 Reported first as a plain "not permitted", which sends somebody looking for a permission that is not
 the one in the way; found by asking `chrt` rather than by asking the code.
+
+**A resource limit is read from one place and written to another, on purpose.** The reading side
+parses `/proc/[pid]/limits`, which answers for a recorded tree as well as for a live process and is
+therefore testable without a machine (§9.1); the writing side has no such choice, because that file
+is read-only and `prlimit64` is the only way in. Always `prlimit64` rather than `prlimit`: the
+latter's `rlim_t` is 32-bit on a 32-bit build unless the caller was compiled with
+`_FILE_OFFSET_BITS=64`, which a P/Invoke has no way of having been, and a file-size limit above
+4 GiB would then come back truncated on 32-bit ARM and nowhere else.
+
+**Each ceiling is shown with what running into it does**, because that is never the same thing
+twice: `RLIMIT_CPU` sends a signal, `RLIMIT_NOFILE` fails an `open`, `RLIMIT_AS` fails an allocation
+the program probably does not check, and `RLIMIT_NPROC` is a limit on the *user* rather than on the
+process it is being read from. Two of the sixteen do nothing at all — Linux has ignored `RLIMIT_RSS`
+since 2.6 and `RLIMIT_LOCKS` since 2.4.25 — and they are shown saying so rather than omitted,
+because the kernel still reports them and a sheet that quietly dropped them would look like one that
+had failed to read them.
+
+**Lowering a hard limit cannot be undone.** The kernel lets anybody lower one and lets nobody raise
+it again without `CAP_SYS_RESOURCE`, which makes it the only irreversible thing on the sheet and the
+one the confirmation names outright (§5.5). Unlimited stays a word and never becomes a number, the
+same rule the cgroup limits follow (§38).
 
 Still unticked and why: a **CPU set** is a cgroup on Linux and an unrelated Win32 API on Windows, and
 the two share a name and nothing else; **page priority** has no Linux equivalent at all; and
@@ -1274,6 +1355,8 @@ which is a subprocess per query against a database whose format is the distribut
 
 ## 25.5 Memory — expert
 
+- [x] **Set the out-of-memory priority** — `oom_score_adj`, which decides who the kernel kills when
+      the machine runs out, shown beside the badness score that says who it would actually pick
 - [ ] Trim working set
 - [ ] Read memory
 - [ ] Save memory range
@@ -1282,6 +1365,21 @@ which is a subprocess per query against a database whose format is the distribut
 
 - [ ] Direct modification of another process's memory is classified expert/debugging and **disabled
       by default** — the only feature here requiring a deliberate per-session opt-in
+
+**The out-of-memory adjustment is not a memory limit and the dialogs say so.** It reserves nothing
+and caps nothing: it decides *which* process dies when something has to, so lowering one process's
+score does not save memory — it points the killer at whatever is next on the list, which is
+somebody else's process. The two numbers are shown separately for the same reason the throttle count
+is shown beside the quota: the adjustment is what somebody asked for and `oom_score` is what the
+kernel would actually do about it, and only the second answers "which process is at risk here".
+
+**Raising it is free and lowering it needs `CAP_SYS_RESOURCE`**, which is the opposite way round
+from most permissions and surprising enough that the refusal says so rather than reporting a bare
+"not permitted": a process may always volunteer itself for the killer and may never excuse itself
+again. It is **deliberately not routed through the privileged helper**, for the reason the real-time
+I/O class is not — making one process harder to kill makes every other process on the machine
+likelier to be chosen, and that is a decision to take at a root prompt rather than from a menu
+(§68).
 
 ## 25.6 Modules
 
@@ -1781,11 +1879,20 @@ Linux cgroups:
 - [ ] I/O limits
 - [x] 🟡 Process membership — the count against the limit; the list of members is not read
 - [x] Pressure metrics (PSI) — per cgroup, through the same parser the machine-wide ones use
+- [x] **Frozen or not, and freeze / thaw** — the state from `cgroup.events` rather than from
+      `cgroup.freeze`, because the first is what the cgroup *is* and the second is only what it was
+      *asked* to be; they differ while a freeze is still catching processes that were inside a
+      syscall when it began (§25.1)
 
 This is the answer to "why is this slow when the machine is idle". A container or a systemd unit can
 be throttled to a fraction of a core or capped well below the machine's memory, and nothing in a
 process table shows it — the process simply appears to be doing less than it should. `--limits PID`
-prints it.
+prints it, together with the process's own ceilings and its out-of-memory standing (§25.2, §25.5).
+
+**The two kinds of ceiling are printed under separate headings and never added together**, because
+different parts of the kernel enforce them against different things: `RLIMIT_NPROC` is a limit on the
+*user*, `pids.max` is a limit on the *cgroup*, and a single combined number would be the false
+equivalence §5.3 forbids.
 
 **Unlimited is not a quantity.** `max` is reported as *no limit* rather than as the very large number
 the file literally contains on some kernels, because "no limit" and "a limit of nine million
@@ -2843,6 +2950,12 @@ was pinned is still the header that gets clicked. `--no-mouse` turns the whole t
 Permitted GUI-only interactions: locating a native desktop window by dragging a crosshair; native
 drag and drop.
 
+Owed and named rather than assumed: **send a signal, set a resource limit, set the out-of-memory
+priority and freeze a cgroup** reached the window and the command line together and have no terminal
+command yet (§25). The information each of them acts on is reachable from the TUI — `--limits` prints
+every ceiling and the out-of-memory standing — so the second clause above holds; the actions
+themselves do not, and this is where that is written down instead of being discovered later.
+
 - [ ] The information such a feature retrieves is still accessible elsewhere
 
 ---
@@ -2862,6 +2975,11 @@ drag and drop.
 - [x] `procman kill 1234`
 - [x] `procman suspend 1234`
 - [x] `procman resume 1234`
+- [x] `procman --signal 1234 TERM` — any signal, by name or by number
+- [x] `procman --rlimit 1234 nofile 512:4096` — one ceiling, in `prlimit`'s own `soft:hard` spelling
+      so an answer can be checked against the tool
+- [x] `procman --oom 1234 500` — how likely the out-of-memory killer is to choose it
+- [x] `procman --freeze 1234` / `--thaw` — the whole cgroup, which is what it says
 - [x] `procman service list` — as `--services`
 - [x] `procman net` — as `--connections`, with `=unix` and `=all` for the local sockets, which a
       desktop has seventeen hundred of against a dozen internet ones

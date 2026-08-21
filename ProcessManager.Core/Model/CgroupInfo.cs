@@ -1,6 +1,24 @@
 namespace Hawkynt.ProcessManager.Model;
 
 /// <summary>
+/// Whether the cgroup is frozen, and whether this kernel can freeze it at all (PRD §38).
+/// </summary>
+/// <remarks>
+/// <para>
+/// The freezer is the only thing on Linux that stops a whole unit the way a person means it. A
+/// <c>SIGSTOP</c> stops one process and leaves everything it started running; freezing the cgroup
+/// stops the cgroup and every cgroup below it, including processes that have not been born yet —
+/// which is why it is described as an action on the cgroup and never as a suspend of the process
+/// somebody happened to have selected (PRD §5.3).
+/// </para>
+/// <para>
+/// <see cref="Supported"/> is false on a kernel before 5.2 and in a cgroup where the file is absent.
+/// That is not the same as "not frozen", and the two are kept apart.
+/// </para>
+/// </remarks>
+public sealed record CgroupFreezer(bool Supported, bool Frozen);
+
+/// <summary>
 /// What a process's cgroup allows it and what it is using (PRD §38).
 /// </summary>
 /// <remarks>
@@ -39,7 +57,8 @@ public sealed record CgroupInfo(
   Counter ThrottledCount,
   PressureReading CpuPressure,
   PressureReading MemoryPressure,
-  PressureReading IoPressure
+  PressureReading IoPressure,
+  CgroupFreezer? Freezer = null
 ) {
 
   /// <summary>Whether a controller is switched on for this cgroup.</summary>

@@ -7,12 +7,22 @@ using Hawkynt.ProcessManager.Sampling;
 namespace Hawkynt.ProcessManager.App;
 
 /// <summary>
-/// What a process's cgroup allows it, and what it is using of that (PRD §38).
+/// Every ceiling on a process: its own, its cgroup's, and its standing with the out-of-memory
+/// killer (PRD §25.2, §25.5, §38).
 /// </summary>
 /// <remarks>
-/// The answer to "why is this slow when the machine is idle". A container or a systemd unit can be
-/// throttled to a fraction of a core or capped well below the machine's memory, and nothing in a
-/// process table shows that — the process simply appears to be doing less than it should.
+/// <para>
+/// The answer to "why is this slow when the machine is idle", and to "why did this die". A container
+/// or a systemd unit can be throttled to a fraction of a core or capped well below the machine's
+/// memory, and nothing in a process table shows that — the process simply appears to be doing less
+/// than it should.
+/// </para>
+/// <para>
+/// The two kinds of ceiling are printed under separate headings and never merged, because different
+/// parts of the kernel enforce them against different things: <c>RLIMIT_NPROC</c> is a limit on this
+/// <em>user</em>, <c>pids.max</c> is a limit on this cgroup, and presenting them as one number would
+/// be exactly the false equivalence §5.3 forbids.
+/// </para>
 /// </remarks>
 internal static class LimitsReport {
 
@@ -37,6 +47,7 @@ internal static class LimitsReport {
       Console.WriteLine($"{name} ({pid.ToString(CultureInfo.InvariantCulture)})");
       Image(probe, key);
       Console.WriteLine();
+      OwnLimits(probe, key);
       // Not an error. A machine on cgroup v1, or a process in no cgroup at all, is an ordinary
       // situation and the honest answer is that there are no limits to report (PRD §5.3).
       Console.WriteLine($"{name} ({pid.ToString(CultureInfo.InvariantCulture)}) is in no cgroup this build can read.");
@@ -46,6 +57,8 @@ internal static class LimitsReport {
 
     Console.WriteLine($"{name} ({pid.ToString(CultureInfo.InvariantCulture)})");
     Image(probe, key);
+    OwnLimits(probe, key);
+    Console.WriteLine("its cgroup");
     Console.WriteLine($"  cgroup               {cgroup.Path}");
     Console.WriteLine($"  controllers          {(cgroup.Controllers.Count > 0 ? string.Join(", ", cgroup.Controllers) : "none enabled here")}");
 
@@ -60,8 +73,71 @@ internal static class LimitsReport {
     Console.WriteLine($"  stalled on CPU       {Pressure(cgroup.CpuPressure)}");
     Console.WriteLine($"  stalled on memory    {Pressure(cgroup.MemoryPressure)}");
     Console.WriteLine($"  stalled on I/O       {Pressure(cgroup.IoPressure)}");
+    Console.WriteLine($"  frozen               {Frozen(cgroup.Freezer)}");
     return 0;
   }
+
+  /// <summary>
+  /// Whether the cgroup is stopped — which nothing in the process table will say, because the
+  /// kernel has no process state for frozen (PRD §38).
+  /// </summary>
+  private static string Frozen(CgroupFreezer? freezer) => freezer switch {
+    { Supported: false } or null => "this kernel's cgroups have no freezer",
+    { Frozen: true } => "yes — every process in it is stopped, and each still reports itself as sleeping",
+    _ => "no",
+  };
+
+  /// <summary>
+  /// The ceilings that belong to the process itself, and its standing with the out-of-memory killer
+  /// (PRD §25.2, §25.5).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Each ceiling carries what running into it actually does, because that is never the same thing
+  /// twice — <c>RLIMIT_CPU</c> sends a signal, <c>RLIMIT_NOFILE</c> fails an <c>open</c>, and
+  /// <c>RLIMIT_AS</c> fails an allocation the program probably does not check. A column of numbers
+  /// without them is a sheet nobody can act on.
+  /// </para>
+  /// <para>
+  /// The two out-of-memory figures are printed separately on purpose: the adjustment is what
+  /// somebody asked for and the score is what the kernel would actually do about it.
+  /// </para>
+  /// </remarks>
+  private static void OwnLimits(ISystemProbe probe, ProcessKey key) {
+    if (probe.DescribeResourceLimits(key) is not { } limits) {
+      Console.WriteLine("its own limits are not readable — another user's process, or one that has ended.");
+      Console.WriteLine();
+      return;
+    }
+
+    if (limits.Limits.Count > 0) {
+      Console.WriteLine("its own limits");
+      foreach (var limit in limits.Limits) {
+        if (ResourceLimits.Of(limit.Kind) is not { } definition)
+          continue;
+
+        Console.WriteLine($"  {definition.Name,-22}{ResourceLimits.Format(in limit),-28}{definition.Consequence}");
+      }
+
+      Console.WriteLine();
+    }
+
+    Console.WriteLine("out of memory");
+    Console.WriteLine($"  adjustment           {Adjustment(limits.OomScoreAdjustment)}");
+    Console.WriteLine($"  badness now          {limits.OomScore?.ToString(CultureInfo.InvariantCulture) ?? Humanize.Placeholder(UnknownReason.NotPermitted)}");
+    Console.WriteLine("  the killer picks the highest badness on the machine; the adjustment is added to it");
+    Console.WriteLine();
+  }
+
+  /// <summary>
+  /// The adjustment, with the one value that is not a number on the same scale said in words.
+  /// </summary>
+  private static string Adjustment(int? value) => value switch {
+    null => Humanize.Placeholder(UnknownReason.NotPermitted),
+    ProcessLimits.OomAdjustmentMinimum => $"{ProcessLimits.OomAdjustmentMinimum.ToString(CultureInfo.InvariantCulture)} — exempt; the killer will never choose it",
+    0 => "0 — untouched",
+    _ => value.Value.ToString(CultureInfo.InvariantCulture),
+  };
 
   /// <summary>
   /// What the running program actually is (PRD §14).

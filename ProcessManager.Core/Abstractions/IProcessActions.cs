@@ -129,7 +129,62 @@ public interface IProcessActions {
   ActionResult SetAffinity(ProcessKey key, ulong mask);
 
   /// <summary>Sends a signal. Unix only; returns <see cref="ActionOutcome.NotSupportedOnPlatform"/> elsewhere.</summary>
+  /// <remarks>
+  /// A number rather than a name, because the number is what the kernel takes and the mapping from
+  /// one to the other is the architecture's — see <c>Query.Signals</c>, which owns that table and
+  /// refuses to guess it on an architecture it does not know (PRD §5.3).
+  /// </remarks>
   ActionResult SendSignal(ProcessKey key, int signal);
+
+  /// <summary>
+  /// How likely the kernel is to choose this process when the machine runs out of memory
+  /// (PRD §25.5).
+  /// </summary>
+  /// <param name="adjustment">
+  /// -1000 to 1000, added to the badness score the out-of-memory killer ranks by. -1000 exempts the
+  /// process from being chosen at all; 1000 volunteers it first.
+  /// </param>
+  /// <remarks>
+  /// <b>Not a memory limit and not a reservation.</b> It changes nothing about what the process may
+  /// allocate — it changes which process dies when something has to, and lowering one process's
+  /// score raises somebody else's chance of being picked instead. That is why the confirmation says
+  /// so and why lowering it is the half that needs privilege.
+  /// </remarks>
+  ActionResult SetOomScoreAdjustment(ProcessKey key, int adjustment)
+    => ActionResult.Fail(ActionOutcome.NotSupportedOnPlatform, "this platform has no out-of-memory score");
+
+  /// <summary>
+  /// One of the kernel's per-process ceilings (PRD §25.2).
+  /// </summary>
+  /// <param name="soft">What is enforced now, or null for no limit.</param>
+  /// <param name="hard">The ceiling on the soft one, or null for no limit.</param>
+  /// <remarks>
+  /// Both halves are set together because the call sets both together: <c>prlimit</c> takes one
+  /// structure, and an interface that offered them separately would have to read the other half back
+  /// first and would race with anything the process did to itself in between.
+  /// </remarks>
+  ActionResult SetResourceLimit(ProcessKey key, ResourceLimitKind kind, ulong? soft, ulong? hard)
+    => ActionResult.Fail(ActionOutcome.NotSupportedOnPlatform, "this platform has no per-process resource limits");
+
+  /// <summary>
+  /// Stops, or restarts, every process in the cgroup this one belongs to (PRD §25.1, §38).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// <b>Deliberately not a suspend of the process.</b> <see cref="Suspend"/> stops one process and
+  /// leaves everything it started running; this stops the whole unit — the cgroup, every cgroup
+  /// below it, and any process either of them starts while it is frozen. On Linux that is what
+  /// pausing a container or a service actually means, and calling it "suspend" would be the false
+  /// equivalence §5.3 forbids.
+  /// </para>
+  /// <para>
+  /// Because the target is the cgroup, a caller must name the cgroup and the number of processes in
+  /// it before asking (PRD §5.5): the row somebody selected is one member of it and usually not the
+  /// interesting one.
+  /// </para>
+  /// </remarks>
+  ActionResult FreezeCgroup(ProcessKey key, bool frozen)
+    => ActionResult.Fail(ActionOutcome.NotSupportedOnPlatform, "this platform has no cgroup freezer");
 
   /// <summary>
   /// Which class the process's disk requests are scheduled in (PRD §26).

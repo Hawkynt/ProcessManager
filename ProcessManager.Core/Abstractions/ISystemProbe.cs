@@ -141,6 +141,20 @@ public interface ISystemProbe : IDisposable {
   CgroupInfo? DescribeCgroup(ProcessKey key) => null;
 
   /// <summary>
+  /// The ceilings the process runs under, and how likely the out-of-memory killer is to choose it
+  /// (PRD §25.2).
+  /// </summary>
+  /// <remarks>
+  /// On demand, for the process being looked at, like the cgroup above it: sixteen ceilings and two
+  /// small files is affordable once and indefensible four hundred times a second (PRD §5.4).
+  /// <para>
+  /// Null where the platform has no such idea, which a caller must not read as "no limits" — a
+  /// process with no limits and a platform that will not say are different answers (PRD §3.4).
+  /// </para>
+  /// </remarks>
+  ProcessLimits? DescribeResourceLimits(ProcessKey key) => null;
+
+  /// <summary>
   /// What the running program actually is: its architecture, its loader, where it runs, and which
   /// namespaces it can see (PRD §14).
   /// </summary>
