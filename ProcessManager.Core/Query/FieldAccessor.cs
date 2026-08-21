@@ -89,13 +89,38 @@ public static class FieldAccessor {
           _ => "?",
         };
 
-      case ProcessField.Capabilities:
+      case ProcessField.SeccompFilters: return Humanize.Count(process.SeccompFilters);
+
+      case ProcessField.Capabilities: return Names(process.EffectiveCapabilities);
+      case ProcessField.PermittedCapabilities: return Names(process.PermittedCapabilities);
+      case ProcessField.InheritableCapabilities: return Names(process.InheritableCapabilities);
+      case ProcessField.BoundingCapabilities: return Names(process.BoundingCapabilities);
+      case ProcessField.AmbientCapabilities: return Names(process.AmbientCapabilities);
+      case ProcessField.CapabilitiesHex:
         return process.EffectiveCapabilities.HasValue
-          ? "0x" + process.EffectiveCapabilities.Value.ToString("x", CultureInfo.InvariantCulture)
+          ? LinuxCapabilities.Hex(process.EffectiveCapabilities.Value)
           : Humanize.Placeholder(process.EffectiveCapabilities.Reason);
 
       case ProcessField.SecurityContext:
         return process.SecurityContext ?? Humanize.Placeholder(process.SecurityContextReason);
+
+      case ProcessField.PrivilegeChanged: return YesNo(PrivilegeChanged(in process));
+      case ProcessField.EffectiveUserName:
+        return process.EffectiveUserName ?? Humanize.Placeholder(UnknownReason.NotPermitted);
+      case ProcessField.UserId: return Id(process.UserId);
+      case ProcessField.EffectiveUserId: return Id(process.EffectiveUserId);
+      case ProcessField.SavedUserId: return Id(process.SavedUserId);
+      case ProcessField.FilesystemUserId: return Id(process.FilesystemUserId);
+      case ProcessField.GroupId: return Id(process.GroupId);
+      case ProcessField.EffectiveGroupId: return Id(process.EffectiveGroupId);
+      case ProcessField.SavedGroupId: return Id(process.SavedGroupId);
+      case ProcessField.FilesystemGroupId: return Id(process.FilesystemGroupId);
+      case ProcessField.SupplementaryGroups:
+        // The empty string is a real answer — a process in no supplementary group at all, which is
+        // every kernel thread — so it says so rather than leaving a cell that reads like a hole.
+        return process.SupplementaryGroups is { } groups
+          ? (groups.Length > 0 ? groups : "none")
+          : Humanize.Placeholder(process.SupplementaryGroupsReason);
 
       case ProcessField.ThreadCount: return process.ThreadCount.ToString(CultureInfo.InvariantCulture);
       case ProcessField.HandleCount: return Humanize.Count(process.HandleCount);
@@ -151,8 +176,28 @@ public static class FieldAccessor {
       case ProcessField.Elevated: return Number(process.IsElevated);
       case ProcessField.Integrity: return Number(process.IntegrityLevel);
       case ProcessField.Seccomp: return Number(process.SeccompMode);
+      case ProcessField.SeccompFilters: return Number(process.SeccompFilters);
       case ProcessField.NoNewPrivileges: return Number(process.NoNewPrivileges);
-      case ProcessField.Capabilities: return Number(process.EffectiveCapabilities);
+      // The mask as a magnitude. Not a quantity anybody adds up, but ordering by it groups the
+      // privileged rows together, which is what sorting a security column is for.
+      case ProcessField.Capabilities:
+      case ProcessField.CapabilitiesHex: return Number(process.EffectiveCapabilities);
+      case ProcessField.PermittedCapabilities: return Number(process.PermittedCapabilities);
+      case ProcessField.InheritableCapabilities: return Number(process.InheritableCapabilities);
+      case ProcessField.BoundingCapabilities: return Number(process.BoundingCapabilities);
+      case ProcessField.AmbientCapabilities: return Number(process.AmbientCapabilities);
+
+      case ProcessField.PrivilegeChanged: return Number(PrivilegeChanged(in process));
+      // -1 is "nobody told us", not user minus one, so it has no number at all and a filter cannot
+      // match it either way (PRD §3.4).
+      case ProcessField.UserId: return process.UserId >= 0 ? process.UserId : null;
+      case ProcessField.EffectiveUserId: return process.EffectiveUserId >= 0 ? process.EffectiveUserId : null;
+      case ProcessField.SavedUserId: return process.SavedUserId >= 0 ? process.SavedUserId : null;
+      case ProcessField.FilesystemUserId: return process.FilesystemUserId >= 0 ? process.FilesystemUserId : null;
+      case ProcessField.GroupId: return process.GroupId >= 0 ? process.GroupId : null;
+      case ProcessField.EffectiveGroupId: return process.EffectiveGroupId >= 0 ? process.EffectiveGroupId : null;
+      case ProcessField.SavedGroupId: return process.SavedGroupId >= 0 ? process.SavedGroupId : null;
+      case ProcessField.FilesystemGroupId: return process.FilesystemGroupId >= 0 ? process.FilesystemGroupId : null;
 
       case ProcessField.CpuTime: return Number(process.CpuTimeNs);
       case ProcessField.UserTime: return Number(process.UserTimeNs);
@@ -217,10 +262,22 @@ public static class FieldAccessor {
       ? process.SeccompMode.Value switch { 0 => "off", 1 => "strict", 2 => "filter", _ => null }
       : null,
     ProcessField.SecurityContext => process.SecurityContext,
-    // Textual because a 64-bit mask is read as hex, not compared as a magnitude — and without this
-    // the column rendered a value on screen and exported an empty cell.
-    ProcessField.Capabilities => process.EffectiveCapabilities.HasValue
-      ? "0x" + process.EffectiveCapabilities.Value.ToString("x", CultureInfo.InvariantCulture)
+    ProcessField.PrivilegeChanged => Word(PrivilegeChanged(in process)),
+    ProcessField.EffectiveUserName => process.EffectiveUserName,
+    // Empty is a real answer and null is not one, so the two must not collapse: a filter for a group
+    // must miss a process that is in none, rather than miss one nobody could read.
+    ProcessField.SupplementaryGroups => process.SupplementaryGroups,
+    // The names, not the mask: "caps:cap_net_admin" is the question somebody actually has, and a
+    // substring search over sixteen hex digits answers nothing. The raw form is its own field.
+    // Textual at all because without this the column rendered a value on screen and exported an
+    // empty cell — the exporter asks only RawText for a field of textual kind.
+    ProcessField.Capabilities => Words(process.EffectiveCapabilities),
+    ProcessField.PermittedCapabilities => Words(process.PermittedCapabilities),
+    ProcessField.InheritableCapabilities => Words(process.InheritableCapabilities),
+    ProcessField.BoundingCapabilities => Words(process.BoundingCapabilities),
+    ProcessField.AmbientCapabilities => Words(process.AmbientCapabilities),
+    ProcessField.CapabilitiesHex => process.EffectiveCapabilities.HasValue
+      ? LinuxCapabilities.Hex(process.EffectiveCapabilities.Value)
       : null,
     ProcessField.PidHex => "0x" + process.Pid.ToString("X", CultureInfo.InvariantCulture),
     ProcessField.Pid => process.Pid.ToString(CultureInfo.InvariantCulture),
@@ -245,6 +302,10 @@ public static class FieldAccessor {
         return string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase);
       case ProcessField.UserName:
         return string.Compare(a.UserName, b.UserName, StringComparison.OrdinalIgnoreCase);
+      case ProcessField.EffectiveUserName:
+        return string.Compare(a.EffectiveUserName, b.EffectiveUserName, StringComparison.OrdinalIgnoreCase);
+      case ProcessField.SupplementaryGroups:
+        return string.Compare(a.SupplementaryGroups, b.SupplementaryGroups, StringComparison.Ordinal);
       case ProcessField.CommandLine:
         return string.Compare(a.CommandLine, b.CommandLine, StringComparison.OrdinalIgnoreCase);
       case ProcessField.ImagePath:
@@ -282,6 +343,60 @@ public static class FieldAccessor {
     0x5000 => "protected",
     _ => "0x" + level.ToString("x", CultureInfo.InvariantCulture),
   };
+
+  /// <summary>A capability mask by name, or the reason there is none.</summary>
+  private static string Names(Counter mask)
+    => mask.HasValue ? LinuxCapabilities.Describe(mask.Value) : Humanize.Placeholder(mask.Reason);
+
+  /// <summary>
+  /// The same for filtering: never a placeholder, and never abbreviated.
+  /// </summary>
+  /// <remarks>
+  /// A filter must match what the value is rather than how the column shortened it, so a search for
+  /// <c>cap_sys_module</c> cannot miss the root processes that hold it precisely because they hold
+  /// every capability there is and the column says "all".
+  /// </remarks>
+  private static string? Words(Counter mask)
+    => mask.HasValue ? LinuxCapabilities.List(mask.Value) : null;
+
+  /// <summary>A numeric identity, or the mark for the platform declining to say who it is.</summary>
+  /// <remarks>
+  /// -1 is the whole point: zero is root, so rendering an unfilled id as its number would name the
+  /// superuser for every process on a platform that does not report the quartet at all.
+  /// <para>
+  /// An <see langword="int"/> cannot carry <em>why</em> the way a <see cref="Counter"/> does, so the
+  /// one reason it can give is the one that is nearly always true — the quartet is a Unix idea and
+  /// the platforms that have no answer are the ones that have no such thing. A
+  /// <c>hidepid</c> mount, where the file exists and this user may not read it, would be better
+  /// served by the other mark; that is the cost of holding these as plain numbers, and the
+  /// alternative is eight more counters in a struct that is refreshed a thousand times a second.
+  /// </para>
+  /// </remarks>
+  private static string Id(int id) => id >= 0
+    ? id.ToString(CultureInfo.InvariantCulture)
+    : Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform);
+
+  /// <summary>
+  /// Whether the process is running as somebody other than whoever started it.
+  /// </summary>
+  /// <remarks>
+  /// Real against effective, for the user and for the group: a set-group-ID binary is the same kind
+  /// of thing as a set-user-ID one and hiding it under a field named for the more famous half would
+  /// be the false equivalence §5.3 forbids. Unknown when either half is, because "they are the same"
+  /// is a claim and an absence is not evidence for it.
+  /// </remarks>
+  private static Counter PrivilegeChanged(in ProcessRecord process) {
+    if (process.UserId < 0 || process.EffectiveUserId < 0)
+      return Counter.NotSupported;
+
+    if (process.UserId != process.EffectiveUserId)
+      return Counter.Of(1ul);
+
+    if (process.GroupId < 0 || process.EffectiveGroupId < 0)
+      return Counter.NotSupported;
+
+    return Counter.Of(process.GroupId != process.EffectiveGroupId ? 1ul : 0ul);
+  }
 
   /// <summary>A yes/no counter as the word, or the reason there is no answer.</summary>
   private static string YesNo(Counter counter)

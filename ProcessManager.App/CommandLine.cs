@@ -94,6 +94,16 @@ internal sealed record CommandLineOptions {
     => this.Wants(ProcessField.ProportionalSet) || this.Wants(ProcessField.ProportionalSwap);
 
   /// <summary>
+  /// Whether the supplementary groups are worth the string they cost (PRD §5.4).
+  /// </summary>
+  /// <remarks>
+  /// The line is already in front of the sampler, so this buys no read — it buys one allocation per
+  /// process per sample, against a budget of zero (PRD §4). Same rule as the two above, for a
+  /// different resource.
+  /// </remarks>
+  public bool WantsSupplementaryGroups => this.Wants(ProcessField.SupplementaryGroups);
+
+  /// <summary>
   /// Whether a field was asked for, by column or by filter.
   /// </summary>
   /// <remarks>
