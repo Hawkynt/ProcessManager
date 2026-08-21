@@ -119,6 +119,10 @@ public sealed class ListOverlay {
     var left = this.FullScreen ? 0 : Math.Max(0, (screen.Width - width) / 2);
     var top = this.FullScreen ? 0 : Math.Max(0, (screen.Height - height) / 2);
     var rows = Math.Max(1, height - (this.FullScreen ? 3 : 4));
+    if (width <= 4 || height <= 2)
+      // Nothing this small can hold a list. The frame beneath stays on screen, which is more use
+      // than a border with no room inside it.
+      return new(top, left, Math.Max(0, width), Math.Max(0, height), this._scroll);
 
     if (this.Selected < this._scroll)
       this._scroll = this.Selected;

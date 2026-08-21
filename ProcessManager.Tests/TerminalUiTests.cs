@@ -163,7 +163,9 @@ public sealed class GoldenFrameTests {
   [TestCase(160, 50)]
   public void EveryProcessNameFitsAtEverySize(int width, int height) {
     var frame = Frame(width, height);
-    foreach (var name in (string[])["systemd", "kthreadd", "bash", "sleep"])
+    // Not "sleep": that one is also a process *state*, so the assertion would pass on a name column
+    // clipped to nothing. Every name here can only have come from the name column.
+    foreach (var name in (string[])["systemd", "kthreadd", "bash", "foo) 0 (bar"])
       Assert.That(frame, Does.Contain(name), $"{name} is clipped at {width}×{height}");
   }
 

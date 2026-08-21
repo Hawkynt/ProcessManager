@@ -163,10 +163,21 @@ public sealed class TerminalHost : IDisposable {
     this.ReplayPending(ui);
   }
 
-  /// <summary>Hands the buffered keys to the UI as the keys they were.</summary>
+  /// <summary>
+  /// Hands the buffered keys to the UI as the keys they were.
+  /// </summary>
+  /// <remarks>
+  /// With one exception: a control sequence that is not a mouse report is dropped rather than
+  /// replayed. Some terminal describes some key with a sequence the console layer does not know —
+  /// Ctrl+arrow on half of them — and replaying it as an Escape followed by <c>[1;5D</c> would quit
+  /// the program because the user pressed Ctrl and an arrow. A lone Escape is still the Escape key.
+  /// </remarks>
   private void ReplayPending(TerminalUi ui) {
     var keys = this._pending.ToArray();
     this._pending.Clear();
+    if (keys.Length > 2 && keys[0].KeyChar == '\u001b' && keys[1].KeyChar == '[')
+      return;
+
     for (var i = 0; i < keys.Length; ++i) {
       // The first one is the Escape itself, which arrives with no ConsoleKey attached because the
       // console layer did not recognise what followed it.

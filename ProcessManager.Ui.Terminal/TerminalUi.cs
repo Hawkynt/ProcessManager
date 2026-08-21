@@ -49,6 +49,7 @@ public sealed class TerminalUi {
   private int _tableHeight;
   private int _headerRow;
   private int _paneTop;
+  private bool _draggingDivider;
 
   private enum InputMode : byte { Normal, Search, Filter, Confirm, SchedulingClass, Detail, Overlay, ExportPath }
 
@@ -683,8 +684,10 @@ public sealed class TerminalUi {
       case MouseButton.WheelDown: this.ScrollBy(3); return true;
     }
 
-    if (!mouse.Pressed)
+    if (!mouse.Pressed) {
+      this._draggingDivider = false;
       return false;
+    }
 
     // The tab row, which is the only thing above the meters.
     if (mouse.Y == 0) {
@@ -695,9 +698,17 @@ public sealed class TerminalUi {
     if (this.Page != TerminalPage.Processes)
       return false;
 
-    // The divider above the lower pane: dragging it is how the pane is resized without keys.
-    if (this._lowerPaneHeight > 0 && mouse.Y == this._paneTop && mouse.Motion) {
+    // The divider above the lower pane. A drag is a press on it and then motion somewhere else, so
+    // the press has to be remembered: by the time the pointer has moved, the divider is no longer
+    // under it — which is exactly what dragging means.
+    if (this._lowerPaneHeight > 0 && !mouse.Motion && mouse.Y == this._paneTop) {
+      this._draggingDivider = true;
+      return false;
+    }
+
+    if (this._draggingDivider && mouse.Motion) {
       this._lowerPaneHeight = Math.Clamp(this._screen.Height - 2 - mouse.Y, 2, Math.Max(2, this._screen.Height / 2));
+      this.ClampScroll();
       return true;
     }
 

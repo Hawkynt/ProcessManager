@@ -340,11 +340,19 @@ public sealed class KeyBindings {
       return "f" + ((int)key.Key - (int)ConsoleKey.F1 + 1).ToString(CultureInfo.InvariantCulture);
 
     var character = key.KeyChar;
-    if (character == ' ')
-      return "space";
+    // The four that are control characters *and* keys with names of their own. Without this they
+    // would be read as Ctrl+M, Ctrl+I and Ctrl+H on a console layer that names no key for them.
+    switch (character) {
+      case ' ': return "space";
+      case '\r' or '\n': return "enter";
+      case '\t': return "tab";
+      case '\b' or '\u007f': return "backspace";
+    }
 
     // Ctrl+letter arrives as the control character itself, which is not something a file can contain.
-    if (character < ' ' && (key.Modifiers & ConsoleModifiers.Control) != 0)
+    // The modifier flag is not relied on: not every console layer sets it for a control character,
+    // and a binding that works on one terminal and not another is worse than none.
+    if (character is > '\0' and < ' ')
       return ((char)(character + 96)).ToString();
 
     return character is >= ' ' and not '\u007f' ? character.ToString() : null;
