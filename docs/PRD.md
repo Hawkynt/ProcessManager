@@ -4185,7 +4185,14 @@ GUI:
       top of the window and insertion order is very nearly the reverse of reading order. A test holds
       the numbers to the reading
 - [ ] 🟡 Screen-reader labels — every container, graph, strip and field in the main window names
-      itself and says what it is. **The rows do not.** The toolkit has no per-item accessibility —
+      itself and says what it is, and so now does every textless control of the lower pane, the
+      properties window and the performance window — thirteen lists, nine plots, a second rail and a
+      composition bar that the main window's own naming never reached. Three of those fixes are
+      structural rather than one-by-one, because a list of controls written out by hand goes stale
+      the next time somebody adds one: a plot takes its name from the caption it paints, a tab's
+      content takes the tab's title, and a record table is told what it is a list of when it is
+      built. A sweep of the real control tree of all four windows fails on a new textless control, and
+      a second test refuses a name that merely repeats the role. **The rows do not name themselves.** The toolkit has no per-item accessibility —
       no object per row, no way to say "firefox, 4 % CPU" as the selection moves — so a reader lands
       on the process list, is told it is a tree, and finds nothing inside it. That is a gap in
       NativeForms rather than here, and this box stays open until it is closed there
@@ -4714,7 +4721,9 @@ Windows parsing on Linux.
 - [ ] Selected-process termination
 - [ ] Lower pane
 - [ ] 🟡 Column sets
-- [ ] Accessibility
+- [x] Accessibility — a sweep of the real control tree of all three windows rather than a checklist
+      written out by hand, so a control added tomorrow and left unnamed fails it. It found every
+      table, every plot, the rail, the filter box and both strips unnamed (§74)
 - [ ] 🟡 Keyboard operation
 
 ## TUI tests

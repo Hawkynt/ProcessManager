@@ -124,6 +124,7 @@ public sealed class DetailPane : IDisposable {
     this._modules.ContextMenuStrip = this.BuildModuleMenu();
     this._handles.ContextMenuStrip = this.BuildHandleMenu();
 
+    this._tabs.AccessibleName = "Process detail";
     this._tabs.Dock = DockStyle.Fill;
     this._overview.Dock = DockStyle.Fill;
     this._hint.Dock = DockStyle.Bottom;
@@ -319,6 +320,9 @@ public sealed class DetailPane : IDisposable {
     }
 
     void AddList(string title, TreeListView list, params (string Header, int Width)[] columns) {
+      // The tab carries the title; the list inside it has no text of its own, so a reader who moves
+      // from the tab strip into the table would otherwise be told only that it is a table (PRD §74).
+      list.AccessibleName = title;
       list.Dock = DockStyle.Fill;
       list.ShowColumnHeaders = true;
       for (var i = 0; i < columns.Length; ++i) {

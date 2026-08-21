@@ -266,6 +266,82 @@ public sealed class AccessibilityTests {
 
   #endregion
 
+  #region nothing left unnamed (PRD §74, §99)
+
+  /// <summary>
+  /// The tests above name the controls they expect and check each one. That list is a thing that
+  /// goes stale the next time somebody adds a control — it cannot fail for a control nobody thought
+  /// to put in it. This sweeps the real tree instead: every control that has no text of its own has
+  /// to answer for itself, and a new textless one fails here until it is named.
+  /// </summary>
+  private static void SweepForUnnamed(Control root) {
+    var unnamed = new List<string>();
+    foreach (var control in Descendants(root)) {
+      // Scaffolding holds other controls and is announced through what it holds. Naming a layout
+      // panel adds a stop on the way to everything inside it and says nothing.
+      if (control is Panel or SplitContainer or Label or GroupBox or TabPage || control.Text.Length > 0)
+        continue;
+
+      if (string.IsNullOrEmpty(control.AccessibleName))
+        unnamed.Add(control.GetType().Name);
+    }
+
+    Assert.That(unnamed, Is.Empty, "these are announced as their role and nothing else");
+  }
+
+  private static IEnumerable<Control> Descendants(Control root) {
+    foreach (Control child in root.Controls) {
+      yield return child;
+      foreach (var deeper in Descendants(child))
+        yield return deeper;
+    }
+  }
+
+  [Test]
+  public void NothingInTheProcessWindowIsLeftUnnamed() => SweepForUnnamed(Window());
+
+  /// <summary>
+  /// The lower pane is built by a different type and its six lists are reached by a reader who moves
+  /// off the tab strip into the page — where, unnamed, they announce only that they are tables.
+  /// </summary>
+  [Test]
+  public void NothingInTheDetailPaneIsLeftUnnamed() {
+    using var pane = new DetailPane(new StubProbe());
+    SweepForUnnamed(pane.Control);
+  }
+
+  [Test]
+  public void NothingInThePropertiesWindowIsLeftUnnamed()
+    => SweepForUnnamed(new ProcessPropertiesWindow(new StubProbe(), new(4242, 100), "editor"));
+
+  [Test]
+  public void NothingInThePerformanceWindowIsLeftUnnamed() {
+    var probe = new StubProbe();
+    var sampler = new Sampler(probe);
+    sampler.Sample();
+    sampler.Sample();
+
+    SweepForUnnamed(new PerformanceWindow(probe, sampler, openOnBusiest: false));
+  }
+
+  /// <summary>
+  /// A name is not a duplicate of the role. "Tree", "Table", "Text box" as a name announces the
+  /// control twice and identifies it not at all — and it is the failure a sweep invites, because a
+  /// name is easy to add and easy to add badly.
+  /// </summary>
+  [Test]
+  public void NoNameIsJustTheKindOfControlAgain() {
+    foreach (var control in Descendants(Window())) {
+      if (control.AccessibleName is not { Length: > 0 } name)
+        continue;
+
+      foreach (var role in (string[])["tree", "table", "list", "text box", "textbox", "panel", "button", "control"])
+        Assert.That(name, Is.Not.EqualTo(role).IgnoreCase, $"{control.GetType().Name} is named after its own kind");
+    }
+  }
+
+  #endregion
+
   private static double Luminance(Color color)
     => (color.R * 0.299) + (color.G * 0.587) + (color.B * 0.114);
 

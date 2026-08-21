@@ -55,6 +55,7 @@ internal sealed class ShellViews(ISystemProbe probe) {
   // a column that does not exist. The last one is widened to whatever is actually there, so a wider
   // window spends the room on the widest value instead of on empty page (PRD §11).
   private readonly RecordTable _startup = new(
+    "Startup entries",
     ("Name", 220),
     ("Enabled", 150),
     ("Scope", 70),
@@ -101,6 +102,7 @@ internal sealed class ShellViews(ISystemProbe probe) {
   #region who is logged in (PRD §43)
 
   private readonly RecordTable _sessions = new(
+    "Sessions",
     ("User", 140),
     ("Terminal", 100),
     ("Kind", 110),
@@ -145,6 +147,7 @@ internal sealed class ShellViews(ISystemProbe probe) {
   #region what the machine runs in the background (PRD §41)
 
   private readonly RecordTable _services = new(
+    "Services",
     // Unit names run long — `NetworkManager-wait-online-initrd.service` is not unusual.
     ("Unit", 300),
     ("State", 78),
@@ -217,6 +220,7 @@ internal sealed class ShellViews(ISystemProbe probe) {
   #region what is on the network (PRD §40)
 
   private readonly RecordTable _network = new(
+    "Connections",
     ("Protocol", 70),
     ("Local", 175),
     ("Remote", 175),

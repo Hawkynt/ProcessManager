@@ -36,6 +36,7 @@ internal sealed class ProcessWindowsPage {
   private const int _HandleColumn = 1;
 
   private readonly RecordTable _table = new(
+    "Windows",
     // The title first, because it is the only cell a person recognises a window by. It is also the
     // one that runs longest, and it is not last only because the columns that say what a row *is*
     // would then be off the right-hand edge of a page that does not scroll sideways (PRD §11).

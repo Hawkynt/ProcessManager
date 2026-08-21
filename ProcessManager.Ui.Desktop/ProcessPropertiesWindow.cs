@@ -309,6 +309,10 @@ public sealed class ProcessPropertiesWindow : Form {
     static TabPage AddPage(TabControl tabs, string title, Control content) {
       var page = new TabPage(title);
       content.Dock = DockStyle.Fill;
+      // The tab carries the title and the table inside it carries nothing, so a reader who moves off
+      // the strip into the page is told only that it is a table. Named from the tab it is under,
+      // unless the page named itself something better (PRD §74).
+      content.AccessibleName ??= title;
       page.Controls.Add(content);
       tabs.TabPages.Add(page);
       return page;
@@ -1091,6 +1095,9 @@ public sealed class ProcessPropertiesWindow : Form {
   #region the General page (PRD §27)
 
   private void BuildGeneralPage() {
+    // The one page whose control is a panel rather than the table itself, so AddPage names the panel
+    // and the table inside it would be left saying nothing (PRD §74).
+    this._general.Control.AccessibleName = _GeneralTab;
     this._general.Control.Dock = DockStyle.Fill;
     this._buttons.Dock = DockStyle.Bottom;
     this._buttons.Height = 40;

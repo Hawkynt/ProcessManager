@@ -2094,6 +2094,7 @@ public sealed class MainWindow : Form {
     // mapped and nought pixels tall, which photographs exactly like a menu that was never added.
     var menu = new MenuStrip { Dock = DockStyle.Top, Height = 26 };
     this._menu = menu;
+    Announce(menu, "Main menu", AccessibleRole.MenuBar);
 
     var view = new ToolStripMenuItem("View");
     view.DropDownItems.Add(this.BuildGroupingMenu());
