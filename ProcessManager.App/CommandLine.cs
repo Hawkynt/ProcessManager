@@ -120,6 +120,34 @@ internal sealed record CommandLineOptions {
   public bool WantsSupplementaryGroups => this.Wants(ProcessField.SupplementaryGroups);
 
   /// <summary>
+  /// Whether anything this run asked for needs per-process graphics accounting (PRD §5.4, §19).
+  /// </summary>
+  /// <remarks>
+  /// Inferred like the other two, and with one switch of its own besides. The inference cannot see a
+  /// saved desktop column set, and a window is where somebody watching a GPU actually wants to be —
+  /// so <c>--gpu</c> exists to say it out loud rather than making people pass <c>--columns</c> to a
+  /// front-end that reads its columns from a file.
+  /// </remarks>
+  public bool WantsGpuUsage
+    => this.Gpu
+    || this.Wants(ProcessField.GpuPercent)
+    || this.Wants(ProcessField.GpuEngineName)
+    || this.Wants(ProcessField.GpuEnginePercent)
+    || this.Wants(ProcessField.GpuAdapter)
+    || this.Wants(ProcessField.GpuDedicatedMemory)
+    || this.Wants(ProcessField.GpuSharedMemory)
+    || this.Wants(ProcessField.GpuTotalMemory)
+    || this.Wants(ProcessField.GpuDedicatedMemoryDelta)
+    || this.Wants(ProcessField.GpuGraphicsPercent)
+    || this.Wants(ProcessField.GpuComputePercent)
+    || this.Wants(ProcessField.GpuCopyPercent)
+    || this.Wants(ProcessField.GpuEncodePercent)
+    || this.Wants(ProcessField.GpuDecodePercent);
+
+  /// <summary>Collect per-process graphics figures, whether or not a column names one.</summary>
+  public bool Gpu { get; init; }
+
+  /// <summary>
   /// Whether a field was asked for, by column or by filter.
   /// </summary>
   /// <remarks>
@@ -383,6 +411,9 @@ internal sealed record CommandLineOptions {
         case "--no-helper":
           options = options with { UseHelper = false };
           break;
+        case "--gpu":
+          options = options with { Gpu = true };
+          break;
         case "--probe-root": {
           if (!TryValue(args, ref i, inlineValue, out var root))
             return options with { Error = "--probe-root needs a directory" };
@@ -580,6 +611,7 @@ internal sealed record CommandLineOptions {
       --ascii            draw the terminal's history columns with ASCII rather than block characters
       --resolve          with --connections: turn addresses into hostnames (asks a resolver)
       -n, --numeric      with --connections: leave ports as numbers rather than naming them
+      --gpu              account for what each process is doing to the graphics adapters (costly)
       --no-helper        never start the privileged helper, even for an action that needs it
       --self-test        check the probe against the runtime's own view of this process
       --helper-check     talk to the privileged helper over its pipe, unelevated, and check it

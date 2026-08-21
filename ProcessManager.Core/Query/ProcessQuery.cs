@@ -116,7 +116,7 @@ public sealed class ProcessQuery {
   private sealed class RegexNode(Regex pattern, ProcessField? field) : Node {
     public override bool Matches(in ProcessRecord process, SnapshotDelta? delta, int index) {
       if (field is { } one)
-        return FieldAccessor.RawText(one, in process) is { } text && pattern.IsMatch(text);
+        return FieldAccessor.RawText(one, in process, delta, index) is { } text && pattern.IsMatch(text);
 
       return Try(process.Name) || Try(process.CommandLine) || Try(process.ImagePath);
     }
@@ -126,7 +126,7 @@ public sealed class ProcessQuery {
 
   private sealed class TextComparisonNode(ProcessField field, QueryOperator op, string value) : Node {
     public override bool Matches(in ProcessRecord process, SnapshotDelta? delta, int index) {
-      var text = FieldAccessor.RawText(field, in process);
+      var text = FieldAccessor.RawText(field, in process, delta, index);
       if (text is null)
         // A field with no text on this platform matches nothing — including "not equal", because
         // "this process's container is not X" is not a claim we can make when there are no

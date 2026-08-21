@@ -26,6 +26,13 @@ public sealed class SnapshotDelta {
   private Rate[] _privateBytesDelta = [];
   private bool[] _isNew = [];
   private Rate[] _memoryPercent = [];
+  private Rate[] _gpuGraphicsPercent = [];
+  private Rate[] _gpuComputePercent = [];
+  private Rate[] _gpuCopyPercent = [];
+  private Rate[] _gpuEncodePercent = [];
+  private Rate[] _gpuDecodePercent = [];
+  private Rate[] _gpuDedicatedBytesDelta = [];
+  private GpuEngine[] _gpuEngine = [];
   private Rate[] _perCoreBusy = [];
   private Rate[] _perCoreKernel = [];
   private Rate[] _perCoreUser = [];
@@ -105,6 +112,50 @@ public sealed class SnapshotDelta {
   public Rate MemoryPercent(int index)
     => (uint)index < (uint)this._memoryPercent.Length ? this._memoryPercent[index] : Rate.NotSampledYet;
 
+  #region graphics (PRD §19)
+
+  /// <summary>What share of the interval this process kept each engine of its adapter busy.</summary>
+  public Rate GpuGraphicsPercent(int index) => this._gpuGraphicsPercent[index];
+
+  public Rate GpuComputePercent(int index) => this._gpuComputePercent[index];
+
+  public Rate GpuCopyPercent(int index) => this._gpuCopyPercent[index];
+
+  public Rate GpuEncodePercent(int index) => this._gpuEncodePercent[index];
+
+  public Rate GpuDecodePercent(int index) => this._gpuDecodePercent[index];
+
+  /// <summary>
+  /// The process's use of its adapter: the busiest of its engines, and nothing summed.
+  /// </summary>
+  /// <remarks>
+  /// A card's engines run at once and their percentages are each of the whole interval, so adding
+  /// them produces figures above a hundred for a process that is transcoding perfectly happily. The
+  /// maximum is what Task Manager's GPU column shows and the only one of the two that can be read as
+  /// "how much of this card is this process using".
+  /// </remarks>
+  public Rate GpuPercent(int index) => this.GpuEnginePercent(index);
+
+  /// <summary>The busiest engine's share, which is the number <see cref="BusiestGpuEngine"/> names.</summary>
+  public Rate GpuEnginePercent(int index) => this._gpuEnginePercent[index];
+
+  /// <summary>
+  /// Which engine <see cref="GpuEnginePercent"/> measured, or <see cref="GpuEngine.Unknown"/> when
+  /// nothing could be measured at all.
+  /// </summary>
+  public GpuEngine BusiestGpuEngine(int index) => this._gpuEngine[index];
+
+  /// <summary>How fast the process's adapter memory is moving, in bytes per second.</summary>
+  /// <remarks>
+  /// Signed, like the private-bytes delta and for the same reason: a renderer that only ever grows
+  /// its VRAM allocation is the one that will eventually stop the machine drawing anything.
+  /// </remarks>
+  public Rate GpuDedicatedBytesDelta(int index) => this._gpuDedicatedBytesDelta[index];
+
+  private Rate[] _gpuEnginePercent = [];
+
+  #endregion
+
   /// <summary>Busy percentage of one logical core.</summary>
   public Rate PerCoreBusyPercent(int core)
     => (uint)core < (uint)this._perCoreBusy.Length ? this._perCoreBusy[core] : Rate.NotSampledYet;
@@ -154,6 +205,14 @@ public sealed class SnapshotDelta {
     EnsureLength(ref this._privateBytesDelta, count);
     EnsureLength(ref this._isNew, count);
     EnsureLength(ref this._memoryPercent, count);
+    EnsureLength(ref this._gpuGraphicsPercent, count);
+    EnsureLength(ref this._gpuComputePercent, count);
+    EnsureLength(ref this._gpuCopyPercent, count);
+    EnsureLength(ref this._gpuEncodePercent, count);
+    EnsureLength(ref this._gpuDecodePercent, count);
+    EnsureLength(ref this._gpuEnginePercent, count);
+    EnsureLength(ref this._gpuDedicatedBytesDelta, count);
+    EnsureLength(ref this._gpuEngine, count);
     FillMemoryPercent(this._memoryPercent, current);
 
     this._exited.Clear();
@@ -179,6 +238,10 @@ public sealed class SnapshotDelta {
         this._contextSwitchesPerSecond[i] = Rate.NotSampledYet;
         this._cyclesPerSecond[i] = Rate.NotSampledYet;
         this._privateBytesDelta[i] = Rate.NotSampledYet;
+        // Not skipped with the rest: half the GPU readings are percentages the driver sampled for
+        // itself, which are as true on the first sample as on the hundredth. Blanking them would
+        // hide a process at full utilisation for a whole interval for no reason.
+        this.FillGpu(i, in processes[i], in processes[i], hasPrevious: false, double.NaN);
         // Nothing is "new" against no previous sample; everything would flash green on start-up.
         this._isNew[i] = false;
       }
@@ -208,6 +271,7 @@ public sealed class SnapshotDelta {
         this._contextSwitchesPerSecond[i] = Rate.NotSampledYet;
         this._cyclesPerSecond[i] = Rate.NotSampledYet;
         this._privateBytesDelta[i] = Rate.NotSampledYet;
+        this.FillGpu(i, in process, in process, hasPrevious: false, elapsed);
         this._isNew[i] = true;
         ++this.StartedCount;
         continue;
@@ -226,6 +290,7 @@ public sealed class SnapshotDelta {
       this._contextSwitchesPerSecond[i] = RateCalculator.PerSecond(before.ContextSwitches, process.ContextSwitches, elapsed);
       this._cyclesPerSecond[i] = RateCalculator.PerSecond(before.Cycles, process.Cycles, elapsed);
       this._privateBytesDelta[i] = RateCalculator.SignedPerSecond(before.PrivateBytes, process.PrivateBytes, elapsed);
+      this.FillGpu(i, in process, in before, hasPrevious: true, elapsed);
       this._isNew[i] = false;
     }
 
@@ -390,6 +455,141 @@ public sealed class SnapshotDelta {
         ? Rate.Of(processes[i].WorkingSetBytes.Value * 100d / total.Value)
         : Rate.Unknown(processes[i].WorkingSetBytes.Reason);
   }
+
+  #region graphics
+
+  /// <summary>
+  /// One process's use of its graphics adapter, from whichever of the two shapes its driver has.
+  /// </summary>
+  /// <remarks>
+  /// The kernel's own accounting is a counter per engine and is differenced here, exactly like CPU
+  /// time. NVIDIA's is a percentage the driver sampled for itself and needs no previous sample at
+  /// all, which is why <paramref name="hasPrevious"/> silences one and not the other. Where a driver
+  /// offers both for the same engine the counter wins: it covers precisely the interval between the
+  /// two samples, where the sampled figure covers whatever window the driver chose.
+  /// </remarks>
+  private void FillGpu(int index, in ProcessRecord process, in ProcessRecord before, bool hasPrevious, double elapsed) {
+    var graphics = Merge(
+      EnginePercent(before.GpuGraphicsNs, process.GpuGraphicsNs, elapsed, hasPrevious),
+      Sampled(process.GpuBusyPercent, process.GpuBusyEngine, GpuEngine.Graphics)
+    );
+    var compute = Merge(
+      EnginePercent(before.GpuComputeNs, process.GpuComputeNs, elapsed, hasPrevious),
+      Sampled(process.GpuBusyPercent, process.GpuBusyEngine, GpuEngine.Compute)
+    );
+    var copy = EnginePercent(before.GpuCopyNs, process.GpuCopyNs, elapsed, hasPrevious);
+    var encode = Merge(
+      EnginePercent(before.GpuEncodeNs, process.GpuEncodeNs, elapsed, hasPrevious),
+      Instant(process.GpuEncodePercent)
+    );
+    var decode = Merge(
+      EnginePercent(before.GpuDecodeNs, process.GpuDecodeNs, elapsed, hasPrevious),
+      Instant(process.GpuDecodePercent)
+    );
+
+    this._gpuGraphicsPercent[index] = graphics;
+    this._gpuComputePercent[index] = compute;
+    this._gpuCopyPercent[index] = copy;
+    this._gpuEncodePercent[index] = encode;
+    this._gpuDecodePercent[index] = decode;
+
+    var best = Rate.Unknown(UnknownReason.NotImplementedHere);
+    var engine = GpuEngine.Unknown;
+    Consider(ref best, ref engine, graphics, GpuEngine.Graphics);
+    Consider(ref best, ref engine, compute, GpuEngine.Compute);
+    Consider(ref best, ref engine, copy, GpuEngine.Copy);
+    Consider(ref best, ref engine, encode, GpuEngine.Encode);
+    Consider(ref best, ref engine, decode, GpuEngine.Decode);
+    this._gpuEnginePercent[index] = best;
+    this._gpuEngine[index] = engine;
+
+    this._gpuDedicatedBytesDelta[index] = hasPrevious
+      ? RateCalculator.SignedPerSecond(before.GpuDedicatedBytes, process.GpuDedicatedBytes, elapsed)
+      : Rate.NotSampledYet;
+  }
+
+  /// <summary>
+  /// Busy nanoseconds against the interval, as a percentage.
+  /// </summary>
+  /// <remarks>
+  /// Clamped at 100 the way the disks' active time is, and for the same reason: an engine cannot be
+  /// busy for longer than the interval, so anything above it is the driver's counter and the
+  /// monotonic clock disagreeing. A part with two of an engine behind one name — i915 reports the
+  /// second through <c>drm-engine-capacity-video</c> — can genuinely reach twice the interval, and
+  /// showing that as 200 % would be read as a bug rather than as a saturated pair.
+  /// </remarks>
+  private static Rate EnginePercent(Counter before, Counter current, double elapsedNanoseconds, bool hasPrevious) {
+    if (!current.HasValue)
+      return Rate.Unknown(current.Reason);
+    if (!hasPrevious)
+      return Rate.NotSampledYet;
+
+    var perSecond = RateCalculator.PerSecond(before, current, elapsedNanoseconds);
+    if (!perSecond.HasValue)
+      return perSecond;
+
+    // Nanoseconds of work per second of wall clock: a billion of them is one engine, all the time.
+    return Rate.Of(Math.Min(100, perSecond.Value / 10_000_000));
+  }
+
+  /// <summary>A percentage the driver sampled, as a rate needing no interval of ours.</summary>
+  private static Rate Instant(Counter percent) => percent.HasValue ? Rate.Of(percent.Value) : Rate.Unknown(percent.Reason);
+
+  /// <summary>
+  /// The sampled figure, but only for the engine the driver attributed it to.
+  /// </summary>
+  /// <remarks>
+  /// NVML publishes one number covering graphics and compute together and says which of its two
+  /// lists the process came from. Showing that number in both columns would claim a compute client
+  /// is also drawing; showing it in neither would throw away the only reading there is.
+  /// </remarks>
+  private static Rate Sampled(Counter percent, GpuEngine attributed, GpuEngine wanted)
+    => attributed == wanted ? Instant(percent) : Rate.Unknown(UnknownReason.NotImplementedHere);
+
+  /// <summary>
+  /// The counter-derived figure where there is one, and the driver's own sample otherwise.
+  /// </summary>
+  /// <remarks>
+  /// The last line is not a detail. Where neither half has a reading the reason is the whole of what
+  /// the reader gets, and "this driver publishes no such counter" is the weaker answer whenever the
+  /// other half is merely waiting for its first sample: without it, every NVIDIA process read as
+  /// "not implemented here" for the one interval before NVML's own sampler had published anything,
+  /// which says the program cannot do something it does perfectly well.
+  /// </remarks>
+  private static Rate Merge(Rate derived, Rate sampled) {
+    if (derived.HasValue)
+      return derived;
+    if (sampled.HasValue)
+      return sampled;
+
+    return derived.Reason == UnknownReason.NotImplementedHere ? sampled : derived;
+  }
+
+  /// <summary>
+  /// Keeps the busiest engine seen so far, and its name.
+  /// </summary>
+  /// <remarks>
+  /// A reason is kept only until a real reading turns up, so a process whose adapter reports four
+  /// engines and refuses the fifth is described by the four rather than by the refusal.
+  /// </remarks>
+  private static void Consider(ref Rate best, ref GpuEngine engine, Rate candidate, GpuEngine name) {
+    if (!candidate.HasValue) {
+      if (!best.HasValue && best.Reason == UnknownReason.NotImplementedHere)
+        best = candidate;
+
+      return;
+    }
+
+    if (best.HasValue && best.Value >= candidate.Value)
+      return;
+
+    best = candidate;
+    // A process using none of the adapter is on no engine. Naming the first one that reported a
+    // nought would put "3D" against every kernel thread on the machine.
+    engine = candidate.Value > 0 ? name : GpuEngine.Unknown;
+  }
+
+  #endregion
 
   private static void EnsureLength<T>(ref T[] array, int length) {
     if (array.Length < length)

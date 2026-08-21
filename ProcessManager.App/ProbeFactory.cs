@@ -30,12 +30,18 @@ internal static class ProbeFactory {
   /// Whether anything on this run asked for the group list. It costs a string per process per
   /// sample, so it is kept only when a column or a filter names it (PRD §5.4).
   /// </param>
+  /// <param name="wantGpuUsage">
+  /// Whether anything on this run asked what the processes are doing to the graphics adapters. It
+  /// costs a scan of every process's descriptors and a library call per card, so it is collected
+  /// only when a column, a filter or <c>--gpu</c> names it — §5.4 enforced rather than stated.
+  /// </param>
   public static ISystemProbe? Create(
     string? probeRoot,
     bool useHelper = true,
     bool wantSecurityContext = false,
     bool wantProportionalSetSize = false,
-    bool wantSupplementaryGroups = false
+    bool wantSupplementaryGroups = false,
+    bool wantGpuUsage = false
   ) {
     if (OperatingSystem.IsLinux()) {
       // A recorded tree is somebody else's machine; asking a helper about pids in it would be asking
@@ -50,6 +56,7 @@ internal static class ProbeFactory {
             ReadSecurityContext = wantSecurityContext,
             UseProportionalSetSize = wantProportionalSetSize,
             ReadSupplementaryGroups = wantSupplementaryGroups,
+            ReadGpuUsage = wantGpuUsage,
           }
           // A recorded tree was captured by somebody else, so the live user's id would refuse every
           // file in it. Root reads everything, which is what a replay wants (PRD §9.1).
@@ -59,6 +66,9 @@ internal static class ProbeFactory {
             EffectiveUserId = 0,
             ReadSecurityContext = wantSecurityContext,
             ReadSupplementaryGroups = wantSupplementaryGroups,
+            // A recorded tree carries no adapters and no descriptors of its own, and the live
+            // machine's cards have nothing to do with the machine that was recorded.
+            ReadGpuUsage = false,
           }
       );
     }

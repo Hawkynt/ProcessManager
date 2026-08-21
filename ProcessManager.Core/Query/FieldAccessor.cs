@@ -71,6 +71,22 @@ public static class FieldAccessor {
       case ProcessField.WriteBytesPerSecond:
         return Humanize.BytesPerSecond(Rated(delta, index, field));
 
+      case ProcessField.GpuPercent:
+      case ProcessField.GpuEnginePercent:
+      case ProcessField.GpuGraphicsPercent:
+      case ProcessField.GpuComputePercent:
+      case ProcessField.GpuCopyPercent:
+      case ProcessField.GpuEncodePercent:
+      case ProcessField.GpuDecodePercent:
+        return Humanize.Percent(Rated(delta, index, field));
+
+      case ProcessField.GpuDedicatedMemory: return Humanize.Bytes(process.GpuDedicatedBytes);
+      case ProcessField.GpuSharedMemory: return Humanize.Bytes(process.GpuSharedBytes);
+      case ProcessField.GpuTotalMemory: return Humanize.Bytes(GpuTotalMemory(in process));
+      case ProcessField.GpuDedicatedMemoryDelta: return Humanize.SignedBytesPerSecond(Rated(delta, index, field));
+      case ProcessField.GpuAdapter: return process.GpuAdapter ?? Humanize.Placeholder(process.GpuAdapterReason);
+      case ProcessField.GpuEngineName: return GpuEngineName(delta, index);
+
       case ProcessField.Elevated: return YesNo(process.IsElevated);
       case ProcessField.Integrity:
         return process.IntegrityLevel.HasValue
@@ -219,6 +235,24 @@ public static class FieldAccessor {
       case ProcessField.Swap: return Number(process.SwapBytes);
       case ProcessField.HandleCount: return Number(process.HandleCount);
 
+      case ProcessField.GpuDedicatedMemory: return Number(process.GpuDedicatedBytes);
+      case ProcessField.GpuSharedMemory: return Number(process.GpuSharedBytes);
+      case ProcessField.GpuTotalMemory: return Number(GpuTotalMemory(in process));
+      // The engine sorts by its own identity, so grouping a table by it is one click. Unknown has no
+      // number at all, which keeps it out of both "== compute" and "!= compute".
+      case ProcessField.GpuEngineName: {
+        var engine = delta?.BusiestGpuEngine(index) ?? GpuEngine.Unknown;
+        return engine == GpuEngine.Unknown ? null : (byte)engine;
+      }
+
+      case ProcessField.GpuPercent:
+      case ProcessField.GpuEnginePercent:
+      case ProcessField.GpuGraphicsPercent:
+      case ProcessField.GpuComputePercent:
+      case ProcessField.GpuCopyPercent:
+      case ProcessField.GpuEncodePercent:
+      case ProcessField.GpuDecodePercent:
+      case ProcessField.GpuDedicatedMemoryDelta:
       case ProcessField.CpuPercent:
       case ProcessField.CpuPercentPerCore:
       case ProcessField.MemoryPercent:
@@ -243,7 +277,18 @@ public static class FieldAccessor {
   /// was abbreviated for a column. Searching for a path should not fail because the column showed
   /// an em dash, and searching "1024" should not match a cell that reads "1.0K".
   /// </remarks>
-  public static string? RawText(ProcessField field, in ProcessRecord process) => field switch {
+  /// <param name="delta">
+  /// Needed by the few fields whose text is derived rather than stored — the busiest GPU engine is
+  /// named by comparing rates, and there is nowhere in a single sample for that name to live. Left
+  /// out by a caller that has no delta, which then reads those fields as having no text, the same
+  /// answer they give before a second sample exists.
+  /// </param>
+  public static string? RawText(
+    ProcessField field,
+    in ProcessRecord process,
+    SnapshotDelta? delta = null,
+    int index = 0
+  ) => field switch {
     ProcessField.Name => process.Name,
     ProcessField.UserName => process.UserName,
     ProcessField.ImagePath => process.ImagePath,
@@ -262,6 +307,10 @@ public static class FieldAccessor {
       ? process.SeccompMode.Value switch { 0 => "off", 1 => "strict", 2 => "filter", _ => null }
       : null,
     ProcessField.SecurityContext => process.SecurityContext,
+    ProcessField.GpuAdapter => process.GpuAdapter,
+    ProcessField.GpuEngineName => delta?.BusiestGpuEngine(index) is { } engine and not GpuEngine.Unknown
+      ? EngineName(engine)
+      : null,
     ProcessField.PrivilegeChanged => Word(PrivilegeChanged(in process)),
     ProcessField.EffectiveUserName => process.EffectiveUserName,
     // Empty is a real answer and null is not one, so the two must not collapse: a filter for a group
@@ -424,6 +473,59 @@ public static class FieldAccessor {
     return slash >= 0 && slash < path.Length - 1 ? path[(slash + 1)..] : path;
   }
 
+  #region graphics (PRD §19)
+
+  /// <summary>
+  /// Dedicated and shared adapter memory together, or the reason there is no total.
+  /// </summary>
+  /// <remarks>
+  /// A card that reports only one of the two still has a total, and it is the half that is known:
+  /// an integrated part has no dedicated memory to report and a discrete one under NVML publishes no
+  /// system-memory figure, so insisting on both would leave the column empty on every machine there
+  /// is. Only when neither is known is there nothing to add, and the reason travels from whichever
+  /// half was asked first.
+  /// </remarks>
+  private static Counter GpuTotalMemory(in ProcessRecord process) {
+    var dedicated = process.GpuDedicatedBytes;
+    var shared = process.GpuSharedBytes;
+    if (!dedicated.HasValue && !shared.HasValue)
+      return dedicated;
+
+    return Counter.Of(dedicated.GetValueOrDefault() + shared.GetValueOrDefault());
+  }
+
+  /// <summary>
+  /// The busiest engine's name, or why there is none.
+  /// </summary>
+  /// <remarks>
+  /// An engine of <see cref="GpuEngine.Unknown"/> beside a real percentage means the process is
+  /// using none of the adapter, and an empty cell says that better than a word would. Beside a
+  /// percentage that is itself unknown it means nobody could tell, and the cell carries that reason
+  /// rather than pretending the process is idle (PRD §72.3).
+  /// </remarks>
+  private static string GpuEngineName(SnapshotDelta? delta, int index) {
+    if (delta is null)
+      return Humanize.Placeholder(UnknownReason.NotSampledYet);
+
+    var busiest = delta.GpuEnginePercent(index);
+    if (!busiest.HasValue)
+      return Humanize.Placeholder(busiest.Reason);
+
+    var engine = delta.BusiestGpuEngine(index);
+    return engine == GpuEngine.Unknown ? string.Empty : EngineName(engine);
+  }
+
+  private static string EngineName(GpuEngine engine) => engine switch {
+    GpuEngine.Graphics => "3D",
+    GpuEngine.Compute => "compute",
+    GpuEngine.Copy => "copy",
+    GpuEngine.Encode => "encode",
+    GpuEngine.Decode => "decode",
+    _ => string.Empty,
+  };
+
+  #endregion
+
   private static Rate Rated(SnapshotDelta? delta, int index, ProcessField field) {
     if (delta is null)
       return Rate.NotSampledYet;
@@ -439,6 +541,14 @@ public static class FieldAccessor {
       ProcessField.IoTotalRate => delta.IoTotalBytesPerSecond(index),
       ProcessField.ReadBytesPerSecond => delta.ReadBytesPerSecond(index),
       ProcessField.WriteBytesPerSecond => delta.WriteBytesPerSecond(index),
+      ProcessField.GpuPercent => delta.GpuPercent(index),
+      ProcessField.GpuEnginePercent => delta.GpuEnginePercent(index),
+      ProcessField.GpuGraphicsPercent => delta.GpuGraphicsPercent(index),
+      ProcessField.GpuComputePercent => delta.GpuComputePercent(index),
+      ProcessField.GpuCopyPercent => delta.GpuCopyPercent(index),
+      ProcessField.GpuEncodePercent => delta.GpuEncodePercent(index),
+      ProcessField.GpuDecodePercent => delta.GpuDecodePercent(index),
+      ProcessField.GpuDedicatedMemoryDelta => delta.GpuDedicatedBytesDelta(index),
       _ => Rate.NotSampledYet,
     };
   }
