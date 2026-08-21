@@ -64,7 +64,7 @@ internal static class LimitsReport {
 
     // A limit and what is being used against it, on one line each: either alone answers half the
     // question somebody asked.
-    Console.WriteLine($"  processor            {Cores(cgroup.CpuQuotaCores)}");
+    Console.WriteLine($"  processor            {Cores(cgroup.CpuQuotaCores, cgroup.Has("cpu"))}");
     Console.WriteLine($"  throttled            {Humanize.Count(cgroup.ThrottledCount)}");
     Console.WriteLine($"  memory               {Humanize.Bytes(cgroup.MemoryCurrentBytes)} of {Limit(cgroup.MemoryMaxBytes)}");
     Console.WriteLine($"  memory, soft cap     {Limit(cgroup.MemoryHighBytes)}");
@@ -200,13 +200,36 @@ internal static class LimitsReport {
   /// No quota is "unlimited" rather than a very large number: unlimited is not a quantity, and this
   /// is the difference between a process that is being held back and one that simply is not busy.
   /// </remarks>
-  private static string Cores(double? quota)
-    => quota is { } cores
-      ? string.Format(CultureInfo.InvariantCulture, "{0:0.##} core{1}", cores, cores == 1 ? string.Empty : "s")
-      : "unlimited";
+  /// <summary>
+  /// A quota as a number of cores, or which kind of "no quota" this is.
+  /// </summary>
+  /// <remarks>
+  /// Absent and unlimited read the same out of the file — there is simply no <c>cpu.max</c> either
+  /// way — so the controller list is what tells them apart. A group with the processor controller
+  /// switched off is governed by an ancestor's quota, and calling that "unlimited" sends somebody
+  /// looking in the wrong place when their process is plainly being held back.
+  /// </remarks>
+  private static string Cores(double? quota, bool controllerEnabled) {
+    if (quota is { } cores)
+      return string.Format(CultureInfo.InvariantCulture, "{0:0.##} core{1}", cores, cores == 1 ? string.Empty : "s");
 
-  private static string Limit(Counter counter)
-    => counter.HasValue ? Humanize.Bytes(counter) : "unlimited";
+    return controllerEnabled ? "unlimited" : "no such controller here — an ancestor's limit applies";
+  }
+
+  /// <summary>
+  /// A ceiling, or which kind of "no ceiling" this is.
+  /// </summary>
+  /// <remarks>
+  /// The two were one word until recently and they are not the same thing. A group whose controller
+  /// is switched off is governed by whatever an ancestor sets, and somebody reading "unlimited"
+  /// against it would go looking for the wrong thing when the process hit a wall.
+  /// </remarks>
+  private static string Limit(Counter counter) => counter.Reason switch {
+    UnknownReason.None => Humanize.Bytes(counter),
+    UnknownReason.NoLimit => "unlimited",
+    UnknownReason.NotSupportedOnPlatform => "no such controller here — an ancestor's limit applies",
+    _ => Humanize.Placeholder(counter.Reason),
+  };
 
   private static string Pressure(PressureReading reading)
     => reading.Some.HasValue

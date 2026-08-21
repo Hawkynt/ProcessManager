@@ -129,11 +129,15 @@ internal static class CgroupReader {
   /// printing it would put an absurd figure in front of somebody looking for a real one.
   /// </remarks>
   private static Counter Bytes(string? text) {
+    // No file at all: this cgroup has no such controller, so the question does not apply here and
+    // whatever an ancestor sets is what governs.
     if (text is not { Length: > 0 })
       return Counter.NotSupported;
 
+    // The file exists and says there is no ceiling. That is an answer, and a different one — telling
+    // a reader the machine could not say would be wrong twice over.
     if (text is "max")
-      return Counter.NotSupported;
+      return Counter.Unknown(UnknownReason.NoLimit);
 
     return ulong.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value)
       ? Counter.Of(value)
