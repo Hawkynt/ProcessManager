@@ -2877,6 +2877,7 @@ public sealed class MainWindow : Form {
     // the cell, which needs somebody to have chosen a column first, gets the deliberate one.
     menu.DropDownItems.Add(Shortcut("Copy row, or every ticked row", Keys.Control | Keys.C, this.CopyRows));
     menu.DropDownItems.Add(Shortcut("Copy cell", Keys.Control | Keys.Shift | Keys.C, this.CopyCell));
+    menu.DropDownItems.Add(Shortcut("Copy this column", Keys.Control | Keys.Shift | Keys.D, this.CopyColumn));
     menu.DropDownItems.Add(new ToolStripSeparator());
     menu.DropDownItems.Add(Shortcut("Tick every row", Keys.Control | Keys.A, () => this.TickAll(invert: false)));
     menu.DropDownItems.Add(Item("Invert the ticks", () => this.TickAll(invert: true)));
@@ -2928,6 +2929,69 @@ public sealed class MainWindow : Form {
     }
 
     this.PutOnClipboard(this.RowsAsText(key => key == row.Key), "one row");
+  }
+
+  /// <summary>
+  /// One column, down every row that is showing — or down the ticked ones (PRD §11).
+  /// </summary>
+  /// <remarks>
+  /// The third shape of copy §11 asks a table for, and the one that was refused for want of a cell
+  /// selection to take it from. There is no cell selection here or in the terminal, and there does
+  /// not need to be: a column copy needs a column, and both front-ends have had a column cursor
+  /// since the header grew its gestures. The rule about which rows is the one the row copy already
+  /// follows — the ticked ones if any are ticked, everything on screen otherwise, because a person
+  /// who has ticked nothing and asked for a column means the column.
+  /// </remarks>
+  private void CopyColumn() {
+    if (this.ColumnAsText() is not { } text) {
+      this._status.Text = $"{ColumnSet.Info(this._columns.CurrentField).Header} is a drawn history and has nothing to copy";
+      return;
+    }
+
+    var ticked = this.TickedKeys().Count;
+    this.PutOnClipboard(
+      text,
+      $"{ColumnSet.Info(this._columns.CurrentField).Header} of {text.Split('\n').Length - 2} row(s)"
+        + (ticked > 0 ? ", the ticked ones" : string.Empty)
+    );
+  }
+
+  /// <summary>
+  /// The current column as a header line and one raw value per row, or null when it has no text.
+  /// </summary>
+  /// <remarks>
+  /// Split from the copy so that what goes on the clipboard can be read without one: this window's
+  /// copies have never been testable, because the toolkit's clipboard needs a backend and a test
+  /// has no display. Null rather than an empty string for a drawn history — copying a column of
+  /// nothing looks exactly like a copy that silently failed.
+  /// </remarks>
+  public string? ColumnAsText() {
+    if (this._columns.Count == 0)
+      return null;
+
+    var field = this._columns.CurrentField;
+    if (ColumnSet.Info(field).IsGraph)
+      return null;
+
+    var ticked = this.TickedKeys();
+    var builder = new System.Text.StringBuilder(256);
+    builder.Append(ColumnSet.Info(field).Header).Append('\n');
+
+    var processes = this._sampler.Current.Processes;
+    foreach (var row in this._view.Rows) {
+      // A heading is not a process and has no cell in any column, so it contributes no line
+      // (PRD §83).
+      if (row.IsGroupHeader)
+        continue;
+
+      ref readonly var process = ref processes[row.Index];
+      if (ticked.Count > 0 && !ticked.Contains(process.Key))
+        continue;
+
+      builder.Append(FieldAccessor.RawText(field, in process, this._sampler.Delta, row.Index) ?? string.Empty).Append('\n');
+    }
+
+    return builder.ToString();
   }
 
   /// <summary>A header line and one tab-separated line per row, over the columns that are showing.</summary>

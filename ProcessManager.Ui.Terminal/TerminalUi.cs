@@ -445,6 +445,7 @@ public sealed class TerminalUi {
         return true;
       case TerminalAction.CopyCell: this.CopyCell(); return true;
       case TerminalAction.CopyRow: this.CopyRows(); return true;
+      case TerminalAction.CopyColumn: this.CopyColumn(); return true;
       case TerminalAction.Export: this.BeginInput(InputMode.ExportPath); return true;
 
       case TerminalAction.ActionMenu: this.OpenActionMenu(); return true;
@@ -1310,6 +1311,48 @@ public sealed class TerminalUi {
     }
 
     this.Copy(builder.ToString(), copied == 1 ? "one row" : $"{copied} rows");
+  }
+
+  /// <summary>
+  /// One column, down every row that is showing — or down the ticked ones (PRD §11).
+  /// </summary>
+  /// <remarks>
+  /// The third shape of copy §11 asks a table for, and the one that was refused for want of a cell
+  /// selection to take it from. There is none here and none is needed: a column copy needs a column,
+  /// and this table has had a column cursor since it grew a mouse. Which rows follows the rule the
+  /// row copy already uses — the ticked ones if any are, everything on screen otherwise.
+  /// </remarks>
+  private void CopyColumn() {
+    var field = this._columns.CurrentField;
+    if (FieldRegistry.Get(field).IsGraph) {
+      // A drawn history has no text. An empty column of nothing looks exactly like a copy that
+      // silently failed.
+      this.Say($"{FieldRegistry.Get(field).Header} is a drawn history and has nothing to copy", Attributes.Dim);
+      return;
+    }
+
+    var builder = new StringBuilder(256);
+    builder.Append(FieldRegistry.Get(field).Header).Append('\n');
+
+    var copied = 0;
+    var processes = this._sampler.Current.Processes;
+    foreach (var row in this._view.Rows) {
+      // A heading is not a process and has no cell in any column but the first (PRD §83).
+      if (row.IsGroupHeader)
+        continue;
+
+      ref readonly var process = ref processes[row.Index];
+      if (this._marked.Count > 0 && !this._marked.Contains(process.Key))
+        continue;
+
+      builder.Append(FieldAccessor.RawText(field, in process, this._sampler.Delta, row.Index) ?? string.Empty).Append('\n');
+      ++copied;
+    }
+
+    this.Copy(
+      builder.ToString(),
+      $"{FieldRegistry.Get(field).Header} of {copied} row(s)" + (this._marked.Count > 0 ? ", the ticked ones" : string.Empty)
+    );
   }
 
   private void Copy(string text, string what) {

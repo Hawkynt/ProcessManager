@@ -118,6 +118,36 @@ public sealed class MainWindowTableTests {
     Assert.That(window.DescribeSettings().PinnedDesktopColumns, Is.EqualTo(2));
   }
 
+  /// <summary>
+  /// The third shape of copy §11 asks a table for. It needs a column and not a cell selection: the
+  /// column cursor is what "this column" means, in this window and in the terminal alike.
+  /// </summary>
+  /// <remarks>
+  /// Over the recorded machine rather than the stub, because a column copy of nothing would pass
+  /// against an empty table however it was built.
+  /// </remarks>
+  [Test]
+  public void CopyingAColumnTakesItDownEveryRowThatIsShowing() {
+    using var probe = TerminalFixture.Probe();
+    var window = new MainWindow(new Sampler(probe), probe, null);
+    window.ApplySettings(new() { DesktopColumns = [ProcessField.Name, ProcessField.Pid] }, _ => true);
+    window.Start();
+
+    var lines = (window.ColumnAsText() ?? string.Empty).TrimEnd('\n').Split('\n');
+    Assert.That(lines[0], Is.EqualTo(FieldRegistry.Get(ProcessField.Name).Header), "the column is named");
+    Assert.That(lines, Has.Length.EqualTo(6), "the recorded machine's five processes, under a header");
+    Assert.That(lines[1], Is.Not.Empty);
+  }
+
+  /// <summary>A drawn history has no text, and an empty copy looks exactly like one that failed.</summary>
+  [Test]
+  public void ADrawnHistoryIsNotAColumnACopyCanTake() {
+    var window = Window();
+    window.ApplySettings(new() { DesktopColumns = [ProcessField.CpuHistory, ProcessField.Pid] }, _ => true);
+
+    Assert.That(window.ColumnAsText(), Is.Null);
+  }
+
   #region the sample tick (PRD §12)
 
   [Test]

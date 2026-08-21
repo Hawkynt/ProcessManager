@@ -239,6 +239,22 @@ public sealed record UserSettings {
         ProcessField.CpuTime, ProcessField.ContextSwitchesDelta, ProcessField.LastCpu,
         ProcessField.ThreadCount, ProcessField.CpuHistory,
       ],
+      // Everything the expert set has, plus the two halves it is missing: who a process really is
+      // and what it is doing to the disk (PRD §11, §94). Deliberately the dearest set in the file —
+      // the package, the digest and the descriptor count each cost a reading the sampler does not
+      // otherwise take, and asking for a forensic table is asking to pay for them (PRD §5.4). It is
+      // also the widest, which is what the pinned columns and the sideways scroll are for.
+      ["forensic"] = [
+        ProcessField.Name, ProcessField.Pid, ProcessField.ParentPid, ProcessField.UserName,
+        ProcessField.EffectiveUserName, ProcessField.PrivilegeChanged, ProcessField.Elevated,
+        ProcessField.Capabilities, ProcessField.SecurityContext, ProcessField.Seccomp,
+        ProcessField.NoNewPrivileges, ProcessField.TracerPid,
+        ProcessField.CpuPercent, ProcessField.PrivateBytes, ProcessField.WorkingSetBytes,
+        ProcessField.ReadBytesPerSecond, ProcessField.WriteBytesPerSecond, ProcessField.IoTotalRate,
+        ProcessField.ThreadCount, ProcessField.HandleCount, ProcessField.StartTime,
+        ProcessField.Package, ProcessField.ImageSha256, ProcessField.ImagePath,
+        ProcessField.CommandLine,
+      ],
       ["minimal"] = [
         ProcessField.Name, ProcessField.Pid, ProcessField.UserName, ProcessField.State,
         ProcessField.CpuPercent, ProcessField.PrivateBytes,

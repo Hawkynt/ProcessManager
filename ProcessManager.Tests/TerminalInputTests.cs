@@ -173,6 +173,56 @@ public sealed class ColumnLayoutTests {
       Assert.That(placements[i].Width, Is.GreaterThanOrEqualTo(Math.Min(6, columns.WidthAt(placements[i].Index))));
   }
 
+  /// <summary>
+  /// A set with more columns than the terminal can hold at their floor must not make the columns it
+  /// <em>can</em> draw pay for the ones it cannot. Reserving room for all twenty-five of the
+  /// forensic set's columns starved the process name to six characters at a hundred and sixty wide,
+  /// which renders every row as <c>kthrea</c> (PRD §57.2).
+  /// </summary>
+  [Test]
+  public void ColumnsThatCannotFitOnTheScreenAreNotReservedFor() {
+    var columns = new ColumnLayout([.. Settings.UserSettings.Presets["forensic"]]);
+    Span<ColumnPlacement> placements = stackalloc ColumnPlacement[64];
+    // The width the table is really laid out in on a hundred-and-sixty-column terminal: one
+    // character of it is the gutter the ticks are drawn in.
+    var count = columns.Place(159, placements);
+
+    Assert.That(count, Is.LessThan(columns.Count), "a set this wide does not fit, which is the case under test");
+    Assert.That(placements[0].Field, Is.EqualTo(ProcessField.Name));
+    Assert.That(placements[0].Width, Is.GreaterThanOrEqualTo(12), "the name is still a name rather than kthrea");
+    Assert.That(
+      placements[count - 1].X + placements[count - 1].Width,
+      Is.LessThanOrEqualTo(159),
+      "and nothing hangs off the edge"
+    );
+  }
+
+  /// <summary>
+  /// The columns that are drawn keep their floor at every width, and the table never runs off the
+  /// right-hand edge — the two things the reservation exists to guarantee.
+  /// </summary>
+  [Test]
+  public void AWideSetStaysInsideTheScreenAtEveryWidth() {
+    var columns = new ColumnLayout([.. Settings.UserSettings.Presets["forensic"]]);
+    for (var width = 40; width <= 400; ++width) {
+      Span<ColumnPlacement> placements = stackalloc ColumnPlacement[64];
+      var count = columns.Place(width, placements);
+      Assert.That(count, Is.GreaterThan(0), $"nothing was placed at {width}");
+      Assert.That(
+        placements[count - 1].X + placements[count - 1].Width,
+        Is.LessThanOrEqualTo(width),
+        $"the table hangs off the edge at {width}"
+      );
+
+      for (var i = 0; i < count; ++i)
+        Assert.That(
+          placements[i].Width,
+          Is.GreaterThanOrEqualTo(Math.Min(6, columns.WidthAt(placements[i].Index))),
+          $"a column vanished at {width}"
+        );
+    }
+  }
+
   [Test]
   public void AHiddenColumnIsNeitherDrawnNorSorted() {
     var columns = Layout();
