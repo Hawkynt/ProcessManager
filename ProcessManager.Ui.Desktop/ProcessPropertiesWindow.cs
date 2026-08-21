@@ -785,6 +785,11 @@ public sealed class ProcessPropertiesWindow : Form {
       extras.Add(new("Architecture", image.Architecture ?? (image.HeaderRead ? "unknown" : "—")));
       extras.Add(new("Interpreter", image.Interpreter ?? (image.HeaderRead ? "statically linked" : "—")));
       extras.Add(new("Working directory", image.WorkingDirectory ?? "—"));
+      // From the module list rather than from what the program calls itself, which is the whole
+      // reason it is worth a row: a .NET application and a shell script that launches one have the
+      // same name and are not the same thing (PRD §14, §80).
+      if (image.Runtime != ProcessRuntime.Unknown)
+        extras.Add(new("Running", image.Runtime.Text()));
     }
 
     if (this._imageFacts is { } facts) {
@@ -792,6 +797,12 @@ public sealed class ProcessPropertiesWindow : Form {
       extras.Add(new("Image modified", FileFactsFormatting.Modified(in facts)));
       extras.Add(new("Image permissions", facts.Permissions ?? "n/a"));
     }
+
+    // Only where the file system carries a birth time, which most do not. A row saying so on most
+    // machines would be a row of dashes; the fact that there is no row is the answer, and unlike a
+    // signature it is not one anybody would read as reassurance (PRD §14).
+    if (this._image?.CreatedUtc is { } created)
+      extras.Add(new("Image created", created.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture) + "Z"));
 
     // Said rather than left blank. A properties window with no signature row reads as one that
     // checked and found nothing wrong, which is the one thing this must never imply (PRD §70).

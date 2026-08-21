@@ -1555,12 +1555,39 @@ nothing records yet.
 
 # 27. General process properties
 
-- [ ] Icon, name, PID, PPID, start time, running duration, state, session, user, architecture,
-      executable path, command line, current directory, parent process, application identity,
-      package/bundle, version, company, description, signer, signature status, file hashes, file
-      size, creation/modification timestamps, runtime, service associations, container/cgroup/job
-      associations
-- [ ] Buttons: Copy · Reveal executable · File properties · Verify · Inspect binary
+- [ ] 🟡 name ✔ · PID ✔ · PPID ✔ · parent process ✔ · start time ✔ · running duration ✔ · state ✔ ·
+      session ✔ · user ✔ · effective user ✔ · architecture ✔ · executable path ✔ · command line ✔ ·
+      current directory ✔ · file size ✔ · modification timestamp ✔ · creation timestamp ✔ · file
+      permissions ✔ · runtime ✔ · container/cgroup association ✔ (and a page of its own — §38) —
+      against **icon**, **application identity**, **package/bundle**, **version**, **company**,
+      **description**, **signer**, **signature status**, **file hashes** and **service associations**
+- [ ] 🟡 Buttons: Copy ✔ · Reveal executable ✔ · File properties ✔ — against **Verify** and
+      **Inspect binary**
+
+**Everything unticked here is unticked for one of three reasons, and none of them is this page.**
+Version, company, description, signer and signature status are §21's, which verifies nothing yet —
+and the page says outright that no signature was checked rather than leaving a blank, because a
+properties window with no signature row reads as one that checked and was happy (§70). File hashes
+and package identity are both readable and both cost the size of the file or a scan of every
+installed package's file list, so they are opt-in elsewhere and would be a page that hung on opening
+if they were here (§5.4, §14, §21). **Verify** and **Inspect binary** are buttons onto §21 and §53,
+neither of which exists.
+
+**The runtime and the creation timestamp were being read and thrown away**, which is the cheapest
+kind of gap there is: `DescribeImage` already makes the one `statx` for the birth time and already
+walks the module list for what is executing inside the process, and neither reached the page. Both
+are rows now. The runtime is worth its own line because it comes from the modules rather than from
+the name — a .NET application and a shell script that launches one are called the same thing and are
+not the same thing (§14, §80).
+
+**Service associations are the one left that could be answered and is not.** The units exist in the
+CLI (§41); joining a process to the one that owns it is a row on this page and a view that does not
+exist yet.
+
+**Icon** is not a Linux fact about a process. It is a desktop-entry lookup by executable path against
+`/usr/share/applications`, which answers for the third of processes that have a launcher and for
+nothing else — a page that showed a picture for some rows and a blank for most would be describing
+which programs ship a `.desktop` file rather than describing the process.
 
 # 28. Performance process properties
 
