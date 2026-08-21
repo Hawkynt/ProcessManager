@@ -134,6 +134,11 @@ public static class FieldAccessor {
       case ProcessField.SecurityContext:
         return process.SecurityContext ?? Humanize.Placeholder(process.SecurityContextReason);
 
+      case ProcessField.ImageSha256:
+        return process.ImageSha256 ?? Humanize.Placeholder(process.ImageHashReason);
+      case ProcessField.ImageSha1:
+        return process.ImageSha1 ?? Humanize.Placeholder(process.ImageHashReason);
+
       case ProcessField.PrivilegeChanged: return YesNo(PrivilegeChanged(in process));
       case ProcessField.EffectiveUserName:
         return process.EffectiveUserName ?? Humanize.Placeholder(UnknownReason.NotPermitted);
@@ -334,6 +339,9 @@ public static class FieldAccessor {
       ? process.SeccompMode.Value switch { 0 => "off", 1 => "strict", 2 => "filter", _ => null }
       : null,
     ProcessField.SecurityContext => process.SecurityContext,
+    // The hex as it is, so a filter can be handed a digest from somewhere else and match on it.
+    ProcessField.ImageSha256 => process.ImageSha256,
+    ProcessField.ImageSha1 => process.ImageSha1,
     // The kernel's own spelling, which is what "sched.class:SCHED_FIFO" is written as and what chrt
     // prints. Unknown has no text, so it matches neither that nor its negation.
     ProcessField.SchedulingClass => process.SchedulingPolicy == SchedulingPolicy.Unknown
@@ -400,6 +408,12 @@ public static class FieldAccessor {
         return string.Compare(a.ImagePath, b.ImagePath, StringComparison.OrdinalIgnoreCase);
       case ProcessField.Container:
         return string.Compare(a.ContainerPath, b.ContainerPath, StringComparison.OrdinalIgnoreCase);
+      // Ordinal, which groups identical images together — the only ordering a digest has, and the
+      // one that makes "which of these are the same binary" one click.
+      case ProcessField.ImageSha256:
+        return string.Compare(a.ImageSha256, b.ImageSha256, StringComparison.Ordinal);
+      case ProcessField.ImageSha1:
+        return string.Compare(a.ImageSha1, b.ImageSha1, StringComparison.Ordinal);
     }
 
     var left = Number(field, in a, delta, indexA);

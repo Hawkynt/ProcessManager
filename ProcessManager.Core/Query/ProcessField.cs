@@ -104,6 +104,8 @@ public enum ProcessField : byte {
   SavedGroupId,
   FilesystemGroupId,
   SupplementaryGroups,
+  ImageSha256,
+  ImageSha1,
 
   ThreadCount,
   HandleCount,

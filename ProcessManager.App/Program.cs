@@ -55,7 +55,8 @@ internal static class Program {
       options.WantsHandleCount,
       options.WantsCpuAffinity,
       options.WantsCpuThrottling,
-      options.WantsDescriptorKinds
+      options.WantsDescriptorKinds,
+      options.WantsImageHashes
     );
     if (probe is null) {
       Console.Error.WriteLine($"procman: there is no probe for this platform yet ({Environment.OSVersion.Platform}).");

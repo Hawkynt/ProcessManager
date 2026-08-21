@@ -138,6 +138,17 @@ public sealed record LinuxProbeOptions {
   public bool CountDescriptorKinds { get; init; }
 
   /// <summary>
+  /// Hash the image each process is running — SHA-256 and SHA-1 (PRD §21, §70).
+  /// </summary>
+  /// <remarks>
+  /// Off, and the one read here whose cost is the size of a file rather than a syscall. Hashed once
+  /// per image rather than once per process — three hundred processes of one runtime share one
+  /// binary — and again only when that file is replaced underneath them, which is what makes it
+  /// affordable for somebody who does ask for the column (PRD §5.4).
+  /// </remarks>
+  public bool ReadImageHashes { get; init; }
+
+  /// <summary>
   /// Account for what each process is doing to the graphics adapters (PRD §19).
   /// </summary>
   /// <remarks>

@@ -305,6 +305,18 @@ public static class FieldRegistry {
       "Every other group the process belongs to, as the kernel numbers them. Empty is a real answer — a kernel thread is in none.",
       FieldKind.Text, FieldUnit.None, _LINUX, FieldCost.High, 200, 24, false, false),
 
+    // PRD §21, §70. What the bytes are, and nothing about whether anybody trusts them: a hash is
+    // not a verdict, and this program never lets one stand in for a signature. Read on demand only —
+    // the cost of hashing is the size of the file (PRD §5.4).
+    new(ProcessField.ImageSha256, "hash.sha256", "SHA-256", "SHA-256",
+      "The SHA-256 of the running image, computed on request. It says what the bytes are and nothing about whether they are signed, trusted or known — those are separate questions and this is not an answer to any of them.",
+      FieldKind.Text, FieldUnit.None, _LINUX, FieldCost.High, 460, 64, false, false,
+      Aliases: "sha256 hash"),
+    new(ProcessField.ImageSha1, "hash.sha1", "SHA-1", "SHA-1",
+      "The SHA-1 of the running image. Collidable since 2017 and kept only because so many package manifests and threat feeds are still keyed by it; on its own it is evidence of nothing.",
+      FieldKind.Text, FieldUnit.None, _LINUX, FieldCost.High, 300, 40, false, false,
+      Aliases: "sha1"),
+
     new(ProcessField.ThreadCount, "threads", "Threads", "Thr",
       "How many threads the process currently has.",
       FieldKind.Instant, FieldUnit.Count, _ALL, FieldCost.Free, 64, 4, true, true),

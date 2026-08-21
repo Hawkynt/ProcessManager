@@ -35,6 +35,9 @@ public sealed class LinuxProbe : ISystemProbe {
   private readonly List<int> _pids = [];
   // Reused for the descriptor numbers of one process at a time, when the per-kind tally is on.
   private readonly List<int> _fdNumbers = [];
+  // One digest per image rather than per process, keyed by what the file was when it was read: the
+  // path alone would answer with the old bytes after an upgrade replaced the binary.
+  private readonly Dictionary<(string Path, long Size, long Modified), Query.FileDigest> _imageDigests = [];
   // One cgroup's throttling counter, for the length of one sample. Several hundred processes share
   // a few dozen groups, so this is the difference between a file per process and a file per group.
   private readonly Dictionary<string, Counter> _throttling = [];
@@ -740,6 +743,8 @@ public sealed class LinuxProbe : ISystemProbe {
     record.ContainerPath = cache.ContainerPath;
     // After the cgroup path is known, because that is what says which group's counter to read.
     this.ReadCpuThrottling(ref record);
+    // And after the image path, for the same reason.
+    this.ReadImageHashes(ref record);
     record.UserName = this._users.Resolve(record.UserId);
     // Almost always the same string, and taking it from the same cache costs a dictionary lookup
     // rather than an allocation. The handful of processes where the two differ are exactly the ones
@@ -1257,6 +1262,66 @@ public sealed class LinuxProbe : ISystemProbe {
       text[i] = (char)content[i];
 
     return CgroupCpuStatParser.Throttled(text);
+  }
+
+  /// <summary>
+  /// The digests of the image a process is running (PRD §21, §70).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Once per image, not once per process: a machine running three hundred processes of one runtime
+  /// has one binary between them, and hashing it three hundred times would read the same gigabyte
+  /// three hundred times. The key carries the size and the modification time as well as the path, so
+  /// an image replaced underneath a running process is hashed again rather than answered from a
+  /// cache describing bytes that are no longer there — which is exactly the case somebody looking at
+  /// this column is looking for (§23's "process with a changed executable").
+  /// </para>
+  /// <para>
+  /// A hash is not a verdict. It says what the bytes are and nothing about whether they are signed,
+  /// trusted or known (PRD §70).
+  /// </para>
+  /// </remarks>
+  private void ReadImageHashes(ref ProcessRecord record) {
+    if (!this._options.ReadImageHashes) {
+      record.ImageHashReason = UnknownReason.NotSampledYet;
+      return;
+    }
+
+    if (record.ImagePath is not { Length: > 0 } path) {
+      // Two different answers behind one null. A kernel thread runs no file at all, which is a fact
+      // about it rather than a failure — and somebody else's process has an image whose link this
+      // user may not follow, which is a failure and one the elevated helper could fix. Sending a
+      // reader after a privilege they already have is the mistake §72.3 exists to stop.
+      record.ImageHashReason = this.MayRead(record)
+        ? UnknownReason.NotSupportedOnPlatform
+        : UnknownReason.NotPermitted;
+
+      return;
+    }
+
+    long size = -1, modified = -1;
+    try {
+      var info = new FileInfo(path);
+      if (info.Exists) {
+        size = info.Length;
+        modified = info.LastWriteTimeUtc.Ticks;
+      }
+    } catch (IOException) {
+      // Left at -1, which is a key of its own: a file that cannot be stat'ed is hashed each time
+      // rather than remembered under a stamp nobody could read.
+    } catch (UnauthorizedAccessException) {
+      // As above.
+    }
+
+    var key = (path, size, modified);
+    if (!this._imageDigests.TryGetValue(key, out var digest)) {
+      digest = Query.FileDigest.Of(path);
+      this._imageDigests[key] = digest;
+    }
+
+    record.ImageSha256 = digest.Sha256;
+    record.ImageSha1 = digest.Sha1;
+    record.ImageHashReason = digest.Why;
   }
 
   private void ReadFileDescriptorCount(ProcessCache cache, ref ProcessRecord record) {

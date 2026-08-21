@@ -525,6 +525,25 @@ public struct ProcessRecord {
   public Counter AmbientCapabilities;
 
   /// <summary>
+  /// The digests of the image the process is running, or <see langword="null"/> (PRD §21, §70).
+  /// </summary>
+  /// <remarks>
+  /// What the bytes are, and nothing else: a hash is not a verdict, and neither of these says
+  /// anything about whether the image is signed, trusted or known. Computed only when asked for and
+  /// once per image rather than once per process — the cost of hashing is the size of the file, and
+  /// three hundred processes of one runtime share one image between them (PRD §5.4).
+  /// </remarks>
+  public string? ImageSha256;
+  public string? ImageSha1;
+
+  /// <summary>
+  /// Why the two digests are <see langword="null"/>: not asked for, no image to hash — a kernel
+  /// thread has none — the file replaced since the process started, or a file this user may not
+  /// read.
+  /// </summary>
+  public UnknownReason ImageHashReason;
+
+  /// <summary>
   /// The LSM label — an SELinux context or an AppArmor profile — or <see langword="null"/>.
   /// </summary>
   /// <remarks>

@@ -889,25 +889,41 @@ a column nobody opened (§5.4).
 - [x] `elevated` — the effective uid on Linux, `TokenElevation` on Windows
 - [x] `integrity` — the last sub-authority of the token's mandatory label: untrusted, low, medium,
       medium+, high or system, and the raw number for anything Microsoft adds later
-- [ ] `protected` — protected-process status
-- [ ] `protection.level`
-- [ ] `signature.status` — see §70's vocabulary
-- [ ] `signer` — verified publisher
-- [ ] `cert.subject`
-- [ ] `cert.issuer`
-- [ ] `signature.timestamp`
-- [ ] `hash.sha256` — on demand only
-- [ ] `hash.sha1`
-- [ ] `reputation` — opt-in, see §70
-- [ ] `dep`
-- [ ] `aslr`
-- [ ] `cfg`
-- [ ] `cet`
-- [ ] `acg`
-- [ ] `cig`
-- [ ] `sandbox`
-- [ ] `appcontainer`
-- [ ] `capabilities`
+- [ ] `protected` — protected-process status. **Windows only**
+- [ ] `protection.level` — **Windows only**
+- [ ] `signature.status` — see §70's vocabulary. **Windows and macOS**: Linux binaries carry no
+      embedded signature to verify. What signs a Linux program is its package, which is a different
+      question with a different answer and belongs to §42's provenance rather than to this column
+- [ ] `signer` — verified publisher. **Windows and macOS**
+- [ ] `cert.subject` — **Windows and macOS**
+- [ ] `cert.issuer` — **Windows and macOS**
+- [ ] `signature.timestamp` — **Windows and macOS**
+- [x] `hash.sha256` — on demand only, and on every platform that has a file to hash: the digest of
+      the running image, which is neither a signature nor a verdict (§70). Hashed once per image
+      rather than once per process — three hundred processes of one runtime share one binary — and
+      again when that file is replaced underneath them, which is the case somebody watching this
+      column is watching for. Linux fills it; the Windows probe does not call it yet and says so.
+      Verified against `sha256sum`
+- [x] `hash.sha1` — the same bytes under the older digest, from the same single read of them. Kept
+      because so many package manifests and threat feeds are still keyed by it, and collidable since
+      2017: on its own it is evidence of nothing. Verified against `sha1sum`
+- [ ] `reputation` — opt-in, see §70. **Not implemented on any platform**; it is a network service
+      rather than an OS reading
+- [ ] `dep` — **Windows only.** Linux has NX on every mapping and no per-process policy to report
+- [ ] `aslr` — **Windows only** as a per-process mitigation policy. Linux's is the machine-wide
+      `kernel.randomize_va_space` plus whether the image is a PIE, which is §53's business
+- [ ] `cfg` — **Windows only**
+- [ ] `cet` — **Windows only** as a policy field. The CPU's own shadow-stack support is a machine
+      capability and is already in §46
+- [ ] `acg` — **Windows only**
+- [ ] `cig` — **Windows only**
+- [ ] `sandbox` — **Windows (AppContainer) and macOS (Seatbelt).** Linux has no single sandbox flag:
+      what confines a process here is the seccomp mode, the LSM label and the namespace set, and all
+      three are already their own fields. One "sandboxed: yes" over them would answer less than any
+      of them does (§5.3)
+- [ ] `appcontainer` — **Windows only**
+- [ ] `capabilities` — the AppContainer capability list. **Windows only**; Linux capabilities are
+      `caps.linux` below and are a different thing wearing the same word
 - [x] `selinux.context` — `/proc/pid/attr/current`, opt-in
 - [x] `apparmor.profile` — same file, same field: the LSM label is one value whichever module wrote it
 - [x] `seccomp` — off, strict or filter
@@ -928,16 +944,23 @@ a column nobody opened (§5.4).
 - [x] 🟡 `groups` — the supplementary groups as the kernel numbers them; opt-in, because the line is
       free to read and costs one string per process per sample to keep (§5.4). Not resolved to
       names: that would need a second name service beside the passwd one
-- [ ] macOS: code-sign identity, entitlements, hardened runtime, sandbox
+- [ ] macOS: code-sign identity, entitlements, hardened runtime, sandbox. **macOS only**, and the
+      macOS probe is a stub (§6.3)
 
 - [ ] **Online reputation checking is opt-in, and the program states exactly what is transmitted
       before the first time it happens** — at the point of use, not buried in a settings page
 
-Everything still unticked here — protected-process status, signatures and certificates, hashes,
-reputation, the Windows mitigation policies, AppContainer, and the macOS line — is Windows or macOS.
-None of it is work that can be written honestly from a Linux machine: a signature verifier or a
+Everything still unticked here is **Windows-only or macOS-only**, and each line above now says
+which. Protected-process status, the certificate and signature fields, the mitigation policies
+(`dep`, `aslr`, `cfg`, `cet`, `acg`, `cig`), AppContainer with its capability list, and the macOS
+line are not work that can be written honestly from a Linux machine: a signature verifier or a
 mitigation-policy reader that nobody can run against the OS it describes is a plausible
-implementation, which is worse than an empty one (§9.2).
+implementation, which is worse than an empty one (§9.2). Reputation is the one exception to the
+pattern — it is a network service rather than an OS reading, and it is unbuilt everywhere.
+
+The hashes were in that list until they were read properly: hashing a file is the same operation on
+every operating system, is verifiable here against `sha256sum`, and says nothing about signatures or
+trust — which is precisely why it could be built while the fields around it could not.
 
 # 22. Process table — energy fields
 

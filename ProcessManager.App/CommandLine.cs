@@ -208,6 +208,17 @@ internal sealed record CommandLineOptions {
     || this.Wants(ProcessField.PipeCount);
 
   /// <summary>
+  /// Whether anything this run asked for needs the images hashed (PRD §5.4, §21, §70).
+  /// </summary>
+  /// <remarks>
+  /// The one read whose cost is the size of a file rather than a syscall, which is why §21 says "on
+  /// demand only" — and naming the column is the demand. Asking for either digest buys both: they
+  /// come from one read of the same bytes.
+  /// </remarks>
+  public bool WantsImageHashes
+    => this.Wants(ProcessField.ImageSha256) || this.Wants(ProcessField.ImageSha1);
+
+  /// <summary>
   /// Whether a field was asked for, by column or by filter.
   /// </summary>
   /// <remarks>

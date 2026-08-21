@@ -49,6 +49,11 @@ internal static class ProbeFactory {
   /// Whether anything on this run asked how often each process's cgroup has been held back. It
   /// costs a file per cgroup per sample, so it is read only when a column or a filter names it.
   /// </param>
+  /// <param name="wantImageHashes">
+  /// Whether anything on this run asked for the digest of each process's image. Its cost is the
+  /// size of the files rather than a syscall, so it happens only when a column or a filter names
+  /// one of the two digests (PRD §5.4, §21).
+  /// </param>
   /// <param name="wantDescriptorKinds">
   /// Whether anything on this run asked how many sockets, files or pipes each process holds. It
   /// costs the descriptor scan plus a link resolved per descriptor, which is the most expensive
@@ -64,7 +69,8 @@ internal static class ProbeFactory {
     bool wantHandleCount = false,
     bool wantCpuAffinity = false,
     bool wantCpuThrottling = false,
-    bool wantDescriptorKinds = false
+    bool wantDescriptorKinds = false,
+    bool wantImageHashes = false
   ) {
     if (OperatingSystem.IsLinux()) {
       // A recorded tree is somebody else's machine; asking a helper about pids in it would be asking
@@ -83,6 +89,7 @@ internal static class ProbeFactory {
             CountFileDescriptors = wantHandleCount,
             ReadCpuAffinity = wantCpuAffinity,
             CountDescriptorKinds = wantDescriptorKinds,
+            ReadImageHashes = wantImageHashes,
             ReadCpuThrottling = wantCpuThrottling,
           }
           // A recorded tree was captured by somebody else, so the live user's id would refuse every
@@ -101,6 +108,7 @@ internal static class ProbeFactory {
             CountFileDescriptors = wantHandleCount,
             ReadCpuAffinity = wantCpuAffinity,
             CountDescriptorKinds = wantDescriptorKinds,
+            ReadImageHashes = wantImageHashes,
             // The recorded tree carries the process's cgroup path, but the group it names lives on
             // the machine that was recorded and its counters are not in the capture.
             ReadCpuThrottling = false,

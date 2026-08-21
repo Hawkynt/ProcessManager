@@ -122,6 +122,11 @@ internal static class SystemProcessInformationReader {
       record.AmbientCapabilities = Counter.NotSupported;
       record.EffectiveUserId = -1;
       record.SecurityContextReason = UnknownReason.NotSupportedOnPlatform;
+      // Hashing an image is the same operation on any platform and nothing here asks for it yet,
+      // which is a fact about us rather than about Windows (PRD §7, §21).
+      record.ImageSha256 = null;
+      record.ImageSha1 = null;
+      record.ImageHashReason = UnknownReason.NotImplementedHere;
 
       // -1 rather than the zero a fresh struct carries, because zero is a real account on the
       // platform these fields come from: a record nobody filled would otherwise report every
