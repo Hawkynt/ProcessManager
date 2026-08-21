@@ -240,6 +240,40 @@ public sealed class StorageLayoutTests {
   /// The weighted counter gains a millisecond per outstanding request per millisecond, so a second
   /// with 2000 of them is an average depth of two.
   /// </summary>
+  /// <summary>
+  /// And the page says so in a word rather than in the placeholder that means "wait one interval" —
+  /// which on a disk that stays idle is a wait with no end (PRD §45.6).
+  /// </summary>
+  [Test]
+  public void AnIdleDiskSaysItIsIdleRatherThanAskingForAnotherSample() {
+    var before = new SystemSnapshot { TimestampTicks = 0 };
+    before.PrepareProcesses(0);
+    var after = new SystemSnapshot { TimestampTicks = System.Diagnostics.Stopwatch.Frequency };
+    after.PrepareProcesses(0);
+
+    foreach (var snapshot in new[] { before, after })
+      snapshot.PrepareDisks(1)[0] = new() {
+        Name = "sda",
+        ReadOperations = Counter.Of(0),
+        WriteOperations = Counter.Of(0),
+        ReadBytes = Counter.Of(0),
+        WriteBytes = Counter.Of(0),
+        BusyMilliseconds = Counter.Of(0),
+        ReadWaitMilliseconds = Counter.Of(0),
+        WriteWaitMilliseconds = Counter.Of(0),
+        WeightedQueueMilliseconds = Counter.Of(0),
+        QueuedRequests = Counter.Of(0),
+      };
+
+    var delta = new SnapshotDelta();
+    delta.Update(before, after, CpuPercentMode.Normalized);
+
+    foreach (var section in PerformanceReport.Build(new(), after, delta))
+      foreach (var row in section.Rows)
+        if (row.Label is "Response time" or "Latency")
+          Assert.That(row.Value, Is.EqualTo("idle"));
+  }
+
   [Test]
   public void QueueLengthIsTheTimeWeightedDepth() {
     Assert.That(Rates(reads: 1, readWaitMs: 1, weightedMs: 2000).QueueLength.Value, Is.EqualTo(2).Within(0.01));

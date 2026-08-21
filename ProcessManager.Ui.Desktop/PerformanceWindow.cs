@@ -788,10 +788,12 @@ public sealed class PerformanceWindow : Form {
   /// Which resource to open on: whatever is under the greatest load (PRD §45.3).
   /// </summary>
   /// <remarks>
-  /// Only the ones on a fixed 0–100 scale are compared, because those are the only ones whose
-  /// numbers mean the same thing. A network adapter's headline is bytes per second, and eleven
-  /// thousand of those is not busier than a processor at eleven percent — it is a different quantity
-  /// wearing a larger number.
+  /// Only the ones that measure a load are compared, and only on a fixed 0–100 scale. Both halves
+  /// are needed. A network adapter's headline is bytes per second, and eleven thousand of those is
+  /// not busier than a processor at eleven percent — it is a different quantity wearing a larger
+  /// number. And a battery at 100 % charge or a sensor chip reading 65 °C on a hundred-degree scale
+  /// are percentages of the right shape that measure no load at all: without the second test the
+  /// page opened on a fully charged battery on every laptop (PRD §45.3).
   /// <para>
   /// Ties go to the earlier entry, which puts the processor first when the machine is idle. Somebody
   /// opening this page on a quiet machine expects the processor, not whichever disk happened to
@@ -802,7 +804,7 @@ public sealed class PerformanceWindow : Form {
     var best = 0;
     var highest = double.NegativeInfinity;
     for (var i = 0; i < titles.Count; ++i) {
-      if (this.Find(titles[i]) is not { PrimaryMaximum: 100 } section || !section.Primary.HasValue)
+      if (this.Find(titles[i]) is not { PrimaryMaximum: 100, PrimaryIsLoad: true } section || !section.Primary.HasValue)
         continue;
 
       if (section.Primary.Value <= highest)
@@ -892,8 +894,11 @@ public sealed class PerformanceWindow : Form {
     // and the inspection view, plus the processor's own switch on the left where it belongs to the
     // page rather than to the graphs.
     var strip = top + 30;
-    this._perCore.Bounds = new(left, strip, 200, 22);
-    this._perNode.Bounds = new(left + 206, strip, 160, 22);
+    // The per-core box keeps its full width: at two hundred pixels its own label was drawn as
+    // "Per logical processor (16" — a control clipped by the control beside it, which is the same
+    // failure as a statistic dropped off the bottom of a column.
+    this._perCore.Bounds = new(left, strip, 220, 22);
+    this._perNode.Bounds = new(left + 226, strip, 170, 22);
     this._inspect.Bounds = new(left + width - 90, strip, 90, 24);
     this._pause.Bounds = new(left + width - 186, strip, 90, 24);
     // A little taller than the buttons beside it: a drop-down list draws its own frame inside its
@@ -1125,8 +1130,13 @@ public sealed class PerformanceWindow : Form {
 
     // Three shapes, in order of specificity: the parts when asked for, a resource's own stack of
     // series where it has more than one, and otherwise the single plot.
+    //
+    // A lone series with a second line goes through the stack as well, because only that path draws
+    // companions. An adapter has exactly one graph — receive against send — and through the single
+    // plot it drew the sum of the two as one filled area and quietly dropped the second line
+    // (PRD §49).
     var series = chosen.Series;
-    var stacked = !split && series.Count > 1;
+    var stacked = !split && (series.Count > 1 || (series.Count == 1 && series[0].HasCompanion));
     this.LayOutPlots(parts, stacked ? (title, series) : default);
     this._plot.Visible = !split && !stacked && series.Count > 0;
     this.ShowComposition(chosen);
@@ -1155,7 +1165,7 @@ public sealed class PerformanceWindow : Form {
 
     this._plot.Maximum = chosen.PrimaryMaximum > 0 ? chosen.PrimaryMaximum : this.Ceiling(title);
     this._plot.Unit = series.Count > 0 ? series[0].Unit : PerformanceUnit.Percent;
-    this._plot.ScaleLabel = ScaleLabelFor(chosen.PrimaryMaximum, this._plot.Maximum);
+    this._plot.ScaleLabel = ScaleLabelFor(chosen.PrimaryMaximum, this._plot.Maximum, this._plot.Unit);
     this._plot.Value = chosen.PrimaryLabel;
     this._plot.Invalidate();
 
@@ -1277,10 +1287,31 @@ public sealed class PerformanceWindow : Form {
   }
 
   /// <summary>
-  /// How the top of a scale reads — <c>100%</c> for a percentage, the quantity otherwise (§45.4).
+  /// How the top of a scale reads — <c>100%</c>, <c>16.0G</c>, <c>130.0 W</c> (§45.4).
   /// </summary>
-  private static string ScaleLabelFor(double declared, double actual)
-    => declared == 100 ? "100%" : Humanize.Bytes(Counter.Of((ulong)Math.Max(0, actual)));
+  /// <remarks>
+  /// In the series' own unit, and that is the whole point of the parameter: every ceiling that was
+  /// not a percentage used to be rendered as a quantity of bytes, so a graphics card's power graph
+  /// was labelled "130 B" — a wattage in bytes, in the corner of a plot whose caption said watts
+  /// two inches away (PRD §76).
+  /// </remarks>
+  private static string ScaleLabelFor(double declared, double actual, PerformanceUnit unit) {
+    // The one §45.4 spells out, and only for a scale that really is a percentage: a temperature
+    // plotted against a fixed hundred degrees is also a fixed scale, and "100%" on it is a unit
+    // that graph does not use.
+    if (declared == 100 && unit == PerformanceUnit.Percent)
+      return "100%";
+
+    var ceiling = Math.Max(0, actual);
+    return unit switch {
+      PerformanceUnit.Bytes => Humanize.Bytes(Counter.Of((ulong)ceiling)),
+      PerformanceUnit.BytesPerSecond => Humanize.BytesPerSecond(Rate.Of(ceiling)),
+      PerformanceUnit.Watts => string.Format(System.Globalization.CultureInfo.InvariantCulture, "{0:0.0} W", ceiling),
+      PerformanceUnit.Celsius => string.Format(System.Globalization.CultureInfo.InvariantCulture, "{0:0} °C", ceiling),
+      PerformanceUnit.Count => Humanize.Count(Counter.Of((ulong)ceiling)),
+      _ => Humanize.Percent(Rate.Of(ceiling)) + " %",
+    };
+  }
 
   /// <summary>
   /// The top of the scale for a series with no natural ceiling.
@@ -1408,19 +1439,22 @@ public sealed class PerformanceWindow : Form {
           : this.Ceiling(SeriesKey(title, graph.Label));
 
       plot.Unit = graph.Unit;
-      plot.ScaleLabel = ScaleLabelFor(graph.Maximum == 100 ? 100 : 0, plot.Maximum);
+      plot.ScaleLabel = ScaleLabelFor(graph.Maximum == 100 ? 100 : 0, plot.Maximum, graph.Unit);
       plot.Visible = true;
       plot.ClearSeries();
       var accent = AccentFor(graph.Accent);
       plot.AddSeries(this.Ring(SeriesKey(title, graph.Label)), accent, graph.FirstLabel);
       // The second line in a lighter shade of the same accent, not in another hue: they are two
-      // halves of one quantity, and §45.5 gives the whole resource one colour. Stroked rather than
-      // filled, because two filled areas on one axis hide each other.
-      if (graph.HasCompanion) {
-        plot.Filled = false;
-        plot.AddSeries(this.Ring(CompanionKey(title, graph.Label)), SeriesPainter.Lighten(accent, 110), graph.CompanionLabel);
-      } else
-        plot.Filled = true;
+      // halves of one quantity, and §45.5 gives the whole resource one colour. Stroked over the
+      // first one's fill rather than filled beside it — two areas on one axis hide each other, and
+      // two lines in two shades of one colour are a pair nobody can tell apart at one pixel wide.
+      if (graph.HasCompanion)
+        plot.AddSeries(
+          this.Ring(CompanionKey(title, graph.Label)),
+          SeriesPainter.Lighten(accent, 110),
+          graph.CompanionLabel,
+          filled: false
+        );
 
       plot.Invalidate();
     }

@@ -102,7 +102,7 @@ public sealed class ProcessorPageTests {
 
     Assert.That(Value(sections, "Context switches"), Is.EqualTo("12.0k/s  (12.0k since boot)"));
     Assert.That(Value(sections, "Interrupts"), Is.EqualTo("8.0k/s  (8.0k since boot)"));
-    Assert.That(Value(sections, "Soft interrupts (deferred)"), Is.EqualTo("2.5k/s  (2.5k since boot)"));
+    Assert.That(Value(sections, "Soft interrupts"), Is.EqualTo("2.5k/s  (2.5k since boot)"));
   }
 
   /// <summary>
@@ -116,7 +116,7 @@ public sealed class ProcessorPageTests {
     var processor = SectionOf(PerformanceReport.Build(new(), after, DeltaOf(before, after)), "Processor");
 
     foreach (var row in processor.Rows)
-      if (row.Label is "Context switches" or "Interrupts" or "Soft interrupts (deferred)" or "System calls")
+      if (row.Label is "Context switches" or "Interrupts" or "Soft interrupts" or "System calls")
         Assert.That(row.IsDiagnostic, Is.True, row.Label);
   }
 

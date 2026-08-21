@@ -167,6 +167,20 @@ public static class DesktopApp {
             ? $"page expanded: {expanded.Width}x{expanded.Height} -> {expandedPng}\n"
             : $"page expanded: none — {expandedFailure}\n";
 
+          // One more page of the performance window, by name, for somebody checking a layout on
+          // their own machine — the GPU page in particular, which stacks six graphs and which no
+          // committed picture can show, because the machines that took them have no such card.
+          // Local only and never part of the committed set, like the rail view below it.
+          if (Environment.GetEnvironmentVariable("PROCMAN_SHOOT_RESOURCE") is { Length: > 0 } resource
+              && performance.Show(resource)) {
+            description += performance.DescribeForCapture();
+            var resourcePng = Path.Combine(directory, "resource.png");
+            var resourceSize = GtkCapture.Window(resourcePng, out var resourceFailure, performance.Text);
+            description += resourceSize is { } shown
+              ? $"resource capture: {shown.Width}x{shown.Height} -> {resourcePng}\n"
+              : $"resource capture: none — {resourceFailure}\n";
+          }
+
           // The rail's views. Counted and not quoted: the number is the empty-view detector, and the
           // rows are this machine's services, logins and open sockets, which do not belong in a log
           // that goes into a public repository (PRD §9).

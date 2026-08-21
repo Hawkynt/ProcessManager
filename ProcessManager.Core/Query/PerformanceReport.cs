@@ -165,7 +165,17 @@ public enum PerformanceUnit {
 /// utilisation, the total beside the memory in use, the temperature beside the GPU's load
 /// (PRD §45.1). Short — it shares a line with the headline figure.
 /// </param>
+/// <param name="PrimaryIsLoad">
+/// Whether the primary measures how hard this resource is being worked, as opposed to some other
+/// quantity that happens to be a percentage (PRD §45.3).
+/// </param>
 /// <remarks>
+/// <paramref name="PrimaryIsLoad"/> exists because "whatever is under the greatest load" cannot be
+/// answered by comparing percentages: a battery at 100 % charge and a sensor chip reading 65 °C on a
+/// nought-to-a-hundred scale both beat a processor at 60 %, and neither of them is under any load at
+/// all. Utilisation, active time and memory in use are loads; a charge, a temperature and a fan
+/// speed are not.
+/// <para>
 /// <paramref name="PartOf"/> is what keeps the window's rail readable: a machine with twenty cores
 /// would otherwise put twenty entries in it and bury the disks below them. The cores belong under
 /// the processor, where a checkbox switches between the whole and the parts — the shape Task Manager
@@ -184,7 +194,8 @@ public readonly record struct PerformanceSection(
   string RailDetail = "",
   string RailTitle = "",
   IReadOnlyList<PerformanceGraph>? Graphs = null,
-  MemoryComposition Composition = default
+  MemoryComposition Composition = default,
+  bool PrimaryIsLoad = false
 ) {
 
   /// <summary>Whether there is a second series worth plotting.</summary>
@@ -294,7 +305,8 @@ public static class PerformanceReport {
         Percent(utilisation),
         delta?.SystemKernelPercent ?? Rate.NotSampledYet,
         "kernel",
-        RailDetail: host.CpuCurrentHertz.HasValue ? Hertz(host.CpuCurrentHertz) : string.Empty
+        RailDetail: host.CpuCurrentHertz.HasValue ? Hertz(host.CpuCurrentHertz) : string.Empty,
+        PrimaryIsLoad: true
       ),
       new(
         "Memory",
@@ -304,7 +316,8 @@ public static class PerformanceReport {
         Percent(memory),
         RailDetail: MemoryDetail(snapshot),
         Graphs: MemoryGraphs(snapshot),
-        Composition: MemoryComposition.Of(in snapshot.System)
+        Composition: MemoryComposition.Of(in snapshot.System),
+        PrimaryIsLoad: true
       ),
     };
 
@@ -344,7 +357,8 @@ public static class PerformanceReport {
         Percent(busy),
         RailDetail: gpu.TemperatureMilliCelsius.HasValue ? Celsius(gpu.TemperatureMilliCelsius) : string.Empty,
         RailTitle: $"GPU {adapter++}",
-        Graphs: GpuGraphs(gpu)
+        Graphs: GpuGraphs(gpu),
+        PrimaryIsLoad: true
       ));
     }
 
@@ -417,7 +431,8 @@ public static class PerformanceReport {
             CompanionLabel: "write",
             SeriesLabel: "read"
           ),
-        ]
+        ],
+        PrimaryIsLoad: true
       ));
     }
 
@@ -514,12 +529,18 @@ public static class PerformanceReport {
     // Active time says the disk is busy; only these say whether it is keeping up. A queue of one at
     // full active time is a disk saturated by a single client, and a queue of thirty at the same
     // active time is a disk being asked for far more than it can do (PRD §48).
-    rows.Add(new("Response time", rates is { } response ? Milliseconds(response.ResponseTimeMilliseconds) : Pending));
+    // A disk nobody asked anything of has no latency to report, and saying "one more sample" about
+    // it sends a reader off to wait for a figure that will never arrive while the disk stays idle.
+    // Three rows of it on every idle disk is what this avoids (PRD §45.6).
+    var idle = rates is { } quiet && Idle(quiet);
+    rows.Add(new("Response time", rates is { } response ? idle ? _Idle : Milliseconds(response.ResponseTimeMilliseconds) : Pending));
     rows.Add(new("Queue length", rates is { } queue ? Depth(queue.QueueLength) : Pending));
     rows.Add(new(
       "Latency",
       rates is { } latency
-        ? $"{Milliseconds(latency.ReadLatencyMilliseconds)} read, {Milliseconds(latency.WriteLatencyMilliseconds)} write"
+        ? idle
+          ? _Idle
+          : $"{Milliseconds(latency.ReadLatencyMilliseconds)} read, {Milliseconds(latency.WriteLatencyMilliseconds)} write"
         : Pending
     ));
 
@@ -629,6 +650,20 @@ public static class PerformanceReport {
 
     return text.ToString();
   }
+
+  /// <summary>
+  /// What a disk with no requests in the interval says about how long they took.
+  /// </summary>
+  /// <remarks>
+  /// A statement about the interval rather than a measurement of it — which is exactly what it is,
+  /// and is why it is a word and not a nought (PRD §5.3).
+  /// </remarks>
+  private const string _Idle = "idle";
+
+  /// <summary>Whether the device completed no request at all in the interval.</summary>
+  private static bool Idle(SnapshotDelta.DiskRates rates)
+    => rates.ReadOperationsPerSecond is { HasValue: true, Value: 0 }
+      && rates.WriteOperationsPerSecond is { HasValue: true, Value: 0 };
 
   /// <summary>A duration in the unit a disk's response times actually fall in.</summary>
   /// <remarks>
@@ -946,9 +981,11 @@ public static class PerformanceReport {
     var system = snapshot.System;
     Add("Context switches", Churn(delta?.SystemContextSwitchesPerSecond, system.ContextSwitches));
     Add("Interrupts", Churn(delta?.SystemInterruptsPerSecond, system.Interrupts));
-    // What Windows calls a DPC. The name is this machine's rather than that one's, with the
-    // equivalence in the tooltip's place — the heading — instead of in the figure (PRD §5.3).
-    Add("Soft interrupts (deferred)", Churn(delta?.SystemSoftInterruptsPerSecond, system.SoftInterrupts));
+    // What Windows calls a DPC, under this machine's own name for it (PRD §5.3). Two words and not
+    // three: the label column is a hundred and sixty pixels, and "Soft interrupts (deferred)" was
+    // drawn as "Soft interrupts (defe…" — a label that has to be guessed at is worse than a shorter
+    // one that does not.
+    Add("Soft interrupts", Churn(delta?.SystemSoftInterruptsPerSecond, system.SoftInterrupts));
     Add("Interrupt time", $"{Percent(delta?.SystemInterruptPercent)} hard, {Percent(delta?.SystemSoftInterruptPercent)} deferred");
     // Linux keeps no machine-wide system-call counter. It can be had per process with ptrace or a
     // BPF probe, and both are far more intrusive than a performance page has any business being —
