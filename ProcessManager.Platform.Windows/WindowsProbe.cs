@@ -277,6 +277,7 @@ public sealed class WindowsProbe : ISystemProbe {
       record.BinarySignaturePolicy = mitigations.BinarySignature;
 
       this.ApplyObjectCounts(ref record);
+      this.ApplyPowerThrottling(ref record);
       this.ApplyImageFacts(ref record);
 
       if (this._commandLines.TryGetValue(record.Key, out var commandLine)) {
@@ -308,14 +309,30 @@ public sealed class WindowsProbe : ISystemProbe {
     if (record.ImagePath is { Length: > 0 } path)
       this._liveImages.Add(path);
 
-    if (!this._options.ReadImageVersions) {
+    var wantVersions = this._options.ReadImageVersions;
+    var wantSignature = this._options.ReadSignatures;
+    if (!wantVersions && !wantSignature) {
       record.ImageVersionReason = UnknownReason.NotSampledYet;
       record.Subsystem = Counter.NotSampledYet;
+      WindowsImageReader.NotAsked(ref record);
       return;
     }
 
-    var facts = this._images.Read(record.ImagePath, out var reason);
-    WindowsImageReader.Apply(ref record, facts, reason);
+    // One read of one file answers both, which is why they share a cache: the version resource and
+    // the certificate table are in the same bytes, and a run that named a column from each would
+    // otherwise read every image on the machine twice.
+    var facts = this._images.Read(record.ImagePath, wantSignature, out var signature, out var reason);
+    if (wantVersions)
+      WindowsImageReader.Apply(ref record, facts, reason);
+    else {
+      record.ImageVersionReason = UnknownReason.NotSampledYet;
+      record.Subsystem = Counter.NotSampledYet;
+    }
+
+    if (wantSignature)
+      WindowsImageReader.ApplySignature(ref record, signature, reason);
+    else
+      WindowsImageReader.NotAsked(ref record);
   }
 
   #region object counts (PRD §20)
@@ -481,6 +498,75 @@ public sealed class WindowsProbe : ISystemProbe {
 
   private static Counter Tallied(ushort index, uint count)
     => index == ObjectTypeIndices.Unknown ? Counter.Unknown(UnknownReason.NotPermitted) : Counter.Of(count);
+
+  /// <summary>
+  /// What Windows has been asked to do about the process's energy use (PRD §22).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Per sample rather than once per process, unlike everything the identity resolver caches. A
+  /// power-throttling state is not fixed for a process's life: an application may set its own at any
+  /// moment, and a person may tick "efficiency mode" against any row of Task Manager — so a cached
+  /// answer would go on reporting a state that had been changed underneath it, which is the one
+  /// failure a column watching for exactly that change cannot afford.
+  /// </para>
+  /// <para>
+  /// That is what makes it opt-in: an <c>OpenProcess</c> per process per sample is the shape of cost
+  /// §5.2 keeps out of the sampling loop, so nothing pays it unless a column or a filter names one of
+  /// the two words it answers (PRD §5.4).
+  /// </para>
+  /// </remarks>
+  private void ApplyPowerThrottling(ref ProcessRecord record) {
+    if (!this._options.ReadPowerThrottling) {
+      record.PowerThrottling = Counter.NotSampledYet;
+      return;
+    }
+
+    var process = Native.OpenProcess(Native.PROCESS_QUERY_LIMITED_INFORMATION, false, record.Pid);
+    if (process == 0) {
+      record.PowerThrottling = Counter.NotPermitted;
+      return;
+    }
+
+    try {
+      record.PowerThrottling = ReadPowerThrottling(process);
+    } finally {
+      Native.CloseHandle(process);
+    }
+  }
+
+  /// <summary>
+  /// <c>PROCESS_POWER_THROTTLING_STATE</c>: a version and two masks, twelve bytes.
+  /// </summary>
+  /// <remarks>
+  /// The version is written before the call rather than left at whatever the allocation held, and
+  /// the two masks are packed into one counter with the state above the control — the same
+  /// arrangement the DEP policy uses for its trailing boolean, and for the same reason: two facts
+  /// that must be read together have no business being two counters that could disagree.
+  /// <para>
+  /// The call arrived in Windows 10 1809. An older Windows fails it rather than filling the buffer,
+  /// and the failure is reported as itself — a process reported as unthrottled on a Windows that has
+  /// never heard of throttling would be a confident answer to a question nobody could ask
+  /// (PRD §72.3).
+  /// </para>
+  /// </remarks>
+  private static Counter ReadPowerThrottling(nint process) {
+    const int size = 12;
+    var buffer = Marshal.AllocHGlobal(size);
+    try {
+      Marshal.WriteInt32(buffer, 0, (int)Native.PROCESS_POWER_THROTTLING_CURRENT_VERSION);
+      Marshal.WriteInt32(buffer, 4, 0);
+      Marshal.WriteInt32(buffer, 8, 0);
+      if (!Native.GetProcessInformation(process, Native.ProcessPowerThrottling, buffer, size))
+        return Native.WhyItFailed();
+
+      var control = (uint)Marshal.ReadInt32(buffer, 4);
+      var state = (uint)Marshal.ReadInt32(buffer, 8);
+      return Counter.Of(control | ((ulong)state << 32));
+    } finally {
+      Marshal.FreeHGlobal(buffer);
+    }
+  }
 
   /// <summary>
   /// One of the two desktop quotas.

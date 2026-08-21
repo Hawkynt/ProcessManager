@@ -57,4 +57,26 @@ public sealed record WindowsProbeOptions {
   /// </remarks>
   public bool ReadImageVersions { get; init; }
 
+  /// <summary>
+  /// Check each running image's own Authenticode signature (PRD §21, §70).
+  /// </summary>
+  /// <remarks>
+  /// Off, and the dearest reading in this file by a wide margin: it digests the whole image and then
+  /// verifies a public-key signature over that digest. Once per image rather than once per process,
+  /// out of the same cache and the same file read the version resource uses — so a machine running
+  /// three hundred processes of one runtime pays for one binary, not three hundred.
+  /// </remarks>
+  public bool ReadSignatures { get; init; }
+
+  /// <summary>
+  /// Read each process's power-throttling state (PRD §22).
+  /// </summary>
+  /// <remarks>
+  /// Off, and per <em>sample</em> rather than per process, which is what separates it from
+  /// everything the identity resolver caches: an application may change its own throttling at any
+  /// moment and a person may change it from Task Manager, so a cached answer would go on reporting
+  /// the state something has since altered.
+  /// </remarks>
+  public bool ReadPowerThrottling { get; init; }
+
 }

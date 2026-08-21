@@ -1160,24 +1160,63 @@ per sample and cannot be cached — have a switch of their own (§5.4).
       page for the structure prints the constant names against an empty value column, so they were
       taken from `winbase.h`, and that is stated here because it is the weakest-sourced constant in
       this section
-- [ ] `signature.status` — see §70's vocabulary. **Windows and macOS**: Linux binaries carry no
-      embedded signature to verify. What signs a Linux program is its package, which is a different
-      question with a different answer and belongs to §42's provenance rather than to this column.
-      **The Windows half is unwritten and is deliberately not in this pass.** It is `WinVerifyTrust`
-      against the image's Authenticode signature, which is a verdict about trust rather than a
-      reading of a header — and a verifier nobody can run against the OS it describes is a plausible
-      implementation, which is worse than an empty one (§9.2). The version resource above was
-      buildable precisely because it is the opposite kind of thing: a documented on-disk layout that
-      real files can be held against here, and one that says nothing about whether anybody trusts
-      what it reads. **macOS is a stub (§6.3)**
-- [ ] `signer` — verified publisher. **Windows and macOS**, and unwritten on both for the reason
-      above: it is the subject of the certificate `WinVerifyTrust` chained to, so it exists only once
-      that verdict does
-- [ ] `cert.subject` — **Windows and macOS**, unwritten, as above
-- [ ] `cert.issuer` — **Windows and macOS**, unwritten, as above
-- [ ] `signature.timestamp` — **Windows and macOS**, unwritten, as above. Its own field because a
+- [x] `signature.status` — see §70's vocabulary. **Windows**: Linux binaries carry no embedded
+      signature to verify, and what signs a Linux program is its package — a different question with
+      a different answer, which is `package.status` rather than this column. **macOS is a stub
+      (§6.3)**.
+
+      This section drew a line for a long time and drew it in the wrong place, which is the mistake
+      the mitigation policies made too. `WinVerifyTrust` is a verdict about *trust*, settled by a
+      machine's root store, its revocation lists and its policy providers, and a verifier nobody can
+      run against the OS it describes is still worse than an empty one (§9.2). But that was never the
+      whole of what this column needed. The other half is a documented on-disk layout and a
+      documented digest, which is precisely what made the version resource above buildable from here:
+      the certificate table out of the image's fifth data directory, the PKCS#7 signed data inside
+      it, the Authenticode digest recomputed over the bytes the specification names, and the signer's
+      signature over that digest checked against the certificate's own key.
+
+      So the column answers §70's **second** question and says which one it answered in a sentence on
+      every row: the running bytes still match the digest the signature covers. That is the same
+      question `package.status` asks on Linux, put to the other kind of evidence. The chain is
+      **not** checked and `trust.chain` stays empty beside it, because a good signature by an unknown
+      key is a different finding from a good signature by a known one — which is §70's first
+      requirement and the entire reason these are two columns.
+
+      **Held against images this program did not produce**, which is the only corroboration worth
+      having: the recomputed digest reproduces the recorded one byte for byte on six binaries signed
+      by Microsoft and by the .NET Foundation, and one of those recorded digests and one of those
+      countersignature times were read out independently with `openssl asn1parse`. MD5 is refused
+      rather than computed — a 1998 VeriSign-signed font installer on the machine this was written on
+      carries one, and its certificate and countersignature read correctly while its digest is
+      declined — and it reads as "verification error"
+      naming the algorithm, because putting this program's word behind a digest forgeable since 2004
+      would be worse than saying nothing. Only the primary signature of a dual-signed image is read,
+      and this says so rather than quietly reporting the stronger of the two. Nothing in it is
+      platform-specific, so the whole of it runs on every CI leg; and on the `windows-latest` leg
+      `--self-test` walks the table for images under the system directory and fails unless at least
+      one that carries a signature verifies — a real Microsoft signature on a real kernel rather than
+      this program agreeing with itself. Where no signed system image was readable at all the run
+      records that instead of failing, which is both an account that may read none and the Wine leg,
+      whose system files nobody signed: neither disproves anything
+- [x] `signer` — the signing certificate's common name, out of the same verification. **Windows**;
+      **macOS is a stub (§6.3)**. Emphatically not the `company` column below, which is a string a
+      publisher typed into a version resource and which anybody at all may type: this one is bound to
+      the key the signature was made with, and the column above says whether that binding still holds
+- [x] `cert.subject` — that certificate's whole subject, for where a common name does not tell two
+      publishers apart. **Windows**; **macOS is a stub (§6.3)**
+- [x] `cert.issuer` — who issued the signing certificate: who put their name to the signer, and
+      **not** who this machine trusts. Nothing behind this column has looked at a root store, which
+      is what `trust.chain` is for. **Windows**; **macOS is a stub (§6.3)**
+- [x] `signature.timestamp` — **Windows**; **macOS is a stub (§6.3)**. Its own field because a
       countersigned timestamp is what keeps a signature valid after the certificate behind it has
-      expired, which is the ordinary state of most signed software
+      expired, which is the ordinary state of most signed software — and it is what makes `Expired`
+      in the column above readable rather than alarming. Both forms are read, because both are in the
+      wild: the RFC 3161 token modern signers attach, and the PKCS#9 countersignature older ones do.
+      Read structurally rather than through `Rfc3161TimestampToken`, which refuses tokens real files
+      on this machine carry — a Microsoft-signed compiler from 2021 among them — and a date reported
+      as absent because a stricter decoder declined it would be a false "never countersigned"
+      (§72.3). "none" is a real answer, is the answer for a great deal of signed software, and reads
+      as one
 - [x] `hash.sha256` — on demand only, and on every platform that has a file to hash: the digest of
       the running image, which is neither a signature nor a verdict (§70). Hashed once per image
       rather than once per process — three hundred processes of one runtime share one binary — and
@@ -1187,10 +1226,13 @@ per sample and cannot be cached — have a switch of their own (§5.4).
 - [x] `hash.sha1` — the same bytes under the older digest, from the same single read of them. Kept
       because so many package manifests and threat feeds are still keyed by it, and collidable since
       2017: on its own it is evidence of nothing. Verified against `sha1sum`
-- [ ] `reputation` — opt-in, see §70. **Not implemented on any platform**; it is a network service
-      rather than an OS reading, so there is no OS to write it against and no platform it is missing
-      from. The one line in this section that is unbuilt everywhere for a reason that is not about
-      any operating system
+- [ ] 🟡 `reputation` — opt-in, see §70. **Not implemented on any platform**; it is a network
+      service rather than an OS reading, so there is no OS to write it against and no platform it is
+      missing from. The one line in this section that is unbuilt everywhere for a reason that is not
+      about any operating system. Partial rather than open because the half that can exist without a
+      provider does: the column, the vocabulary and the slot are there and say `n/i` out loud, which
+      is what stops a digest computed on this machine from ever being read as a file sent from it.
+      What is missing is a provider, and that box belongs to §70
 - [x] `dep` — **Windows only.** Linux has NX on every mapping and no per-process policy to report.
 
       All six mitigation lines are read the same way and share one switch, and the six are worth
@@ -1249,14 +1291,15 @@ per sample and cannot be cached — have a switch of their own (§5.4).
       integrity level come from, so it costs nothing beyond them. The sandbox a packaged application
       and a browser renderer are put in, which decides what a process may reach rather than who it
       runs as
-- [ ] `capabilities` — the AppContainer capability list. **Windows only**; Linux capabilities are
-      `caps.linux` below and are a different thing wearing the same word. **Unwritten**: the flag
-      above says a process is in an AppContainer and this would say what that container is allowed to
-      reach, which is `TokenCapabilities` — a variable-length list of capability SIDs, each needing a
-      name lookup, for a list that is empty on every process that is not a packaged application. It
-      is a per-row allocation of unbounded size on a path with a budget of zero (§4), so it wants the
-      on-demand treatment §36 gives the other expensive security readings rather than a column, and
-      that is not written
+- ∅ `capabilities` — the AppContainer capability list. **Windows only**; Linux capabilities are
+      `caps.linux` below and are a different thing wearing the same word. **Refused as a column, not
+      deferred.** The flag above says a process is in an AppContainer and this would say what that
+      container is allowed to reach, which is `TokenCapabilities` — a variable-length list of
+      capability SIDs, each needing a name lookup, for a list that is empty on every process that is
+      not a packaged application. That is a per-row allocation of unbounded size on a path with a
+      budget of zero (§4). It belongs in §36's on-demand view with the other expensive security
+      readings, and putting it there is a decision about where the reading lives rather than a gap in
+      this table — which is why it is no longer a box here
 - [x] `selinux.context` — `/proc/pid/attr/current`, opt-in
 - [x] `apparmor.profile` — same file, same field: the LSM label is one value whichever module wrote it
 - [x] `lsm.mode` — the part of that label which is not the label: AppArmor writes how hard it is
@@ -1323,7 +1366,11 @@ per sample and cannot be cached — have a switch of their own (§5.4).
       platform, and nothing here will move until §6.3 does
 
 - [ ] **Online reputation checking is opt-in, and the program states exactly what is transmitted
-      before the first time it happens** — at the point of use, not buried in a settings page
+      before the first time it happens** — at the point of use, not buried in a settings page.
+      **Blocked on there being anything to disclose.** Nothing is transmitted about an executable by
+      any code path in this program, and a sentence describing a transmission that cannot happen
+      would be a worse thing to ship than no sentence: it would teach a reader that the program does
+      send something. This box opens when §70's provider box does, and not before
 
 The five lines added above are **opt-in**, and for a cost that is neither a read nor an allocation,
 which is why it had to be measured rather than argued about. Every one of them is in the `status`
@@ -1335,26 +1382,31 @@ slower in eleven pairs out of eleven. Moving the work out of the loop recovered 
 switch buys the rest, so a run that names none of these columns measures level with `main` — which
 is what §5.4 asks for and, on this evidence, is not a rule that only applies to expensive reads.
 
-Everything still unticked here is **Windows-only or macOS-only**, and each line above now says which
-and why. What is left divides cleanly in three. The certificate and signature fields and the macOS
-line are **not work that can be written honestly from a Linux machine**: a signature verifier that
-nobody can run against the OS it describes is a plausible implementation, which is worse than an
-empty one (§9.2). The AppContainer capability list is **written off rather than unwritten** — it is a
-per-row allocation of unbounded size that belongs in §36's on-demand view rather than in a column,
-and that is a design decision rather than a gap. Reputation is the one exception to every pattern
-here: it is a network service rather than an OS reading, and it is unbuilt everywhere.
+Two boxes are left in this section, and neither is waiting on anything that could be written here.
+The macOS line is a whole unwritten platform rather than four unwritten readings, and nothing on it
+moves until §6.3 does. The reputation disclosure is blocked on there being a transmission to
+disclose, which there is not.
 
-The protected-process status and the six mitigation policies were in the first of those groups until
-the line was drawn in the right place. They are not verdicts about trust; they are a documented
-information class and a documented bitfield, and what could not be done here is the *call*, not the
-reading of what it returns. So the calls are gated on Windows and the six flags words are decoded in
-portable code with a test case per bit, which every CI leg runs — and the calls themselves are
-executed by `--self-test` on the `windows-latest` leg, which now names every one of these columns
-because §5.4's opt-in rule would otherwise mean the interop never ran anywhere at all.
+The protected-process status, the six mitigation policies and now the five signature fields were all
+once refused on the grounds that they could not be written honestly from a Linux machine. They were
+refused on a line drawn in the wrong place. In every one of these cases the part that cannot be done
+here is the *call* — or, for the signatures, a *verdict about trust* that depends on a machine's root
+store — and never the reading of a documented structure. So the calls are gated on Windows and the
+decoding lives in portable code with a test case per bit and per state, which every CI leg runs, and
+the calls themselves are executed by `--self-test` on the `windows-latest` leg, which names every one
+of these columns because §5.4's opt-in rule would otherwise mean the interop never ran anywhere.
 
-The hashes were in that list too, until they were read properly: hashing a file is the same operation
-on every operating system, is verifiable here against `sha256sum`, and says nothing about signatures
-or trust — which is precisely why it could be built while the fields around it could not.
+The signature fields are the clearest case of that line being moved rather than crossed. What is
+built is arithmetic over a documented on-disk layout and a signature check against a key that is in
+the file — every step of which runs on a Linux machine and was held there against real signed
+binaries. What is still not built, and is not promised anywhere, is the chain: `trust.chain` sits
+beside these five and stays empty on Windows, which is the honest shape of "the signature is the
+signer's, and whether anybody trusts the signer is a question nothing here asked".
+
+The hashes were on the wrong side of the same line, until they were read properly: hashing a file is
+the same operation on every operating system, is verifiable here against `sha256sum`, and says
+nothing about signatures or trust — which is precisely why it could be built while the fields around
+it could not.
 
 # 22. Process table — energy fields
 
@@ -1386,23 +1438,64 @@ That leaves splitting a machine-level reading by each process's share of somethi
 model, and §72.3 is the rule that a model may not be shown where a measurement is claimed. Nine
 columns of it would be worse than nine empty ones, because a number on screen is read as a reading.
 
-- [ ] `power.usage` — **no per-process source on any platform.** Windows models it; Linux has RAPL
-      for the package, which the two paragraphs above show cannot be attributed to a process
-- [ ] `power.trend` — the derivative of a figure that does not exist
+**One of the nine turned out not to be an energy figure at all**, and that is what got it built. Two
+of the lines below ask what quality of service a process has been given rather than what it is
+spending, and Windows answers exactly that through `GetProcessInformation(ProcessPowerThrottling)` —
+a documented information class, a documented pair of bitmasks, and only
+`PROCESS_QUERY_LIMITED_INFORMATION` to read it. Nothing about it is modelled: it reports what was
+*asked for* on a process's behalf, which is a state, and it is the same kind of reading the six
+Windows mitigation policies of §21 are. The masks are decoded in portable code with a test per state
+and the call is gated on Windows, which is §21's arrangement for the same reason. So the count below
+is not nine refusals; it is seven, one blocked platform, and two readings.
+
+The seven are marked ∅ rather than left open. They are not work waiting to be done: each is a figure
+that either does not exist per process anywhere, or exists on Windows only inside a structure
+Microsoft has never published — and §8.3 forbids reading those as firmly as §72.3 forbids modelling
+them.
+
+- ∅ `power.usage` — **no per-process source this program will read, on any platform.** Linux has
+      RAPL for the package, which the two paragraphs above show cannot be attributed to a process.
+      Windows does have a number and Task Manager shows it, out of an undocumented extension to
+      `SYSTEM_PROCESS_INFORMATION` that Microsoft has never published — and §8.3 refuses that for the
+      same reason `protection.level` is read through the documented call rather than the undocumented
+      one. Refused, not deferred
+- ∅ `power.trend` — the derivative of a figure that does not exist
 - [ ] `energy.impact` — **Windows and macOS**, and a weighted model on both. It is the one field here
       that is honest *as* a model, because both platforms define it as one and label it so; on Linux
       there is no vendor definition to be faithful to, and inventing weights would make this
-      program's arithmetic look like the operating system's measurement
-- [ ] `energy.cpu` — would need RAPL charged to a task. See above: the PMU refuses the scope
-- [ ] `energy.gpu` — **not published per process by any driver.** §19 refused this already
-- [ ] `qos.background` — **Windows (EcoQoS) and macOS (QoS classes).** Linux has no energy quality of
-      service per process. What it has is the scheduler class and the cgroup's `cpu.idle`, which are
-      scheduling decisions rather than energy ones and are already `sched.class` in §15; the
-      processor's energy-performance preference is per core, not per process
-- [ ] `eco.state` — **Windows only**, and the same thing as the line above wearing the UI's name
-- [ ] `thermal` — **not a per-process quantity anywhere.** A processor has a temperature and a
+      program's arithmetic look like the operating system's measurement. **Open on macOS only, and
+      blocked on §6.3**: the Windows half comes out of the same undocumented structure as
+      `power.usage` and is refused with it, so what is left here is a whole unwritten platform rather
+      than an unwritten reading
+- ∅ `energy.cpu` — would need RAPL charged to a task. See above: the PMU refuses the scope
+- ∅ `energy.gpu` — **not published per process by any driver.** §19 refused this already
+- [x] `qos.background` — **Windows (EcoQoS).** Linux has no energy quality of service per process:
+      what it has is the scheduler class and the cgroup's `cpu.idle`, which are scheduling decisions
+      rather than energy ones and are already `sched.class` in §15, and the processor's
+      energy-performance preference is per core rather than per process. **macOS is a stub (§6.3)**,
+      so its QoS classes are unanswered.
+
+      Three states and not two, which is the whole reason both of the structure's masks are carried.
+      The control mask says which behaviours the process has an opinion about and the state mask says
+      what that opinion is, so a bit absent from the control mask is one nobody has set — the system
+      decides, which is what nearly every row on a machine is. A decoder that read only the state
+      mask would report an untouched process as "not throttled", which claims somebody asked for full
+      speed when nobody asked for anything (§72.3). The second bit in the same word is named rather
+      than dropped: whether the process's requests for a finer system timer are ignored is a real
+      saving and a separate decision.
+
+      Read per **sample** rather than cached for a process's lifetime, unlike everything else that
+      comes off a process handle here — an application may set its own throttling at any moment and a
+      person may tick "efficiency mode" against any row of Task Manager, and a column watching for
+      exactly that change must not remember the answer. That is what makes it opt-in (§5.4)
+- [x] `eco.state` — **Windows only**, and the same reading as the line above wearing the name the
+      operating system's own window uses for it, the way `protected` and `protection.level` are one
+      call and two questions. Kept apart from it because "off" and "system managed" are different
+      findings and a yes-or-no column would have to round one into the other
+- ∅ `thermal` — **not a per-process quantity anywhere.** A processor has a temperature and a
       process does not; the machine's sensors are read and are on the performance page (§46)
-- [ ] `battery.impact` — **macOS only**, and modelled there too
+- [ ] `battery.impact` — **macOS only**, modelled there too, and blocked on §6.3 like the rest of
+      that platform
 
 Machine-level RAPL is a different matter and a legitimate one: it is a real measurement of a real
 thing, it is simply not a property of a process. It belongs beside the other machine readings on the

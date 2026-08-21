@@ -108,7 +108,7 @@ internal static class SelfTest {
 
     CheckSecurity(failures, notes, in self);
     CheckScheduling(failures, notes, in self);
-    CheckWindowsOnly(failures, notes, in self, expected);
+    CheckWindowsOnly(failures, notes, snapshot, in self, expected);
 
     // CPU time only grows, and the probe read it first, so it must not exceed the later reading by
     // more than the interval could account for.
@@ -484,6 +484,7 @@ internal static class SelfTest {
   private static void CheckWindowsOnly(
     List<string> failures,
     List<string> notes,
+    SystemSnapshot snapshot,
     in ProcessRecord self,
     System.Diagnostics.Process expected
   ) {
@@ -549,6 +550,112 @@ internal static class SelfTest {
     CheckImageVersion(failures, notes, in self, runtimePath);
     CheckMitigations(failures, notes, in self);
     CheckObjectCounts(failures, notes, in self);
+    CheckPowerThrottling(failures, notes, in self);
+    CheckSignatures(failures, notes, snapshot, in self);
+  }
+
+  /// <summary>
+  /// The one energy reading §22 accepts, on the only kernel that has it.
+  /// </summary>
+  /// <remarks>
+  /// The value is not asserted — what a runtime asks for is the runtime's business — but the call
+  /// succeeding is, and that is the whole of what a wrong information class or a wrong structure
+  /// size would break. Both make <c>GetProcessInformation</c> return FALSE and leave the column
+  /// looking like a process nobody has set a policy on, which is what most of the table looks like
+  /// anyway: the failure would be invisible on a screen (PRD §72.3).
+  /// </remarks>
+  private static void CheckPowerThrottling(List<string> failures, List<string> notes, in ProcessRecord self) {
+    // ProcessPowerThrottling arrived in Windows 10 1809, so an older Windows legitimately refuses
+    // this one and is recorded rather than failed.
+    if (!self.PowerThrottling.HasValue) {
+      notes.Add(
+        $"eco.state: not reported ({self.PowerThrottling.Reason}) — ProcessPowerThrottling needs Windows 10 1809 or newer"
+      );
+      return;
+    }
+
+    Check(
+      failures,
+      notes,
+      "eco.state",
+      FieldAccessor.Text(ProcessField.EcoMode, in self, null, 0),
+      true,
+      "a process can open itself, so this state should have been read"
+    );
+
+    notes.Add($"qos.background: {FieldAccessor.Text(ProcessField.BackgroundQualityOfService, in self, null, 0)}");
+  }
+
+  /// <summary>
+  /// The Authenticode reader, against images Microsoft itself signed.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The strongest check available for this one, and the reason it looks at other processes rather
+  /// than at this one: the program under test is not signed, so its own row proves only that the
+  /// reader ran. Windows' own system directory is full of images that are signed, timestamped and
+  /// still valid, and every one of them is a file this walk did not produce — so agreeing with them
+  /// is corroboration rather than this program agreeing with itself.
+  /// </para>
+  /// <para>
+  /// A digest computed over the wrong bytes fails against all of them at once. That is the mistake
+  /// this exists to catch, and it is one the unit tests cannot: they sign an image with the same
+  /// arithmetic they check it with, which proves the arithmetic is self-consistent and not that it
+  /// is Microsoft's.
+  /// </para>
+  /// </remarks>
+  private static void CheckSignatures(
+    List<string> failures,
+    List<string> notes,
+    SystemSnapshot snapshot,
+    in ProcessRecord self
+  ) {
+    Check(
+      failures,
+      notes,
+      "signature.status",
+      FieldAccessor.Text(ProcessField.ImageSignature, in self, null, 0),
+      self.ImageSignature != SignatureStatus.NotChecked,
+      "the run asked for every Windows column, so this image should have been checked"
+    );
+
+    var system = Environment.SystemDirectory;
+    var verified = 0;
+    var signed = 0;
+    string? example = null;
+    string? disagreed = null;
+    for (var i = 0; i < snapshot.ProcessCount; ++i) {
+      ref readonly var record = ref snapshot.Processes[i];
+      if (record.ImagePath is not { Length: > 0 } path
+          || !path.StartsWith(system, StringComparison.OrdinalIgnoreCase)
+          || record.ImageSignature is SignatureStatus.NotChecked or SignatureStatus.Unsigned)
+        continue;
+
+      ++signed;
+      if (record.ImageSignature == SignatureStatus.Verified) {
+        ++verified;
+        example ??= $"{Path.GetFileName(path)} signed by {record.ImageSigner}";
+      } else
+        disagreed ??= $"{Path.GetFileName(path)}: {record.ImageSignature.Text()}";
+    }
+
+    if (signed == 0) {
+      // Nothing was disproved, and there are two innocent ways to get here: an account that may read
+      // no system process's path, and a Windows whose system files are not signed at all — which is
+      // what the Wine leg is. Failing either would be failing a run for describing its machine
+      // correctly.
+      notes.Add("signature: no signed image under the system directory was readable, so nothing corroborated the digest");
+      return;
+    }
+
+    Check(
+      failures,
+      notes,
+      "signed system image",
+      $"{verified} of {signed} verified" + (example is null ? "" : $"  ({example})") + (disagreed is null ? "" : $"  first other: {disagreed}"),
+      verified > 0,
+      "Windows' own system images are signed and timestamped, so the Authenticode digest must reproduce at least one of them"
+    );
   }
 
   /// <summary>

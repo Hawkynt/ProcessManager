@@ -286,6 +286,28 @@ internal static partial class Native {
   public const int ProcessProtectionLevelInfo = 7;
 
   /// <summary>
+  /// <c>ProcessPowerThrottling</c>, the fifth member of <c>PROCESS_INFORMATION_CLASS</c> (PRD §22).
+  /// </summary>
+  /// <remarks>
+  /// Documented for <c>GetProcessInformation</c> as well as for the set side, and needing only
+  /// <c>PROCESS_QUERY_LIMITED_INFORMATION</c>. The number is derived from the member's position in
+  /// the enumeration the same way <see cref="ProcessProtectionLevelInfo"/> above is, and for the same
+  /// reason: Microsoft's reference page for it prints names without values.
+  /// </remarks>
+  public const int ProcessPowerThrottling = 4;
+
+  /// <summary>
+  /// <c>PROCESS_POWER_THROTTLING_STATE.Version</c>, which the structure must carry to be accepted.
+  /// </summary>
+  /// <remarks>
+  /// The one field of the three that is written rather than read. A buffer handed over with a
+  /// version of nought is refused, which would look exactly like a process that has no power
+  /// throttling to report — so it is set before the call rather than left at whatever the allocation
+  /// contained.
+  /// </remarks>
+  public const uint PROCESS_POWER_THROTTLING_CURRENT_VERSION = 1;
+
+  /// <summary>
   /// <c>PROTECTION_LEVEL_NONE</c>, which is <c>0xFFFFFFFE</c> and emphatically not <c>-1</c>.
   /// </summary>
   /// <remarks>

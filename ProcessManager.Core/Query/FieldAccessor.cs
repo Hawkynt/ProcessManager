@@ -219,6 +219,44 @@ public static class FieldAccessor {
         return process.PackageStatus == SignatureStatus.NotChecked
           ? Humanize.Placeholder(UnknownReason.NotSampledYet)
           : process.PackageStatus.Text();
+      // PRD §21. Its own reason and not the package check's: on a machine whose executables carry no
+      // embedded signature at all this is "n/a", which is a statement about the platform rather than
+      // about the file, and neither of those is "nobody asked" (PRD §72.3).
+      case ProcessField.ImageSignature:
+        return process.ImageSignature == SignatureStatus.NotChecked
+          ? Humanize.Placeholder(process.ImageSignatureReason)
+          : process.ImageSignature.Text();
+      // The three certificate strings share the signature's reason, because they share its read: a
+      // file that has no signature has no signer either, and that is an empty cell rather than a
+      // placeholder — "this program is not signed" is a finding about a great many programs, and the
+      // column beside these says it in words.
+      case ProcessField.ImageSigner:
+        return process.ImageSigner ?? Humanize.Placeholder(process.ImageSignatureReason);
+      case ProcessField.CertificateSubject:
+        return process.CertificateSubject ?? Humanize.Placeholder(process.ImageSignatureReason);
+      case ProcessField.CertificateIssuer:
+        return process.CertificateIssuer ?? Humanize.Placeholder(process.ImageSignatureReason);
+      case ProcessField.SignatureTimestamp:
+        // Nought ticks is "nothing countersigned this", which is a real finding and the reason the
+        // certificate's own expiry then decides the verdict. It is not the first of January in the
+        // year one, and it is not an unknown either.
+        if (!process.SignatureTimestampUtcTicks.TryGetValue(out var countersigned))
+          return Humanize.Placeholder(process.SignatureTimestampUtcTicks.Reason);
+
+        return countersigned > 0
+          ? new DateTime((long)countersigned, DateTimeKind.Utc).ToLocalTime()
+            .ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture)
+          : "none";
+
+      // PRD §22. Both out of the one reading, and both saying "system managed" where nobody has
+      // asked for either behaviour — which is most of a machine, and is emphatically not "off".
+      case ProcessField.BackgroundQualityOfService:
+        return PowerThrottlingText(process.PowerThrottling)
+          ?? Humanize.Placeholder(process.PowerThrottling.Reason);
+      case ProcessField.EcoMode:
+        return EcoModeText(process.PowerThrottling)
+          ?? Humanize.Placeholder(process.PowerThrottling.Reason);
+
       case ProcessField.TrustChain:
         // Its own reason rather than the one above it. "Unsigned" here is a finding — somebody read
         // the package's entry and nothing had signed it — so an absent answer must not borrow the
@@ -365,6 +403,17 @@ public static class FieldAccessor {
       // it were an answer.
       case ProcessField.PackageStatus:
         return process.PackageStatus == SignatureStatus.NotChecked ? null : (byte)process.PackageStatus;
+      case ProcessField.ImageSignature:
+        return process.ImageSignature == SignatureStatus.NotChecked ? null : (byte)process.ImageSignature;
+      // The instant as its own number, so sorting brings the most recently signed to the top and a
+      // filter can be handed a date. Nought — never countersigned — is a real answer and sorts as
+      // the oldest, which is where a signature nothing dated belongs.
+      case ProcessField.SignatureTimestamp: return Number(process.SignatureTimestampUtcTicks);
+      // Both masks as the one number they are packed into, so that a filter can be handed the exact
+      // value a configuration set. Nothing sums them: a pair of bitfields is two sets, not a
+      // quantity.
+      case ProcessField.BackgroundQualityOfService:
+      case ProcessField.EcoMode: return Number(process.PowerThrottling);
       case ProcessField.TrustChain:
         return process.TrustChain == SignatureStatus.NotChecked ? null : (byte)process.TrustChain;
       // No number at all, and deliberately: an unasked question must not sort or filter as though it
@@ -604,6 +653,29 @@ public static class FieldAccessor {
     ProcessField.TrustChain => process.TrustChain == SignatureStatus.NotChecked
       ? null
       : process.TrustChain.Text(),
+    // PRD §21. The same eight words again, over the third kind of evidence: "signature.status:Expired"
+    // finds the images whose certificate ran out before anything countersigned them.
+    ProcessField.ImageSignature => process.ImageSignature == SignatureStatus.NotChecked
+      ? null
+      : process.ImageSignature.Text(),
+    // The names as the certificate spells them, so a filter can be handed a publisher read off
+    // somebody else's machine and match on it.
+    ProcessField.ImageSigner => process.ImageSigner,
+    ProcessField.CertificateSubject => process.CertificateSubject,
+    ProcessField.CertificateIssuer => process.CertificateIssuer,
+    // "none" is exported as well as shown, because a signature nothing dated is a finding: a cell
+    // that reads "none" on screen and empty in a file is the seam §103's invariant exists to catch.
+    ProcessField.SignatureTimestamp => process.SignatureTimestampUtcTicks.TryGetValue(out var signed)
+      ? (signed > 0
+        ? new DateTime((long)signed, DateTimeKind.Utc).ToLocalTime()
+          .ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture)
+        : "none")
+      : null,
+    // The words the columns show, so "eco.state:on" and "qos.background:throttled" read the way they
+    // would be said aloud. Textual at all because the exporter asks only for raw text on a field of
+    // state kind, and a state that renders a word and exports an empty cell is what §103 catches.
+    ProcessField.BackgroundQualityOfService => PowerThrottlingText(process.PowerThrottling),
+    ProcessField.EcoMode => EcoModeText(process.PowerThrottling),
     ProcessField.Runtime => process.Runtime == ProcessRuntime.Unknown ? null : process.Runtime.Text(),
     // PRD §14. The five version-resource strings as they are, so a filter can be handed a company
     // name or a version read off a bug report and match on it. Textual at all because without it the
@@ -723,6 +795,15 @@ public static class FieldAccessor {
         return string.Compare(a.ImageProductVersion, b.ImageProductVersion, StringComparison.OrdinalIgnoreCase);
       case ProcessField.ImageFileVersion:
         return string.Compare(a.ImageFileVersion, b.ImageFileVersion, StringComparison.OrdinalIgnoreCase);
+      // By the text, which groups every image one publisher signed together — the point of sorting a
+      // provenance column at all, and the fastest way to see that one process on the table was
+      // signed by somebody nothing else on it was.
+      case ProcessField.ImageSigner:
+        return string.Compare(a.ImageSigner, b.ImageSigner, StringComparison.OrdinalIgnoreCase);
+      case ProcessField.CertificateSubject:
+        return string.Compare(a.CertificateSubject, b.CertificateSubject, StringComparison.OrdinalIgnoreCase);
+      case ProcessField.CertificateIssuer:
+        return string.Compare(a.CertificateIssuer, b.CertificateIssuer, StringComparison.OrdinalIgnoreCase);
     }
 
     var left = Number(field, in a, delta, indexA);
@@ -913,6 +994,68 @@ public static class FieldAccessor {
     0xFFFF_FFFF => "same",
     _ => "0x" + level.ToString("x", CultureInfo.InvariantCulture),
   };
+
+  /// <summary><c>PROCESS_POWER_THROTTLING_EXECUTION_SPEED</c>.</summary>
+  private const ulong _THROTTLE_EXECUTION_SPEED = 0x1;
+
+  /// <summary><c>PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION</c>.</summary>
+  private const ulong _THROTTLE_TIMER_RESOLUTION = 0x4;
+
+  /// <summary>
+  /// What Windows has been asked to do about this process's energy use (PRD §22).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Three states out of two masks, and the third is the whole reason both masks are carried. The
+  /// control mask says which behaviours the process has an opinion about and the state mask says
+  /// what that opinion is, so a bit absent from the control mask is one nobody has set — the system
+  /// decides, which is what almost every row on a machine is. Reporting that as "not throttled"
+  /// would claim somebody asked for full speed when nobody asked for anything (PRD §72.3).
+  /// </para>
+  /// <para>
+  /// The timer bit is named rather than dropped. It is a second, independent behaviour in the same
+  /// word — whether the process's requests for a finer system timer are ignored, which is a real
+  /// battery saving — and a decoder that showed only the first bit would silently lose it.
+  /// </para>
+  /// </remarks>
+  private static string? PowerThrottlingText(Counter reading) {
+    if (!reading.TryGetValue(out var value))
+      return null;
+
+    var control = value & 0xFFFF_FFFF;
+    var state = value >> 32;
+    var speed = (control & _THROTTLE_EXECUTION_SPEED) == 0
+      ? "system managed"
+      : (state & _THROTTLE_EXECUTION_SPEED) != 0
+        ? "throttled"
+        : "high performance";
+
+    return (control & _THROTTLE_TIMER_RESOLUTION) != 0 && (state & _THROTTLE_TIMER_RESOLUTION) != 0
+      ? speed + ", timer resolution ignored"
+      : speed;
+  }
+
+  /// <summary>
+  /// The same reading in the words the operating system's own window uses (PRD §22).
+  /// </summary>
+  /// <remarks>
+  /// Only the execution-speed bit, because that is the one Task Manager's "efficiency mode" tick
+  /// sets and this column exists to be the same fact under the same name. Three answers rather than
+  /// two, for the reason above: "off" means somebody asked for full speed, and most rows have asked
+  /// for nothing at all.
+  /// </remarks>
+  private static string? EcoModeText(Counter reading) {
+    if (!reading.TryGetValue(out var value))
+      return null;
+
+    var control = value & 0xFFFF_FFFF;
+    var state = value >> 32;
+    return (control & _THROTTLE_EXECUTION_SPEED) == 0
+      ? "system managed"
+      : (state & _THROTTLE_EXECUTION_SPEED) != 0
+        ? "on"
+        : "off";
+  }
 
   #endregion
 

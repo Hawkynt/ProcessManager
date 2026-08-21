@@ -505,6 +505,33 @@ public static class FieldRegistry {
       "Whether the running image still matches the digest its package recorded, and whether that package was itself signed. An ELF carries no signature to verify, so this is the honest local equivalent: what pacman -Qkk and dpkg --verify ask. It is not a hash, not a trust chain and not a reputation — those are separate questions and nothing here answers them.",
       FieldKind.State, FieldUnit.None, _LINUX, FieldCost.High, 200, 25, false, false,
       Aliases: "pkgcheck"),
+    // PRD §21, §70. The same one of §70's five questions the package check answers, asked of the
+    // other kind of evidence there is: a signature the publisher put inside the file, rather than a
+    // digest the machine's package manager wrote down about it. Two columns and not one, because a
+    // PE carries a signature and an ELF does not, and a Linux package database records a digest
+    // where Windows has no such database — one column would mean a different thing on each
+    // (PRD §5.3). All five are High for one reason: filling them means reading and digesting the
+    // whole image, once per image rather than once per process (PRD §5.4).
+    new(ProcessField.ImageSignature, "signature.status", "Signature", "Sig",
+      "Whether the image's own embedded signature still covers the bytes that are running: the Authenticode digest recomputed over the file and compared with the one the signature records, and the signature over that digest checked against the signing certificate's key. It is not a trust chain — nothing here asks whether that certificate chains to a root this machine believes in, which is the next column and routinely a different answer.",
+      FieldKind.State, FieldUnit.None, _WINDOWS, FieldCost.High, 200, 25, false, false,
+      Aliases: "signature"),
+    new(ProcessField.ImageSigner, "signer", "Signer", "Signer",
+      "Who the signing certificate says signed the image. Not the company name in the version resource, which anybody may type: this one is bound to the key the signature was made with, and the column beside it says whether that binding still holds.",
+      FieldKind.Text, FieldUnit.None, _WINDOWS, FieldCost.High, 220, 24, false, false,
+      Aliases: "signed.by"),
+    new(ProcessField.CertificateSubject, "cert.subject", "Certificate subject", "CertSubj",
+      "The signing certificate's whole subject, for the cases where a common name is not enough to tell two publishers apart.",
+      FieldKind.Text, FieldUnit.None, _WINDOWS, FieldCost.High, 380, 40, false, false,
+      Aliases: "certificate.subject"),
+    new(ProcessField.CertificateIssuer, "cert.issuer", "Certificate issuer", "CertIss",
+      "Who issued the signing certificate. Who put their name to the signer, and not who this machine trusts — nothing here has looked at a root store.",
+      FieldKind.Text, FieldUnit.None, _WINDOWS, FieldCost.High, 340, 36, false, false,
+      Aliases: "certificate.issuer"),
+    new(ProcessField.SignatureTimestamp, "signature.timestamp", "Signature timestamp", "SigTime",
+      "When the signature was countersigned by a timestamping authority. Its own column because this is what keeps a signature valid after the certificate behind it has expired, which is the ordinary state of most signed software. \"none\" is a real answer: a great deal of software is signed and never dated, and such a signature dies with its certificate.",
+      FieldKind.Instant, FieldUnit.Timestamp, _WINDOWS, FieldCost.High, 160, 19, false, true,
+      Aliases: "countersigned"),
     // PRD §70's five questions, in five slots that cannot be read off one another. The hash is
     // above; this is the third, and the fourth and fifth are below it. What each column may say is
     // one vocabulary — Verified, Unsigned, Expired and the rest — and which question it answers is
@@ -561,6 +588,22 @@ public static class FieldRegistry {
       "Which instruction set the process is being translated from, or none. An x86 program on an x64 machine and an x64 program on an ARM64 one are both this column's business; a program running on the machine's own instruction set is \"native\", which is an answer rather than an empty cell.",
       FieldKind.State, FieldUnit.None, _WINDOWS, FieldCost.Free, 130, 10, false, true,
       Aliases: "wow64 translation"),
+
+    // PRD §22. The whole of what this program will report per process about energy, and deliberately
+    // so: the eight columns beside these in §22 would each be a machine-level figure divided by a
+    // guess, and a model shown where a measurement is claimed is the dishonesty §72.3 exists to
+    // prevent. This one is neither a model nor a measurement — it is a documented state, read
+    // through a documented call, and it says what was asked for rather than what is being spent.
+    // One reading answers both: the second is the first wearing the name the operating system's own
+    // window uses for it, the way `protected` and `protection.level` are one call and two questions.
+    new(ProcessField.BackgroundQualityOfService, "qos.background", "Background QoS", "QoS",
+      "Which energy behaviour Windows has been asked to give the process: throttled to the efficient cores and the slower clock, held at full speed, or left for the system to decide. \"system managed\" is the ordinary answer and a real one — it means nobody has asked for either, not that nobody could read it.",
+      FieldKind.State, FieldUnit.None, _WINDOWS, FieldCost.High, 160, 16, false, false,
+      Aliases: "qos ecoqos"),
+    new(ProcessField.EcoMode, "eco.state", "Efficiency mode", "Eco",
+      "The same reading as the column beside it, in the words Task Manager uses: whether the process has been put into efficiency mode. Kept apart from it because \"eco: off\" and \"eco: system managed\" are different findings, and a yes-or-no column would have to round one of them into the other.",
+      FieldKind.State, FieldUnit.None, _WINDOWS, FieldCost.High, 140, 14, false, false,
+      Aliases: "eco efficiency"),
 
     new(ProcessField.ThreadCount, "threads", "Threads", "Thr",
       "How many threads the process currently has.",

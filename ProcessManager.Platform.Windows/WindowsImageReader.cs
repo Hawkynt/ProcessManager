@@ -29,7 +29,19 @@ internal sealed class WindowsImageReader {
   /// Null when the file exists and is not a PE image, which is a different answer from not having
   /// looked and is cached just as firmly — otherwise every sample would re-read it.
   /// </param>
-  private readonly record struct Entry(long Length, long ModifiedTicks, PeImageFacts? Facts, UnknownReason Reason);
+  /// <param name="Signature">
+  /// Null both when nobody asked for it and when the file is not a PE image at all. The two are told
+  /// apart by <paramref name="Facts"/> beside it, which is null only in the second case — so a
+  /// cached entry taken before anything wanted a signature can be topped up rather than answering
+  /// "unsigned" for the rest of the run (PRD §72.3).
+  /// </param>
+  private readonly record struct Entry(
+    long Length,
+    long ModifiedTicks,
+    PeImageFacts? Facts,
+    AuthenticodeFacts? Signature,
+    UnknownReason Reason
+  );
 
   private readonly Dictionary<string, Entry> _byPath = new(StringComparer.OrdinalIgnoreCase);
 
@@ -48,7 +60,14 @@ internal sealed class WindowsImageReader {
   /// <summary>
   /// What the image at <paramref name="path"/> says about itself, or why there is no answer.
   /// </summary>
-  public PeImageFacts? Read(string? path, out UnknownReason reason) {
+  /// <param name="wantSignature">
+  /// Whether to check the image's own signature as well (PRD §21, §5.4). Dearer than everything else
+  /// here by a wide margin — it digests the whole file and verifies a signature over that digest —
+  /// so it happens only when a column or a filter names one of the five columns behind it, and only
+  /// once per image however many processes are running it.
+  /// </param>
+  public PeImageFacts? Read(string? path, bool wantSignature, out AuthenticodeFacts? signature, out UnknownReason reason) {
+    signature = null;
     reason = UnknownReason.None;
     if (path is not { Length: > 0 }) {
       // No path at all: a kernel thread, or a process this user may not open. Which of the two it is
@@ -72,36 +91,47 @@ internal sealed class WindowsImageReader {
 
     var length = info.Length;
     var modified = info.LastWriteTimeUtc.Ticks;
-    if (this._byPath.TryGetValue(path, out var cached) && cached.Length == length && cached.ModifiedTicks == modified) {
+    if (this._byPath.TryGetValue(path, out var cached)
+        && cached.Length == length
+        && cached.ModifiedTicks == modified
+        // A run that has only just been asked for the signature finds an entry taken without one,
+        // and must read the file again rather than reporting for ever that the image is unsigned.
+        && (!wantSignature || cached.Signature is not null || cached.Facts is null)) {
       reason = cached.Reason;
+      signature = cached.Signature;
       return cached.Facts;
     }
 
-    var entry = ReadFile(path, length);
+    var entry = ReadFile(path, length, wantSignature);
     this._byPath[path] = entry;
     reason = entry.Reason;
+    signature = entry.Signature;
     return entry.Facts;
   }
 
-  private static Entry ReadFile(string path, long length) {
+  private static Entry ReadFile(string path, long length, bool wantSignature) {
     var modified = File.GetLastWriteTimeUtc(path).Ticks;
     if (length is <= 0 or > _MaximumBytes)
-      return new(length, modified, null, UnknownReason.NotImplementedHere);
+      return new(length, modified, null, null, UnknownReason.NotImplementedHere);
 
     byte[] bytes;
     try {
       bytes = File.ReadAllBytes(path);
     } catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) {
-      return new(length, modified, null, UnknownReason.NotPermitted);
+      return new(length, modified, null, null, UnknownReason.NotPermitted);
     }
 
     if (!PortableExecutable.TryRead(bytes, out var facts))
       // A file that runs and is not a PE image is a real thing on Windows — a script through its
       // interpreter, whatever a subsystem is running — and this is a finding about it rather than a
       // failure to read (PRD §72.3).
-      return new(length, modified, null, UnknownReason.NotSupportedOnPlatform);
+      return new(length, modified, null, null, UnknownReason.NotSupportedOnPlatform);
 
-    return new(length, modified, facts, UnknownReason.None);
+    AuthenticodeFacts? signature = null;
+    if (wantSignature && AuthenticodeSignature.TryRead(bytes, out var verdict))
+      signature = verdict;
+
+    return new(length, modified, facts, signature, UnknownReason.None);
   }
 
   /// <summary>Drops entries for images nothing is running any more.</summary>
@@ -141,6 +171,61 @@ internal sealed class WindowsImageReader {
     record.ImageFileVersion = value.FileVersion;
     record.ImageVersionReason = UnknownReason.None;
     record.Subsystem = Counter.Of(value.Subsystem);
+  }
+
+  /// <summary>
+  /// Copies the signature verdict into a record, or the reason there is none (PRD §21, §70).
+  /// </summary>
+  /// <remarks>
+  /// The three certificate strings stay null for an image that is unsigned, and that is deliberate:
+  /// a file nobody signed has no signer, and the verdict beside them says "Unsigned" in words. What
+  /// must never happen is the opposite — a verdict left at <see cref="SignatureStatus.NotChecked"/>
+  /// with no reason, which renders as an empty cell and reads as "signed by nobody" when it means
+  /// "nobody looked".
+  /// </remarks>
+  public static void ApplySignature(ref ProcessRecord record, AuthenticodeFacts? signature, UnknownReason reason) {
+    if (signature is not { } value) {
+      record.ImageSignature = SignatureStatus.NotChecked;
+      record.ImageSignatureDetail = null;
+      // A file that is not a PE image at all carries no Authenticode signature by construction, and
+      // a file nobody could read carries no answer — two different empty cells (PRD §72.3).
+      record.ImageSignatureReason = reason == UnknownReason.None ? UnknownReason.NotSupportedOnPlatform : reason;
+      record.ImageSigner = null;
+      record.CertificateSubject = null;
+      record.CertificateIssuer = null;
+      record.SignatureTimestampUtcTicks = Counter.Unknown(record.ImageSignatureReason);
+      return;
+    }
+
+    record.ImageSignature = value.Status;
+    record.ImageSignatureDetail = value.Detail;
+    record.ImageSignatureReason = UnknownReason.None;
+    record.ImageSigner = value.Signer;
+    record.CertificateSubject = value.Subject;
+    record.CertificateIssuer = value.Issuer;
+    // Nought is "nothing countersigned this", which is a reading rather than a hole — but only for an
+    // image that has a signature at all. An unsigned file has no timestamp to be absent.
+    record.SignatureTimestampUtcTicks = value.Status == SignatureStatus.Unsigned
+      ? Counter.NotSupported
+      : Counter.Of((ulong)value.TimestampUtcTicks);
+  }
+
+  /// <summary>
+  /// What the five signature readings say on a run that never asked for them (PRD §5.4, §72.3).
+  /// </summary>
+  /// <remarks>
+  /// Spelled out rather than left at the default, because the default of
+  /// <see cref="SignatureStatus"/> is <see cref="SignatureStatus.NotChecked"/> with no reason beside
+  /// it — which is exactly the shape of a record nobody filled claiming to have an answer.
+  /// </remarks>
+  public static void NotAsked(ref ProcessRecord record) {
+    record.ImageSignature = SignatureStatus.NotChecked;
+    record.ImageSignatureDetail = null;
+    record.ImageSignatureReason = UnknownReason.NotSampledYet;
+    record.ImageSigner = null;
+    record.CertificateSubject = null;
+    record.CertificateIssuer = null;
+    record.SignatureTimestampUtcTicks = Counter.NotSampledYet;
   }
 
 }
