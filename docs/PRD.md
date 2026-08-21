@@ -3073,7 +3073,7 @@ a naive parser hands the attacker the parse.
 
 # 99. Testing strategy
 
-**140 tests pass on every leg, under both a UTF-8 and a `C` locale.**
+**802 tests pass on every leg, under both a UTF-8 and a `C` locale.**
 
 ## Unit tests
 
@@ -3115,10 +3115,10 @@ Windows parsing on Linux.
 ## Performance tests
 
 - [x] Sampling budget enforced as a build gate (§71.2)
-- [ ] 10 000 processes
+- [x] 10 000 processes
 - [ ] 100 000 threads
 - [ ] 1 000 000 resource rows
-- [ ] Rapid process churn
+- [x] Rapid process churn
 - [ ] 100 % CPU load
 - [ ] Low-memory state
 - [ ] High-I/O machine
