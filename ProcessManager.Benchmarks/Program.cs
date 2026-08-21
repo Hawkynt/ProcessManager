@@ -79,7 +79,18 @@ internal static class Program {
     // a *design* regression, not to grade the hardware.
     //
     // Measured on the two machines this actually runs on: 33 ms on a sixteen-core desktop at load 15,
-    // 51 ms on the four-core shared runner nightly uses. Same code, and the difference is what a
+    // 51 ms on the four-core shared runner nightly uses.
+    //
+    // Both figures are now old. The same desktop measures 63-66 ms at load 7 and 83-105 ms at load
+    // 45, because the row has grown a great many fields and every one of them is a file somebody
+    // reads. Held against an older build interleaved on the same machine at the same moment: 41 ms
+    // then against 65 ms now. Bisecting the growth found no single step to point at — it is spread
+    // across the lot, which is what honest feature growth looks like rather than a regression.
+    //
+    // So this ceiling is now marginal rather than generous, and on a loaded machine it fails without
+    // anything having gone wrong. Raising it weakens the only gate that watches this, so the number
+    // is left where it is and the situation written down instead: whoever raises it should do so
+    // deliberately, with a measurement beside the decision. Same code, and the difference is what a
     // syscall costs on each — this work is syscalls almost end to end. A ceiling of 50 therefore
     // failed the runner by 2.6% while nothing had regressed, which is precisely the "cries wolf and
     // gets disabled within a month" failure the harness is written to avoid.
