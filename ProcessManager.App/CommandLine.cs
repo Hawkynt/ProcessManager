@@ -148,6 +148,16 @@ internal sealed record CommandLineOptions {
   public bool Gpu { get; init; }
 
   /// <summary>
+  /// Whether the descriptor count is worth the directory listing it costs (PRD §5.4).
+  /// </summary>
+  /// <remarks>
+  /// The most expensive read in the sampler: one <c>getdents</c> loop over <c>/proc/[pid]/fd</c> for
+  /// every process, every sample. Same rule as the three above — and until this existed there was no
+  /// rule at all, so the column could be asked for and came back empty however it was asked for.
+  /// </remarks>
+  public bool WantsHandleCount => this.Wants(ProcessField.HandleCount);
+
+  /// <summary>
   /// Whether a field was asked for, by column or by filter.
   /// </summary>
   /// <remarks>

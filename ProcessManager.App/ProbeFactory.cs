@@ -26,6 +26,11 @@ internal static class ProbeFactory {
   /// Whether anything on this run actually asked for the LSM label. It costs a file per process, so
   /// it is read only when a column or a filter names it — which is §5.4 enforced rather than stated.
   /// </param>
+  /// <param name="wantHandleCount">
+  /// Whether anything on this run asked how many descriptors each process holds. It costs a
+  /// directory listing per process per sample — the most expensive thing in the sampler — so it is
+  /// read only when a column or a filter names it (PRD §5.4).
+  /// </param>
   /// <param name="wantSupplementaryGroups">
   /// Whether anything on this run asked for the group list. It costs a string per process per
   /// sample, so it is kept only when a column or a filter names it (PRD §5.4).
@@ -41,7 +46,8 @@ internal static class ProbeFactory {
     bool wantSecurityContext = false,
     bool wantProportionalSetSize = false,
     bool wantSupplementaryGroups = false,
-    bool wantGpuUsage = false
+    bool wantGpuUsage = false,
+    bool wantHandleCount = false
   ) {
     if (OperatingSystem.IsLinux()) {
       // A recorded tree is somebody else's machine; asking a helper about pids in it would be asking
@@ -57,6 +63,7 @@ internal static class ProbeFactory {
             UseProportionalSetSize = wantProportionalSetSize,
             ReadSupplementaryGroups = wantSupplementaryGroups,
             ReadGpuUsage = wantGpuUsage,
+            CountFileDescriptors = wantHandleCount,
           }
           // A recorded tree was captured by somebody else, so the live user's id would refuse every
           // file in it. Root reads everything, which is what a replay wants (PRD §9.1).
@@ -66,9 +73,12 @@ internal static class ProbeFactory {
             EffectiveUserId = 0,
             ReadSecurityContext = wantSecurityContext,
             ReadSupplementaryGroups = wantSupplementaryGroups,
-            // A recorded tree carries no adapters and no descriptors of its own, and the live
-            // machine's cards have nothing to do with the machine that was recorded.
+            // A recorded tree has no adapters, and the live machine's cards have nothing to do
+            // with the machine that was recorded. Its descriptors are another matter: a captured
+            // tree carries the fd directories it was captured with, and counting those is the
+            // point of having captured them.
             ReadGpuUsage = false,
+            CountFileDescriptors = wantHandleCount,
           }
       );
     }
