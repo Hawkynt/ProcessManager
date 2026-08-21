@@ -48,7 +48,7 @@ public static class DesktopApp {
       window.Start();
 
       if (shootPath is not null)
-        return Shoot(window, shootPath, holdSeconds);
+        return Shoot(window, sampler, probe, shootPath, holdSeconds);
 
       Application.Run(window);
       return null;
@@ -65,7 +65,13 @@ public static class DesktopApp {
   /// The CI smoke path (PRD §9.6): bring the window up, prove it painted, write a log, and exit
   /// without an event loop nobody is there to end.
   /// </summary>
-  private static string? Shoot(MainWindow window, string directory, double holdSeconds) {
+  private static string? Shoot(
+    MainWindow window,
+    Sampler sampler,
+    ISystemProbe probe,
+    string directory,
+    double holdSeconds
+  ) {
     Directory.CreateDirectory(directory);
     var log = Path.Combine(directory, "shoot.log");
     try {
@@ -195,6 +201,12 @@ public static class DesktopApp {
               : $"file capture: none — {fileFailure}\n";
           } else
             description += "file box:     the selected process has no readable executable\n";
+
+          // And the thread tab of §29 with the stack viewer of §30 open on one of its rows. Neither
+          // has ever been photographed: the detail pane opens on the overview, so a table with
+          // twenty columns in it was a layout no picture had ever shown — and a column drawn under
+          // the scrollbar loses its units without any test noticing (PRD §9.6).
+          description += Threads(sampler, probe, directory);
         } else
           description += "capture:      not implemented on this platform\n";
 
@@ -230,6 +242,71 @@ public static class DesktopApp {
       File.WriteAllText(log, e.ToString());
       return $"the window could not be brought up: {e.Message}";
     }
+  }
+
+  /// <summary>
+  /// Photographs the thread tab and the stack viewer (PRD §29, §30, §9.6).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The process with the most threads, in a window of its own, rather than the selected row's:
+  /// a thread table photographed on a single-threaded process proves the layout and nothing else,
+  /// and whichever row happens to sort first is not reliably interesting. §26 exists precisely so
+  /// that several of these windows can be open at once, so opening one costs nothing.
+  /// </para>
+  /// <para>
+  /// It matters more than usual here. Half of §29's columns are only filled for a process the reader
+  /// could have attached a debugger to, and inside the capture's own PID namespace the program itself
+  /// is both the busiest and the only such process — so this is the one picture where the instruction
+  /// pointer and the stack usage are real readings rather than the refusals they are for everything
+  /// else on a desktop.
+  /// </para>
+  /// </remarks>
+  [System.Runtime.Versioning.SupportedOSPlatform("linux")]
+  private static string Threads(Sampler sampler, ISystemProbe probe, string directory) {
+    var busiest = Model.ProcessKey.None;
+    var name = string.Empty;
+    var most = 0;
+    foreach (var process in sampler.Current.Processes)
+      if (process.ThreadCount > most) {
+        most = process.ThreadCount;
+        busiest = process.Key;
+        name = process.Name ?? string.Empty;
+      }
+
+    if (busiest.IsNone)
+      return "thread tab:   nothing on this machine reported a thread count\n";
+
+    var properties = new ProcessPropertiesWindow(probe, busiest, name);
+    properties.Show();
+    if (!properties.ShowPage("Threads"))
+      return "thread tab:   the detail pane has no thread tab\n";
+
+    // Filled twice, an interval apart, because the CPU and switch columns are differences between
+    // two readings: photographed once they are a row of ellipses, which proves the layout and
+    // nothing else — the same reason the performance page is opened at the start of the hold.
+    System.Threading.Thread.Sleep(400);
+    properties.Pane.Refresh();
+
+    var description = properties.DescribeForCapture();
+    var png = System.IO.Path.Combine(directory, "threads.png");
+    description += GtkCapture.Window(png, out var failure, properties.Text) is { } size
+      ? $"thread shot:  {size.Width}x{size.Height} -> {png}\n"
+      : $"thread shot:  none — {failure}\n";
+
+    var rows = properties.Pane.ThreadRows;
+    if (rows.Count == 0)
+      return description + "stack window: the process reported no threads to open one on\n";
+
+    // The first thread, which is the one whose start address §29 can answer for.
+    var stack = properties.Pane.OpenStack(rows[0].Tid, resolveSymbols: true);
+    description += stack.DescribeForCapture();
+    var stackPng = System.IO.Path.Combine(directory, "stack.png");
+    description += GtkCapture.Window(stackPng, out var stackFailure, stack.Text) is { } stackSize
+      ? $"stack shot:   {stackSize.Width}x{stackSize.Height} -> {stackPng}\n"
+      : $"stack shot:   none — {stackFailure}\n";
+
+    return description;
   }
 
 }
