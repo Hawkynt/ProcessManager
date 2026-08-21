@@ -2,17 +2,63 @@ content floor: 0x0
 title:        Process Manager
 bounds:       {X=0,Y=0,Width=1240,Height=820}
 client size:  {Width=1240, Height=820}
-controls:     6
+controls:     7
 process rows: 20 roots, 20 visible
-columns:      5
-split at:     319, lower pane shown
-rail:         {X=0,Y=160,Width=168,Height=638}, 7 entries — Processes, Performance, Startup, Users, Services, Network, Find resources
+columns:      5 — name:260* pid:70 cpu:78 ws:92 private:96
+sorted by:    ws desc
+grouped by:   none, 0 heading(s), 20 process row(s)
+filter:       (none), case ignored
+ticked rows:  0
+split at:     304, lower pane shown
+rail:         {X=0,Y=190,Width=168,Height=608}, 7 entries — Processes, Performance, Startup, Users, Services, Network, Find resources
 command bar:  {X=0,Y=26,Width=1240,Height=30}, 7 items
-content:      {X=168,Y=160,Width=1072,Height=638} showing Processes
+content:      {X=168,Y=190,Width=1072,Height=608} showing Processes
 plots:        cpu {X=6,Y=6,Width=392,Height=92}, memory {X=404,Y=6,Width=392,Height=92}, cores {X=802,Y=6,Width=432,Height=92}
 topology:     16 logical, 1 socket(s), hybrid False
-status:       20 of 20 processes  ·  CPU 100% (normalized)  ·  memory 125G total, 82.8G free  ·  sample 1.5 ms
+status:       20 of 20 processes  ·  CPU 79.6% (normalized)  ·  memory 125G total, 80.5G free  ·  sample 3.8 ms
 capture:      1240x820 -> docs/screenshots/desktop.png
+title:        Process Manager
+bounds:       {X=0,Y=0,Width=1240,Height=820}
+client size:  {Width=1240, Height=820}
+controls:     7
+process rows: 10 roots, 30 visible
+columns:      5 — name:260* pid:70 cpu:78 ws:92 private:96
+sorted by:    ws desc
+grouped by:   executable, 10 heading(s), 20 process row(s)
+filter:       (none), case ignored
+ticked rows:  0
+split at:     304, lower pane shown
+rail:         {X=0,Y=190,Width=168,Height=608}, 7 entries — Processes, Performance, Startup, Users, Services, Network, Find resources
+command bar:  {X=0,Y=26,Width=1240,Height=30}, 7 items
+content:      {X=168,Y=190,Width=1072,Height=608} showing Processes
+plots:        cpu {X=6,Y=6,Width=392,Height=92}, memory {X=404,Y=6,Width=392,Height=92}, cores {X=802,Y=6,Width=432,Height=92}
+topology:     16 logical, 1 socket(s), hybrid False
+status:       grouped by executable — 10 heading(s)
+grouped capture: 1240x820 -> docs/screenshots/desktop-grouped.png
+title:        Process Manager
+bounds:       {X=0,Y=0,Width=1240,Height=820}
+client size:  {Width=1240, Height=820}
+controls:     7
+process rows: 7 roots, 7 visible
+columns:      5 — name:260* pid:70 cpu:78 ws:92 private:96
+sorted by:    ws desc
+grouped by:   none, 0 heading(s), 7 process row(s)
+filter:       ba, case ignored
+ticked rows:  0
+split at:     304, lower pane shown
+rail:         {X=0,Y=190,Width=168,Height=608}, 7 entries — Processes, Performance, Startup, Users, Services, Network, Find resources
+command bar:  {X=0,Y=26,Width=1240,Height=30}, 7 items
+content:      {X=168,Y=190,Width=1072,Height=608} showing Processes
+plots:        cpu {X=6,Y=6,Width=392,Height=92}, memory {X=404,Y=6,Width=392,Height=92}, cores {X=802,Y=6,Width=432,Height=92}
+topology:     16 logical, 1 socket(s), hybrid False
+status:       7 of 20 processes  ·  CPU 94.0% (normalized)  ·  memory 125G total, 80.4G free  ·  sample 1.6 ms
+filtered capture: 1240x820 -> docs/screenshots/desktop-filtered.png
+columns opened:  name:260* pid:70 cpu:78 ws:92 private:96
+columns fitted:  name:114* pid:44 cpu:69 ws:105 private:112
+columns moved:   pid:44* name:114 cpu:69 ws:105 private:112
+columns resized: pid:92* name:114 cpu:69 ws:105 private:112
+columns reset:   name:260* pid:70 cpu:78 io.total:104 private:96 user:130
+columns put back:name:260* pid:70 cpu:78 ws:92 private:96
 page rail:    22 resources, showing 'Memory'
 page header:  Memory / 125G
 page stats:   12 live, 7 hardware, 0 diagnostics
@@ -53,16 +99,16 @@ page expanded: 1180x780 -> docs/screenshots/performance-expanded.png
 shell views:
   Processes        20 row(s) — 20 rows
   Performance      (opens a window of its own)
-  Startup          23 row(s) — 23 entries, 13 of which will run.  As of 17:53:38.
-  Users            4 row(s) — 4 records, 1 of them somebody logged in.  As of 17:53:38.
-  Services         372 row(s) — 372 units, 1 running.  As of 17:53:38.  Starting and stopping them is not implemented yet.
-  Network          1423 row(s) — 1423 sockets, 10 of them traceable to a process from this account.  As of 17:53:38.
+  Startup          23 row(s) — 23 entries, 13 of which will run.  As of 17:59:27.
+  Users            4 row(s) — 4 records, 1 of them somebody logged in.  As of 17:59:27.
+  Services         372 row(s) — 372 units, 1 running.  As of 17:59:27.  Starting and stopping them is not implemented yet.
+  Network          1390 row(s) — 1390 sockets, 10 of them traceable to a process from this account.  As of 17:59:27.
   Find resources   (opens a window of its own)
 properties:   12 tabs, 26 facts on General
 properties general: 1280x640 -> docs/screenshots/properties.png
-span:         60 s over 17 retained samples
-  CPU         {X=8,Y=40,Width=627,Height=169}  0.1 %
-  Memory      {X=643,Y=40,Width=627,Height=169}  17.9M
+span:         60 s over 18 retained samples
+  CPU         {X=8,Y=40,Width=627,Height=169}  0.2 %
+  Memory      {X=643,Y=40,Width=627,Height=169}  17.2M
   Disk        {X=8,Y=217,Width=627,Height=169}  0 B/s
   GPU         {X=643,Y=217,Width=627,Height=169}  …
   Descriptors {X=8,Y=394,Width=627,Height=169}  10
