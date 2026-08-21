@@ -103,7 +103,9 @@ thread continuously consuming logical CPU 7."
 
 ## 3.1 Primary — MUST
 
-- [ ] 🟡 Replace everyday Task Manager workflows — process management yes; services, startup, users no
+- [ ] 🟡 Replace everyday Task Manager workflows — process management, and views of services, startup
+      and users; a service can be started and stopped from the command line but not from the window,
+      and a startup entry cannot be turned off at all
 - [x] Replace Process Explorer tree and lower-pane workflows — the pane is docked under the tree with
       overview, threads, modules, handles, environment and network, and pins to one process in a window
 - [ ] Replace the majority of System Informer process-inspection workflows
@@ -131,7 +133,8 @@ thread continuously consuming logical CPU 7."
 - [ ] Serve as a developer debugging companion
 - [ ] Provide long-running metric history when requested
 - [ ] Support plugins and extensions
-- [ ] 🟡 Support scripting and automation through CLI/API
+- [ ] 🟡 Support scripting and automation through CLI/API — six formats over ninety fields, a filter
+      language, and exit codes a script can branch on; there is no library API
 - [x] Provide a portable, no-install distribution — single-file NativeAOT binary, 3.2 MB, no runtime
 - [x] Support dark, light and system themes
 - [ ] Provide an optional tray / menu-bar mode
