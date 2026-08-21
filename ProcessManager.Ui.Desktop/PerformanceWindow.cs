@@ -976,7 +976,9 @@ public sealed class PerformanceWindow : Form {
   private static (int Rows, int Longest) DiagnosticsOf(PerformanceSection section) {
     var count = 0;
     var longest = 0;
-    foreach (var row in section.Rows) {
+    // default(PerformanceSection) has a null row list rather than an empty one, and a caller that
+    // could not find its section hands one over.
+    foreach (var row in section.Rows ?? []) {
       if (row.Level != PerformanceRowLevel.Diagnostic)
         continue;
 

@@ -174,9 +174,17 @@ public sealed class MainWindow : Form {
   }
 
   /// <summary>The refresh interval in milliseconds.</summary>
+  /// <remarks>
+  /// The two summary plots are told it as well as the timer. Their axis is a minute of wall clock
+  /// rather than a count of samples, and a machine sampled every four seconds would otherwise put
+  /// four minutes of history under a label reading sixty seconds (PRD §45.4).
+  /// </remarks>
   public int Interval {
     get => this._timer.Interval;
-    set => this._timer.Interval = Math.Clamp(value, 250, 60_000);
+    set {
+      this._timer.Interval = Math.Clamp(value, 250, 60_000);
+      this._cpuPlot.SecondsPerSample = this._memoryPlot.SecondsPerSample = this._timer.Interval / 1000d;
+    }
   }
 
   public void Start() {
