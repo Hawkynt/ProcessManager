@@ -137,7 +137,12 @@ public sealed class ResourceSearchTests {
         "*",
         Counter.Of(0ul),
         Counter.Of(0ul),
-        Counter.Of(0ul)
+        Counter.Of(0ul),
+        SocketStatistics.NotRead,
+        Rate.NotSampledYet,
+        Rate.NotSampledYet,
+        null,
+        null
       ),
     ];
     probe.Services.Add(new("systemd-journald.service", "Journal Service", ServiceState.Running, true, false, 300, null, "/x", null));

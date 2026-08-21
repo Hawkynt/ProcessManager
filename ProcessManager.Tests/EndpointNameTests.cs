@@ -247,7 +247,12 @@ public sealed class EndpointNameTests {
     null,
     Model.Counter.NotSupported,
     Model.Counter.NotSupported,
-    Model.Counter.NotSupported
+    Model.Counter.NotSupported,
+    Model.SocketStatistics.NotRead,
+    Model.Rate.NotSampledYet,
+    Model.Rate.NotSampledYet,
+    null,
+    null
   );
 
   [Test]

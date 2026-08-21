@@ -12,7 +12,8 @@ namespace Hawkynt.ProcessManager.Query;
 /// socket of our own. What is here is read; what is not — bytes transferred, round-trip time, the
 /// cumulative retransmission count — is left unknown rather than filled with a zero, because a
 /// connection that has moved nothing and a connection nobody measured look identical otherwise
-/// (PRD §72.3).
+/// (PRD §72.3). Those four are what <see cref="InetDiagParser"/> exists to answer, and the probe
+/// merges its answers onto these rows by inode.
 /// </para>
 /// <para>
 /// No platform attribute and no file access, so it is tested on every CI leg (PRD §9.2).
@@ -111,7 +112,17 @@ public static class ProcNetParser {
         // UDP has the column and never fills it: the kernel prints a literal zero there for every
         // datagram socket, so reading it would report "no retransmissions" for a protocol that has
         // no such concept.
-        isTcp && !noQueues ? Counter.Of((ulong)retransmits) : Counter.NotSupported
+        isTcp && !noQueues ? Counter.Of((ulong)retransmits) : Counter.NotSupported,
+        // Bytes, segments and round-trip time are not in this file at all, and no arrangement of the
+        // columns that are will produce them. For TCP they come from the socket diagnostics, which
+        // the probe merges in afterwards by inode. For UDP they come from nowhere: Linux keeps no
+        // byte total, no segment count and no round-trip time for a datagram socket, so the answer
+        // is "there is no such thing" and not "we have not looked yet".
+        isTcp ? SocketStatistics.NotRead : SocketStatistics.NotSupported,
+        isTcp ? Rate.NotSampledYet : Rate.NotSupported,
+        isTcp ? Rate.NotSampledYet : Rate.NotSupported,
+        null,                                              // the owning unit; joined by the probe
+        null                                               // and its cgroup, from the same place
       ));
     }
   }
@@ -169,7 +180,15 @@ public static class ProcNetParser {
         null,                                              // and no interface: it never leaves the machine
         Counter.NotSupported,
         Counter.NotSupported,
-        Counter.NotSupported
+        Counter.NotSupported,
+        // The socket diagnostics describe the internet families and nothing else. A Unix socket has
+        // no round-trip time to report and the kernel keeps no byte total for one, so this is
+        // "there is no such thing here" rather than "we did not look".
+        SocketStatistics.NotSupported,
+        Rate.NotSupported,
+        Rate.NotSupported,
+        null,
+        null
       ));
     }
   }

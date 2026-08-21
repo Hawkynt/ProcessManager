@@ -1768,12 +1768,16 @@ public sealed class LinuxProbe : ISystemProbe {
       return result;
 
     this.CollectSockets(inodes, result);
+    var (unit, cgroup) = this.UnitOf(key.Pid);
     for (var i = 0; i < result.Count; ++i)
       // Every row came back because this process holds a descriptor on it, so the owner is known
-      // without the machine-wide scan the unfiltered listing has to do.
+      // without the machine-wide scan the unfiltered listing has to do — and so is the unit it
+      // belongs to, which is one cgroup read rather than one per socket.
       result[i] = result[i] with {
         Pid = key.Pid,
         UserName = this._users.Resolve(result[i].UserId),
+        OwningService = unit,
+        ContainerPath = cgroup,
       };
 
     return result;
@@ -1793,13 +1797,57 @@ public sealed class LinuxProbe : ISystemProbe {
     var owners = this.SocketOwners();
     var result = new List<ConnectionRecord>();
     this.CollectSockets(null, result);
-    for (var i = 0; i < result.Count; ++i)
+    // One cgroup read per owning process rather than one per socket: a busy server has thousands of
+    // connections and a handful of processes holding them.
+    var units = new Dictionary<int, (string? Unit, string? Cgroup)>();
+    for (var i = 0; i < result.Count; ++i) {
+      var pid = owners.TryGetValue(result[i].Inode, out var owner) ? owner : 0;
+      // Nobody visible holds it, so there is nobody to read a unit from. Null here means "no owner
+      // was attributed", which the front-ends already have to render for the process column.
+      var unit = (Unit: (string?)null, Cgroup: (string?)null);
+      if (pid != 0) {
+        if (!units.TryGetValue(pid, out unit))
+          units[pid] = unit = this.UnitOf(pid);
+      }
+
       result[i] = result[i] with {
-        Pid = owners.TryGetValue(result[i].Inode, out var pid) ? pid : 0,
+        Pid = pid,
         UserName = this._users.Resolve(result[i].UserId),
+        OwningService = unit.Unit,
+        ContainerPath = unit.Cgroup,
       };
+    }
 
     return result;
+  }
+
+  /// <summary>
+  /// The systemd unit and cgroup path of one process, for the socket rows it holds (PRD §40).
+  /// </summary>
+  /// <remarks>
+  /// Read fresh rather than taken from the sample cache: this is asked from the on-demand path,
+  /// which a front-end may call for a process the sampler has never seen — and a process that was
+  /// moved into a different cgroup while it ran would otherwise keep reporting the old one.
+  /// </remarks>
+  private (string? Unit, string? Cgroup) UnitOf(int pid) {
+    Span<byte> pathBuffer = stackalloc byte[ProcPath.MaxLength];
+    if (!this._reader.TryRead(ProcPath.Build(pathBuffer, this._procRootUtf8, pid, "cgroup"u8), out var content, out _))
+      return (null, null);
+
+    // cgroup v2 writes exactly one line, "0::/path". v1 writes one per controller and none of them
+    // begins that way, so a v1 machine reports no cgroup rather than picking a controller's view of
+    // one — the same rule DescribeCgroup follows.
+    var scanner = new AsciiScanner(content);
+    while (!scanner.IsEmpty) {
+      var line = scanner.NextLine();
+      if (!AsciiScanner.StartsWith(line, "0::"u8))
+        continue;
+
+      var path = Encoding.UTF8.GetString(line[3..]);
+      return (CgroupUnit.Of(path), path.Length == 0 ? null : path);
+    }
+
+    return (null, null);
   }
 
   /// <summary>
@@ -1860,6 +1908,72 @@ public sealed class LinuxProbe : ISystemProbe {
     this.CollectInet("/net/udp6", ConnectionProtocol.Udp6, interfaces, inodes, result);
     if (this.ReadText("/net/unix") is { } unix)
       ProcNetParser.ParseUnix(unix, inodes, result);
+
+    this.MergeSocketStatistics(result);
+  }
+
+  /// <summary>
+  /// Adds what the socket diagnostics know to the rows the tables produced (PRD §40).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Two netlink round trips for the whole machine, whatever its socket count, which is why this is
+  /// not opt-in the way a per-process read has to be: it costs the same for one connection as for a
+  /// thousand, and it is on the on-demand path rather than in the sample loop (PRD §5.4).
+  /// </para>
+  /// <para>
+  /// A socket the dump did not describe keeps <see cref="SocketStatistics.NotRead"/>. That happens
+  /// legitimately — the two reads are not atomic, and a connection that opened between them is in
+  /// one and not the other — and it must not read as a connection that has moved nothing.
+  /// </para>
+  /// </remarks>
+  private void MergeSocketStatistics(List<ConnectionRecord> result) {
+    // A recorded tree is somebody else's machine. Asking this kernel about its own sockets would put
+    // the host's connections against a fixture's rows, so a replay gets the same "not read" every
+    // non-Linux CI leg gets (PRD §9.1).
+    if (this._procRoot != LinuxProbeOptions.LiveProcRoot || !OperatingSystem.IsLinux())
+      return;
+
+    // Nothing here is waiting for an answer, so there is no question to ask. That is the ordinary
+    // case for a single process: most of them hold no internet socket at all, and the ones that hold
+    // only Unix sockets or only UDP have their answer already. Without this, a caller that asks
+    // about every process in turn — the resource search of §33 does — pays a machine-wide netlink
+    // dump per process to learn nothing, which measured at a third again on top of `--find`.
+    var wanted = false;
+    foreach (var connection in result)
+      if (connection.Statistics == SocketStatistics.NotRead) {
+        wanted = true;
+        break;
+      }
+
+    if (!wanted)
+      return;
+
+    var statistics = new Dictionary<ulong, SocketStatistics>();
+    if (!InetDiagReader.TryRead(statistics, out var reason)) {
+      // The kernel has no such diagnostics, or this process may not ask. Either way the columns say
+      // which of the two it was rather than showing a zero (PRD §72.3).
+      var unavailable = SocketStatistics.Unknown(reason);
+      for (var i = 0; i < result.Count; ++i)
+        if (result[i].Statistics == SocketStatistics.NotRead)
+          result[i] = result[i] with { Statistics = unavailable };
+
+      return;
+    }
+
+    for (var i = 0; i < result.Count; ++i) {
+      // Only the rows that were waiting for an answer. A Unix or UDP row already says the kernel has
+      // no such counters, and overwriting that with "not read" would turn a settled answer into an
+      // open question.
+      if (result[i].Statistics != SocketStatistics.NotRead)
+        continue;
+
+      // Written out rather than through the ternary a TryGetValue invites: a miss leaves `default`
+      // behind, whose reason is None — "the value is here and it is nought" — and that is the defect
+      // this whole type exists to prevent.
+      if (statistics.TryGetValue(result[i].Inode, out var found))
+        result[i] = result[i] with { Statistics = found };
+    }
   }
 
   private void CollectInet(
