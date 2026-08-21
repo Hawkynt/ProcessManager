@@ -277,6 +277,24 @@ public static class DesktopApp {
           } else
             description += "file box:     the selected process has no readable executable\n";
 
+          // And the legend of §23 — the one window here whose entire content is colour, and the one
+          // that has to be looked at to be checked. It lays itself out by arithmetic against a height
+          // it computes from its own rows, so a category added to it either lands under the buttons
+          // or leaves a band of nothing across the middle, and no assertion can see either. Safe to
+          // commit: swatches and fixed sentences, with nothing of this machine on it.
+          var legend = new LegendWindow(Query.UsageThresholds.Default);
+          legend.Show();
+          legend.ApplyLayout();
+          description += $"legend:       {LegendWindow.Categories.Count} colours, "
+            + $"{LegendWindow.Note.Split('\n').Length} lines of note, {legend.Height} tall\n";
+
+          var legendPng = Path.Combine(directory, "legend.png");
+          description += GtkCapture.Window(legendPng, out var legendFailure, legend.Text) is { } legendShot
+            ? $"legend capture: {legendShot.Width}x{legendShot.Height} -> {legendPng}\n"
+            : $"legend capture: none — {legendFailure}\n";
+
+          legend.Close();
+
           // And the thread tab of §29 with the stack viewer of §30 open on one of its rows. Neither
           // has ever been photographed: the detail pane opens on the overview, so a table with
           // twenty columns in it was a layout no picture had ever shown — and a column drawn under

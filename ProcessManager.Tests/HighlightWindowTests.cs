@@ -1,3 +1,4 @@
+using Hawkynt.NativeForms.Drawing;
 using Hawkynt.ProcessManager.Model;
 using Hawkynt.ProcessManager.Query;
 using Hawkynt.ProcessManager.Sampling;
@@ -132,6 +133,33 @@ public sealed class HighlightWindowTests {
 
     Assert.That(legend.Description, Does.Contain("switched off"));
     Assert.That(legend.Description, Does.Not.Contain(" 0 "));
+  }
+
+  /// <summary>
+  /// A colour no dialog explains is decoration (PRD §7.1), and that is the defect this file's subject
+  /// shipped with once already. Walked over the enum rather than written out, so that adding a
+  /// category and forgetting the legend fails a build instead of painting an unexplained row.
+  /// </summary>
+  [Test]
+  public void EveryColourTheTableCanPaintIsInTheLegend() {
+    var theme = DefaultTheme.Instance;
+    foreach (var category in Enum.GetValues<ProcessCategory>()) {
+      if (RowPalette.BackColorOf(category, theme) is null)
+        continue;
+
+      Assert.That(LegendWindow.Categories, Does.Contain(category), $"{category} is painted and unexplained");
+    }
+  }
+
+  /// <summary>
+  /// The other half of the same requirement: the note names what is deliberately not distinguished,
+  /// and it must not still be naming something that now is. Packaged and managed-runtime rows were on
+  /// that list until the readings existed to prove them (PRD §23).
+  /// </summary>
+  [Test]
+  public void TheNoteDoesNotStillRefuseWhatTheTableNowPaints() {
+    Assert.That(LegendWindow.Note, Does.Contain("unsigned"), "the refusal that still stands");
+    Assert.That(LegendWindow.Note, Does.Not.Contain("Not distinguished: packaged"));
   }
 
   [Test]

@@ -1200,11 +1200,21 @@ Categories:
 - [x] Another user's process
 - [x] Elevated — and deliberately not the same colour as System: one is a process root started, the
       other is a process a user started that is root now, which is the more interesting of the two
-- [ ] Packaged application — needs `package` (§14)
-- [ ] Managed runtime — needs `runtime` (§14)
-- [x] Unsigned — no signature stands behind the package, which is most of a machine built locally executable — needs `signature.status` (§21)
-- [x] Invalid signature — the image no longer matches what the package recorded
-- [ ] Suspicious reputation — needs opt-in reputation
+- [x] Packaged application — a Flatpak, a snap or an AppImage, from `package` (§14). Deliberately not
+      "some package owns this file": `pacman` and `dpkg` own nearly every binary on a machine, and a
+      colour that paints nine rows in ten distinguishes nothing. What is worth a colour is the
+      application that brought its own filesystem with it, which is what Windows means by the word
+- [x] Managed runtime — from `runtime` (§14), which reads the module list rather than the name.
+      `native` is a finding and is not coloured; `unknown` is nobody having looked and is not either
+- [ ] Unsigned executable — **refused, not deferred.** §21 makes `signature.status` a Windows and
+      macOS field because a Linux binary carries no signature to check. What signs a Linux program is
+      its package, and `package.status` answers that — a different question, with `Unsigned` in it
+      meaning "no package on this machine claims these bytes", which is true of everything anybody
+      compiles. Painting that row "unsigned" is exactly the conflation §70 keeps five separate fields
+      to prevent
+- [ ] Invalid signature — as above: there is no signature to be invalid
+- [ ] Suspicious reputation — needs opt-in reputation, and §97 promises nothing about an executable
+      leaves this machine unasked. There is no provider to ask
 - [x] High CPU
 - [x] High memory
 - [x] High disk
@@ -1238,12 +1248,44 @@ measurement at all (§5.3).
       could only ever fire on a benchmark. Each engine column is marked from its own reading and the
       summary column from the busiest engine; the graphics-memory columns are bytes and are left
       alone, because a percentage threshold has nothing to say about them.
-- [ ] Process with an active UI window — needs §39
-- [ ] Process with a changed executable — needs image mtime + hash watch
-- [ ] Process containing the selected search match — needs §56
+- [ ] Process with an active UI window — **refused on Linux.** §39's own finding is that a Wayland
+      client cannot enumerate other clients' surfaces by design, so the colour would appear on
+      XWayland rows and on nothing else. A mark that is present for a third of the windows on a
+      modern desktop and absent for the rest describes which toolkit a program was built with
+- [x] Process with a changed executable — the kernel appends `" (deleted)"` to the `exe` link of a
+      process whose image has been unlinked, which is an upgrade having replaced the file underneath
+      it. No mtime watch and no hash: the kernel states this rather than the program inferring it,
+      which is the difference between this and the two signature lines above.
+
+      **It under-reports and never over-reports.** The link is read once per process, so an image
+      replaced while this program is already watching shows on the next full build of the table
+      rather than at the moment it happens. The reverse is impossible — a path carrying the marker
+      was never a live file. An under-reported colour costs a reader one discovery; an over-reported
+      one costs them their trust in every other colour.
+
+      It is the one row colour deliberately louder than the rest, and it outranks System: after an
+      upgrade the rows that need restarting are almost all root daemons, and painting them the same
+      blue as every other daemon is exactly how they are missed
+- [ ] Process containing the selected search match — the match is already marked, on the run of
+      characters it matched, which is §11's wash and points at the word rather than at the row. A
+      second mark on the row would say the same thing less precisely. The one case the cell mark does
+      not cover is a match in a column that is not showing, and that is a reason to show the column
 
 The ones that are ticked are the ones the program can *prove*. The rest stay off rather than
 guessing: a colour claiming "unsigned" without having checked a signature is worse than no colour.
+
+**A row has one colour and most processes qualify for several, so the order is part of the design.**
+Two rules settle it. *The transient beats the permanent*: started, ended, stopped and
+running-a-deleted-image were all untrue an hour ago and will be untrue again, while being root, or
+yours, or a service is true for the process's whole life and is in a column besides. And *the two
+identity colours only ever replace "nothing distinguishing"*: packaged and managed-runtime are tested
+after privilege and service membership, so a .NET service stays a service and a snap running as root
+stays a system process. They take the place of "yours" and "somebody else's", which is where the
+palette had nothing to say.
+
+Neither of those two can crowd the default table, because neither is painted unless the `package` or
+`runtime` field is switched on — both cost a read, and an unread field is never marked in either
+direction. Somebody who switched one on is looking for exactly this.
 
 ---
 
