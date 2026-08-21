@@ -60,6 +60,7 @@ internal static class ConnectionsReport {
       if (!Wanted(connection.Protocol, options.ConnectionScope))
         continue;
 
+      var statistics = connection.Statistics;
       rows.Add(new(
         connection.Protocol.ToString().ToLowerInvariant(),
         Humanize.SocketKindName(connection.Kind),
@@ -71,6 +72,16 @@ internal static class ConnectionsReport {
         Humanize.Bytes(connection.SendQueueBytes),
         Humanize.Bytes(connection.ReceiveQueueBytes),
         Humanize.Count(connection.Retransmits),
+        // From the socket diagnostics rather than from the tables, which have no column for any of
+        // them. A dash down the whole of these means the kernel has no such diagnostics or this user
+        // may not ask — not that the machine has moved nothing (PRD §72.3).
+        Humanize.Bytes(statistics.BytesSent),
+        Humanize.Bytes(statistics.BytesReceived),
+        Humanize.Count(statistics.PacketsSent),
+        Humanize.Count(statistics.PacketsReceived),
+        Humanize.RoundTrip(statistics.RoundTripTimeMicroseconds),
+        Humanize.Count(statistics.TotalRetransmits),
+        connection.OwningService ?? "—",
         connection.LocalPort,
         connection.Pid,
         // Not "unknown": on Linux this means no process we may look at holds a descriptor on it,
@@ -115,6 +126,13 @@ internal static class ConnectionsReport {
     string SendQueue,
     string ReceiveQueue,
     string Retransmits,
+    string BytesSent,
+    string BytesReceived,
+    string PacketsSent,
+    string PacketsReceived,
+    string RoundTrip,
+    string TotalRetransmits,
+    string Service,
     int Port,
     int Pid,
     string Process
@@ -138,12 +156,21 @@ internal static class ConnectionsReport {
     var send = Width("SEND-Q", rows, static row => row.SendQueue);
     var receive = Width("RECV-Q", rows, static row => row.ReceiveQueue);
     var retransmits = Width("RETX", rows, static row => row.Retransmits);
+    var sent = Width("SENT", rows, static row => row.BytesSent);
+    var received = Width("RECV", rows, static row => row.BytesReceived);
+    var packetsOut = Width("PKT-OUT", rows, static row => row.PacketsSent);
+    var packetsIn = Width("PKT-IN", rows, static row => row.PacketsReceived);
+    var roundTrip = Width("RTT", rows, static row => row.RoundTrip);
+    var totalRetransmits = Width("RETX-ALL", rows, static row => row.TotalRetransmits);
+    var service = Width("SERVICE", rows, static row => row.Service);
 
     Console.WriteLine(
       $"{"PROTO".PadRight(protocol)} {"TYPE".PadRight(kind)} {"STATE".PadRight(state)} "
       + $"{"LOCAL".PadRight(local)} {"REMOTE".PadRight(remote)} {"USER".PadRight(user)} "
       + $"{"IF".PadRight(iface)} {"SEND-Q".PadLeft(send)} {"RECV-Q".PadLeft(receive)} "
-      + $"{"RETX".PadLeft(retransmits)} {"PID",7}  PROCESS"
+      + $"{"RETX".PadLeft(retransmits)} {"SENT".PadLeft(sent)} {"RECV".PadLeft(received)} "
+      + $"{"PKT-OUT".PadLeft(packetsOut)} {"PKT-IN".PadLeft(packetsIn)} {"RTT".PadLeft(roundTrip)} "
+      + $"{"RETX-ALL".PadLeft(totalRetransmits)} {"SERVICE".PadRight(service)} {"PID",7}  PROCESS"
     );
 
     foreach (var row in rows)
@@ -151,7 +178,9 @@ internal static class ConnectionsReport {
         $"{row.Protocol.PadRight(protocol)} {row.Kind.PadRight(kind)} {row.State.PadRight(state)} "
         + $"{row.Local.PadRight(local)} {row.Remote.PadRight(remote)} {row.User.PadRight(user)} "
         + $"{row.Interface.PadRight(iface)} {row.SendQueue.PadLeft(send)} {row.ReceiveQueue.PadLeft(receive)} "
-        + $"{row.Retransmits.PadLeft(retransmits)} {Pid(row.Pid),7}  {row.Process}"
+        + $"{row.Retransmits.PadLeft(retransmits)} {row.BytesSent.PadLeft(sent)} {row.BytesReceived.PadLeft(received)} "
+        + $"{row.PacketsSent.PadLeft(packetsOut)} {row.PacketsReceived.PadLeft(packetsIn)} {row.RoundTrip.PadLeft(roundTrip)} "
+        + $"{row.TotalRetransmits.PadLeft(totalRetransmits)} {row.Service.PadRight(service)} {Pid(row.Pid),7}  {row.Process}"
       );
   }
 
