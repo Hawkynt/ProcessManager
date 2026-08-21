@@ -133,6 +133,19 @@ internal sealed record CommandLineOptions {
   public ProcessField[]? TerminalColumns { get; init; }
 
   /// <summary>
+  /// The window's saved column layout, which is a request for those fields exactly as naming them on
+  /// the command line would be.
+  /// </summary>
+  /// <remarks>
+  /// Deliberately not folded into <see cref="Fields"/>: that is what <c>--list</c> writes, and a
+  /// saved window layout has no business changing what a file export contains. This exists only so
+  /// that the sampler is told to collect what the window is about to show — without it, somebody
+  /// whose layout includes an opt-in column sees "not sampled yet" in it for the whole session, and
+  /// nothing they can type will fix it because they already asked (PRD §5.4).
+  /// </remarks>
+  public ProcessField[]? DesktopColumns { get; init; }
+
+  /// <summary>
   /// Whether anything this run asked for needs the LSM label, which costs a file per process.
   /// </summary>
   /// <remarks>
@@ -359,7 +372,7 @@ internal sealed record CommandLineOptions {
     // file's — it keeps the drawn histories, and it can come from the settings file rather than from
     // this command line — and a saved terminal column that the sampler was never told to collect is
     // a column that says "not sampled" for the whole session (PRD §5.4).
-    foreach (var list in (ReadOnlySpan<ProcessField[]?>)[this.Fields, this.TerminalColumns]) {
+    foreach (var list in (ReadOnlySpan<ProcessField[]?>)[this.Fields, this.TerminalColumns, this.DesktopColumns]) {
       if (list is not { } fields)
         continue;
 
@@ -490,6 +503,7 @@ internal sealed record CommandLineOptions {
       CpuMode = settings.CpuMode,
       AsciiOnly = !settings.BlockCharacters,
       TerminalColumns = settings.TerminalColumns.Length > 0 ? settings.TerminalColumns : null,
+      DesktopColumns = settings.DesktopColumns.Length > 0 ? settings.DesktopColumns : null,
     };
 
     return Parse(args, seeded, settings);

@@ -23,6 +23,47 @@ public sealed class TerminalColumnRequestTests {
   private static CommandLineOptions WithSavedTerminalColumns(params ProcessField[] fields)
     => CommandLineOptions.Parse(["--tui"], new UserSettings { TerminalColumns = fields });
 
+  private static CommandLineOptions WithSavedDesktopColumns(params ProcessField[] fields)
+    => CommandLineOptions.Parse([], new UserSettings { DesktopColumns = fields });
+
+  /// <summary>
+  /// The window's saved layout is a request too, and it was the one nobody was listening to.
+  /// </summary>
+  /// <remarks>
+  /// The terminal's saved columns counted and the window's did not, so somebody whose layout included
+  /// a descriptor tally, a proportional set, a digest or a group list saw "not sampled yet" in it for
+  /// the whole session — and nothing they could type would fix it, because they had already asked.
+  /// About a dozen fields were affected equally.
+  /// </remarks>
+  [Test]
+  public void ASavedDesktopColumnAsksForWhatItNeedsToo() {
+    var options = WithSavedDesktopColumns(ProcessField.Name, ProcessField.HandleCount);
+
+    Assert.That(options.WantsHandleCount, Is.True);
+  }
+
+  [Test]
+  public void AndTheWindowsLayoutAsksOnlyForWhatItShows() {
+    var options = WithSavedDesktopColumns(ProcessField.Name, ProcessField.CpuPercent);
+
+    Assert.Multiple(() => {
+      Assert.That(options.WantsHandleCount, Is.False);
+      Assert.That(options.WantsImageHashes, Is.False);
+    });
+  }
+
+  /// <summary>
+  /// And it must not change what a file export contains. A saved window layout has no business
+  /// deciding the columns of a CSV — that is what <c>--columns</c> is for, and somebody scripting
+  /// against this program would not thank us for making its output depend on their desktop.
+  /// </summary>
+  [Test]
+  public void TheWindowsLayoutDoesNotChangeWhatIsExported() {
+    var options = WithSavedDesktopColumns(ProcessField.Name, ProcessField.HandleCount);
+
+    Assert.That(options.Fields, Is.Null, "the export still writes its own default set");
+  }
+
   [Test]
   public void ASavedTerminalColumnAsksForWhatItNeeds() {
     var options = WithSavedTerminalColumns(ProcessField.Name, ProcessField.SocketCount);
