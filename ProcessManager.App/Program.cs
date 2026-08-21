@@ -108,7 +108,7 @@ internal static class Program {
       host.Run(sampler, probe, actions, options.Interval, new() {
         SortColumn = options.SortColumn,
         SortDescending = options.SortDescending,
-        TreeMode = options.TreeMode,
+        Grouping = options.Grouping,
         Columns = options.TerminalColumns,
         // Only when this run said so: otherwise the terminal decides from the locale, which is the
         // one thing a capture may not do and a person watching wants.
@@ -127,7 +127,7 @@ internal static class Program {
       ShowTiming = false,
       GraphStyle = options.AsciiOnly ? GraphStyle.Ascii : options.GraphStyle,
     };
-    ui.View.TreeMode = options.TreeMode;
+    ui.View.Grouping = options.Grouping;
     ui.View.SortColumn = options.SortColumn;
     ui.View.SortDescending = options.SortDescending;
     // The same columns the interactive terminal would have opened with. Without this a capture could
@@ -218,7 +218,7 @@ internal static class Program {
       IntervalSeconds = options.Interval.TotalSeconds,
       SortField = options.SortColumn,
       SortDescending = options.SortDescending,
-      TreeMode = options.TreeMode,
+      Grouping = options.Grouping,
       CpuMode = options.CpuMode,
       DesktopColumns = options.Fields is { Length: > 0 } fields ? fields : settings.DesktopColumns,
     };
@@ -263,7 +263,7 @@ internal static class Program {
     var view = new ProcessView {
       SortColumn = options.SortColumn,
       SortDescending = options.SortDescending,
-      TreeMode = options.TreeMode,
+      Grouping = options.Grouping,
       TextFilter = options.Filter,
     };
 
@@ -545,7 +545,7 @@ internal static class Program {
       IntervalSeconds = options.Interval.TotalSeconds,
       SortField = options.SortColumn,
       SortDescending = options.SortDescending,
-      TreeMode = options.TreeMode,
+      Grouping = options.Grouping,
       CpuMode = options.CpuMode,
       BlockCharacters = !options.AsciiOnly,
     };

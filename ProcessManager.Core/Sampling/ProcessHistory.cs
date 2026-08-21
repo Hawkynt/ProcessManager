@@ -81,6 +81,11 @@ public sealed class ProcessHistory {
     var peakIo = _IoFloor;
 
     for (var i = Math.Max(0, first); i < last; ++i) {
+      // A grouping heading occupies a row and is not a process; there is nothing to keep a history
+      // of, and its index into the snapshot is deliberately invalid (PRD §83).
+      if (rows[i].IsGroupHeader)
+        continue;
+
       var index = rows[i].Index;
       ref readonly var process = ref processes[index];
       if (!this._entries.TryGetValue(process.Key, out var entry)) {

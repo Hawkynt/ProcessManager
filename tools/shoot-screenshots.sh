@@ -49,6 +49,15 @@ HOLD=20 "${ISOLATE[@]}" bash -c "$WORKLOAD"'
     --capture-svg "$1/tui.svg" --capture-frame "$1/tui.txt"
 ' "$BIN" "$OUT"
 
+echo "== terminal, grouped =="
+# The same table with headings in it (PRD §83). By executable rather than by user, because inside
+# the private pid namespace every process belongs to one account, and a picture with one heading in
+# it says nothing about how a list of them reads.
+HOLD=20 "${ISOLATE[@]}" bash -c "$WORKLOAD"'
+  "$0" --tui --group executable --capture-samples 18 --interval 0.4 \
+    --capture-frame "$1/tui-grouped.txt"
+' "$BIN" "$OUT"
+
 echo "== desktop =="
 HOLD=30 "${ISOLATE[@]}" bash -c "$WORKLOAD"'
   xvfb-run -a --server-args="-screen 0 1400x900x24" \

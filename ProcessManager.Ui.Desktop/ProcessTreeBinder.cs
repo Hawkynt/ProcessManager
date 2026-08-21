@@ -31,6 +31,11 @@ public sealed class ProcessTreeBinder {
   // showing.
   private readonly Dictionary<ProcessKey, TreeNode?> _attachedTo = [];
   private readonly Dictionary<ProcessKey, ProcessRow> _rows = [];
+  // Heading nodes, keyed by their label. Kept across samples for the same reason process nodes are:
+  // a heading rebuilt every second is a heading that folds itself open once a second (PRD §83).
+  private readonly Dictionary<string, TreeNode> _groupNodes = new(StringComparer.Ordinal);
+  private readonly Dictionary<string, GroupRow> _groupRows = new(StringComparer.Ordinal);
+  private readonly List<string> _staleGroups = [];
   private readonly Dictionary<int, ProcessKey> _byPid = [];
   private readonly List<ProcessKey> _stale = [];
   // Roots kept apart from children rather than under a null key: a Dictionary will not take one.
@@ -63,8 +68,24 @@ public sealed class ProcessTreeBinder {
   /// <summary>The tree node a process occupies, for a caller that wants to select it.</summary>
   public TreeNode? NodeFor(ProcessKey key) => this._nodes.TryGetValue(key, out var node) ? node : null;
 
-  /// <summary>The row behind the selected node, or null.</summary>
+  /// <summary>
+  /// The row behind the selected node, or null.
+  /// </summary>
+  /// <remarks>
+  /// Null for a grouping heading, whose tag is a <see cref="GroupRow"/> rather than a
+  /// <see cref="ProcessRow"/> — which is what makes every action in the window decline on one
+  /// (PRD §83).
+  /// </remarks>
   public ProcessRow? SelectedRow => this._tree.SelectedNode?.Tag as ProcessRow;
+
+  /// <summary>The first node that is a process rather than a heading, for a caller that wants one.</summary>
+  public TreeNode? FirstProcessNode() {
+    for (var row = 0; row < this._tree.VisibleNodeCount; ++row)
+      if (this._tree.NodeAt(row) is { Tag: ProcessRow } node)
+        return node;
+
+    return null;
+  }
 
   /// <summary>The uid of whoever is running this, so rows can be coloured "mine" (PRD §7.1).</summary>
   public int CurrentUserId { get; set; } = -1;
@@ -100,12 +121,21 @@ public sealed class ProcessTreeBinder {
     var processes = snapshot.Processes;
     var rows = view.Rows;
 
+    this.SyncGroups(view);
+
     this._byPid.Clear();
-    for (var i = 0; i < rows.Length; ++i)
+    for (var i = 0; i < rows.Length; ++i) {
+      if (rows[i].IsGroupHeader)
+        continue;
+
       this._byPid[processes[rows[i].Index].Pid] = processes[rows[i].Index].Key;
+    }
 
     // First pass: every visible process has a node with current text in it.
     for (var i = 0; i < rows.Length; ++i) {
+      if (rows[i].IsGroupHeader)
+        continue;
+
       var index = rows[i].Index;
       ref readonly var process = ref processes[index];
       var key = process.Key;
@@ -137,15 +167,18 @@ public sealed class ProcessTreeBinder {
 
     // Second pass: parents. Done after the first so a child seen before its parent still finds it.
     for (var i = 0; i < rows.Length; ++i) {
+      if (rows[i].IsGroupHeader)
+        continue;
+
       var index = rows[i].Index;
       ref readonly var process = ref processes[index];
       var node = this._nodes[process.Key];
-      var desiredParent = view.TreeMode
+      var desiredParent = this.GroupNodeOf(view, rows[i]) ?? (view.TreeMode
           && this._byPid.TryGetValue(process.ParentPid, out var parentKey)
           && parentKey != process.Key
           && this._nodes.TryGetValue(parentKey, out var found)
         ? found
-        : null;
+        : null);
 
       if (this._attachedTo.TryGetValue(process.Key, out var currentParent)
           && ReferenceEquals(currentParent, desiredParent))
@@ -172,6 +205,60 @@ public sealed class ProcessTreeBinder {
     this.RemoveStale();
     this.ReorderToMatch(processes, rows, view);
     Restore(this._tree, anchor, selected);
+  }
+
+  /// <summary>
+  /// Makes a node for every heading the view produced, and drops the ones it no longer does
+  /// (PRD §83).
+  /// </summary>
+  /// <remarks>
+  /// Reused across samples for the reason the process nodes are: a heading rebuilt every second is
+  /// one that folds itself back open every second, taking whatever somebody had collapsed with it.
+  /// The count is rewritten in place instead.
+  /// </remarks>
+  private void SyncGroups(ProcessView view) {
+    foreach (var group in view.Groups) {
+      if (!this._groupRows.TryGetValue(group.Label, out var row)) {
+        row = new(group);
+        this._groupRows[group.Label] = row;
+      } else
+        row.Update(group);
+
+      row.Generation = this._generation;
+      if (!this._groupNodes.TryGetValue(group.Label, out var node)) {
+        node = new(row.Text) { Tag = row };
+        node.Expand();
+        this._groupNodes[group.Label] = node;
+        this._tree.Nodes.Add(node);
+      } else if (!string.Equals(node.Text, row.Text, StringComparison.Ordinal))
+        node.Text = row.Text;
+    }
+
+    this._staleGroups.Clear();
+    foreach (var (label, row) in this._groupRows)
+      if (row.Generation != this._generation)
+        this._staleGroups.Add(label);
+
+    foreach (var label in this._staleGroups) {
+      if (this._groupNodes.Remove(label, out var node)) {
+        // Its processes are re-parented by the pass that follows; taking them with the heading would
+        // delete rows for processes that are still running.
+        while (node.Nodes.Count > 0)
+          node.Nodes.Remove(node.Nodes[0]);
+
+        this._tree.Nodes.Remove(node);
+      }
+
+      this._groupRows.Remove(label);
+    }
+  }
+
+  /// <summary>The heading node one row belongs under, or null when nothing is grouped.</summary>
+  private TreeNode? GroupNodeOf(ProcessView view, ViewRow row) {
+    if ((uint)row.Group >= (uint)view.Groups.Count)
+      return null;
+
+    return this._groupNodes.GetValueOrDefault(view.Groups[row.Group].Label);
   }
 
   /// <summary>
@@ -220,6 +307,15 @@ public sealed class ProcessTreeBinder {
     this._desiredRoots.Clear();
     this._desiredChildren.Clear();
     for (var i = 0; i < rows.Length; ++i) {
+      if (rows[i].IsGroupHeader) {
+        // A heading is always a root, and its place among the other headings is the order the view
+        // put it in — which is the order the current sort produced (PRD §83).
+        if (this.GroupNodeOf(view, rows[i]) is { } heading)
+          this._desiredRoots.Add(heading);
+
+        continue;
+      }
+
       var key = processes[rows[i].Index].Key;
       if (!this._nodes.TryGetValue(key, out var node))
         continue;

@@ -54,7 +54,7 @@ public sealed class TerminalUi {
   private enum InputMode : byte { Normal, Search, Filter, Confirm, SchedulingClass, Detail, Overlay, ExportPath }
 
   /// <summary>Which list is on screen, so one set of keys can drive all three.</summary>
-  private enum OverlayKind : byte { None, Actions, Columns, Help }
+  private enum OverlayKind : byte { None, Actions, Columns, Help, Grouping }
 
   /// <summary>
   /// What the pending confirmation will do if it is answered yes.
@@ -101,6 +101,15 @@ public sealed class TerminalUi {
 
   /// <summary>How many rows the user has ticked for a bulk action.</summary>
   public int MarkedCount => this._marked.Count;
+
+  /// <summary>
+  /// Which row the cursor is on.
+  /// </summary>
+  /// <remarks>
+  /// Exposed so a test can assert what a person can see: that the cursor never comes to rest on a
+  /// grouping heading, which is what makes a heading un-actionable (PRD §83).
+  /// </remarks>
+  public int SelectedRow => this._selectedRow;
 
   /// <summary>
   /// Where a copy is written: the terminal's own output, which is the only clipboard reachable from
@@ -200,7 +209,7 @@ public sealed class TerminalUi {
       }
     }
 
-    this._selectedRow = Math.Clamp(this._selectedRow, 0, Math.Max(0, this._view.RowCount - 1));
+    this._selectedRow = this.NearestProcessRow(this._selectedRow, 1);
     this._selectedKey = this.KeyAt(this._selectedRow);
     this.ClampScroll();
   }
@@ -221,11 +230,39 @@ public sealed class TerminalUi {
     this._marked.RemoveWhere(key => !snapshot.TryGetProcess(key, out _));
   }
 
+  /// <summary>
+  /// The process on a row, or none when the row is a grouping heading (PRD §83).
+  /// </summary>
+  /// <remarks>
+  /// A heading answers <see cref="ProcessKey.None"/>, and every action in this front-end already
+  /// refuses that with "nothing selected". That is the whole guard: ending a heading is impossible
+  /// rather than discouraged, because there is nothing for the request to name.
+  /// </remarks>
   private ProcessKey KeyAt(int row) {
-    if ((uint)row >= (uint)this._view.RowCount)
+    if ((uint)row >= (uint)this._view.RowCount || this._view.Rows[row].IsGroupHeader)
       return ProcessKey.None;
 
     return this._sampler.Current.Processes[this._view.Rows[row].Index].Key;
+  }
+
+  /// <summary>The nearest row that is a process, searching in one direction and then the other.</summary>
+  private int NearestProcessRow(int row, int step) {
+    var rows = this._view.Rows;
+    if (rows.Length == 0)
+      return 0;
+
+    row = Math.Clamp(row, 0, rows.Length - 1);
+    for (var i = row; (uint)i < (uint)rows.Length; i += step)
+      if (!rows[i].IsGroupHeader)
+        return i;
+
+    // The list may end in a heading with nothing under it — a group whose rows are all folded away —
+    // so a search that ran off one end tries the other rather than parking on the heading.
+    for (var i = row; (uint)i < (uint)rows.Length; i -= step)
+      if (!rows[i].IsGroupHeader)
+        return i;
+
+    return row;
   }
 
   /// <summary>How many rows of processes there is room for, once everything else has its lines.</summary>
@@ -345,6 +382,7 @@ public sealed class TerminalUi {
       case TerminalAction.PaneGrow: this.ResizePane(1); return true;
       case TerminalAction.PaneShrink: this.ResizePane(-1); return true;
       case TerminalAction.Help: this.OpenHelp(); return true;
+      case TerminalAction.GroupBy: this.OpenGroupingMenu(); return true;
 
       case TerminalAction.SortNext: this.SetSortColumn(1); return true;
       case TerminalAction.SortPrevious: this.SetSortColumn(-1); return true;
@@ -467,6 +505,9 @@ public sealed class TerminalUi {
     var processes = this._sampler.Current.Processes;
     var rows = this._view.Rows;
     for (var i = 0; i < rows.Length; ++i) {
+      if (rows[i].IsGroupHeader)
+        continue;
+
       ref readonly var process = ref processes[rows[i].Index];
       if (!process.Name.Contains(needle, comparison)
           && (process.CommandLine is null || !process.CommandLine.Contains(needle, comparison)))
@@ -637,6 +678,10 @@ public sealed class TerminalUi {
         this.Execute((TerminalAction)item.Tag);
         return true;
 
+      case OverlayKind.Grouping:
+        this.GroupBy((ProcessGrouping)item.Tag);
+        return this.CloseOverlay();
+
       case OverlayKind.Columns:
         // The sets come first in the list and are marked with a negative tag, so one list can offer
         // "everything about memory" and "this one column" without being two lists.
@@ -739,6 +784,13 @@ public sealed class TerminalUi {
     if (row >= this._view.RowCount)
       return false;
 
+    // A heading is not a row that can be selected, so clicking one folds it instead — which is the
+    // only thing there is to do to a heading (PRD §83).
+    if (this._view.Rows[row].IsGroupHeader) {
+      var group = this._view.Rows[row].Group;
+      return this.ToggleGroup(group, !this._view.IsGroupCollapsed(this._view.Groups[group].Label));
+    }
+
     this._selectedRow = row;
     this._selectedKey = this.KeyAt(row);
     if (mouse.X > 0) {
@@ -767,7 +819,7 @@ public sealed class TerminalUi {
     // The selection comes with the view rather than being left behind off screen: a key pressed
     // after a scroll should act on something visible.
     this._selectedRow = Math.Clamp(this._selectedRow, this._scrollOffset, Math.Max(this._scrollOffset, this._scrollOffset + this.ListHeight - 1));
-    this._selectedRow = Math.Clamp(this._selectedRow, 0, Math.Max(0, this._view.RowCount - 1));
+    this._selectedRow = this.NearestProcessRow(this._selectedRow, delta < 0 ? -1 : 1);
     this._selectedKey = this.KeyAt(this._selectedRow);
   }
 
@@ -831,13 +883,19 @@ public sealed class TerminalUi {
     if (this._view.RowCount == 0)
       return;
 
-    this._selectedRow = Math.Clamp(this._selectedRow + delta, 0, this._view.RowCount - 1);
+    // Past the heading rather than onto it: an arrow key that lands the cursor on something no key
+    // can act on reads as a list that skipped a row (PRD §83).
+    var wanted = Math.Clamp(this._selectedRow + delta, 0, this._view.RowCount - 1);
+    this._selectedRow = this.NearestProcessRow(wanted, delta < 0 ? -1 : 1);
     this._selectedKey = this.KeyAt(this._selectedRow);
     this.ClampScroll();
   }
 
   /// <summary>Hides this row's children, or steps out to its parent when it has none showing.</summary>
   private void Collapse() {
+    if (this.FoldGroup(true))
+      return;
+
     if (!this._view.TreeMode || this._selectedRow >= this._view.RowCount)
       return;
 
@@ -863,6 +921,9 @@ public sealed class TerminalUi {
   }
 
   private void Expand() {
+    if (this.FoldGroup(false))
+      return;
+
     if (!this._view.TreeMode || this._selectedRow >= this._view.RowCount)
       return;
 
@@ -873,6 +934,64 @@ public sealed class TerminalUi {
 
     this._view.Rebuild(this._sampler.Current, this._sampler.Delta);
     this.RestoreSelection();
+  }
+
+  /// <summary>
+  /// Folds the heading the cursor is under, or opens it (PRD §83).
+  /// </summary>
+  /// <remarks>
+  /// The left and right arrows already mean "fold" and "open" in the tree, so a grouped list gives
+  /// them the same meaning rather than a second pair of keys. The cursor never sits on a heading, so
+  /// the group being folded is the one the selected process is in.
+  /// </remarks>
+  /// <returns>False when there is nothing grouped, so the caller falls through to the tree.</returns>
+  private bool FoldGroup(bool collapsed) {
+    if (this._view.Grouping is ProcessGrouping.None or ProcessGrouping.ParentTree)
+      return false;
+
+    if ((uint)this._selectedRow >= (uint)this._view.RowCount)
+      return true;
+
+    var group = this._view.Rows[this._selectedRow].Group;
+    if ((uint)group >= (uint)this._view.Groups.Count)
+      return true;
+
+    // Opening is not quite the mirror of folding. Folding a group takes the cursor's row away with
+    // it, so the cursor ends up in the *next* group — and pressing the other arrow would then open
+    // something that was never shut. So an open request that has nothing to do here looks upwards
+    // for the nearest heading that is folded, which is the one that was just closed.
+    if (!collapsed && !this._view.IsGroupCollapsed(this._view.Groups[group].Label)) {
+      if (this.NearestFoldedGroupAbove() is not { } folded)
+        return true;
+
+      group = folded;
+    }
+
+    return this.ToggleGroup(group, collapsed);
+  }
+
+  private int? NearestFoldedGroupAbove() {
+    for (var row = Math.Min(this._selectedRow, this._view.RowCount - 1); row >= 0; --row) {
+      if (!this._view.Rows[row].IsGroupHeader)
+        continue;
+
+      var candidate = this._view.Rows[row].Group;
+      if (this._view.IsGroupCollapsed(this._view.Groups[candidate].Label))
+        return candidate;
+    }
+
+    return null;
+  }
+
+  private bool ToggleGroup(int group, bool collapsed) {
+    var label = this._view.Groups[group].Label;
+    if (!this._view.SetGroupCollapsed(label, collapsed))
+      return true;
+
+    this._view.Rebuild(this._sampler.Current, this._sampler.Delta);
+    this.RestoreSelection();
+    this.Say(collapsed ? $"{label} is folded away" : $"{label} is open again", Attributes.Dim);
+    return true;
   }
 
   private void BeginInput(InputMode mode) {
@@ -1016,6 +1135,9 @@ public sealed class TerminalUi {
     var rows = this._view.Rows;
     var last = Math.Min(rows.Length, this._scrollOffset + this.ListHeight);
     for (var i = this._scrollOffset; i < last; ++i) {
+      if (rows[i].IsGroupHeader)
+        continue;
+
       ref readonly var process = ref processes[rows[i].Index];
       widest = Math.Max(widest, this.CellText(field, rows[i], in process, this._sampler.Delta).Length);
     }
@@ -1085,7 +1207,8 @@ public sealed class TerminalUi {
   private void MarkAll() {
     var processes = this._sampler.Current.Processes;
     foreach (var row in this._view.Rows)
-      this._marked.Add(processes[row.Index].Key);
+      if (!row.IsGroupHeader)
+        this._marked.Add(processes[row.Index].Key);
 
     this.Say($"{this._marked.Count} rows ticked", Attributes.Accent);
   }
@@ -1093,6 +1216,9 @@ public sealed class TerminalUi {
   private void InvertMarks() {
     var processes = this._sampler.Current.Processes;
     foreach (var row in this._view.Rows) {
+      if (row.IsGroupHeader)
+        continue;
+
       var key = processes[row.Index].Key;
       if (!this._marked.Add(key))
         this._marked.Remove(key);
@@ -1135,6 +1261,9 @@ public sealed class TerminalUi {
     var copied = 0;
     var processes = this._sampler.Current.Processes;
     foreach (var row in this._view.Rows) {
+      if (row.IsGroupHeader)
+        continue;
+
       ref readonly var process = ref processes[row.Index];
       if (this._marked.Count > 0 ? !this._marked.Contains(process.Key) : this._view.Rows[this._selectedRow].Index != row.Index)
         continue;
@@ -1209,7 +1338,7 @@ public sealed class TerminalUi {
         );
       }
 
-      this.Say($"wrote {this._view.RowCount} rows to {path} as {format}", Attributes.Good);
+      this.Say($"wrote {this._view.MatchCount} rows to {path} as {format}", Attributes.Good);
     } catch (IOException problem) {
       this.Say(problem.Message, Attributes.Bad);
     } catch (UnauthorizedAccessException problem) {
@@ -1228,6 +1357,9 @@ public sealed class TerminalUi {
     var rows = this._view.Rows;
     var last = Math.Min(rows.Length, this._scrollOffset + this.ListHeight);
     for (var i = this._scrollOffset; i < last; ++i) {
+      if (rows[i].IsGroupHeader)
+        continue;
+
       var key = processes[rows[i].Index].Key;
       this._handleCounts[key] = this._probe.GetHandleCount(key);
     }
@@ -1290,6 +1422,51 @@ public sealed class TerminalUi {
         return OverlayItem.Entry(entry.Description, this.Keys.KeysFor(action), (int)action);
 
     return OverlayItem.Entry(action.ToString(), string.Empty, (int)action);
+  }
+
+  /// <summary>
+  /// What the rows may be grouped by (PRD §83).
+  /// </summary>
+  /// <remarks>
+  /// The tree is in the list rather than beside it, because picking one of these is picking how the
+  /// rows are arranged and the tree is one of the answers. What each grouping reads off the process
+  /// is beside its name, so the list says why a machine with no containers has one heading.
+  /// </remarks>
+  private void OpenGroupingMenu() {
+    var items = new List<OverlayItem> { OverlayItem.Heading("Arrange the rows by") };
+    foreach (var (grouping, label, hint) in _Groupings)
+      items.Add(OverlayItem.Toggle(label, hint, (int)grouping, this._view.Grouping == grouping));
+
+    this.ShowOverlay(new("Grouping — Enter chooses, Esc closes", items) { HintColumn = 22 }, OverlayKind.Grouping);
+  }
+
+  private static readonly (ProcessGrouping Grouping, string Label, string Hint)[] _Groupings = [
+    (ProcessGrouping.None, "Nothing", "one flat list"),
+    (ProcessGrouping.ParentTree, "Parent tree", "who started what"),
+    (ProcessGrouping.User, "User", "the account it runs as"),
+    (ProcessGrouping.Session, "Session", "the login it belongs to"),
+    (ProcessGrouping.Service, "Service", "its systemd unit"),
+    (ProcessGrouping.Executable, "Executable", "the image on disk"),
+    (ProcessGrouping.Container, "Container", "its container id"),
+    (ProcessGrouping.Cgroup, "Cgroup", "the whole cgroup path"),
+    (ProcessGrouping.Package, "Package", "where the image came from"),
+  ];
+
+  private void GroupBy(ProcessGrouping grouping) {
+    this._view.Grouping = grouping;
+    this._view.Rebuild(this._sampler.Current, this._sampler.Delta);
+    this.RestoreSelection();
+    foreach (var (candidate, label, _) in _Groupings)
+      if (candidate == grouping) {
+        this.Say(
+          grouping == ProcessGrouping.None
+            ? "the rows are one flat list again"
+            : $"grouped by {label.ToLowerInvariant()} — {this._view.Groups.Count} heading(s)",
+          Attributes.Accent
+        );
+
+        return;
+      }
   }
 
   private void OpenColumnChooser() {
@@ -1417,7 +1594,8 @@ public sealed class TerminalUi {
     if (this._view.TextFilter is { Length: > 0 } filter)
       state.Append(CultureInfo.InvariantCulture, $"filter: {filter}  ");
 
-    state.Append(CultureInfo.InvariantCulture, $"{this._view.RowCount} of {this._view.TotalCount}");
+    // MatchCount, not RowCount: a grouping heading takes a row and is not a process (PRD §83).
+    state.Append(CultureInfo.InvariantCulture, $"{this._view.MatchCount} of {this._view.TotalCount}");
     this.WriteSentenceRight(0, state.ToString(), Attributes.Header);
   }
 
@@ -1638,6 +1816,11 @@ public sealed class TerminalUi {
         break;
 
       var row = rows[rowIndex];
+      if (row.IsGroupHeader) {
+        this.DrawGroupHeading(top + line, row.Group);
+        continue;
+      }
+
       ref readonly var process = ref snapshot.Processes[row.Index];
       var selected = rowIndex == this._selectedRow;
       var marked = this._marked.Contains(process.Key);
@@ -1683,6 +1866,26 @@ public sealed class TerminalUi {
 
     if (rows.Length == 0)
       this._screen.Write(1, top, "nothing matches", Attributes.Dim);
+  }
+
+  /// <summary>
+  /// One grouping heading, across the whole line (PRD §83).
+  /// </summary>
+  /// <remarks>
+  /// Across the line and not into the columns, because it is not a row of the table: it has no pid,
+  /// no CPU figure and nothing to put under any header. The count is the group's whole membership
+  /// rather than what is on screen, so a folded heading still says how much it is hiding.
+  /// </remarks>
+  private void DrawGroupHeading(int y, int group) {
+    if ((uint)group >= (uint)this._view.Groups.Count)
+      return;
+
+    var (label, count) = this._view.Groups[group];
+    var folded = this._view.IsGroupCollapsed(label);
+    this._screen.Fill(0, y, this._screen.Width, ' ', Attributes.Header);
+    var marker = folded ? "+" : "-";
+    var text = $"{marker} {label}  ({count} process{(count == 1 ? string.Empty : "es")})";
+    this._screen.Write(0, y, Clip(text, this._screen.Width), Attributes.Header);
   }
 
   /// <summary>

@@ -33,7 +33,13 @@ internal sealed record CommandLineOptions {
   public RunMode Mode { get; init; } = RunMode.Desktop;
   public ProcessField SortColumn { get; init; } = ProcessField.CpuPercent;
   public bool SortDescending { get; init; } = true;
-  public bool TreeMode { get; init; }
+  public bool TreeMode {
+    get => this.Grouping == ProcessGrouping.ParentTree;
+    init => this.Grouping = value ? ProcessGrouping.ParentTree : ProcessGrouping.None;
+  }
+
+  /// <summary>What the rows are grouped by (PRD §83). The tree is one of the answers.</summary>
+  public ProcessGrouping Grouping { get; init; }
 
   /// <summary>True when --flat was given, so the desktop's tree default can be overridden.</summary>
   public bool FlatRequested { get; init; }
@@ -259,6 +265,10 @@ internal sealed record CommandLineOptions {
   public bool WantsPackageIdentity
     => this.Wants(ProcessField.Package)
     || this.Wants(ProcessField.ApplicationId)
+    // Grouping by package is somebody naming the column as much as a --columns argument is: the
+    // headings are the field, and a run that did not collect it would head every row "package not
+    // looked up" (PRD §83).
+    || this.Grouping == ProcessGrouping.Package
     || this.WantsPackageVerification;
 
   /// <summary>
@@ -445,7 +455,7 @@ internal sealed record CommandLineOptions {
       Interval = TimeSpan.FromSeconds(settings.IntervalSeconds),
       SortColumn = settings.SortField,
       SortDescending = settings.SortDescending,
-      TreeMode = settings.TreeMode,
+      Grouping = settings.Grouping,
       CpuMode = settings.CpuMode,
       AsciiOnly = !settings.BlockCharacters,
       TerminalColumns = settings.TerminalColumns.Length > 0 ? settings.TerminalColumns : null,
@@ -659,6 +669,17 @@ internal sealed record CommandLineOptions {
         case "--tree":
           options = options with { TreeMode = true, KillTree = true };
           break;
+        case "--group": {
+          if (!TryValue(args, ref i, inlineValue, out var grouping))
+            return options with {
+              Error = "--group needs one of: none, tree, user, session, service, executable, container, cgroup, package",
+            };
+          if (!UserSettings.TryParseGrouping(grouping, out var parsedGrouping))
+            return options with { Error = $"there is no grouping called '{grouping}'" };
+
+          options = options with { Grouping = parsedGrouping };
+          break;
+        }
         case "--flat":
           // The desktop opens as a tree, which is what the reference tools do. This starts it flat
           // and sorted, which is what somebody looking for the busiest process wants — and what a
@@ -954,6 +975,8 @@ internal sealed record CommandLineOptions {
       --save-settings    write this run's options back to the settings file
       --tree             show the process tree (with --kill: the whole subtree)
       --flat             start with a flat list sorted by CPU rather than a tree
+      --group <what>     group the rows: none, tree, user, session, service, executable,
+                         container, cgroup, package
       --user             only this user's processes
       --interval <s>     seconds between samples (default 1)
       --json             the same as --format=json

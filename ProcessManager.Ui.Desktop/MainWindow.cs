@@ -41,7 +41,7 @@ public sealed class MainWindow : Form {
   private readonly HistoryRing<Rate> _cpuHistory = new(600);
   private readonly HistoryRing<Rate> _memoryHistory = new(600);
   private readonly ProcessHistory _rowHistory = new();
-  private readonly List<ProcessField> _columns = [.. ColumnSet.Default];
+  private readonly DesktopColumns _columns = new(ColumnSet.Default);
   private bool _splitPlaced;
   private ITheme _theme = DefaultTheme.Instance;
   private int _laidOutWidth = -1;
@@ -80,6 +80,7 @@ public sealed class MainWindow : Form {
     this.BuildSplit();
     this.BuildRail();
     this.BuildStatus();
+    this.BuildFilterBar();
     this.BuildPlots();
     this.BuildCommandBar();
     this.BuildMenu();
@@ -121,10 +122,15 @@ public sealed class MainWindow : Form {
     this._sampler.CpuPercentMode = settings.CpuMode;
     this.Interval = (int)Math.Round(settings.IntervalSeconds * 1000);
 
-    if (settings.DesktopColumns.Length > 0) {
-      this._columns.Clear();
-      this._columns.AddRange(settings.DesktopColumns);
-    }
+    if (settings.DesktopColumns.Length > 0)
+      this._columns.Apply(settings.DesktopColumns);
+
+    // After the set, because a width belongs to a column that is showing: applying them the other
+    // way round would drop every width the moment the column list was replaced.
+    foreach (var (field, width) in settings.DesktopColumnWidths)
+      this._columns.Restore(field, width);
+
+    this._view.Grouping = settings.Grouping;
 
     if (settings.WindowWidth > 0 && settings.WindowHeight > 0)
       this.Bounds = new(this.Bounds.X, this.Bounds.Y, settings.WindowWidth, settings.WindowHeight);
@@ -151,7 +157,9 @@ public sealed class MainWindow : Form {
       SortDescending = this._view.SortDescending,
       TreeMode = this._view.TreeMode,
       CpuMode = this._sampler.CpuPercentMode,
-      DesktopColumns = [.. this._columns],
+      DesktopColumns = this._columns.Fields,
+      DesktopColumnWidths = this._columns.ChosenWidths,
+      Grouping = this._view.Grouping,
       Thresholds = ProcessRow.Thresholds,
       WindowWidth = this.Width,
       WindowHeight = this.Height,
@@ -176,7 +184,20 @@ public sealed class MainWindow : Form {
     builder.AppendLine($"client size:  {this.ClientSize}");
     builder.AppendLine($"controls:     {this.Controls.Count}");
     builder.AppendLine($"process rows: {this._tree.Nodes.Count} roots, {this._tree.VisibleNodeCount} visible");
-    builder.AppendLine($"columns:      {this._tree.Columns.Count}");
+    builder.AppendLine($"columns:      {this._tree.Columns.Count} — {this.DescribeColumns()}");
+    builder.AppendLine($"sorted by:    {this.DescribeSort()}");
+    builder.AppendLine(
+      $"grouped by:   {Settings.UserSettings.NameOfGrouping(this._view.Grouping)}, "
+      + $"{this._view.Groups.Count} heading(s), {this._view.MatchCount} process row(s)"
+    );
+
+    builder.AppendLine(
+      $"filter:       {(this._filterBox.Text.Length == 0 ? "(none)" : this._filterBox.Text)}"
+      + $", case {(this._view.CaseSensitive ? "matters" : "ignored")}"
+      + $"{(this._filterNote.Text.Length > 0 ? " — " + this._filterNote.Text : string.Empty)}"
+    );
+
+    builder.AppendLine($"ticked rows:  {this.TickedKeys().Count}");
     builder.AppendLine($"split at:     {this._split.SplitterDistance}, lower pane {(this.LowerPaneVisible ? "shown" : "hidden")}");
     builder.AppendLine($"rail:         {this._rail.Bounds}, {this._rail.Items.Count} entries — {string.Join(", ", this._rail.Items)}");
     builder.AppendLine($"command bar:  {this._commands.Bounds}, {this._commands.Items.Count} items");
@@ -186,6 +207,33 @@ public sealed class MainWindow : Form {
     builder.AppendLine($"status:       {this._status.Text}");
     return builder.ToString();
   }
+
+  /// <summary>The columns as they stand — their order and the width each ended up with.</summary>
+  private string DescribeColumns() {
+    var parts = new List<string>(this._columns.Count);
+    for (var i = 0; i < this._columns.Count; ++i)
+      parts.Add(
+        $"{ColumnSet.Info(this._columns.FieldAt(i)).Key}:{this._columns.WidthAt(i).ToString(CultureInfo.InvariantCulture)}"
+        + (i == this._columns.Current ? "*" : string.Empty)
+      );
+
+    return string.Join(" ", parts);
+  }
+
+  /// <summary>The sort, tie-breakers included — the half of §11 a picture of the header cannot show.</summary>
+  private string DescribeSort() {
+    var parts = new List<string> {
+      ColumnSet.Info(this._view.SortColumn).Key + (this._view.SortDescending ? " desc" : " asc"),
+    };
+
+    foreach (var key in this._view.SecondarySort)
+      parts.Add("then " + ColumnSet.Info(key.Field).Key + (key.Descending ? " desc" : " asc"));
+
+    return string.Join(", ", parts);
+  }
+
+  /// <summary>What the rows are grouped by (PRD §83).</summary>
+  public ProcessGrouping Grouping => this._view.Grouping;
 
   /// <summary>Start with a flat sorted list rather than the tree. Set before <see cref="Start"/>.</summary>
   public bool FlatMode {
@@ -220,10 +268,13 @@ public sealed class MainWindow : Form {
   /// box. A person opening the window picks a row within a second; a capture has nobody to do it.
   /// </summary>
   public void SelectFirstRow() {
-    if (this._tree.Nodes.Count == 0)
+    // The first *process*, which in a grouped list is not the first node: a heading cannot be
+    // selected, and asking for one leaves the pane empty and the capture showing an empty box
+    // (PRD §83).
+    if (this._binder.FirstProcessNode() is not { } node)
       return;
 
-    this._tree.SelectedNode = this._tree.Nodes[0];
+    this._tree.SelectedNode = node;
     this.UpdateDetails();
   }
 
@@ -345,31 +396,208 @@ public sealed class MainWindow : Form {
     this._tree.RowBackColorSelector = node =>
       node.Tag is ProcessRow row ? RowPalette.BackColorOf(row.Category, this._theme) : null;
 
+    // Tick boxes, for the bulk actions §11 asks every table for. The terminal has had a gutter of
+    // them since it grew a mouse; this is the same thing said with a check box, and it is a mark on
+    // the row rather than a colour so that it survives a monochrome theme and a reader who cannot
+    // see one (PRD §11, §74).
+    this._tree.CheckBoxes = true;
+
     // The three history columns are drawn, not written.
     this._tree.CellPaint += this.OnCellPaint;
-    this._tree.ColumnClick += this.OnColumnClick;
+    // Deliberately not ColumnClick. The toolkit reports a header press as a bare column index with
+    // no modifier state and no way to see a drag, and §11 wants three gestures on that header —
+    // click to sort, shift-click to add a tie-breaker, and drag to move or resize. The control
+    // raises ColumnClick only when something is subscribed to it, so leaving it alone hands the
+    // whole header to the handlers below rather than having two of them fight over one press.
+    this._tree.MouseDown += this.OnTreeMouseDown;
+    this._tree.MouseMove += this.OnTreeMouseMove;
+    this._tree.MouseUp += this.OnTreeMouseUp;
+    // A heading is not a process: it cannot be selected, which is what makes it un-actionable —
+    // every verb in this window reads the selection as a ProcessRow and declines without one
+    // (PRD §83).
+    this._tree.BeforeSelect += (_, e) => e.Cancel = e.Node?.Tag is GroupRow;
     this._tree.AfterSelect += (_, _) => this.UpdateDetails();
     // Double-click is how every tool of this kind opens a process, and the gesture people try first.
     this._tree.MouseDoubleClick += (_, _) => this.ShowProperties();
     this._tree.ContextMenuStrip = this.BuildContextMenu();
   }
 
-  /// <summary>Recreates the header from the chosen column set.</summary>
+  #region the header's three gestures (PRD §11)
+
+  private int _pressedColumn = -1;
+  private int _resizingColumn = -1;
+  private int _pressX;
+  private int _pressWidth;
+  private bool _dragged;
+
+  /// <summary>The header's own y range. A press below it belongs to the rows.</summary>
+  private bool IsHeader(int y) => this._tree.ShowColumnHeaders && y >= 0 && y < this._tree.ItemHeight;
+
+  /// <summary>
+  /// A press in the header: near a boundary it grabs the boundary, otherwise it grabs the column.
+  /// </summary>
+  /// <remarks>
+  /// Which of the two it is has to be decided here rather than on release, because a resize has to
+  /// follow the pointer from the first pixel it moves. The x is put into the columns' own
+  /// coordinates first: the table scrolls sideways now, and a header hit-test done in the control's
+  /// coordinates picks whichever column happens to be under the unscrolled position.
+  /// </remarks>
+  private void OnTreeMouseDown(object? sender, MouseEventArgs e) {
+    this._pressedColumn = -1;
+    this._resizingColumn = -1;
+    this._dragged = false;
+    if (e.Button != MouseButtons.Left || !this.IsHeader(e.Y))
+      return;
+
+    var x = e.X + this._tree.HorizontalOffset;
+    this._pressX = x;
+    var edge = this._columns.EdgeAt(x);
+    if (edge >= 0) {
+      this._resizingColumn = edge;
+      this._pressWidth = this._columns.WidthAt(edge);
+      return;
+    }
+
+    this._pressedColumn = this._columns.HitTest(x);
+    if (this._pressedColumn >= 0)
+      this._columns.SetCurrent(this._pressedColumn);
+  }
+
+  private void OnTreeMouseMove(object? sender, MouseEventArgs e) {
+    if (this._resizingColumn >= 0) {
+      this._dragged = true;
+      this._columns.SetWidth(this._resizingColumn, this._pressWidth + (e.X + this._tree.HorizontalOffset - this._pressX));
+      // The widths, not the whole header: rebuilding the columns on every pointer move would drop
+      // and recreate six controls a frame, and the header would flicker under the hand doing it.
+      this.ApplyWidths();
+      return;
+    }
+
+    if (this._pressedColumn >= 0 && Math.Abs(e.X + this._tree.HorizontalOffset - this._pressX) > _DragSlop)
+      this._dragged = true;
+  }
+
+  /// <summary>How far the pointer may wander before a click becomes a drag.</summary>
+  /// <remarks>
+  /// Without it every click is a one-pixel drag, and a header that reorders itself when somebody
+  /// meant to sort by it is worse than one that does not reorder at all.
+  /// </remarks>
+  private const int _DragSlop = 5;
+
+  private void OnTreeMouseUp(object? sender, MouseEventArgs e) {
+    var pressed = this._pressedColumn;
+    var resizing = this._resizingColumn;
+    var dragged = this._dragged;
+    this._pressedColumn = -1;
+    this._resizingColumn = -1;
+    this._dragged = false;
+
+    if (resizing >= 0) {
+      this.RebuildColumns();
+      return;
+    }
+
+    if (pressed < 0)
+      return;
+
+    if (dragged) {
+      var target = this._columns.HitTest(e.X + this._tree.HorizontalOffset);
+      if (target >= 0 && this._columns.MoveTo(pressed, target)) {
+        this.RebuildColumns();
+        this.Rebind();
+      }
+
+      return;
+    }
+
+    this.SortByColumn(pressed, (e.Modifiers & KeyModifiers.Shift) != 0);
+  }
+
+  /// <summary>
+  /// What clicking a header means (PRD §11).
+  /// </summary>
+  /// <remarks>
+  /// Shift-click adds a tie-breaker rather than replacing the sort, which is the one gesture every
+  /// table with a multi-column sort has agreed on, and the one the terminal already binds.
+  /// </remarks>
+  private void SortByColumn(int index, bool addKey) {
+    if ((uint)index >= (uint)this._columns.Count)
+      return;
+
+    var sortBy = this._columns.FieldAt(index);
+    if (!ColumnSet.Info(sortBy).IsSortable) {
+      // A history column has no text to sort by, and sorting by "the shape of a graph" is not a
+      // thing. Clicking one does nothing rather than doing something arbitrary.
+      return;
+    }
+
+    if (addKey) {
+      this._view.AddSortKey(sortBy, sortBy.PrefersDescending());
+      this.RebuildColumns();
+      this.Rebind();
+      return;
+    }
+
+    // Clicking the current column reverses it, the way every list does.
+    if (this._view.SortColumn == sortBy)
+      this._view.SortDescending = !this._view.SortDescending;
+    else {
+      this._view.SortColumn = sortBy;
+      this._view.SortDescending = sortBy.PrefersDescending();
+    }
+
+    this._view.ClearSecondarySort();
+    this.RebuildColumns();
+    this.Rebind();
+  }
+
+  /// <summary>Pushes the chosen widths onto the header without recreating it.</summary>
+  private void ApplyWidths() {
+    var count = Math.Min(this._tree.Columns.Count, this._columns.Count);
+    for (var i = 0; i < count; ++i)
+      this._tree.Columns[i].Width = this._columns.WidthAt(i);
+
+    this._stretchedTo = 0;
+    this.StretchLastColumn();
+  }
+
+  #endregion
+
+  /// <summary>Recreates the header from the chosen column set, in its chosen order and widths.</summary>
   private void RebuildColumns() {
     this._tree.Columns.Clear();
-    foreach (var column in this._columns) {
+    for (var i = 0; i < this._columns.Count; ++i) {
+      var column = this._columns.FieldAt(i);
       var info = ColumnSet.Info(column);
       var header = info.Header;
       if (info.IsSortable && column == this._view.SortColumn)
         header = this._view.SortDescending ? header + " ▾" : header + " ▴";
+      else if (this.SecondarySortRank(column) is { } rank)
+        // A digit, not a second arrow: two arrows in a header row say "sorted twice" and nothing
+        // about which one wins. The terminal marks its tie-breakers the same way (PRD §11).
+        header += " " + rank.ToString(CultureInfo.InvariantCulture);
 
       var which = column;
-      this._tree.Columns.Add(new(header, info.DesktopWidth, node => ((ProcessRow)node.Tag!).TextOf(which)) {
+      this._tree.Columns.Add(new(header, this._columns.WidthAt(i), Cell) {
         TextAlign = info.RightAligned ? ContentAlignment.MiddleRight : ContentAlignment.MiddleLeft,
       });
+
+      // A grouping heading is not a process, so it has no cell in any column but the first — where
+      // the binder has already put its label in the node's own text (PRD §83).
+      string Cell(TreeNode node) => node.Tag is ProcessRow row ? row.TextOf(which) : string.Empty;
     }
 
     this.StretchLastColumn();
+  }
+
+  /// <summary>Which tie-breaker this column is, counting the primary as one.</summary>
+  private int? SecondarySortRank(ProcessField field) {
+    var keys = this._view.SecondarySort;
+    for (var i = 0; i < keys.Count; ++i)
+      if (keys[i].Field == field)
+        return i + 2;
+
+    return null;
   }
 
   private int _stretchedTo;
@@ -407,7 +635,7 @@ public sealed class MainWindow : Form {
     for (var i = 0; i < count - 1; ++i)
       used += this._tree.Columns[i].Width;
 
-    var last = this._columns.Count == count ? ColumnSet.Info(this._columns[count - 1]).DesktopWidth : 120;
+    var last = this._columns.Count == count ? this._columns.WidthAt(count - 1) : 120;
     var wanted = Math.Max(last, available - used - 2);
     if (wanted == this._stretchedTo)
       return;
@@ -425,9 +653,15 @@ public sealed class MainWindow : Form {
     // rule laid down here is a rule the text sits on rather than one drawn over it.
     DrawGridLines(e);
 
-    var info = ColumnSet.Info(this._columns[e.ColumnIndex]);
-    if (e.Node.Tag is not ProcessRow row)
+    var info = ColumnSet.Info(this._columns.FieldAt(e.ColumnIndex));
+    if (e.Node.Tag is not ProcessRow row) {
+      // A grouping heading: its own band across the row, so it reads as a divider rather than as a
+      // process with every cell empty (PRD §83).
+      if (e.Node.Tag is GroupRow)
+        e.Graphics.FillRectangle(RowPalette.GroupHeading(e.Theme), e.Bounds);
+
       return;
+    }
 
     // A process leaning hard on something gets its cell marked, not its row. The row's colour
     // already says what kind of process it is, which is a different question — colouring the row
@@ -435,8 +669,10 @@ public sealed class MainWindow : Form {
     if (RowPalette.HeatColour(row.HeatOf(info.Id), e.Theme) is { } heat)
       e.Graphics.FillRectangle(heat, e.Bounds);
 
-    if (info.Series is not { } series)
+    if (info.Series is not { } series) {
+      this.PaintMatch(e, info, row.TextOf(info.Id));
       return;
+    }
 
     var colour = series switch {
       HistorySeries.Cpu => RowPalette.Cpu,
@@ -449,6 +685,76 @@ public sealed class MainWindow : Form {
     // would only cost a measure.
     e.Handled = true;
   }
+
+  /// <summary>
+  /// Marks the run of characters the filter matched, inside the cell (PRD §11).
+  /// </summary>
+  /// <remarks>
+  /// Behind the text rather than over it, and only the run: highlighting the whole cell would say
+  /// "this row matched", which the list already says by showing the row at all. What somebody needs
+  /// is <em>why</em> — and the word is often forty characters into a command line, where no amount
+  /// of staring finds it.
+  /// <para>
+  /// Measured with the same renderer that draws the string, because a run located by counting
+  /// characters lands in the wrong place in every proportional font (PRD §45.9).
+  /// </para>
+  /// </remarks>
+  private void PaintMatch(TreeListViewCellPaintEventArgs e, FieldDescriptor info, string text) {
+    if (this._highlight is not { Length: > 0 } needle || text.Length == 0)
+      return;
+
+    var comparison = this._view.CaseSensitive ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
+    var at = text.IndexOf(needle, comparison);
+    if (at < 0)
+      return;
+
+    var font = e.Theme.DefaultFont;
+    var before = at == 0 ? 0 : e.Graphics.MeasureText(text[..at], font).Width;
+    var run = e.Graphics.MeasureText(text.Substring(at, needle.Length), font).Width;
+    if (run <= 0)
+      return;
+
+    // Where the control is about to draw the string, which is not the cell's left edge. Every column
+    // is inset by a pad; the tree column is also pushed right by one indent per level, by the
+    // expander's own cell and by the tick box. Getting this wrong does not look like a rounding
+    // error — the first capture drew every highlight out in the indent, four columns from the word
+    // it had matched.
+    var whole = e.Graphics.MeasureText(text, font).Width;
+    var left = info.RightAligned
+      ? e.Bounds.Right - _CellPad - whole + before
+      : e.Bounds.X + this.TextInsetOf(e) + before;
+
+    var clipped = Math.Min(run, e.Bounds.Right - 1 - left);
+    if (clipped <= 0 || left >= e.Bounds.Right - 1)
+      return;
+
+    e.Graphics.FillRectangle(
+      RowPalette.MatchHighlight(e.Theme),
+      new(Math.Max(e.Bounds.X, left), e.Bounds.Y, clipped, e.Bounds.Height - 1)
+    );
+  }
+
+  /// <summary>
+  /// How far into a cell the control starts drawing its text.
+  /// </summary>
+  /// <remarks>
+  /// These are the toolkit's own insets, mirrored here because it exposes no way to ask. That is a
+  /// duplication and it is written down as one: if <c>TreeListView</c> ever changes them, the
+  /// highlight lands beside the word rather than on it, and this is the line to change. The check
+  /// box's size is at least a public constant, so only the pads are guesses.
+  /// </remarks>
+  private int TextInsetOf(TreeListViewCellPaintEventArgs e) {
+    if (e.ColumnIndex != 0)
+      return _CellPad;
+
+    var indent = (e.Node.Level + 1) * e.Bounds.Height;
+    return indent + (this._tree.CheckBoxes ? _CheckCellWidth : 0) + _CellPad;
+  }
+
+  private const int _CellPad = 2;
+
+  /// <summary>The tick box's cell: fourteen pixels of box and four of gap, as the toolkit draws it.</summary>
+  private const int _CheckCellWidth = 18;
 
   /// <summary>
   /// The faint rules that make a dense table readable across a row (PRD §93).
@@ -493,28 +799,6 @@ public sealed class MainWindow : Form {
     );
   }
 
-  private void OnColumnClick(object? sender, ColumnClickEventArgs e) {
-    if ((uint)e.Column >= (uint)this._columns.Count)
-      return;
-
-    var sortBy = this._columns[e.Column];
-    if (!ColumnSet.Info(sortBy).IsSortable)
-      // A history column has no text to sort by, and sorting by "the shape of a graph" is not a
-      // thing. Clicking one does nothing rather than doing something arbitrary.
-      return;
-
-    // Clicking the current column reverses it, the way every list does.
-    if (this._view.SortColumn == sortBy)
-      this._view.SortDescending = !this._view.SortDescending;
-    else {
-      this._view.SortColumn = sortBy;
-      this._view.SortDescending = sortBy.PrefersDescending();
-    }
-
-    this.RebuildColumns();
-    this.Refresh();
-  }
-
   private ContextMenuStrip BuildContextMenu() {
     var menu = new ContextMenuStrip();
     menu.Items.Add(Item("Properties", () => this.UpdateDetails()));
@@ -522,6 +806,7 @@ public sealed class MainWindow : Form {
     menu.Items.Add(Item("End task", this.EndTask));
     menu.Items.Add(Item("End process", () => this.Act("end", key => this._actions!.Terminate(key), _EndsWithoutAsking)));
     menu.Items.Add(Item("End process tree", this.EndTree));
+    menu.Items.Add(Item("End the ticked processes", this.EndTicked));
     menu.Items.Add(Item("Restart", this.RestartProcess));
     menu.Items.Add(Item("Suspend", () => this.Act("suspend", key => this._actions!.Suspend(key))));
     menu.Items.Add(Item("Resume", () => this.Act("resume", key => this._actions!.Resume(key))));
@@ -539,6 +824,11 @@ public sealed class MainWindow : Form {
     menu.Items.Add(Item("Read handle count", this.FillHandleCounts));
     menu.Items.Add(Item("Properties…", this.ShowProperties));
     menu.Items.Add(Item("Refresh details", () => this._details.Invalidate()));
+    menu.Items.Add(new ToolStripSeparator());
+    // Right-click is where a table's copy lives, whatever the menu bar also offers.
+    menu.Items.Add(Item("Copy row, or every ticked row", this.CopyRows));
+    menu.Items.Add(Item("Copy cell", this.CopyCell));
+    menu.Items.Add(Item("Export table…", this.ExportTable));
     return menu;
   }
 
@@ -1033,6 +1323,20 @@ public sealed class MainWindow : Form {
     return item;
   }
 
+  /// <summary>
+  /// A menu item with a chord, which is how anything here is reachable without the mouse.
+  /// </summary>
+  /// <remarks>
+  /// The form dispatches the chord through the menu strip, so it works wherever the focus happens
+  /// to be — including in the filter box, which is the one place a bare letter would be typed
+  /// rather than obeyed.
+  /// </remarks>
+  private static ToolStripMenuItem Shortcut(string text, Keys keys, Action action) {
+    var item = Item(text, action);
+    item.ShortcutKeys = keys;
+    return item;
+  }
+
   private void BuildStatus() {
     this._status.Dock = DockStyle.Bottom;
     this._status.Height = 22;
@@ -1066,7 +1370,7 @@ public sealed class MainWindow : Form {
   /// because it is what the program is for.
   /// </remarks>
   private void BuildViews() {
-    this.AddView("Processes", this._split, () => { }, () => $"{this._view.RowCount} rows", () => this._view.RowCount);
+    this.AddView("Processes", this._split, () => { }, () => $"{this._view.MatchCount} rows", () => this._view.MatchCount);
     // A window rather than a page: the performance view is modeless, has its own timer and its own
     // lifetime, and embedding a second copy of it here would mean two of everything it samples.
     this.AddView("Performance", null, this.ShowPerformance, () => "opens the performance window", () => 0);
@@ -1298,10 +1602,7 @@ public sealed class MainWindow : Form {
     var menu = new MenuStrip { Dock = DockStyle.Top, Height = 26 };
 
     var view = new ToolStripMenuItem("View");
-    view.DropDownItems.Add(Item("Tree", () => {
-      this._view.TreeMode = !this._view.TreeMode;
-      this.Refresh();
-    }));
+    view.DropDownItems.Add(this.BuildGroupingMenu());
 
     view.DropDownItems.Add(Item("Show all users", () => {
       this._view.UserIdFilter = null;
@@ -1318,10 +1619,19 @@ public sealed class MainWindow : Form {
 
     menu.Items.Add(view);
 
-    // Sorting lives in a menu because the header cannot carry it: NativeForms' TreeListView has no
-    // ColumnClick (its ListView does, and is flat). Click-to-sort is the gesture people expect, so
-    // this is a stand-in for a hook that has to come from the toolkit, not a preference.
+    // The header carries the click now — see the gestures above — so this menu is what makes the
+    // same thing reachable from the keyboard, which is a requirement rather than a convenience
+    // (PRD §11 "keyboard sort", §74).
     var sort = new ToolStripMenuItem("Sort by");
+    sort.DropDownItems.Add(Shortcut("Sort by the next column", Keys.F6, () => this.StepSort(1)));
+    sort.DropDownItems.Add(Shortcut("Sort by the previous column", Keys.Shift | Keys.F6, () => this.StepSort(-1)));
+    sort.DropDownItems.Add(Shortcut("Reverse", Keys.F7, () => {
+      this._view.SortDescending = !this._view.SortDescending;
+      this.RebuildColumns();
+      this.Refresh();
+    }));
+
+    sort.DropDownItems.Add(new ToolStripSeparator());
     foreach (var column in (ReadOnlySpan<ProcessField>)[
       ProcessField.CpuPercent,
       ProcessField.PrivateBytes,
@@ -1343,13 +1653,17 @@ public sealed class MainWindow : Form {
     }
 
     sort.DropDownItems.Add(new ToolStripSeparator());
-    sort.DropDownItems.Add(Item("Reverse", () => {
-      this._view.SortDescending = !this._view.SortDescending;
+    sort.DropDownItems.Add(this.BuildTieBreakerMenu());
+    sort.DropDownItems.Add(Item("Sort by one column only", () => {
+      this._view.ClearSecondarySort();
       this.RebuildColumns();
-      this.Refresh();
+      this.Rebind();
+      this._status.Text = "ties are broken by the pid again";
     }));
 
     menu.Items.Add(sort);
+    menu.Items.Add(this.BuildColumnMenu());
+    menu.Items.Add(this.BuildEditMenu());
 
     view.DropDownItems.Add(new ToolStripSeparator());
 
@@ -1360,6 +1674,7 @@ public sealed class MainWindow : Form {
     this._lowerPaneItem.Click += (_, _) => this.ToggleLowerPane();
     view.DropDownItems.Add(this._lowerPaneItem);
 
+    view.DropDownItems.Add(Shortcut("Filter…", Keys.F3, this.FocusFilter));
     view.DropDownItems.Add(Item("Select columns…", this.ChooseColumns));
     view.DropDownItems.Add(Item("Performance…", this.ShowPerformance));
     view.DropDownItems.Add(Item("Colour legend…", this.ShowLegend));
@@ -1371,6 +1686,7 @@ public sealed class MainWindow : Form {
     process.DropDownItems.Add(Item("End task", this.EndTask));
     process.DropDownItems.Add(Item("End process", () => this.Act("end", key => this._actions!.Terminate(key), _EndsWithoutAsking)));
     process.DropDownItems.Add(Item("End process tree", this.EndTree));
+    process.DropDownItems.Add(Item("End the ticked processes", this.EndTicked));
     process.DropDownItems.Add(Item("Restart", this.RestartProcess));
     process.DropDownItems.Add(Item("Suspend", () => this.Act("suspend", key => this._actions!.Suspend(key))));
     process.DropDownItems.Add(Item("Resume", () => this.Act("resume", key => this._actions!.Resume(key))));
@@ -1389,6 +1705,24 @@ public sealed class MainWindow : Form {
   #endregion
 
   #region refresh
+
+  /// <summary>
+  /// Redraws the list from the sample already taken (PRD §11).
+  /// </summary>
+  /// <remarks>
+  /// What a keystroke gets. <see cref="Refresh"/> takes a sample, and a filter box that sampled the
+  /// machine on every character would read a thousand /proc files per letter typed — and make every
+  /// rate on screen jump while somebody was still deciding what to search for.
+  /// </remarks>
+  private void Rebind() {
+    var snapshot = this._sampler.Current;
+    var delta = this._sampler.Delta;
+    this._view.Rebuild(snapshot, delta);
+    this._binder.Sync(snapshot, delta, this._view);
+    this.StretchLastColumn();
+    this.UpdateStatus(snapshot, delta);
+    this._tree.Invalidate();
+  }
 
   private new void Refresh() {
     this.ApplyLayout();
@@ -1438,6 +1772,7 @@ public sealed class MainWindow : Form {
     if (this._plots.Width != this._laidOutWidth) {
       this._laidOutWidth = this._plots.Width;
       this.LayOutPlots();
+      this.LayOutFilterBar();
     }
 
     this._shell.Stretch();
@@ -1462,7 +1797,8 @@ public sealed class MainWindow : Form {
   private void UpdateStatus(SystemSnapshot snapshot, SnapshotDelta delta) {
     var mode = this._sampler.CpuPercentMode == CpuPercentMode.PerCore ? "per core" : "normalized";
     this._status.Text =
-      $"{this._view.RowCount} of {snapshot.ProcessCount} processes  ·  "
+      // MatchCount, not RowCount: a grouping heading takes a row and is not a process (PRD §83).
+      $"{this._view.MatchCount} of {snapshot.ProcessCount} processes{this.TickedSuffix}  ·  "
       + $"CPU {Humanize.Percent(delta.SystemCpuPercent)}% ({mode})  ·  "
       + $"memory {Humanize.Bytes(snapshot.System.TotalMemoryBytes)} total, {Humanize.Bytes(snapshot.System.AvailableMemoryBytes)} free  ·  "
       + $"sample {this._sampler.LastSampleDuration.TotalMilliseconds.ToString("0.0", CultureInfo.InvariantCulture)} ms";
@@ -1516,15 +1852,14 @@ public sealed class MainWindow : Form {
   }
 
   private void ChooseColumns() {
-    var chooser = new ColumnChooser(this._columns);
+    var chooser = new ColumnChooser(this._columns.Fields);
     chooser.ShowDialog();
     if (!chooser.Accepted)
       return;
 
-    this._columns.Clear();
-    this._columns.AddRange(chooser.Selection);
+    this._columns.Apply(chooser.Selection);
     this.RebuildColumns();
-    this.Refresh();
+    this.Rebind();
   }
 
   private void FillHandleCounts() {
@@ -1752,6 +2087,84 @@ public sealed class MainWindow : Form {
   }
 
   /// <summary>
+  /// Puts the list into a grouping, for the capture run (PRD §9.6, §83).
+  /// </summary>
+  /// <remarks>
+  /// A grouping is the one thing about this table that a photograph of the default view cannot show,
+  /// and a heading row that is drawn wrongly — the wrong colour, the wrong height, selectable when it
+  /// should not be — passes every test in the suite. So the capture takes a second picture with the
+  /// rows grouped, and this is what it asks for.
+  /// </remarks>
+  public string ShowGrouping(ProcessGrouping grouping) {
+    this.GroupBy(grouping);
+    // Selected again, because the previous selection was a process the regrouping moved: the pane
+    // under the table would otherwise photograph as whatever it happened to keep.
+    this.SelectFirstRow();
+    // And scrolled back to the very top afterwards. Selecting the first *process* scrolls it into
+    // view, which in a grouped list pushes the heading above it off the top — so the picture came
+    // out with its first row apparently belonging to no group at all.
+    this._tree.TopIndex = 0;
+    return this.DescribeForCapture();
+  }
+
+  /// <summary>
+  /// Types into the filter box, for the capture run (PRD §9.6, §11).
+  /// </summary>
+  /// <remarks>
+  /// Match highlighting is measured text drawn behind other text. It is the exact shape of defect
+  /// this project keeps shipping — right in the tests, one column out on screen — so the capture
+  /// photographs it rather than trusting it.
+  /// </remarks>
+  public string ShowFilter(string text) {
+    ArgumentNullException.ThrowIfNull(text);
+    this._filterBox.Text = text;
+    // The box raises TextChanged from the peer, which does not exist until the window is realized;
+    // asking directly means the capture photographs the filter it set rather than the one before it.
+    this.ApplyFilter();
+    this.SelectFirstRow();
+    this._tree.TopIndex = 0;
+    return this.DescribeForCapture();
+  }
+
+  /// <summary>
+  /// Puts the columns through the moves §11 asks for, and says what each did (PRD §9.6).
+  /// </summary>
+  /// <remarks>
+  /// Text and no picture: a width is a number, and the number is better evidence than a photograph
+  /// of it. What a photograph is needed for is that the header and the cells agree afterwards, which
+  /// the grouped and filtered captures either side of this already show.
+  /// </remarks>
+  public string ExerciseColumns() {
+    // What was there before, put back at the end. The capture runs against the real settings file
+    // and the window writes it once a second, so a run that left the columns reset would quietly
+    // throw away the layout of whoever regenerated the screenshots.
+    var opened = this._columns.Fields;
+    var openedWidths = this._columns.ChosenWidths;
+
+    var builder = new System.Text.StringBuilder();
+    builder.AppendLine($"columns opened:  {this.DescribeColumns()}");
+    this.AutoSize(everyColumn: true);
+    builder.AppendLine($"columns fitted:  {this.DescribeColumns()}");
+    this._columns.SetCurrent(1);
+    this.MoveColumn(-1);
+    builder.AppendLine($"columns moved:   {this.DescribeColumns()}");
+    this.ResizeColumn(_ResizeStep * 4);
+    builder.AppendLine($"columns resized: {this.DescribeColumns()}");
+    this.ResetColumns();
+    builder.AppendLine($"columns reset:   {this.DescribeColumns()}");
+
+    this._columns.Apply(opened);
+    foreach (var (field, width) in openedWidths)
+      this._columns.Restore(field, width);
+
+    this._columns.SetCurrent(0);
+    this.RebuildColumns();
+    this.Rebind();
+    builder.AppendLine($"columns put back:{this.DescribeColumns()}");
+    return builder.ToString();
+  }
+
+  /// <summary>
   /// What each of the rail's views holds, counted rather than quoted (PRD §9.6).
   /// </summary>
   /// <remarks>
@@ -1779,6 +2192,583 @@ public sealed class MainWindow : Form {
     this.ShowView(opened);
     return builder.ToString();
   }
+
+  #region the filter box (PRD §11, §56)
+
+  private readonly Panel _filterBar = new();
+  private readonly Label _filterLabel = new();
+  private readonly TextBox _filterBox = new();
+  private readonly CheckBox _matchCase = new();
+  private readonly Label _filterNote = new();
+  private string? _highlight;
+
+  /// <summary>
+  /// The strip above the table: the query, whether it minds case, and what it made of what was typed.
+  /// </summary>
+  /// <remarks>
+  /// The window had no filter at all — the query language of §56 was reachable from the terminal and
+  /// from <c>--filter</c>, and from nowhere in the GUI — which is also why §11's case-sensitivity and
+  /// match-highlighting rows both read "terminal only". A box is the smallest thing that fixes all
+  /// three.
+  /// <para>
+  /// What the parser said goes beside it rather than in a dialog. A query that will not parse is
+  /// the ordinary state of a query somebody is halfway through typing, and the list keeps working
+  /// meanwhile: an unparsable query falls back to a plain substring search, exactly as it does in
+  /// the terminal.
+  /// </para>
+  /// </remarks>
+  private void BuildFilterBar() {
+    this._filterBar.Dock = DockStyle.Top;
+    this._filterBar.Height = 30;
+
+    this._filterLabel.Text = "Filter";
+    this._filterBox.PlaceholderText = "name, or cpu>50 AND user:root — F3 to come back here";
+    this._filterBox.TextChanged += (_, _) => this.ApplyFilter();
+
+    this._matchCase.Text = "Match case";
+    this._matchCase.CheckedChanged += (_, _) => {
+      this._view.CaseSensitive = this._matchCase.Checked;
+      this.ApplyFilter();
+    };
+
+    this._filterBar.Controls.Add(this._filterLabel);
+    this._filterBar.Controls.Add(this._filterBox);
+    this._filterBar.Controls.Add(this._matchCase);
+    this._filterBar.Controls.Add(this._filterNote);
+    this.Controls.Add(this._filterBar);
+    this.LayOutFilterBar();
+  }
+
+  private void LayOutFilterBar() {
+    const int Gap = 6;
+    var width = Math.Max(360, this._filterBar.Width);
+    // Right to left, because the two on the right have widths of their own and the box takes what is
+    // left: a box sized from the left would run under the check box on a narrow window.
+    var noteWidth = Math.Min(320, Math.Max(80, width / 3));
+    var caseWidth = 110;
+    this._filterLabel.Bounds = new(Gap, 6, 44, 20);
+    var boxLeft = Gap + 48;
+    var boxWidth = Math.Max(120, width - boxLeft - caseWidth - noteWidth - (Gap * 3));
+    this._filterBox.Bounds = new(boxLeft, 4, boxWidth, 22);
+    this._matchCase.Bounds = new(boxLeft + boxWidth + Gap, 5, caseWidth, 20);
+    this._filterNote.Bounds = new(boxLeft + boxWidth + Gap + caseWidth + Gap, 6, noteWidth, 20);
+  }
+
+  /// <summary>
+  /// Takes what was typed, and says what became of it.
+  /// </summary>
+  /// <remarks>
+  /// The highlight is the typed text only while it is a plain word. Once it contains an operator it
+  /// is a query rather than a string, and picking the letters "cpu&gt;50" out of a command line
+  /// would mark something nobody searched for — which is the rule the terminal already follows.
+  /// </remarks>
+  private void ApplyFilter() {
+    var text = this._filterBox.Text;
+    this._view.TextFilter = string.IsNullOrEmpty(text) ? null : text;
+    this._highlight = text.Length > 0 && text.AsSpan().IndexOfAny(":<>=/") < 0 ? text : null;
+
+    this._filterNote.Text = text.Length == 0
+      ? string.Empty
+      : ProcessQuery.TryParse(text, out _, out var error, this._view.CaseSensitive) || error is null
+        ? string.Empty
+        : error;
+
+    this.Rebind();
+  }
+
+  /// <summary>Puts the caret in the filter box, which is what F3 and Ctrl+F are for (PRD §56).</summary>
+  private void FocusFilter() => this._filterBox.Focus();
+
+  #endregion
+
+  #region columns, copying and exporting (PRD §11)
+
+  /// <summary>
+  /// The column menu: everything §11 asks a table's header to be able to do.
+  /// </summary>
+  /// <remarks>
+  /// A menu as well as the header gestures, and not instead of them. The gestures are what a hand
+  /// reaches for; the menu is what makes every one of them reachable from the keyboard, which §11's
+  /// "keyboard sort" row and §74 both require — and it is the only place the current column has a
+  /// name, so it is also where somebody finds out which column the keyboard is on.
+  /// </remarks>
+  private ToolStripMenuItem BuildColumnMenu() {
+    var menu = new ToolStripMenuItem("Columns");
+    menu.DropDownItems.Add(Item("Select columns…", this.ChooseColumns));
+    menu.DropDownItems.Add(new ToolStripSeparator());
+    menu.DropDownItems.Add(Shortcut("Previous column", Keys.Control | Keys.Left, () => this.StepColumn(-1)));
+    menu.DropDownItems.Add(Shortcut("Next column", Keys.Control | Keys.Right, () => this.StepColumn(1)));
+    menu.DropDownItems.Add(new ToolStripSeparator());
+    menu.DropDownItems.Add(Shortcut("Move left", Keys.Control | Keys.Shift | Keys.Left, () => this.MoveColumn(-1)));
+    menu.DropDownItems.Add(Shortcut("Move right", Keys.Control | Keys.Shift | Keys.Right, () => this.MoveColumn(1)));
+    menu.DropDownItems.Add(Shortcut("Narrower", Keys.Control | Keys.OemMinus, () => this.ResizeColumn(-_ResizeStep)));
+    menu.DropDownItems.Add(Shortcut("Wider", Keys.Control | Keys.Oemplus, () => this.ResizeColumn(_ResizeStep)));
+    menu.DropDownItems.Add(new ToolStripSeparator());
+    menu.DropDownItems.Add(Shortcut("Fit this column", Keys.Control | Keys.D1, () => this.AutoSize(false)));
+    menu.DropDownItems.Add(Shortcut("Fit every column", Keys.Control | Keys.D2, () => this.AutoSize(true)));
+    menu.DropDownItems.Add(Shortcut("Reset columns", Keys.Control | Keys.D0, this.ResetColumns));
+    return menu;
+  }
+
+  /// <summary>How much one keypress moves a column boundary. A pixel a press would be useless.</summary>
+  private const int _ResizeStep = 12;
+
+  private void StepColumn(int delta) {
+    this._columns.MoveCurrent(delta);
+    this.SayCurrentColumn();
+  }
+
+  /// <summary>
+  /// Names the column the keyboard is on.
+  /// </summary>
+  /// <remarks>
+  /// The header cannot show it — the toolkit draws the header itself and offers no per-column state
+  /// to draw with — so the status bar says it instead. Without this, "wider" and "copy cell" both
+  /// act on a column nobody can see the identity of, which is indistinguishable from acting on the
+  /// wrong one.
+  /// </remarks>
+  private void SayCurrentColumn() {
+    if (this._columns.Count == 0)
+      return;
+
+    this._status.Text = $"column: {ColumnSet.Info(this._columns.CurrentField).Header}"
+      + $"  ({this._columns.WidthAt(this._columns.Current)} px)";
+  }
+
+  private void MoveColumn(int delta) {
+    if (!this._columns.Reorder(delta))
+      return;
+
+    this.RebuildColumns();
+    this.Rebind();
+    this.SayCurrentColumn();
+  }
+
+  private void ResizeColumn(int delta) {
+    this._columns.ResizeCurrent(delta);
+    this.ApplyWidths();
+    this.SayCurrentColumn();
+  }
+
+  private void ResetColumns() {
+    this._columns.Reset(ColumnSet.Default);
+    this.RebuildColumns();
+    this.Rebind();
+    this._status.Text = "columns are back to the defaults";
+  }
+
+  /// <summary>
+  /// Fits one column, or all of them, to the rows on screen (PRD §11).
+  /// </summary>
+  /// <remarks>
+  /// Measured against what is showing rather than against every process, which is what auto-sizing
+  /// means here and in the terminal: reading a thousand command lines to widen a column nobody is
+  /// looking at costs a frame, and a column fitted to the widest value in the whole table is usually
+  /// fitted to something scrolled far out of sight.
+  /// </remarks>
+  private void AutoSize(bool everyColumn) {
+    if (MeasureText.Instance is not { } measure) {
+      this._status.Text = "there is no display to measure text against";
+      return;
+    }
+
+    var first = everyColumn ? 0 : this._columns.Current;
+    var last = everyColumn ? this._columns.Count - 1 : this._columns.Current;
+    for (var i = first; i <= last; ++i)
+      this._columns.AutoSize(i, this.MeasureColumn(measure, i));
+
+    this.RebuildColumns();
+    this._status.Text = everyColumn
+      ? "every column fits what is on screen"
+      : $"{ColumnSet.Info(this._columns.CurrentField).Header} fits what is on screen";
+  }
+
+  private int MeasureColumn(MeasureText measure, int index) {
+    var field = this._columns.FieldAt(index);
+    // The header too: a column narrower than its own caption is a column whose caption is an
+    // ellipsis, which names nothing.
+    var widest = measure.WidthOf(ColumnSet.Info(field).Header + " ▾");
+    var visible = this._tree.VisibleNodeCount;
+    for (var row = this._tree.TopIndex; row < visible; ++row) {
+      if (this._tree.NodeAt(row) is not { } node)
+        break;
+
+      var text = node.Tag switch {
+        ProcessRow process => index == 0 ? process.Label : process.TextOf(field),
+        GroupRow group when index == 0 => group.Text,
+        _ => string.Empty,
+      };
+
+      if (text.Length == 0)
+        continue;
+
+      // The tree column carries the indentation and the expander, which are as much a part of the
+      // width it needs as the text is.
+      var indent = index == 0 ? (node.Level + 2) * this._tree.ItemHeight : 0;
+      widest = Math.Max(widest, measure.WidthOf(text) + indent);
+    }
+
+    // The cell inset the control draws with, on both sides, plus a hair so the value is not flush
+    // against the rule down the right-hand edge.
+    return widest + 6;
+  }
+
+  /// <summary>
+  /// Copying, in the three shapes §11 asks for.
+  /// </summary>
+  /// <remarks>
+  /// Raw values, not what the column shows: a cell copied out of a monitor is on its way into
+  /// something that will do arithmetic with it, and "1.5G" is not a number (PRD §76). This is the
+  /// same call the terminal's copy keys make.
+  /// </remarks>
+  private ToolStripMenuItem BuildEditMenu() {
+    var menu = new ToolStripMenuItem("Edit");
+    // Ctrl+C is the rows, not the cell. §95 asks for the rows when there is no cell selection, and
+    // this table has no cell selection to speak of — the current column is a keyboard position, not
+    // something the header can be drawn to show. So the obvious chord does the obvious thing, and
+    // the cell, which needs somebody to have chosen a column first, gets the deliberate one.
+    menu.DropDownItems.Add(Shortcut("Copy row, or every ticked row", Keys.Control | Keys.C, this.CopyRows));
+    menu.DropDownItems.Add(Shortcut("Copy cell", Keys.Control | Keys.Shift | Keys.C, this.CopyCell));
+    menu.DropDownItems.Add(new ToolStripSeparator());
+    menu.DropDownItems.Add(Shortcut("Tick every row", Keys.Control | Keys.A, () => this.TickAll(invert: false)));
+    menu.DropDownItems.Add(Item("Invert the ticks", () => this.TickAll(invert: true)));
+    menu.DropDownItems.Add(Item("Clear the ticks", this.ClearTicks));
+    menu.DropDownItems.Add(new ToolStripSeparator());
+    menu.DropDownItems.Add(Shortcut("Find…", Keys.Control | Keys.F, this.FocusFilter));
+    menu.DropDownItems.Add(Shortcut("Export table…", Keys.Control | Keys.E, this.ExportTable));
+    return menu;
+  }
+
+  private void CopyCell() {
+    if (this._binder.SelectedRow is not { } row) {
+      this._status.Text = "nothing is selected";
+      return;
+    }
+
+    var index = this._view.FindRow(row.Key);
+    if (index < 0)
+      return;
+
+    var field = this._columns.CurrentField;
+    var view = this._view.Rows[index];
+    ref readonly var process = ref this._sampler.Current.Processes[view.Index];
+    var text = FieldAccessor.RawText(field, in process, this._sampler.Delta, view.Index)
+      ?? row.TextOf(field);
+
+    this.PutOnClipboard(text, $"{ColumnSet.Info(field).Header} of {row.Name}");
+  }
+
+  /// <summary>
+  /// The ticked rows, or the selected one when nothing is ticked.
+  /// </summary>
+  /// <remarks>
+  /// One item rather than two, and the same rule the terminal's <c>Y</c> follows: somebody who has
+  /// ticked rows means those, and somebody who has not means the one under the cursor. A separate
+  /// "copy ticked rows" that did nothing when nothing was ticked would be an item that looks broken
+  /// most of the time.
+  /// </remarks>
+  private void CopyRows() {
+    var ticked = this.TickedKeys();
+    if (ticked.Count > 0) {
+      this.PutOnClipboard(this.RowsAsText(ticked.Contains), $"{ticked.Count} rows");
+      return;
+    }
+
+    if (this._binder.SelectedRow is not { } row) {
+      this._status.Text = "nothing is selected";
+      return;
+    }
+
+    this.PutOnClipboard(this.RowsAsText(key => key == row.Key), "one row");
+  }
+
+  /// <summary>A header line and one tab-separated line per row, over the columns that are showing.</summary>
+  private string RowsAsText(Func<ProcessKey, bool> wanted) {
+    var fields = this.ExportableFields();
+    var builder = new System.Text.StringBuilder(256);
+    foreach (var field in fields)
+      builder.Append(ColumnSet.Info(field).Header).Append('\t');
+
+    if (fields.Length > 0)
+      --builder.Length;
+
+    builder.Append('\n');
+
+    var processes = this._sampler.Current.Processes;
+    foreach (var row in this._view.Rows) {
+      if (row.IsGroupHeader)
+        continue;
+
+      ref readonly var process = ref processes[row.Index];
+      if (!wanted(process.Key))
+        continue;
+
+      foreach (var field in fields)
+        builder
+          .Append(FieldAccessor.RawText(field, in process, this._sampler.Delta, row.Index) ?? string.Empty)
+          .Append('\t');
+
+      if (fields.Length > 0)
+        --builder.Length;
+
+      builder.Append('\n');
+    }
+
+    return builder.ToString();
+  }
+
+  /// <summary>The showing columns that have text. A drawn history has none, so it is not one.</summary>
+  private ProcessField[] ExportableFields() {
+    var fields = new List<ProcessField>(this._columns.Count);
+    for (var i = 0; i < this._columns.Count; ++i) {
+      var field = this._columns.FieldAt(i);
+      if (!ColumnSet.Info(field).IsGraph)
+        fields.Add(field);
+    }
+
+    return [.. fields];
+  }
+
+  private void PutOnClipboard(string text, string what) {
+    NativeForms.Clipboard.SetText(text);
+    this._status.Text = $"copied {what}";
+  }
+
+  /// <summary>
+  /// Writes the table out, in whichever of the six formats the file name asks for (PRD §61).
+  /// </summary>
+  /// <remarks>
+  /// The columns that are showing and the rows that pass the filter — what is on screen, which is
+  /// what somebody who chose both of those means by "the table". The format comes from the
+  /// extension, so choosing <c>.csv</c> in the box is the whole of choosing CSV.
+  /// </remarks>
+  private void ExportTable() {
+    var dialog = new SaveFileDialog {
+      Title = "Export the process table",
+      FileName = "processes.tsv",
+      Filter = "Tab separated (*.tsv)|*.tsv|Comma separated (*.csv)|*.csv|JSON (*.json)|*.json"
+        + "|JSON lines (*.jsonl)|*.jsonl|Markdown (*.md)|*.md|Plain text (*.txt)|*.txt",
+    };
+
+    if (dialog.ShowDialog() != DialogResult.OK || dialog.FileName.Length == 0)
+      return;
+
+    if (!Exporter.TryParseFormat(Path.GetExtension(dialog.FileName).TrimStart('.'), out var format))
+      format = ExportFormat.Tsv;
+
+    try {
+      using (var writer = new StreamWriter(dialog.FileName, false))
+        Exporter.Write(
+          writer,
+          format,
+          this._sampler.Current,
+          this._sampler.Delta,
+          this._view,
+          this.ExportableFields(),
+          this._view.TreeMode
+        );
+
+      this._status.Text = $"wrote {this._view.MatchCount} rows to {dialog.FileName} as {format}";
+    } catch (IOException problem) {
+      MessageBox.Show(problem.Message, "Process Manager");
+    } catch (UnauthorizedAccessException problem) {
+      MessageBox.Show(problem.Message, "Process Manager");
+    }
+  }
+
+  #endregion
+
+  #region ticking rows (PRD §11)
+
+  /// <summary>
+  /// The processes somebody has ticked.
+  /// </summary>
+  /// <remarks>
+  /// Read off the tree rather than kept in a set beside it, so the two can never disagree about what
+  /// is ticked — and a heading's tick, if the toolkit ever lets one be set, is not a process and
+  /// contributes nothing.
+  /// </remarks>
+  private HashSet<ProcessKey> TickedKeys() {
+    var ticked = new HashSet<ProcessKey>();
+    for (var row = 0; row < this._tree.VisibleNodeCount; ++row)
+      if (this._tree.NodeAt(row) is { Checked: true, Tag: ProcessRow process })
+        ticked.Add(process.Key);
+
+    return ticked;
+  }
+
+  private void TickAll(bool invert) {
+    for (var row = 0; row < this._tree.VisibleNodeCount; ++row)
+      if (this._tree.NodeAt(row) is { Tag: ProcessRow } node)
+        node.Checked = invert ? !node.Checked : true;
+
+    this._status.Text = $"{this.TickedKeys().Count} rows ticked";
+  }
+
+  private void ClearTicks() {
+    for (var row = 0; row < this._tree.VisibleNodeCount; ++row)
+      if (this._tree.NodeAt(row) is { Tag: ProcessRow } node)
+        node.Checked = false;
+
+    this._status.Text = "nothing is ticked now";
+  }
+
+  /// <summary>What the status bar adds when rows are ticked, so the count is never a surprise.</summary>
+  private string TickedSuffix {
+    get {
+      var ticked = this.TickedKeys().Count;
+      return ticked == 0 ? string.Empty : $", {ticked} ticked";
+    }
+  }
+
+  /// <summary>
+  /// Ends every ticked process, having said how many there are (PRD §11, §90).
+  /// </summary>
+  /// <remarks>
+  /// The count is the whole of the confirmation's job here. "End 14 processes?" and "End Firefox?"
+  /// are the same gesture and very different requests, and a bulk action that does not name its
+  /// size is one somebody agrees to without knowing what they agreed to.
+  /// </remarks>
+  private void EndTicked() {
+    var ticked = this.TickedKeys();
+    if (ticked.Count == 0) {
+      this._status.Text = "no rows are ticked";
+      return;
+    }
+
+    if (this._actions is null) {
+      MessageBox.Show("This build has no actions for this platform.", "Process Manager");
+      return;
+    }
+
+    var answer = MessageBox.Show(
+      $"End the {ticked.Count} ticked process{(ticked.Count == 1 ? string.Empty : "es")}?\n\n{_EndsWithoutAsking}",
+      "Process Manager",
+      MessageBoxButtons.YesNo
+    );
+
+    if (answer != DialogResult.Yes)
+      return;
+
+    var sent = 0;
+    var refused = 0;
+    foreach (var key in ticked) {
+      if (this._actions.Terminate(key).Succeeded)
+        ++sent;
+      else
+        ++refused;
+    }
+
+    this.ClearTicks();
+    this._status.Text = refused == 0
+      ? $"ended {sent} processes"
+      : $"ended {sent}; {refused} refused";
+
+    this.Refresh();
+  }
+
+  #endregion
+
+  /// <summary>
+  /// Moves the sort to the next showing column, which is what a keyboard sort is (PRD §11).
+  /// </summary>
+  /// <remarks>
+  /// Around the columns that are on screen rather than around the whole registry: a key that steps
+  /// through a hundred and twenty fields, most of them hidden, sorts by things nobody can see the
+  /// result of.
+  /// </remarks>
+  private void StepSort(int direction) {
+    var sortable = new List<ProcessField>(this._columns.Count);
+    for (var i = 0; i < this._columns.Count; ++i)
+      if (ColumnSet.Info(this._columns.FieldAt(i)).IsSortable)
+        sortable.Add(this._columns.FieldAt(i));
+
+    if (sortable.Count == 0)
+      return;
+
+    var index = sortable.IndexOf(this._view.SortColumn);
+    index = ((index < 0 ? 0 : index) + direction + sortable.Count) % sortable.Count;
+    this._view.SortColumn = sortable[index];
+    this._view.SortDescending = sortable[index].PrefersDescending();
+    this._view.ClearSecondarySort();
+    this.RebuildColumns();
+    this.Rebind();
+    this._status.Text = $"sorted by {ColumnSet.Info(sortable[index]).Header}";
+  }
+
+  /// <summary>
+  /// The columns that break a tie in the first one (PRD §11).
+  /// </summary>
+  /// <remarks>
+  /// Sorting by state and then by memory is the request behind most of the two-column sorts anybody
+  /// asks for: a group of rows with identical values in the first column is exactly where a second
+  /// one earns its place. Shift-clicking a header does the same thing with the mouse.
+  /// </remarks>
+  private ToolStripMenuItem BuildTieBreakerMenu() {
+    var menu = new ToolStripMenuItem("Break ties with");
+    foreach (var column in (ReadOnlySpan<ProcessField>)[
+      ProcessField.CpuPercent,
+      ProcessField.PrivateBytes,
+      ProcessField.WorkingSetBytes,
+      ProcessField.ThreadCount,
+      ProcessField.State,
+      ProcessField.Name,
+      ProcessField.UserName,
+      ProcessField.StartTime,
+    ]) {
+      var chosen = column;
+      menu.DropDownItems.Add(Item(column.Header(), () => {
+        this._view.AddSortKey(chosen, chosen.PrefersDescending());
+        this.RebuildColumns();
+        this.Rebind();
+        this._status.Text = $"ties are broken by {ColumnSet.Info(chosen).Header} now";
+      }));
+    }
+
+    return menu;
+  }
+
+  #region grouping (PRD §83)
+
+  private void GroupBy(ProcessGrouping grouping) {
+    this._view.Grouping = grouping;
+    this.Rebind();
+    this._status.Text = grouping == ProcessGrouping.None
+      ? "the rows are one flat list again"
+      : $"grouped by {Settings.UserSettings.NameOfGrouping(grouping)} — {this._view.Groups.Count} heading(s)";
+  }
+
+  /// <summary>
+  /// How the rows are arranged (PRD §83).
+  /// </summary>
+  /// <remarks>
+  /// The tree is one of the entries rather than a separate toggle, because picking one of these is
+  /// picking how the list is arranged and the tree is one of the answers. §83's other three —
+  /// application and publisher — are absent: naming a group needs something to read it off, and this
+  /// program has no notion of an application and no signature verification. A heading that guessed
+  /// would be a heading that is not true.
+  /// </remarks>
+  private ToolStripMenuItem BuildGroupingMenu() {
+    var menu = new ToolStripMenuItem("Group by");
+    foreach (var (grouping, label) in (ReadOnlySpan<(ProcessGrouping, string)>)[
+      (ProcessGrouping.None, "Nothing — one flat list"),
+      (ProcessGrouping.ParentTree, "Parent tree"),
+      (ProcessGrouping.User, "User"),
+      (ProcessGrouping.Session, "Session"),
+      (ProcessGrouping.Service, "Service"),
+      (ProcessGrouping.Executable, "Executable"),
+      (ProcessGrouping.Container, "Container"),
+      (ProcessGrouping.Cgroup, "Cgroup"),
+      (ProcessGrouping.Package, "Package"),
+    ]) {
+      var chosen = grouping;
+      menu.DropDownItems.Add(Item(label, () => this.GroupBy(chosen)));
+    }
+
+    return menu;
+  }
+
+  #endregion
 
   private void ShowPerformance() {
     if (this._performance is not null) {

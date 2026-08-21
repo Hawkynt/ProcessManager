@@ -496,34 +496,50 @@ shipped with its plots above its menu bar for exactly as long as nobody looked a
 Every table:
 
 - [x] Column show/hide
-- [ ] 🟡 Column reorder — terminal only, `{` and `}`
-- [ ] 🟡 Column resize — terminal only, `,` and `.`
-- [ ] 🟡 Column reset — terminal only, `0`
+- [x] Column reorder — `{` and `}` in the terminal; in the window, drag the header or
+      `Ctrl+Shift+←`/`→`
+- [x] Column resize — `,` and `.` in the terminal; in the window, drag the boundary between two
+      headers or `Ctrl+-`/`Ctrl++`
+- [x] Column reset — `0` in the terminal, `Ctrl+0` in the window
 - [x] Ascending sort
 - [x] Descending sort
-- [ ] 🟡 Multi-column sort — the engine takes any number of tie-breaking keys and the terminal binds
-      `o` to add one; the window has no way to ask for a second column yet
-- [ ] 🟡 Keyboard sort — TUI only
+- [x] Multi-column sort — the engine takes any number of tie-breaking keys; shift-clicking a header
+      adds one in either front-end, and the header shows a digit rather than a second arrow, because
+      two arrows say "sorted twice" and nothing about which one wins
+- [x] Keyboard sort — `F6`/`Shift+F6` step the sort through the columns that are showing and `F7`
+      reverses it, in both front-ends
 - [ ] 🟡 Freeze / pin columns — terminal only; the first column is pinned by default and `#` moves
-      the boundary
-- [ ] 🟡 Auto-size column / all columns — terminal only, `a` and `A`, measured against the rows on
-      screen rather than every process
-- [ ] 🟡 Copy cell — terminal only, `y`, over OSC 52
-- [ ] 🟡 Copy row — terminal only, `Y`
-- [ ] 🟡 Copy selected rows / columns — terminal only: `Y` copies every ticked row, with a header
-- [ ] 🟡 Export table — terminal only, `X`, in whichever of the six formats the file name asks for
+      the boundary. The window's list paints every column from one horizontal offset and has no
+      pinned region to paint into, so this needs a seam in the toolkit rather than work here
+- [x] Auto-size column / all columns — measured against the rows on screen rather than every
+      process, because a column fitted to the widest value in the whole table is usually fitted to
+      something scrolled out of sight
+- [x] Copy cell — `y` in the terminal, over OSC 52; `Ctrl+Shift+C` in the window
+- [x] Copy row — `Y` in the terminal, `Ctrl+C` in the window
+- [ ] 🟡 Copy selected rows / columns — the rows are done in both front-ends: one key copies every
+      ticked row with a header line. A column is not, in either — there is no cell selection to copy
+      one from (§95)
+- [x] Export table — `X` in the terminal and Ctrl+E in the window, in whichever of the six formats
+      the file name asks for
 - [x] Text filter
 - [x] Advanced filter
 - [x] Regular-expression filter
 - [x] Numeric comparison filters
 - [x] Unit-aware comparison
-- [ ] 🟡 Case-sensitive toggle — the query language takes the switch and the terminal binds `!`; the
-      window has no control for it
-- [ ] 🟡 Highlight matched text — terminal only
-- [ ] 🟡 Multi-selection — terminal only, `Space`; a bulk terminate names the count before it acts
-- [ ] 🟡 Select all / invert selection — terminal only, `Ctrl+A` and `v`
+- [x] Case-sensitive toggle — `!` in the terminal, the "Match case" box beside the window's filter
+- [x] Highlight matched text — the run that matched, inside the cell, measured with the renderer
+      that draws the string rather than by counting characters
+- [x] Multi-selection — `Space` in the terminal, a tick box on the row in the window; a bulk
+      terminate names the count before it acts
+- [x] Select all / invert selection — `Ctrl+A` and `v` in the terminal, the Edit menu in the window
 - [x] Context menu
-- [x] Persist layout — columns, sort and interval survive a restart
+- [x] Persist layout — columns, their order, their widths, the sort, the grouping and the interval
+      survive a restart
+
+**The window's filter box.** §56's query language was reachable from the terminal and from
+`--filter`, and from nowhere in the GUI; the three rows above it depend on there being somewhere to
+type. A query that will not parse falls back to a plain substring search rather than blanking the
+list, because somebody halfway through typing `chrome:` has not written a broken query.
 
 **Copying, over SSH.** The clipboard a terminal front-end can reach is the *terminal emulator's*,
 not the machine's: a process on the far end of an SSH session that wrote to an X selection would put
@@ -3364,18 +3380,40 @@ dependencies to be missing on a broken machine.
 
 # 83. Process grouping
 
-- [ ] none
+Grouping is one setting rather than a flag beside the tree: a list is nested by parentage, or headed
+by user, or neither, and it can never be two of those at once. Picking one is `G` in the terminal and
+View ▸ Group by in the window, and `--group` takes the same words the settings file does.
+
+**A heading is not a process.** It is not counted in "N of M processes", it cannot be selected, and
+no action can be aimed at it — its row carries no process at all, so ending one is impossible rather
+than discouraged. Folding a heading hides its members and keeps its count, because the count is a
+fact about the machine and not about what is on screen.
+
+The headings come out in the order the current sort put their first row in, so a table sorted by
+memory puts the heaviest group at the top. Ordering them alphabetically would bury the group somebody
+sorted the table to find.
+
+- [x] none
 - [x] parent tree
-- [ ] application
-- [ ] executable
-- [ ] user
-- [ ] session
-- [ ] service
-- [ ] container
-- [ ] cgroup
-- [ ] package
-- [ ] publisher
-- [ ] Aggregations follow canonical query rules
+- [ ] application — there is no notion of an application to read off a process. Task Manager gets
+      one from shell activation; nothing here does, and a heading that guessed would not be true
+- [x] executable
+- [x] user
+- [x] session
+- [x] service — the innermost systemd unit in the cgroup path, for the reason `CgroupUnit` gives:
+      naming the slice above it would report every program a user started as their session manager's
+- [x] container
+- [x] cgroup
+- [ ] 🟡 package — off the same reader §14's package column uses, so a heading and that column can
+      never disagree. `--group package` and a saved `grouping=package` collect it and work; switching
+      to it in a running session heads every row "package not looked up" instead, because reading a
+      package costs a database lookup per image and the probe's expensive readings are chosen when it
+      is built (§5.4). Honest, and half a feature
+- [ ] publisher — needs the signature verification of §70, which is not built
+- [ ] Aggregations follow canonical query rules — a heading's key is read through the same accessor
+      the columns and the filters use, so that half holds; but the aggregates themselves are §82's
+      CPU, memory and I/O sums, and none of those exists yet. A heading counts its members and
+      claims nothing else
 
 # 84. User-defined alerts
 

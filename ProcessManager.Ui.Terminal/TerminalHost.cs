@@ -20,7 +20,13 @@ public sealed record TerminalStartup {
 
   public bool SortDescending { get; init; } = true;
 
-  public bool TreeMode { get; init; }
+  public bool TreeMode {
+    get => this.Grouping == ProcessGrouping.ParentTree;
+    init => this.Grouping = value ? ProcessGrouping.ParentTree : ProcessGrouping.None;
+  }
+
+  /// <summary>What the rows are grouped by (PRD §83). The tree is one of the answers.</summary>
+  public ProcessGrouping Grouping { get; init; }
 
   /// <summary>The saved columns, or null to let the width decide (PRD §57.1).</summary>
   public ProcessField[]? Columns { get; init; }
@@ -65,7 +71,7 @@ public sealed class TerminalHost : IDisposable {
     if (startup is not null) {
       ui.View.SortColumn = startup.SortColumn;
       ui.View.SortDescending = startup.SortDescending;
-      ui.View.TreeMode = startup.TreeMode;
+      ui.View.Grouping = startup.Grouping;
       if (startup.Graphs is { } graphs)
         ui.GraphStyle = graphs;
 
