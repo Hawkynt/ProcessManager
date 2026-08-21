@@ -128,6 +128,13 @@ public sealed record LinuxProbeOptions {
   /// </remarks>
   public string GroupPath { get; init; } = "/etc/group";
 
+  /// <summary>Where the port-name file is, for port → name (PRD §40).</summary>
+  /// <remarks>
+  /// Its own option for the same reason the group file is: a recorded machine may carry one of these
+  /// and not the others, and a fixture that names ports has nothing to say about logins.
+  /// </remarks>
+  public string ServicesPath { get; init; } = ServiceNameReader.DefaultPath;
+
   /// <summary>
   /// <c>USER_HZ</c>. Defaults to <c>sysconf(_SC_CLK_TCK)</c> on the running machine; a fixture
   /// recorded elsewhere must state the value it was recorded with, or every CPU time is wrong by a

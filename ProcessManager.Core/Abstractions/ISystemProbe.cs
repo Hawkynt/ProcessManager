@@ -146,6 +146,30 @@ public interface ISystemProbe : IDisposable {
   IReadOnlyList<ConnectionRecord> GetConnections() => [];
 
   /// <summary>
+  /// What this machine calls its port numbers, for every front-end that shows an endpoint (PRD §40).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The table lives behind the probe because the file it comes from is the operating system's:
+  /// <c>/etc/services</c> on Linux and macOS, <c>%SystemRoot%\System32\drivers\etc\services</c> on
+  /// Windows. Opening it is platform work (PRD §8.1), and without this method a front-end that
+  /// references only the engine cannot name a port at all — which is why the window and the terminal
+  /// both showed <c>443</c> where <c>--connections</c> showed <c>https</c>. That is precisely the
+  /// front-end disagreement PRD §58 exists to stop.
+  /// </para>
+  /// <para>
+  /// The default is <see cref="ServiceNames.Empty"/>: a probe that has not learnt to look names no
+  /// ports, and a port with no name keeps its number. It is never a claim that the machine declares
+  /// none.
+  /// </para>
+  /// <para>
+  /// Cached by the probe. The file changes about as often as the machine is rebuilt, and a caller
+  /// may ask once per frame without it costing a read.
+  /// </para>
+  /// </remarks>
+  Query.ServiceNames DescribePortNames() => Query.ServiceNames.Empty;
+
+  /// <summary>
   /// The machine's services (PRD §41), or an empty list where they are not read yet.
   /// </summary>
   IReadOnlyList<ServiceRecord> GetServices();

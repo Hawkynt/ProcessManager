@@ -1210,14 +1210,20 @@ public sealed class DetailPane : IDisposable {
     // here waits: a name that is not back yet shows the address, and the next fill shows the name
     // (PRD §40).
     var hosts = this._hostnames;
+
+    // Named ports, from the machine's own file by way of the probe. Free where the CLI is free: the
+    // table is read once and kept, and asking for it per fill costs a dictionary lookup rather than
+    // a read. Without this the window said 443 where --connections said https, which is the one
+    // thing the parity contract is for (PRD §40, §58).
+    var services = this._probe.DescribePortNames();
     Fill(this._network, connections.Count, i => {
       var connection = connections[i];
       var statistics = connection.Statistics;
       return [
         connection.Protocol.ToString(),
         Humanize.SocketKindName(connection.Kind),
-        Humanize.LocalEndpoint(connection, null, hosts),
-        Humanize.RemoteEndpoint(connection, null, hosts),
+        Humanize.LocalEndpoint(connection, services, hosts),
+        Humanize.RemoteEndpoint(connection, services, hosts),
         connection.State,
         Humanize.SocketUser(connection),
         connection.Interface ?? "—",

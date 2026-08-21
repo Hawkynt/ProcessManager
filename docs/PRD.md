@@ -2670,9 +2670,10 @@ Endpoints are enumerated on both platforms and attributed to processes.
 
 - [x] Process
 - [x] PID
-- [ ] 🟡 User — Linux reads the uid the kernel charges the socket to, which is the socket's own owner
-      rather than the owning process's; they differ for a descriptor passed between processes. The
-      Windows owner table carries no uid at all
+- [x] 🟡 User — Linux reads the uid the kernel charges the socket to, which is the socket's own owner
+      rather than the owning process's; they differ for a descriptor passed between processes. A
+      socket in `TIME_WAIT` has no structure left to charge, so it reads unknown and not `root`. The
+      Windows owner table carries no uid at all, which is why the tick is amber
 - [x] Protocol
 - [x] Address family
 - [x] State
@@ -2684,16 +2685,23 @@ Endpoints are enumerated on both platforms and attributed to processes.
 - [x] Remote address
 - [x] Remote port
 - [x] Remote hostname — as above
-- [ ] 🟡 Service name — from the machine's own `/etc/services`, in `--connections`; `-n` turns it off,
-      as it does for `ss`. **The window's network tab shows numbers instead**, and that is a gap
-      rather than a decision: reading the file is `ProcessManager.Platform.Linux`'s job (§8.1) and the
-      desktop project references only `ProcessManager.Core`, so naming a port there needs a probe
-      method the interface has not got. It is one addition across three probes, and it is the kind of
-      front-end disagreement §58 exists to stop
-- [ ] 🟡 Interface — Linux, from the address the socket is bound to. `/proc/net/if_inet6` names it
+- [x] 🟡 Service name — from the machine's own `/etc/services`, in all three front-ends; `-n` turns it
+      off on the command line, as it does for `ss`. The window and the terminal used to show numbers
+      where `--connections` showed names, because reading the file is the platform project's job
+      (§8.1) and the front-ends reference only `ProcessManager.Core`. The seam is
+      `ISystemProbe.DescribePortNames`, which hands back the parsed table read once and held: the
+      Linux probe reads `/etc/services`, the Windows probe
+      `%SystemRoot%\System32\drivers\etc\services` — the same file in the same format, which is why
+      only the path is platform-specific and the parser is shared and tested on every leg. A probe
+      that has not learnt to look answers with an empty table, so a port keeps its number rather
+      than acquiring an invented name. Amber because macOS, whose probe is a stub, is on that
+      default. One test renders the same socket through both front-ends and holds their cells
+      together, which is what §58 asks for rather than a promise in prose
+- [x] 🟡 Interface — Linux, from the address the socket is bound to. `/proc/net/if_inet6` names it
       outright for IPv6; an IPv4 address is on the interface whose on-link subnet contains it, longest
       prefix first. A socket on the wildcard address is on all of them and shows `*`; an address no
-      route claims — a multicast group, a point-to-point peer — is left unknown rather than guessed at
+      route claims — a multicast group, a point-to-point peer — is left unknown rather than guessed at.
+      Amber because Windows has no equivalent reading yet
 - [ ] Connection creation time
 - [ ] Connection age
 - [x] Bytes sent / received — payload each way over the connection's life, retransmissions included.

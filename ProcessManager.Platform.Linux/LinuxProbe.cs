@@ -915,6 +915,17 @@ public sealed partial class LinuxProbe : ISystemProbe {
   /// </summary>
   public IReadOnlyList<GpuInfo> DescribeGpus() => LinuxDeviceReader.DescribeGpus(this._options.SysRoot);
 
+  /// <summary>What this machine calls its port numbers, read once (PRD §40).</summary>
+  /// <remarks>
+  /// Held on the probe rather than on the caller so that every front-end asking the same question
+  /// gets the same answer off the same reading — which is the whole point of putting it behind the
+  /// interface (PRD §58).
+  /// </remarks>
+  public Query.ServiceNames DescribePortNames()
+    => this._portNames ??= ServiceNameReader.Read(this._options.ServicesPath);
+
+  private Query.ServiceNames? _portNames;
+
   /// <summary>What each interface is, read once (PRD §49).</summary>
   public NetworkInterfaceInfo DescribeInterface(string name) {
     if (this._interfaceInfo.TryGetValue(name, out var known))

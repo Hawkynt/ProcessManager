@@ -88,6 +88,97 @@ public sealed class EndpointNameTests {
 
   #endregion
 
+  #region the probe seam (PRD §40, §58)
+
+  private static string FixtureRoot
+    => Path.Combine(TestContext.CurrentContext.TestDirectory, "Fixtures", "proc-desktop");
+
+  private static Platform.Linux.LinuxProbe Probe(string? servicesPath = null) => new(new() {
+    ProcRoot = FixtureRoot,
+    PasswdPath = Path.Combine(FixtureRoot, "passwd"),
+    ServicesPath = servicesPath ?? Path.Combine(FixtureRoot, "services"),
+    ClockTicksPerSecond = 100,
+    PageSize = 4096,
+    EffectiveUserId = 0,
+  });
+
+  /// <summary>
+  /// The table reaches the front-ends through the probe. Before it did, the file was read in the
+  /// Linux project and the window and the terminal reference only the engine, so both of them showed
+  /// a number where the command line showed a name — one program disagreeing with itself about what
+  /// 443 is called (PRD §58).
+  /// </summary>
+  [Test]
+  public void TheProbeAnswersWithTheMachinesOwnTable() {
+    using var probe = Probe();
+    var names = probe.DescribePortNames();
+
+    Assert.That(names.Describe(443, datagram: false), Is.EqualTo("https"));
+    Assert.That(names.Describe(631, datagram: true), Is.EqualTo("ipp"));
+    Assert.That(names.Describe(38658, datagram: false), Is.EqualTo("38658"), "nothing claims it");
+  }
+
+  /// <summary>
+  /// Read once and kept. Every fill of the network tab asks, and a file re-read at one hertz for a
+  /// fact that changes when the machine is rebuilt would be a syscall spent on nothing (PRD §5.4).
+  /// </summary>
+  [Test]
+  public void TheTableIsReadOnceAndHeld() {
+    using var probe = Probe();
+
+    Assert.That(probe.DescribePortNames(), Is.SameAs(probe.DescribePortNames()));
+  }
+
+  /// <summary>
+  /// A machine with no such file names no ports, and the numbers underneath were always the fact the
+  /// name was standing in for. It is emphatically not an error, and emphatically not a compiled-in
+  /// table that would be wrong about this machine specifically.
+  /// </summary>
+  [Test]
+  public void AMachineWithoutTheFileStillAnswers() {
+    using var probe = Probe(Path.Combine(FixtureRoot, "no-such-services-file"));
+    var names = probe.DescribePortNames();
+
+    Assert.That(names.Count, Is.Zero);
+    Assert.That(names.Describe(443, datagram: false), Is.EqualTo("443"));
+  }
+
+  /// <summary>
+  /// The interface's own answer for a platform that has not learnt to look. Empty is "this probe
+  /// names no ports", never "this machine declares none" — which is why it is a table with nothing
+  /// in it rather than a null a caller would have to remember to check.
+  /// </summary>
+  [Test]
+  public void AProbeThatHasNotLearntNamesNothingRatherThanFailing() {
+    using Abstractions.ISystemProbe probe = new SilentProbe();
+
+    Assert.That(probe.DescribePortNames(), Is.SameAs(ServiceNames.Empty));
+  }
+
+  /// <summary>A probe that implements nothing beyond what the interface demands.</summary>
+  private sealed class SilentProbe : Abstractions.ISystemProbe {
+    public string Description => "silent";
+    public Model.HostInfo DescribeHost() => new();
+    public void Sample(Model.SystemSnapshot snapshot) { }
+    public Model.Counter GetHandleCount(Model.ProcessKey key) => Model.Counter.NotSupported;
+    public IReadOnlyList<Model.HandleRecord> GetHandles(Model.ProcessKey key) => [];
+    public IReadOnlyList<Model.ModuleRecord> GetModules(Model.ProcessKey key) => [];
+    public IReadOnlyList<Model.ConnectionRecord> GetConnections(Model.ProcessKey key) => [];
+    public IReadOnlyList<Model.ServiceRecord> GetServices() => [];
+    public IReadOnlyList<Model.ThreadRecord> GetThreads(Model.ProcessKey key) => [];
+    public IReadOnlyList<KeyValuePair<string, string>> GetEnvironment(Model.ProcessKey key) => [];
+    public IReadOnlyList<Model.StartupEntry> GetStartupEntries() => [];
+    public IReadOnlyList<Model.SessionRecord> GetSessions() => [];
+    public Model.DiskInfo DescribeDisk(string name) => new(name, null, null, Model.Counter.NotSupported);
+
+    public Model.NetworkInterfaceInfo DescribeInterface(string name)
+      => new(name, null, Model.Counter.NotSupported, null, Model.Counter.NotSupported, false);
+
+    public void Dispose() { }
+  }
+
+  #endregion
+
   #region hostnames
 
   /// <summary>
