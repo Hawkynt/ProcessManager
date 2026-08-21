@@ -3398,9 +3398,9 @@ Windows parsing on Linux.
 - [x] Suspension
 - [x] Termination
 - [x] Priority
-- [ ] Affinity
-- [ ] 🟡 Services
-- [ ] 🟡 Startup
+- [x] Affinity — set on a real process and held against the kernel's Cpus_allowed_list
+- [x] Services — against systemctl's own loaded and installed lists
+- [x] Startup — every entry traced back to a desktop file that is really there
 - [x] Network
 - [x] Modules
 - [x] Descriptors
@@ -3413,9 +3413,9 @@ Windows parsing on Linux.
 - [ ] 100 000 threads
 - [x] 1 000 000 resource rows
 - [x] Rapid process churn
-- [ ] 100 % CPU load
-- [ ] Low-memory state
-- [ ] High-I/O machine
+- [x] 100 % CPU load — a sample taken while every core is saturated is still a whole sample
+- [x] Low-memory state — free, available and total stay consistent and stay distinct
+- [x] High-I/O machine — the byte counters only ever go forwards, checked across real disk work
 
 ## UI tests
 
