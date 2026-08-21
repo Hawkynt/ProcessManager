@@ -124,10 +124,17 @@ public sealed class LaunchTests {
   }
 
   /// <summary>
-  /// Stopped the instant it exists. There is a race here that cannot be closed from outside — between
-  /// exec and the signal the program has begun — which is the same race every tool offering this has.
+  /// Stopped before it has run any of its own code — unconditionally, on a busy machine as much as
+  /// on an idle one.
   /// </summary>
+  /// <remarks>
+  /// This assertion used to be written as "usually T", which is what let a race hide behind a green
+  /// suite: starting the program and then signalling it leaves a window in which the program has
+  /// already begun, and under load the machine lands in that window roughly one run in four. Loop it
+  /// rather than sampling it once — a single pass proves nothing about a race.
+  /// </remarks>
   [Test]
+  [Repeat(12)]
   public void AProgramCanBeStartedStopped() {
     var result = Actions().Launch(new("/bin/sleep", ["30"], Suspended: true));
 
@@ -139,6 +146,81 @@ public sealed class LaunchTests {
     } finally {
       Stop(result.Pid);
     }
+  }
+
+  /// <summary>
+  /// …and the program it stops is the one that was asked for, not the shell that holds it there.
+  /// </summary>
+  /// <remarks>
+  /// The shell <c>exec</c>s the program, which keeps the pid, so resuming it has to leave the caller
+  /// holding an identity that names the program. If <c>exec</c> were ever replaced by a fork the pid
+  /// reported here would belong to a shell that outlives nothing.
+  /// </remarks>
+  [Test]
+  public void AProgramStartedStoppedIsTheProgramOnceResumed() {
+    var actions = Actions();
+    var result = actions.Launch(new("/bin/sleep", ["31"], Suspended: true));
+
+    try {
+      Assert.That(result.Outcome.Succeeded, Is.True, result.Outcome.Detail);
+      Assert.That(actions.Resume(result.Key).Succeeded, Is.True);
+
+      // exec is not instantaneous; what matters is that it happens at all and keeps the pid. What
+      // marks the moment is argv[0]: before exec the vector is the shell's, which already contains
+      // "31" as a positional parameter, and only afterwards does it begin with the program. Waiting
+      // on the argument would have been satisfied before anything happened, and waiting on `comm`
+      // would catch the microseconds in which the task has been renamed and its new vector is not
+      // yet readable.
+      var deadline = Environment.TickCount64 + 5000;
+      string[] vector;
+      do {
+        vector = File.ReadAllText($"/proc/{result.Pid}/cmdline").Split('\0');
+      } while (vector is not ["/bin/sleep", ..] && Environment.TickCount64 < deadline);
+
+      Assert.That(vector, Is.EqualTo(new[] { "/bin/sleep", "31", string.Empty }), "the program and its own arguments");
+      Assert.That(File.ReadAllText($"/proc/{result.Pid}/comm").Trim(), Is.EqualTo("sleep"));
+    } finally {
+      Stop(result.Pid);
+    }
+  }
+
+  /// <summary>
+  /// The shell that holds a suspended program still does not re-split or re-glob its arguments.
+  /// </summary>
+  /// <remarks>
+  /// Read while it is still stopped, which is the one moment the whole vector is visible: the
+  /// arguments are the shell's positional parameters at that point, so an argument containing a
+  /// space that arrives as one entry, and a lone <c>*</c> that has not become a directory listing,
+  /// prove between them that nothing interpolated them into the script text.
+  /// </remarks>
+  [Test]
+  public void ASuspendedStartStillPassesItsArgumentsWhole() {
+    var result = Actions().Launch(new("/bin/sleep", ["a b", "*", "30"], Suspended: true));
+
+    try {
+      Assert.That(result.Outcome.Succeeded, Is.True, result.Outcome.Detail);
+
+      var vector = File.ReadAllText($"/proc/{result.Pid}/cmdline").Split('\0');
+      Assert.That(vector, Does.Contain("a b"), "one argument, space and all");
+      Assert.That(vector, Does.Contain("*"), "not expanded against the working directory");
+      Assert.That(vector, Does.Contain("/bin/sleep"));
+    } finally {
+      Stop(result.Pid);
+    }
+  }
+
+  /// <summary>
+  /// A suspended start of a program that is not there is refused before anything runs, rather than
+  /// becoming an exit status a shell prints to nobody when it is resumed.
+  /// </summary>
+  [Test]
+  public void ASuspendedStartOfAMissingProgramIsRefused() {
+    var result = Actions().Launch(new("/nonexistent/program", [], Suspended: true));
+
+    Assert.That(result.Outcome.Succeeded, Is.False);
+    Assert.That(result.Outcome.Outcome, Is.EqualTo(ActionOutcome.Refused));
+    Assert.That(result.Pid, Is.Zero);
+    Assert.That(result.Outcome.Detail, Does.Contain("/nonexistent/program"));
   }
 
   [Test]

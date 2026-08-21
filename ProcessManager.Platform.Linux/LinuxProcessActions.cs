@@ -19,6 +19,11 @@ public sealed class LinuxProcessActions(LinuxProbeOptions? options = null) : IPr
     (options ?? new()).UsePortableFileAccess ? new ManagedProcIo() : ProcIo.ForCurrentPlatform
   );
 
+  /// <summary>How long a program started suspended is given to reach state <c>T</c>.</summary>
+  private static readonly TimeSpan _SuspendGrace = TimeSpan.FromMilliseconds(2000);
+
+  private const string _Shell = "/bin/sh";
+
   public ActionResult Terminate(ProcessKey key) => this.Signal(key, Native.SIGTERM);
 
   public ActionResult Suspend(ProcessKey key) => this.Signal(key, Native.SIGSTOP);
@@ -68,10 +73,11 @@ public sealed class LinuxProcessActions(LinuxProbeOptions? options = null) : IPr
   /// for a program that is now running.
   /// </para>
   /// <para>
-  /// Suspended means stopped before it has run any of its own code. There is a race here that cannot
-  /// be closed from outside: between <c>exec</c> and the signal the program has begun. It is the same
-  /// race every tool that offers this has, and it is worth saying so rather than implying the
-  /// instruction pointer is at the entry point.
+  /// Suspended means stopped before it has run any of its own code, and it means it literally. The
+  /// obvious implementation — start the program, then send it <c>SIGSTOP</c> — is a race the caller
+  /// loses: between <c>exec</c> and the signal arriving the program has already run, which is the
+  /// one thing "start suspended" exists to prevent. See <see cref="StartSuspended"/> for how it is
+  /// closed.
   /// </para>
   /// </remarks>
   public LaunchResult Launch(LaunchRequest request) {
@@ -79,11 +85,16 @@ public sealed class LinuxProcessActions(LinuxProbeOptions? options = null) : IPr
     if (string.IsNullOrWhiteSpace(request.FileName))
       return LaunchResult.Failed(ActionOutcome.Refused, "there is no program to start");
 
-    var start = new System.Diagnostics.ProcessStartInfo(request.FileName) {
+    var start = new System.Diagnostics.ProcessStartInfo {
       // The shell is not involved: it would re-split and re-glob arguments that have already been
       // split, and every program that tries gets quoting wrong for at least one shell.
       UseShellExecute = false,
     };
+
+    if (!request.Suspended)
+      start.FileName = request.FileName;
+    else if (StartSuspended(request, start) is { } refusal)
+      return refusal;
 
     foreach (var argument in request.Arguments)
       start.ArgumentList.Add(argument);
@@ -110,10 +121,19 @@ public sealed class LinuxProcessActions(LinuxProbeOptions? options = null) : IPr
       return LaunchResult.Failed(ActionOutcome.Failed, $"could not start {request.FileName}: {e.Message}");
     }
 
-    // Suspend first and everything else after: a process being held still cannot outrun the settings
-    // being applied to it, and one that was asked to start suspended must not get a chance to run.
-    if (request.Suspended)
-      Native.SendSignal(started.Id, Native.SIGSTOP);
+    // A caller who asked for the program to be held before its first instruction is not told it
+    // happened until the kernel says the task is stopped. Bounded, because the front-end that asked
+    // is waiting on this call: a machine under load can take a few milliseconds to schedule the
+    // shell, and an unbounded wait would hang the window rather than report anything.
+    if (request.Suspended && !this.WaitForState(started.Id, ProcessState.Stopped, _SuspendGrace))
+      return new(
+        ActionResult.Fail(
+          ActionOutcome.Failed,
+          $"{request.FileName} was started but had not stopped {_SuspendGrace.TotalMilliseconds:0} ms later"
+        ),
+        started.Id,
+        this.KeyOf(started.Id)
+      );
 
     // The program is running, so the launch succeeded. Whether its identity could be read back and
     // whether the scheduling took are separate questions, answered below.
@@ -144,6 +164,96 @@ public sealed class LinuxProcessActions(LinuxProbeOptions? options = null) : IPr
     return refused.Count == 0
       ? new(ActionResult.Ok, started.Id, key)
       : new(ActionResult.Fail(ActionOutcome.NotPermitted, $"started, but its {string.Join(" and ", refused)} could not be set"), started.Id, key);
+  }
+
+  /// <summary>
+  /// Arranges for the program to be stopped before it has executed a single one of its own
+  /// instructions, and fills in <paramref name="start"/> accordingly.
+  /// </summary>
+  /// <returns>A refusal to hand straight back, or <see langword="null"/> when the request is ready.</returns>
+  /// <remarks>
+  /// <para>
+  /// The program is not what gets started. A shell is, and its one job is to stop <em>itself</em> and
+  /// then <c>exec</c> the program — so the task is already in state <c>T</c> when the program's image
+  /// is loaded, and there is no window in which it can run. <c>exec</c> keeps the pid, so the pid and
+  /// identity reported to the caller are the program's own; until it is resumed, <c>cmdline</c> still
+  /// reads as the shell's, because the program has not been loaded yet.
+  /// </para>
+  /// <para>
+  /// <b>Nothing is re-split.</b> The arguments are passed to the shell as positional parameters and
+  /// forwarded with <c>"$@"</c>, which no shell re-splits and none re-globs. Interpolating them into
+  /// the <c>-c</c> text is what would break that, and is exactly what this does not do.
+  /// </para>
+  /// <para>
+  /// The program is resolved here rather than left to the shell, because a failure to find it has to
+  /// be reported to whoever asked instead of becoming an exit status the shell prints on resume.
+  /// </para>
+  /// </remarks>
+  private static LaunchResult? StartSuspended(LaunchRequest request, System.Diagnostics.ProcessStartInfo start) {
+    if (ResolveProgram(request.FileName) is not { } program)
+      return LaunchResult.Failed(ActionOutcome.Refused, $"could not start {request.FileName}: no program of that name was found");
+
+    if (!File.Exists(_Shell))
+      return LaunchResult.Failed(ActionOutcome.NotSupportedOnPlatform, $"starting a program suspended needs {_Shell}, which is not on this machine");
+
+    start.FileName = _Shell;
+    start.ArgumentList.Add("-c");
+    start.ArgumentList.Add("kill -STOP \"$$\"; exec \"$0\" \"$@\"");
+    start.ArgumentList.Add(program);
+    return null;
+  }
+
+  /// <summary>
+  /// Where a program named on a request actually is, resolved the way a shell would resolve it.
+  /// </summary>
+  /// <remarks>
+  /// Only the suspended path needs this: an ordinary launch lets <c>Process.Start</c> search
+  /// <c>PATH</c> and turns a miss into an exception this class already reports. Whether the file is
+  /// executable is deliberately not checked — that is the kernel's answer to give, and a check here
+  /// would only race with the permissions changing underneath it.
+  /// </remarks>
+  private static string? ResolveProgram(string fileName) {
+    if (fileName.Contains('/'))
+      return File.Exists(fileName) ? Path.GetFullPath(fileName) : null;
+
+    foreach (var directory in (Environment.GetEnvironmentVariable("PATH") ?? string.Empty).Split(':', StringSplitOptions.RemoveEmptyEntries)) {
+      var candidate = Path.Combine(directory, fileName);
+      if (File.Exists(candidate))
+        return candidate;
+    }
+
+    return null;
+  }
+
+  /// <summary>Waits for a pid to reach a state, or gives up. Used to confirm a suspended start.</summary>
+  private bool WaitForState(int pid, ProcessState wanted, TimeSpan limit) {
+    var deadline = Environment.TickCount64 + (long)limit.TotalMilliseconds;
+    while (true) {
+      // No identity pair yet: this runs against a process this call has just started, so there is
+      // nothing that could have recycled the pid in between and nothing to compare it against.
+      if (this.ReadState(new(pid, 0), matchIdentity: false) == wanted)
+        return true;
+
+      if (Environment.TickCount64 >= deadline)
+        return false;
+
+      Thread.Sleep(1);
+    }
+  }
+
+  /// <summary>
+  /// The process's state right now, or null when it is gone or is no longer the one the key names.
+  /// </summary>
+  private ProcessState? ReadState(ProcessKey key, bool matchIdentity = true) {
+    var path = $"{this._options.ProcRoot.TrimEnd('/')}/{key.Pid}/stat";
+    if (!this._reader.TryRead(path, out var content, out _))
+      return null;
+
+    var record = new ProcessRecord();
+    if (!LinuxProbe.ParseStat(content, 1, this._options.PageSize, ref record))
+      return null;
+
+    return matchIdentity && record.Key.StartTicks != key.StartTicks ? null : record.State;
   }
 
   /// <summary>The identity pair of a process that has just been started, or default if it is gone.</summary>
