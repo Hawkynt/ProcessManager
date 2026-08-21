@@ -223,6 +223,29 @@ public static class DesktopApp {
             description += graphsSize is { } graphs
               ? $"properties graphs: {graphs.Width}x{graphs.Height} -> {graphsPng}\n"
               : $"properties graphs: none — {graphsFailure}\n";
+
+            // And the three pages §26 was missing. Every one of them is a list that can come up empty
+            // for a reason rather than because the layout broke, so the log carries the count and the
+            // sentence above it — which is what tells "the page says why" apart from "the page failed
+            // to draw" without a person looking at the picture (PRD §9.6, §34, §36, §38).
+            foreach (var (tab, image) in (ReadOnlySpan<(string Tab, string Image)>)[
+              ("Memory map", "properties-memory-map.png"),
+              ("Security", "properties-security.png"),
+              ("cgroup", "properties-cgroup.png"),
+            ]) {
+              properties.ShowPage(tab);
+              properties.ApplyLayout();
+              var pngPath = Path.Combine(directory, image);
+              description += GtkCapture.Window(pngPath, out var pageFail, properties.Text) is { } shot
+                ? $"properties {tab}: {shot.Width}x{shot.Height} -> {pngPath}\n"
+                : $"properties {tab}: none — {pageFail}\n";
+            }
+
+            // After the loop, not before it: the map is filled when the page is asked for, so read
+            // off beforehand this said "0 mappings" about a page that had never been opened.
+            description += $"properties map: {properties.MemoryMapRows} mappings — {properties.MemoryMapHeading}\n";
+            description += $"properties security: {properties.SecurityText.Split('\n').Length} rows\n";
+            description += $"properties cgroup: {properties.CgroupText.Split('\n').Length} rows\n";
           } else
             description += "properties:   no row was selected to open one for\n";
 
