@@ -2419,7 +2419,12 @@ Endpoints are enumerated on both platforms and attributed to processes.
 - [x] Remote address
 - [x] Remote port
 - [x] Remote hostname — as above
-- [x] Service name — from the machine's own `/etc/services`, in `--connections`; `-n` turns it off, as it does for `ss`
+- [ ] 🟡 Service name — from the machine's own `/etc/services`, in `--connections`; `-n` turns it off,
+      as it does for `ss`. **The window's network tab shows numbers instead**, and that is a gap
+      rather than a decision: reading the file is `ProcessManager.Platform.Linux`'s job (§8.1) and the
+      desktop project references only `ProcessManager.Core`, so naming a port there needs a probe
+      method the interface has not got. It is one addition across three probes, and it is the kind of
+      front-end disagreement §58 exists to stop
 - [ ] 🟡 Interface — Linux, from the address the socket is bound to. `/proc/net/if_inet6` names it
       outright for IPv6; an IPv4 address is on the interface whose on-link subnet contains it, longest
       prefix first. A socket on the wildcard address is on all of them and shows `*`; an address no
@@ -2518,7 +2523,17 @@ Actions:
       refuse is a lie dressed as a feature (§32). It belongs with the elevated helper of §8
 - [x] Terminate owner — with the confirmation §5.5 requires. The process is the pane's own rather
       than one read off a row: every row here belongs to the same process by construction
-- [ ] Search remote endpoint
+- [x] Search remote endpoint — the far end's address, without its port, handed to the session's
+      browser. The engine is named in the item's own label rather than only in the code: this is the
+      one thing in the program that reaches the network, §97's promise is that nothing goes out
+      unasked, and an item reading only "search online" would be collecting consent without saying to
+      what. The port is left off because it is noise in a search — the question is who the address
+      belongs to, and `:443` only narrows it to pages that mention the port too.
+
+      The term comes off the drawn cell rather than out of the record, for the same reason Copy
+      endpoint's does, so `Humanize` reads back what `Humanize` wrote and one test holds the pair
+      together. On a row with no far end — a listener, a Unix socket — the item is greyed rather than
+      shown and then apologising (§32)
 
 - [x] **Hostname resolution is asynchronous and globally disableable** — a blocking DNS lookup in a
       table that refreshes every second is a hang waiting to happen, and on some networks it is also
