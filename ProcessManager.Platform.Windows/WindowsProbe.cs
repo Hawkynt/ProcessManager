@@ -277,6 +277,21 @@ public sealed class WindowsProbe : ISystemProbe {
       record.DynamicCodePolicy = mitigations.DynamicCode;
       record.BinarySignaturePolicy = mitigations.BinarySignature;
 
+      // Two fields this platform does not fill, said out loud rather than left at their defaults.
+      // A zeroed record means "the value is present": app.name came out as "none", which is a real
+      // Linux answer meaning the machine has no desktop entry for the program, and runtime came out
+      // as an empty placeholder. Both were confident statements nobody had made (PRD §72.3).
+      //
+      // The two get different reasons because they are different situations. A desktop entry is a
+      // thing Windows does not have — the nearest equivalent is the version resource, which is its
+      // own column — so app.name is not supported here. The module list, on the other hand, is
+      // perfectly readable through Toolhelp32 and nobody has written it, which is "not implemented
+      // here" and is a different sentence to a reader deciding whether to go and look elsewhere.
+      record.ApplicationName = null;
+      record.ApplicationNameReason = UnknownReason.NotSupportedOnPlatform;
+      record.Runtime = ProcessRuntime.Unknown;
+      record.RuntimeReason = UnknownReason.NotImplementedHere;
+
       this.ApplyObjectCounts(ref record);
       this.ApplyImageFacts(ref record);
       this.ApplyProcessDetails(ref record);
