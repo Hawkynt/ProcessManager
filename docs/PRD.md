@@ -31,8 +31,8 @@ shorthand:
 it is not known*. An unticked box must never become a zero on screen. This is restated here because
 it is the single requirement most likely to be broken while filling the tables in.
 
-**Counting, as of the last update:** **905 of 1356 boxes are ticked** — 127 of 205 in the field
-registry (§14–22), 778 of 1151 across the capabilities. A further 103 are marked 🟡, meaning some of
+**Counting, as of the last update:** **937 of 1358 boxes are ticked** — 151 of 205 in the field
+registry (§14–22), 786 of 1153 across the capabilities. A further 97 are marked 🟡, meaning some of
 the work behind them is already done. §100 tracks the phases; §101 defines when this may be called
 finished.
 
@@ -4346,9 +4346,11 @@ that has a tab for it. That drift is what made an earlier version of this matrix
 - [x] Signature verification — an ELF carries no Authenticode, so the honest equivalent is what the
       package manager knows: whether the image still matches the digest recorded for it, and
       whether anything signed for the package. Both are read, and both agree with pacman
-- [ ] 🟡 Image metadata — architecture, word size, position independence, interpreter, build id,
-      mitigations, size and mtime. A version comes from the package rather than the binary,
-      because an ELF carries no version resource to read
+- [x] Image metadata — architecture, word size, position independence, interpreter, build id,
+      mitigations, size and mtime on both. On Windows the version resource itself: description,
+      company, product, product version and file version, matching what the shell's own property
+      sheet shows. On Linux the version comes from the package instead, because an ELF carries no
+      version resource to read — two different sources for the same question, each named as itself
 - [x] CPU / memory / I/O histories
 - [x] Per-process inspection
 
