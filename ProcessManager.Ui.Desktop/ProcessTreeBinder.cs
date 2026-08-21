@@ -104,7 +104,11 @@ public sealed class ProcessTreeBinder {
         this._rows[key] = row;
       }
 
-      this.HandleCounts.TryGetValue(key, out var handles);
+      // Not TryGetValue's out parameter on its own: a miss leaves default(Counter), whose reason is
+      // None — "the value is present" — and a present value of nought is a claim that the process
+      // holds no descriptors at all. Every process that had not been counted yet said "handles 0"
+      // (PRD §5.3, §72.3).
+      var handles = this.HandleCounts.TryGetValue(key, out var counted) ? counted : Counter.NotSampledYet;
       row.Update(in process, delta, index, handles, this.CurrentUserId);
       row.Generation = this._generation;
 

@@ -17,6 +17,9 @@ namespace Hawkynt.ProcessManager.App;
 /// </remarks>
 internal static class ConnectionsReport {
 
+  private static ServiceNames ServiceNames()
+    => OperatingSystem.IsLinux() ? Platform.Linux.ServiceNameReader.Read() : Query.ServiceNames.Empty;
+
   public static int Run(Sampler sampler, ISystemProbe probe, CommandLineOptions options) {
     var connections = probe.GetConnections();
     if (connections.Count == 0) {
@@ -34,6 +37,24 @@ internal static class ConnectionsReport {
     sampler.Sample();
     var names = Names(sampler.Current);
 
+    // Port names come from the machine's own file and cost one read; ss and netstat both name ports
+    // by default and this does too. Addresses are another matter — resolving one asks somebody else
+    // a question — so that happens only when it was asked for (PRD §40).
+    var services = options.NumericEndpoints ? null : ServiceNames();
+    using var hosts = options.ResolveHostnames ? new HostnameCache { Enabled = true } : null;
+    if (hosts is not null)
+      // Nothing is known on the first pass, so ask for every address and then give the lookups a
+      // moment. In a one-shot listing there is no later frame for a name to appear in, which is the
+      // whole reason the interactive views do not do this.
+      foreach (var connection in connections) {
+        hosts.Lookup(connection.LocalAddress);
+        hosts.Lookup(connection.RemoteAddress);
+      }
+
+    // Bounded, and it gives up at the limit rather than at an answer: an unreachable resolver costs
+    // two seconds once, not two seconds a line.
+    hosts?.WaitForPending(TimeSpan.FromSeconds(2));
+
     var rows = new List<Row>(connections.Count);
     foreach (var connection in connections) {
       if (!Wanted(connection.Protocol, options.ConnectionScope))
@@ -43,8 +64,8 @@ internal static class ConnectionsReport {
         connection.Protocol.ToString().ToLowerInvariant(),
         Humanize.SocketKindName(connection.Kind),
         connection.State,
-        Truncate(Humanize.LocalEndpoint(connection)),
-        Truncate(Humanize.RemoteEndpoint(connection)),
+        Truncate(Humanize.LocalEndpoint(connection, services, hosts)),
+        Truncate(Humanize.RemoteEndpoint(connection, services, hosts)),
         Humanize.SocketUser(connection),
         connection.Interface ?? "—",
         Humanize.Bytes(connection.SendQueueBytes),

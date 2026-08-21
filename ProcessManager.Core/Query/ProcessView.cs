@@ -20,6 +20,7 @@ public sealed class ProcessView {
   private int[] _childCount = [];
   private int[] _children = [];
   private int[] _cursor = [];
+  private byte[] _state = [];
   private bool[] _visible = [];
   private ViewRow[] _rows = [];
   private readonly Dictionary<int, int> _byPid = [];
@@ -196,16 +197,40 @@ public sealed class ProcessView {
 
     // A cycle would make the walk below run forever. It should not be possible, and it has been
     // observed anyway across namespace boundaries, so the link that closes one is cut rather than
-    // trusted. Bounded at `count` steps: any chain longer than that has revisited something.
+    // trusted.
+    //
+    // Each process is walked up from at most once. Counting steps per process instead — stopping
+    // after `count` of them because a longer chain must have revisited something — is correct but
+    // costs the depth of the tree for every row: a ten-thousand-deep chain took ninety milliseconds
+    // and twice that depth took four times as long, which is the whole sampling budget spent on a
+    // check for something that almost never happens (PRD §4).
+    EnsureLength(ref this._state, count);
+    Array.Clear(this._state, 0, count);
     for (var i = 0; i < count; ++i) {
-      var steps = 0;
-      for (var walker = this._parentOf[i]; walker >= 0; walker = this._parentOf[walker])
-        if (++steps > count) {
-          this._parentOf[i] = -1;
-          break;
-        }
+      if (this._state[i] != Unvisited)
+        continue;
+
+      // Up the chain, marking as we go, until we reach a root or something already accounted for.
+      var node = i;
+      while (node >= 0 && this._state[node] == Unvisited) {
+        this._state[node] = OnPath;
+        node = this._parentOf[node];
+      }
+
+      // Stopping on a node still marked from *this* walk means the chain closed on itself. That
+      // node is the one the cycle runs through, so it becomes a root and the cycle is a chain.
+      if (node >= 0 && this._state[node] == OnPath)
+        this._parentOf[node] = -1;
+
+      // Everything just walked ends at a root now, so no later walk needs to look past it.
+      for (var walker = i; walker >= 0 && this._state[walker] == OnPath; walker = this._parentOf[walker])
+        this._state[walker] = Safe;
     }
   }
+
+  private const byte Unvisited = 0;
+  private const byte OnPath = 1;
+  private const byte Safe = 2;
 
   private void PromoteAncestorsOfMatches(int count) {
     if (this._query.IsEmpty && this.UserIdFilter is null)

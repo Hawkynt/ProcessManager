@@ -66,6 +66,99 @@ public sealed class ExporterTests {
     return writer.ToString();
   }
 
+  #region the schema
+
+  /// <summary>
+  /// The catalogue is the schema (PRD §99). Anything reading the JSON decides how to treat a column
+  /// from what the catalogue says it is, so a field declared a number has to arrive as a number in
+  /// every row — and a field that arrives as a quoted number in some rows and a bare one in others
+  /// breaks a reader that was told it could sum the column.
+  /// </summary>
+  /// <remarks>
+  /// Every field at once rather than a chosen few, so a field added later is covered the day it is
+  /// added instead of the day somebody remembers to extend this.
+  /// </remarks>
+  [Test]
+  public void EveryExportedFieldMatchesTheKindTheCatalogueDeclares() {
+    var fields = new List<ProcessField>();
+    foreach (var descriptor in FieldRegistry.All)
+      // A graph is drawn, not written: it has no text and nothing to export.
+      if (!descriptor.IsGraph)
+        fields.Add(descriptor.Id);
+
+    using var document = System.Text.Json.JsonDocument.Parse(this.Export(ExportFormat.Json, [.. fields]));
+
+    var rows = document.RootElement.GetProperty("processes");
+    Assert.That(rows.GetArrayLength(), Is.EqualTo(3));
+
+    foreach (var row in rows.EnumerateArray())
+      foreach (var field in fields) {
+        var descriptor = FieldRegistry.Get(field);
+        Assert.That(row.TryGetProperty(descriptor.Key, out var value), Is.True, $"{descriptor.Key} is missing");
+
+        // Unknown is null in every case — that is the whole reason the export distinguishes it from
+        // zero, and null is legal for any kind (PRD §5.3).
+        if (value.ValueKind == System.Text.Json.JsonValueKind.Null)
+          continue;
+
+        // A timestamp is a moment rather than a quantity, and it goes out as ISO 8601 whatever kind
+        // it is declared: nobody sums a start time, and a raw tick count is unreadable.
+        var expected = descriptor.Unit == FieldUnit.Timestamp || descriptor.Kind is FieldKind.Text or FieldKind.State
+          ? System.Text.Json.JsonValueKind.String
+          : System.Text.Json.JsonValueKind.Number;
+
+        Assert.That(value.ValueKind, Is.EqualTo(expected), $"{descriptor.Key} is declared {descriptor.Kind}/{descriptor.Unit}");
+      }
+  }
+
+  /// <summary>
+  /// Every key appears once and is spelled the way the catalogue spells it. Two fields sharing a key
+  /// would silently lose one of them in an object format, where the last one written wins.
+  /// </summary>
+  [Test]
+  public void EveryExportedKeyIsTheCatalogueKeyAndAppearsOnce() {
+    var fields = new List<ProcessField>();
+    foreach (var descriptor in FieldRegistry.All)
+      if (!descriptor.IsGraph)
+        fields.Add(descriptor.Id);
+
+    using var document = System.Text.Json.JsonDocument.Parse(this.Export(ExportFormat.Json, [.. fields]));
+
+    var first = document.RootElement.GetProperty("processes")[0];
+    var seen = new HashSet<string>();
+    var count = 0;
+    foreach (var property in first.EnumerateObject()) {
+      ++count;
+      Assert.That(seen.Add(property.Name), Is.True, $"{property.Name} was written twice");
+    }
+
+    Assert.That(count, Is.EqualTo(fields.Count), "one column in, one column out");
+  }
+
+  /// <summary>
+  /// The separated formats have to carry the same columns as the object ones. A reader choosing CSV
+  /// over JSON is choosing a container, not a subset of the data.
+  /// </summary>
+  [Test]
+  public void TheSeparatedFormatsCarryTheSameColumnsAsJson() {
+    var fields = new List<ProcessField>();
+    foreach (var descriptor in FieldRegistry.All)
+      if (!descriptor.IsGraph)
+        fields.Add(descriptor.Id);
+
+    var header = this.Export(ExportFormat.Csv, [.. fields]).Split('\n')[0].Trim();
+
+    var keys = new List<string>();
+    foreach (var field in fields)
+      keys.Add(FieldRegistry.Get(field).Key);
+
+    Assert.That(header.Split(',').Length, Is.EqualTo(keys.Count));
+    foreach (var key in keys)
+      Assert.That(header, Does.Contain(key), key);
+  }
+
+  #endregion
+
   #region separated values
 
   [Test]

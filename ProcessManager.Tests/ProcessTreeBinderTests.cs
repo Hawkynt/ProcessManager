@@ -18,6 +18,65 @@ namespace Hawkynt.ProcessManager.Tests;
 [TestFixture]
 public sealed class ProcessTreeBinderTests {
 
+  /// <summary>
+  /// A process whose descriptors have not been counted says so, rather than saying it holds none.
+  /// </summary>
+  /// <remarks>
+  /// The count is measured on its own schedule because doing it for every process every second is
+  /// the expense §5.4 exists to avoid, so "not counted yet" is the ordinary state of most rows most
+  /// of the time. Looking it up with <c>TryGetValue</c>'s out parameter alone left
+  /// <c>default(Counter)</c> on a miss, whose reason is <c>None</c> — the value is present — and the
+  /// window duly reported "handles 0" for a process holding thirty of them. Found by reading a
+  /// screenshot; no test in the suite touched it, because every one of them stubs the count.
+  /// </remarks>
+  [Test]
+  public void AProcessWhoseDescriptorsAreUncountedDoesNotClaimItHasNone() {
+    var tree = new TreeListView();
+    var binder = new ProcessTreeBinder(tree);
+    var (snapshot, delta, view) = Build((1, 0), (2, 1));
+
+    // Nothing has been measured, which is exactly the state the window starts in.
+    binder.Sync(snapshot, delta, view);
+
+    foreach (var row in Rows(tree)) {
+      Assert.That(row.Handles, Is.Not.EqualTo("0"), "an uncounted process must not report nought");
+      Assert.That(row.Handles, Is.EqualTo(Humanize.Placeholder(UnknownReason.NotSampledYet)));
+    }
+  }
+
+  /// <summary>And once it has been counted, the number is the one that was measured.</summary>
+  [Test]
+  public void AMeasuredCountIsTheOneShown() {
+    var tree = new TreeListView();
+    var binder = new ProcessTreeBinder(tree);
+    var (snapshot, delta, view) = Build((1, 0), (2, 1));
+
+    binder.HandleCounts[new(1, 1000ul)] = Counter.Of(30ul);
+    binder.Sync(snapshot, delta, view);
+
+    var counted = 0;
+    foreach (var row in Rows(tree))
+      if (row.Handles == "30")
+        ++counted;
+
+    Assert.That(counted, Is.EqualTo(1), "the one that was measured, and only it");
+  }
+
+  private static IEnumerable<ProcessRow> Rows(TreeListView tree) {
+    var pending = new Stack<TreeNode>();
+    foreach (var node in tree.Nodes)
+      pending.Push(node);
+
+    while (pending.Count > 0) {
+      var node = pending.Pop();
+      if (node.Tag is ProcessRow row)
+        yield return row;
+
+      foreach (var child in node.Nodes)
+        pending.Push(child);
+    }
+  }
+
   [Test]
   public void EveryProcessGetsANode() {
     var tree = new TreeListView();
@@ -358,6 +417,10 @@ public sealed class ProcessTreeBinderTests {
       buffer[i].Name = $"p{processes[i].Pid}";
       buffer[i].UserId = 1000;
       buffer[i].CpuTimeNs = Counter.Of(0ul);
+      // What the probe puts there: counting descriptors is opt-in, so the sampled figure is
+      // honestly absent rather than nought. Leaving it default(Counter) would make this harness
+      // claim every process holds no descriptors, which is the very thing being tested for.
+      buffer[i].HandleCount = Counter.NotSampledYet;
     }
 
     var delta = new SnapshotDelta();

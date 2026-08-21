@@ -31,10 +31,17 @@ shorthand:
 it is not known*. An unticked box must never become a zero on screen. This is restated here because
 it is the single requirement most likely to be broken while filling the tables in.
 
-**Counting, as of the last update:** **491 of 1260 boxes are ticked** — 62 of 189 in the field
-registry (§14–22), 429 of 1071 across the capabilities. A further 143 are marked 🟡, meaning some of
+**Counting, as of the last update:** **623 of 1343 boxes are ticked** — 84 of 198 in the field
+registry (§14–22), 539 of 1145 across the capabilities. A further 135 are marked 🟡, meaning some of
 the work behind them is already done. §100 tracks the phases; §101 defines when this may be called
 finished.
+
+This paragraph is counted by hand and goes stale the moment two branches are in flight against this
+file, which is exactly when somebody reads it. Recount before quoting it:
+
+```sh
+grep -c '\[x\]' docs/PRD.md && grep -c '\[ \]' docs/PRD.md
+```
 
 ---
 
@@ -1476,11 +1483,11 @@ Endpoints are enumerated on both platforms and attributed to processes.
 - [x] State
 - [x] Local address
 - [x] Local port
-- [ ] Local hostname
+- [ ] 🟡 Local hostname — resolved and shown by `--connections --resolve`; the window's network tab still shows addresses
 - [x] Remote address
 - [x] Remote port
-- [ ] Remote hostname
-- [ ] Service name
+- [ ] 🟡 Remote hostname — as above
+- [x] Service name — from the machine's own `/etc/services`, in `--connections`; `-n` turns it off, as it does for `ss`
 - [ ] 🟡 Interface — Linux, from the address the socket is bound to. `/proc/net/if_inet6` names it
       outright for IPv6; an IPv4 address is on the interface whose on-link subnet contains it, longest
       prefix first. A socket on the wildcard address is on all of them and shows `*`; an address no
@@ -1534,13 +1541,13 @@ Actions:
 - [ ] Go to process
 - [ ] Process properties
 - [ ] Copy endpoint
-- [ ] Resolve hostname
-- [ ] Disable hostname resolution
+- [ ] 🟡 Resolve hostname — `--connections --resolve`; no per-row command in the window yet
+- [x] Disable hostname resolution — off unless asked for, which is the stronger version of disableable
 - [ ] Close connection where natively supported
 - [ ] Terminate owner
 - [ ] Search remote endpoint
 
-- [ ] **Hostname resolution is asynchronous and globally disableable** — a blocking DNS lookup in a
+- [x] **Hostname resolution is asynchronous and globally disableable** — a blocking DNS lookup in a
       table that refreshes every second is a hang waiting to happen, and on some networks it is also
       a disclosure
 
@@ -3073,7 +3080,7 @@ a naive parser hands the attacker the parse.
 
 # 99. Testing strategy
 
-**140 tests pass on every leg, under both a UTF-8 and a `C` locale.**
+**802 tests pass on every leg, under both a UTF-8 and a `C` locale.**
 
 ## Unit tests
 
@@ -3084,7 +3091,7 @@ a naive parser hands the attacker the parse.
 - [x] Field registry — 14 tests, including the one that enforces §103
 - [x] Filters
 - [x] Sorting
-- [ ] Export schemas
+- [x] Export schemas
 
 ## Fixture replay
 
@@ -3115,10 +3122,10 @@ Windows parsing on Linux.
 ## Performance tests
 
 - [x] Sampling budget enforced as a build gate (§71.2)
-- [ ] 10 000 processes
+- [x] 10 000 processes
 - [ ] 100 000 threads
-- [ ] 1 000 000 resource rows
-- [ ] Rapid process churn
+- [x] 1 000 000 resource rows
+- [x] Rapid process churn
 - [ ] 100 % CPU load
 - [ ] Low-memory state
 - [ ] High-I/O machine

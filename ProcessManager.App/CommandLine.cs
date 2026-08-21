@@ -63,6 +63,22 @@ internal sealed record CommandLineOptions {
   /// <summary>Which sockets --connections lists (PRD §40).</summary>
   public ConnectionScope ConnectionScope { get; init; } = ConnectionScope.Internet;
 
+  /// <summary>
+  /// Turn addresses into hostnames, which asks a resolver about every address on the machine.
+  /// </summary>
+  /// <remarks>
+  /// Off unless asked for. On some networks a reverse lookup tells whoever runs the resolver which
+  /// addresses this machine is talking to, and that is not a disclosure to make on somebody's behalf
+  /// (PRD §40).
+  /// </remarks>
+  public bool ResolveHostnames { get; init; }
+
+  /// <summary>
+  /// Leave ports as numbers rather than naming them from <c>/etc/services</c>, the way <c>ss -n</c>
+  /// and <c>netstat -n</c> do.
+  /// </summary>
+  public bool NumericEndpoints { get; init; }
+
   /// <summary>What --list writes: text, csv, tsv, json, jsonl or markdown (PRD §61).</summary>
   public ExportFormat Format { get; init; } = ExportFormat.Text;
 
@@ -357,6 +373,13 @@ internal sealed record CommandLineOptions {
         case "--ascii":
           options = options with { AsciiOnly = true };
           break;
+        case "--resolve":
+          options = options with { ResolveHostnames = true };
+          break;
+        case "-n":
+        case "--numeric":
+          options = options with { NumericEndpoints = true };
+          break;
         case "--no-helper":
           options = options with { UseHelper = false };
           break;
@@ -555,6 +578,8 @@ internal sealed record CommandLineOptions {
       --json             the same as --format=json
       --probe-root <d>   read a recorded /proc tree instead of the live one
       --ascii            draw the terminal's history columns with ASCII rather than block characters
+      --resolve          with --connections: turn addresses into hostnames (asks a resolver)
+      -n, --numeric      with --connections: leave ports as numbers rather than naming them
       --no-helper        never start the privileged helper, even for an action that needs it
       --self-test        check the probe against the runtime's own view of this process
       --helper-check     talk to the privileged helper over its pipe, unelevated, and check it
