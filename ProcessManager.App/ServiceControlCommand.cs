@@ -1,4 +1,4 @@
-using Hawkynt.ProcessManager.Platform.Linux;
+using Hawkynt.ProcessManager.Abstractions;
 
 namespace Hawkynt.ProcessManager.App;
 
@@ -20,7 +20,12 @@ internal static class ServiceControlCommand {
       return 1;
     }
 
-    var result = new SystemdServiceControl().Apply(command, unit ?? string.Empty);
+    if (ProbeFactory.CreateServiceControl() is not { } control) {
+      Console.Error.WriteLine("procman: there is no service manager on this machine to ask.");
+      return 1;
+    }
+
+    var result = control.Apply(command, unit ?? string.Empty);
     if (result.Succeeded) {
       Console.WriteLine($"{verb} {unit}: done.");
       return 0;

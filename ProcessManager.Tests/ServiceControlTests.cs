@@ -33,7 +33,7 @@ public sealed class ServiceControlTests {
 
   }
 
-  private static bool Systemd => SystemdServiceControl.IsAvailable;
+  private static bool Systemd => SystemdServiceControl.IsPresent;
 
   [Test]
   public void TheUnitNameIsAnArgumentRatherThanPartOfACommandLine() {

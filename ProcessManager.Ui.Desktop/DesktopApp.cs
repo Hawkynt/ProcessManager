@@ -27,6 +27,7 @@ public static class DesktopApp {
     Sampler sampler,
     ISystemProbe probe,
     IProcessActions? actions,
+    IServiceControl? services = null,
     string? shootPath = null,
     double holdSeconds = 0,
     bool flat = false,
@@ -41,7 +42,7 @@ public static class DesktopApp {
       else
         return $"there is no UI backend for {Environment.OSVersion.Platform}";
 
-      var window = new MainWindow(sampler, probe, actions);
+      var window = new MainWindow(sampler, probe, actions, services);
 
       // Before FlatMode, so an explicit --flat still wins over what the file remembered.
       window.SettingsFile = SettingsStore.Locate(settingsPath);

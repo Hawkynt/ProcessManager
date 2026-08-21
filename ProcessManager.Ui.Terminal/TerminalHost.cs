@@ -67,9 +67,16 @@ public sealed class TerminalHost : IDisposable {
   /// delays a keystroke by at most one sample — and the sample cost is on screen, so it is visible
   /// when it does.
   /// </summary>
-  public void Run(Sampler sampler, ISystemProbe probe, IProcessActions? actions, TimeSpan interval, TerminalStartup? startup = null) {
+  public void Run(
+    Sampler sampler,
+    ISystemProbe probe,
+    IProcessActions? actions,
+    TimeSpan interval,
+    TerminalStartup? startup = null,
+    IServiceControl? services = null
+  ) {
     var (width, height) = ReadSize();
-    var ui = new TerminalUi(sampler, probe, actions, width, height, DetectColorDepth()) {
+    var ui = new TerminalUi(sampler, probe, actions, width, height, DetectColorDepth(), services) {
       Keys = KeyBindings.Load(),
       ClipboardOutput = this._output,
     };

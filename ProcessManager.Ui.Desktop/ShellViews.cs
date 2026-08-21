@@ -154,6 +154,15 @@ internal sealed class ShellViews(ISystemProbe probe) {
     ("Description", 260)
   );
 
+  /// <summary>
+  /// What the services heading says about commanding a unit, which depends on whether anything here
+  /// can. Set by the window once, because only it knows whether a control was found.
+  /// </summary>
+  private string _servicesHint = "  Starting and stopping them needs a service manager this build cannot reach.";
+
+  /// <summary>Says the commands are there, and how to get at them.</summary>
+  public void ServicesAreCommandable() => this._servicesHint = "  Right-click a unit to start, stop or enable it.";
+
   public Control ServicesControl => this._services.Control;
 
   public string ServicesText => this._services.Description;
@@ -170,7 +179,7 @@ internal sealed class ShellViews(ISystemProbe probe) {
     this._services.Fill(
       services.Count == 0
         ? "No services came back. On Windows the service control manager is not read yet; on Linux this needs systemd's unit files."
-        : $"{services.Count} units, {running} running.  {AsOf()}  Starting and stopping them is not implemented yet.",
+        : $"{services.Count} units, {running} running.  {AsOf()}{this._servicesHint}",
       services.Count,
       i => [
         services[i].Name,
@@ -207,6 +216,19 @@ internal sealed class ShellViews(ISystemProbe probe) {
   /// runtime is in the cgroup tree and on no disk.
   /// </remarks>
   public bool SelectService(string unit) => this._services.Select(unit);
+
+  /// <summary>
+  /// What may be done to the unit under the pointer, hung on the services table.
+  /// </summary>
+  /// <remarks>
+  /// Built by the window rather than here, because doing something to a unit means asking a person
+  /// first and then showing them what the manager said, and this class has no way to do either. It
+  /// owns the tables; the window owns the conversation.
+  /// </remarks>
+  public ContextMenuStrip? ServicesMenu {
+    get => this._services.ContextMenuStrip;
+    set => this._services.ContextMenuStrip = value;
+  }
 
   /// <summary>The unit the cursor is on, or null when it is on nothing.</summary>
   public string? SelectedService

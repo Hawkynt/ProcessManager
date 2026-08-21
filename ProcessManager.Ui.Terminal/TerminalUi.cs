@@ -19,6 +19,7 @@ public sealed class TerminalUi {
 
   private readonly Sampler _sampler;
   private readonly IProcessActions? _actions;
+  private readonly IServiceControl? _services;
   private readonly ISystemProbe _probe;
   private readonly ProcessView _view = new();
   private readonly TerminalScreen _screen;
@@ -54,7 +55,7 @@ public sealed class TerminalUi {
   private enum InputMode : byte { Normal, Search, Filter, Confirm, SchedulingClass, Detail, Overlay, ExportPath }
 
   /// <summary>Which list is on screen, so one set of keys can drive all three.</summary>
-  private enum OverlayKind : byte { None, Actions, Columns, Help, Grouping, Interval }
+  private enum OverlayKind : byte { None, Actions, Columns, Help, Grouping, Interval, Service }
 
   /// <summary>
   /// What the pending confirmation will do if it is answered yes.
@@ -66,12 +67,21 @@ public sealed class TerminalUi {
   /// </remarks>
   private enum PendingAction : byte { None, Terminate, TerminateTree, Restart }
 
-  public TerminalUi(Sampler sampler, ISystemProbe probe, IProcessActions? actions, int width, int height, ColorDepth depth) {
+  public TerminalUi(
+    Sampler sampler,
+    ISystemProbe probe,
+    IProcessActions? actions,
+    int width,
+    int height,
+    ColorDepth depth,
+    IServiceControl? services = null
+  ) {
     ArgumentNullException.ThrowIfNull(sampler);
     ArgumentNullException.ThrowIfNull(probe);
     this._sampler = sampler;
     this._probe = probe;
     this._actions = actions;
+    this._services = services;
     this._screen = new(width, height, depth);
     this._detail = new(probe);
     this._columns = new(Layout.ColumnsFor(width));
@@ -456,6 +466,7 @@ public sealed class TerminalUi {
       case TerminalAction.SuspendResume: this.SuspendOrResume(); return true;
       case TerminalAction.SchedulingClass: this.BeginSchedulingClass(); return true;
       case TerminalAction.CountHandles: this.FillHandleCounts(); return true;
+      case TerminalAction.ServiceMenu: this.OpenServiceMenu(); return true;
       case TerminalAction.Threads: this.OpenDetail(DetailTab.Threads); return true;
       case TerminalAction.Modules: this.OpenDetail(DetailTab.Modules); return true;
       case TerminalAction.Handles: this.OpenDetail(DetailTab.Handles); return true;
@@ -709,6 +720,11 @@ public sealed class TerminalUi {
       case OverlayKind.Grouping:
         this.GroupBy((ProcessGrouping)item.Tag);
         return this.CloseOverlay();
+
+      case OverlayKind.Service:
+        this.CloseOverlay();
+        this.CommandUnit((ServiceCommand)item.Tag);
+        return true;
 
       case OverlayKind.Interval:
         this.SetRefresh(item.Tag);
@@ -1441,6 +1457,79 @@ public sealed class TerminalUi {
     this.Say("handle counts read for the visible rows", Attributes.Accent);
   }
 
+  /// <summary>
+  /// The unit the selected process belongs to, or null when it belongs to none.
+  /// </summary>
+  /// <remarks>
+  /// Read from the cgroup path rather than from a list of units, because the cgroup is what the
+  /// kernel actually charges the process to. A transient scope systemd made at runtime is there and
+  /// is on no disk, so this can name a unit the services list does not have — and that is the right
+  /// way round: the process really is under it.
+  /// </remarks>
+  private string? OwningUnit()
+    => this._sampler.Current.TryGetProcess(this._selectedKey, out var process)
+      ? CgroupUnit.Of(process.ContainerPath)
+      : null;
+
+  /// <summary>
+  /// Start, stop and the rest, for the unit the selected process belongs to (PRD §41).
+  /// </summary>
+  /// <remarks>
+  /// The terminal has no services browser of its own, so the way in is the process — which is also
+  /// how somebody arrives at wanting this. They are looking at a row eating the machine, and what
+  /// they want is not to kill that process but to stop the unit that will start it again.
+  /// </remarks>
+  private void OpenServiceMenu() {
+    if (this._services is not { IsAvailable: true }) {
+      this.Say("there is no service manager here to ask", Attributes.Dim);
+      return;
+    }
+
+    if (this.OwningUnit() is not { Length: > 0 } unit) {
+      this.Say("this process is under no unit", Attributes.Dim);
+      return;
+    }
+
+    var items = new List<OverlayItem> { OverlayItem.Heading("Now") };
+    foreach (var (command, hint) in (ReadOnlySpan<(ServiceCommand, string)>)[
+      (ServiceCommand.Start, "start it"),
+      (ServiceCommand.Stop, "stop it, and whatever it does for the machine"),
+      (ServiceCommand.Restart, "stop it and start it again, dropping what it holds"),
+      (ServiceCommand.Reload, "re-read its configuration without dropping anything"),
+    ])
+      items.Add(OverlayItem.Entry(hint, IServiceControl.Verb(command), (int)command));
+
+    items.Add(OverlayItem.Heading("Next boot"));
+    foreach (var (command, hint) in (ReadOnlySpan<(ServiceCommand, string)>)[
+      (ServiceCommand.Enable, "start it at boot — not now"),
+      (ServiceCommand.Disable, "do not start it at boot — not now either"),
+    ])
+      items.Add(OverlayItem.Entry(hint, IServiceControl.Verb(command), (int)command));
+
+    this.ShowOverlay(new($"{unit} — Enter chooses, Esc closes", items) { HintColumn = 48 }, OverlayKind.Service);
+  }
+
+  /// <summary>
+  /// Asks the manager, and says what it answered in the manager's own words.
+  /// </summary>
+  /// <remarks>
+  /// The unit is read again here rather than remembered from when the menu opened: the sample under
+  /// the cursor may have been replaced in between, and acting on a unit the reader is no longer
+  /// looking at is the mistake §6.4 exists to stop.
+  /// </remarks>
+  private void CommandUnit(ServiceCommand command) {
+    if (this._services is null || this.OwningUnit() is not { Length: > 0 } unit)
+      return;
+
+    var result = this._services.Apply(command, unit);
+    this.Say(
+      result.Succeeded
+        ? $"{IServiceControl.Verb(command)} {unit}: done"
+        : result.Detail ?? $"{IServiceControl.Verb(command)} {unit}: refused",
+      result.Succeeded ? Attributes.Good : Attributes.Bad
+    );
+  }
+
   private void Say(string message, byte attribute) {
     this._message = message;
     this._messageAttribute = attribute;
@@ -1467,6 +1556,9 @@ public sealed class TerminalUi {
       TerminalAction.SchedulingClass,
     ])
       items.Add(this.MenuEntry(action));
+
+    if (this._services is { IsAvailable: true } && this.OwningUnit() is not null)
+      items.Add(this.MenuEntry(TerminalAction.ServiceMenu));
 
     items.Add(OverlayItem.Heading("Look at"));
     foreach (var action in (ReadOnlySpan<TerminalAction>)[
