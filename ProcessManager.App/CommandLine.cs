@@ -656,6 +656,18 @@ internal sealed record CommandLineOptions {
   /// <summary>Whether the terminal asks for mouse reports (PRD §57.5).</summary>
   public bool UseMouse { get; init; } = true;
 
+  /// <summary>
+  /// The terminal's palette, as the settings file named it (PRD §67).
+  /// </summary>
+  /// <remarks>
+  /// From the file only — there is no flag for it, and deliberately. A colour is a thing somebody
+  /// decides once about every terminal they will ever run this in, which is the definition of a
+  /// setting rather than of an argument; a run that took twenty of them on the command line would
+  /// be a run nobody typed.
+  /// </remarks>
+  public IReadOnlyDictionary<string, uint> TerminalColours { get; init; }
+    = new Dictionary<string, uint>(StringComparer.OrdinalIgnoreCase);
+
   /// <summary>Bring the window up, photograph it and exit — the CI desktop smoke leg.</summary>
   public string? ShootPath { get; init; }
 
@@ -717,6 +729,7 @@ internal sealed record CommandLineOptions {
       ManualRefresh = settings.ManualRefresh,
       DesktopColumns = settings.DesktopColumns.Length > 0 ? settings.DesktopColumns : null,
       UseMouse = settings.TerminalMouse,
+      TerminalColours = settings.TerminalColours,
     };
 
     return Parse(args, seeded, settings);
