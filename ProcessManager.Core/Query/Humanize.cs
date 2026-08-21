@@ -21,6 +21,7 @@ public static class Humanize {
     UnknownReason.SourceGone => "gone",
     UnknownReason.NotSampledYet => "…",
     UnknownReason.CounterInvalid => "?",
+    UnknownReason.NoLimit => "∞",
     _ => string.Empty,
   };
 

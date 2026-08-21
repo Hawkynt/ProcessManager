@@ -51,4 +51,16 @@ public enum UnknownReason : byte {
   /// </summary>
   CounterInvalid,
 
+  /// <summary>
+  /// There is no limit, which is not the same as not knowing what the limit is.
+  /// </summary>
+  /// <remarks>
+  /// A cgroup with no memory controller and one with a memory controller set to <c>max</c> both have
+  /// no number to show, and they are not the same fact: the first says the question does not apply
+  /// here and an ancestor's limit governs, the second says this group was deliberately left
+  /// unbounded. Rendering both as "not supported" told a reader the machine could not answer when it
+  /// had answered plainly (PRD §5.3).
+  /// </remarks>
+  NoLimit,
+
 }

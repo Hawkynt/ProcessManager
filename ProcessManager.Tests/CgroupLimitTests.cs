@@ -1,4 +1,5 @@
 using Hawkynt.ProcessManager.Model;
+using Hawkynt.ProcessManager.Query;
 
 namespace Hawkynt.ProcessManager.Tests;
 
@@ -59,6 +60,37 @@ public sealed class CgroupLimitTests {
     Assert.That(free.MemoryMaxBytes.HasValue, Is.False);
     Assert.That(free.MemoryHighBytes.HasValue, Is.False);
     Assert.That(free.PidsMax.HasValue, Is.False);
+  }
+
+  /// <summary>
+  /// A controller that is switched off and a controller set to <c>max</c> are different answers.
+  /// </summary>
+  /// <remarks>
+  /// Both have no number to show, and reading them as the same thing said the machine could not
+  /// answer when it had answered plainly. The first means the question does not apply to this group
+  /// and an ancestor's limit governs it; the second means this group was deliberately left unbounded.
+  /// Somebody chasing why a process hit a wall needs to know which (PRD §5.3).
+  /// </remarks>
+  [Test]
+  public void NoControllerAndNoLimitAreNotTheSameAnswer() {
+    var free = Free();
+
+    // memory.max exists in this cgroup and reads "max".
+    Assert.That(free.MemoryMaxBytes.HasValue, Is.False);
+    Assert.That(free.MemoryMaxBytes.Reason, Is.EqualTo(UnknownReason.NoLimit));
+
+    // cpu.stat does not exist here at all, because the controller is not enabled.
+    Assert.That(free.ThrottledCount.Reason, Is.EqualTo(UnknownReason.NotSupportedOnPlatform));
+  }
+
+  /// <summary>And each renders as itself rather than as a shared blank.</summary>
+  [Test]
+  public void EachKindOfAbsenceRendersAsItself() {
+    Assert.That(Humanize.Placeholder(UnknownReason.NoLimit), Is.Not.Empty);
+    Assert.That(
+      Humanize.Placeholder(UnknownReason.NoLimit),
+      Is.Not.EqualTo(Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform))
+    );
   }
 
   [Test]
