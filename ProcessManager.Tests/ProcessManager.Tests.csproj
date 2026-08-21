@@ -5,6 +5,10 @@
     <RootNamespace>Hawkynt.ProcessManager.Tests</RootNamespace>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
+    <!-- The generated marshalling for the one [LibraryImport] the tests own. Arranging a descriptor's
+         kernel file offset needs lseek: .NET's Unix FileStream reads through pread and keeps its
+         position in managed code, so no BCL call moves the number the §32 assertion checks. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>

@@ -333,12 +333,33 @@ public sealed class WindowsProbe : ISystemProbe {
       do {
         var path = entry.ReadExePath();
         result.Add(new(
-          path.Length > 0 ? path : entry.ReadModule(),
-          (ulong)entry.ModuleBaseAddress,
-          entry.ModuleBaseSize,
+          Path: path.Length > 0 ? path : entry.ReadModule(),
+          BaseAddress: (ulong)entry.ModuleBaseAddress,
+          Size: entry.ModuleBaseSize,
           // Windows does not report per-module page protection here; the mapping's own protection is
           // per-region rather than per-module, so claiming one would be inventing it.
-          string.Empty
+          Permissions: string.Empty,
+          EndAddress: (ulong)entry.ModuleBaseAddress + entry.ModuleBaseSize,
+          // Everything below is readable on Windows and is not read yet — the version resource, the
+          // signature, the section-by-section working set. "Windows cannot do this" and "we have not
+          // written it" are different sentences and must not render as the same cell (PRD §7).
+          ResidentBytes: Counter.Unknown(UnknownReason.NotImplementedHere),
+          // A Toolhelp entry is one image at one base, not a fold of several mappings, so there is no
+          // per-mapping file offset to report and no count of mappings to fold.
+          FileOffset: Counter.NotSupported,
+          Inode: Counter.NotSupported,
+          Device: null,
+          IsDeleted: false,
+          MappingCount: 1,
+          FileSizeBytes: Counter.Unknown(UnknownReason.NotImplementedHere),
+          FileModifiedUtcTicks: 0,
+          Type: ModuleType.Unknown,
+          Architecture: null,
+          EntryPoint: Counter.Unknown(UnknownReason.NotImplementedHere),
+          // A PE image has no SONAME and asks for no interpreter: the import table names what it
+          // needs, and the loader is the kernel's.
+          Soname: null,
+          Interpreter: null
         ));
 
         entry.Size = (uint)Marshal.SizeOf<NtStructures.ModuleEntry32>();
@@ -413,7 +434,21 @@ public sealed class WindowsProbe : ISystemProbe {
       try {
         var type = HandleNameResolver.QueryType(copy);
         var name = this._handleNames.TryGetName(copy);
-        result.Add(new((ulong)entry.HandleValue, ClassifyType(type), name, null));
+        result.Add(new(
+          Handle: (ulong)entry.HandleValue,
+          Kind: ClassifyType(type),
+          Name: name,
+          // The granted access mask is in the table entry we are already looking at; decoding it into
+          // the per-object-type rights of §32 is not written yet, and an empty cell would say Windows
+          // does not have them (PRD §7).
+          Access: null,
+          // A Windows handle has no file position and no open flags: the position belongs to the file
+          // object, and the equivalent of the flags is the access mask above.
+          Position: Counter.NotSupported,
+          OpenFlags: Counter.NotSupported,
+          Inode: Counter.NotSupported,
+          TargetPid: Counter.Unknown(UnknownReason.NotImplementedHere)
+        ));
       } finally {
         Native.CloseHandle(copy);
       }

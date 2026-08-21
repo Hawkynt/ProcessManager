@@ -104,27 +104,40 @@ public sealed class DetailView(ISystemProbe probe) {
       }
 
       case DetailTab.Modules: {
-        this._headers = ["Base", "Size", "Perm", "Path"];
-        this._widths = [18, 9, 6, 90];
+        this._headers = ["Base", "End", "Size", "Resident", "Perm", "Type", "Arch", "SONAME", "Path"];
+        this._widths = [16, 16, 9, 9, 6, 14, 9, 22, 70];
         foreach (var module in probe.GetModules(this._key))
           this._rows.Add([
-            "0x" + module.BaseAddress.ToString("x", CultureInfo.InvariantCulture),
+            Humanize.Address(module.BaseAddress),
+            Humanize.Address(module.EndAddress),
             Humanize.Bytes(module.Size),
+            Humanize.Bytes(module.ResidentBytes),
             module.Permissions.Length > 0 ? module.Permissions : "—",
-            module.Path,
+            Humanize.ImageType(module.Type),
+            module.Architecture ?? "—",
+            module.Soname ?? "—",
+            // The deleted marker rides on the path here, as it does in maps itself: the terminal has
+            // no room for a column that is empty on all but one row in a thousand.
+            module.IsDeleted ? module.Path + " (deleted)" : module.Path,
           ]);
 
         break;
       }
 
       case DetailTab.Handles: {
-        this._headers = ["Type", "Handle", "Name"];
-        this._widths = [12, 8, 100];
+        this._headers = ["Type", "FD", "Acc", "Position", "Inode", "Flags", "Name"];
+        this._widths = [14, 6, 4, 12, 12, 26, 70];
         foreach (var handle in probe.GetHandles(this._key))
           this._rows.Add([
-            handle.Kind.ToString(),
+            Humanize.ResourceKind(handle.Kind),
             handle.Handle.ToString(CultureInfo.InvariantCulture),
-            handle.Name ?? "<not named>",
+            handle.Access ?? "—",
+            Humanize.Count(handle.Position),
+            Humanize.Count(handle.Inode),
+            DescriptorParser.DescribeFlags(handle.OpenFlags) ?? Humanize.Placeholder(handle.OpenFlags.Reason),
+            handle.TargetPid.TryGetValue(out var target)
+              ? $"{handle.Name} → pid {target}"
+              : handle.Name ?? "<not named>",
           ]);
 
         break;

@@ -1,4 +1,5 @@
 using Hawkynt.ProcessManager.Model;
+using Hawkynt.ProcessManager.Query;
 
 namespace Hawkynt.ProcessManager.Platform.Linux;
 

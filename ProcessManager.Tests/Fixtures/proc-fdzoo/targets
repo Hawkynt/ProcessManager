@@ -1,0 +1,18 @@
+0	/dev/null
+1	/dev/null
+2	/dev/null
+3	/sys/kernel/mm/transparent_hugepage/enabled
+4	/dev/urandom
+5	/etc/hostname
+6	/usr/share
+7	pipe:[11134441]
+8	pipe:[11134441]
+9	anon_inode:[eventpoll]
+10	anon_inode:[eventfd]
+11	anon_inode:[timerfd]
+12	anon_inode:inotify
+13	socket:[11134442]
+14	socket:[11134443]
+15	/memfd:module-cache (deleted)
+16	/dev/null
+17	anon_inode:[pidfd]

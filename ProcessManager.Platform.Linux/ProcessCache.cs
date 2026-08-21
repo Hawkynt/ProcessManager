@@ -1,4 +1,5 @@
 using System.Text;
+using Hawkynt.ProcessManager.Query;
 
 namespace Hawkynt.ProcessManager.Platform.Linux;
 

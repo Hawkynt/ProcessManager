@@ -31,8 +31,8 @@ shorthand:
 it is not known*. An unticked box must never become a zero on screen. This is restated here because
 it is the single requirement most likely to be broken while filling the tables in.
 
-**Counting, as of the last update:** **469 of 1254 boxes are ticked** — 62 of 189 in the field
-registry (§14–22), 407 of 1065 across the capabilities. A further 137 are marked 🟡, meaning some of
+**Counting, as of the last update:** **491 of 1260 boxes are ticked** — 62 of 189 in the field
+registry (§14–22), 429 of 1071 across the capabilities. A further 143 are marked 🟡, meaning some of
 the work behind them is already done. §100 tracks the phases; §101 defines when this may be called
 finished.
 
@@ -784,7 +784,9 @@ leaving proprietary NVIDIA to a vendor plugin.
 - [x] `handles` — handle count (W) / fd count (L)
 - [ ] `handles.peak`
 - [x] `fd.count`
-- [ ] 🟡 `socket.count` — derivable from the fd scan
+- [ ] 🟡 `socket.count` — counted, and shown in the handles view of §32 rather than as a column here.
+      A column would have to be filled every sample, and the fd scan behind it is the 85 µs per
+      process that had to leave the sample loop in the first place
 - [ ] 🟡 `file.count` — as above
 - [ ] 🟡 `pipe.count` — as above
 - [ ] `event.count` — Windows handle-type tally
@@ -1175,19 +1177,26 @@ Actions:
 
 Enumeration works on both platforms (Toolhelp32; `/proc/pid/maps`).
 
+One row per *load*, not per mapping: a library's four or five consecutive lines are folded, and
+`Mappings` says how many. A file mapped twice at unrelated addresses — which is what .NET does to
+every assembly — stays two rows, because one row spanning the gap would report an image occupying
+most of the address space.
+
 - [x] Name
 - [x] Path
 - [x] Base address
-- [x] Size
-- [ ] End address
-- [ ] Entry point
-- [ ] Architecture
-- [ ] Module type
+- [x] Size — the total of the folded mappings, not the span from the first to the last
+- [x] End address
+- [x] 🟡 Entry point — from the ELF header, biased by the load address for a position-independent
+      image so it is an address in *this* process. Windows does not read it yet
+- [x] 🟡 Architecture — the ELF `e_machine`; a machine with no name is reported as its number
+- [x] 🟡 Module type — executable · shared object · relocatable · core dump, and `data` for a mapped
+      file that is not an image at all
 - [ ] Load count
 - [ ] Load time
 - [ ] Load reason
-- [ ] File size
-- [ ] File modification time
+- [x] 🟡 File size — Linux only; Windows reports `n/i`
+- [x] 🟡 File modification time — as above
 - [ ] Version
 - [ ] Description
 - [ ] Company
@@ -1197,11 +1206,21 @@ Enumeration works on both platforms (Toolhelp32; `/proc/pid/maps`).
 - [ ] SHA-256
 - [ ] ASLR
 - [ ] CFG
-- [ ] 🟡 Executable flag — in `maps`, not surfaced
-- [ ] 🟡 Writable flag — as above
-- [ ] 🟡 Mapped / shared — as above
+- [x] Executable flag — the `x` of the folded mappings' permission union
+- [x] Writable flag — the `w` of it
+- [x] Mapped / shared — the `s`/`p` of it
 - [x] Backing file
 - [ ] Runtime classification
+
+Linux additions — what `maps` and `smaps` report and Windows has no equivalent for:
+
+- [x] Resident size per module, summed over its mappings — from `smaps`, and the reason it is not
+      there when only `maps` could be read
+- [x] File offset · device · inode
+- [x] Deleted — the image is still mapped and still running, and the file on disk is gone
+- [x] Mapping count — how many `maps` lines the row folded
+- [x] `SONAME` — the name other binaries link against, which is not always the file's
+- [x] Program interpreter — the dynamic loader an executable asks for
 
 - [x] Windows enumerates DLLs and mapped images; Unix maps the concept to shared objects and
       executable mappings
@@ -1215,24 +1234,33 @@ named pipes (§6.1).
 - [x] Native type
 - [x] Handle / FD identifier
 - [x] Name / path
-- [ ] Access rights
-- [ ] Flags
+- [x] 🟡 Access rights — on Unix this is the access mode in the open flags, `r`, `w` or `rw`, and not
+      a mask of independent bits. Windows has the mask in the table entry and does not decode it yet
+- [x] 🟡 Flags — the `O_*` word, spelled out; a bit the list does not name is shown as a hex
+      remainder rather than dropped. Windows reports `n/a`: its equivalent is the access mask
 - [ ] Object address
 - [ ] Reference count
-- [ ] File offset
+- [x] 🟡 File offset — Linux, from `fdinfo`. A socket and an event descriptor have none and say so
 - [ ] File type
 - [ ] Device
-- [ ] 🟡 Inode
-- [ ] 🟡 Socket endpoint
+- [x] 🟡 Inode — Linux, from `fdinfo`'s `ino:` with the bracketed number in `socket:[n]`/`pipe:[n]`
+      as the fallback for a kernel too old to write it
+- [x] Socket endpoint — the descriptor's inode joins it to a row of the five `/proc/net` tables, and
+      the handles view shows the endpoint and state beside the descriptor
 - [ ] Creation / open time
-- [ ] Target process
+- [x] 🟡 Target process — a pidfd names the process it holds, from `fdinfo`'s `Pid:`. Nothing else
+      refers to a process, and says so rather than reporting pid 0
 
 Categories — Windows: files, directories, registry keys, processes, threads, events, mutexes,
 sections, jobs, tokens, desktops, window stations, pipes, ports, transactions, devices. Linux/macOS:
 files, directories, sockets, pipes, event descriptors, devices, shared memory, process descriptors,
 kernel/event interfaces.
 
-- [ ] 🟡 Resource categories as above — the types are read; the grouping is not built
+- [x] 🟡 Resource categories as above — Linux reads and names all of them: file, directory, socket,
+      pipe, eventfd, epoll, timerfd, signalfd, inotify/fanotify, shared memory (`memfd` and
+      `/dev/shm`), device, pidfd, and "kernel object" for an anonymous inode nobody has named yet.
+      The handles view tallies them per process (§20). Windows' own list is still the nine types
+      `NtQueryObject` returns
 
 Actions:
 

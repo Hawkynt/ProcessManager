@@ -24,6 +24,7 @@ public sealed class DetailPane {
   private readonly TreeListView _threads = new();
   private readonly TreeListView _modules = new();
   private readonly TreeListView _handles = new();
+  private readonly Label _handleSummary = new();
   private readonly TreeListView _environment = new();
   private readonly TreeListView _network = new();
   private readonly Label _hint = new();
@@ -78,8 +79,48 @@ public sealed class DetailPane {
       // "why is this hanging" (PRD §2, §29).
       ("Waiting on", 200)
     );
-    AddList("Modules", this._modules, ("Path", 520), ("Base", 140), ("Size", 100), ("Permissions", 100));
-    AddList("Handles", this._handles, ("Type", 110), ("Handle", 90), ("Name", 640));
+    AddList(
+      "Modules",
+      this._modules,
+      ("Path", 380),
+      ("Base", 130),
+      ("End", 130),
+      ("Size", 80),
+      ("Resident", 80),
+      ("Perm", 56),
+      ("Type", 100),
+      ("Arch", 80),
+      ("SONAME", 160),
+      ("Offset", 90),
+      ("Device", 62),
+      ("Inode", 90),
+      ("File size", 80),
+      ("Modified", 130),
+      ("Maps", 50),
+      ("Interpreter", 220)
+    );
+    AddList(
+      "Handles",
+      this._handles,
+      ("Type", 110),
+      ("FD", 60),
+      ("Access", 60),
+      ("Position", 90),
+      ("Inode", 100),
+      ("Endpoint", 200),
+      ("Flags", 220),
+      ("Name", 520)
+    );
+
+    // The per-kind tally of §20 sits above the descriptors it was counted from rather than becoming
+    // a process-table column: the count is free, the enumeration behind it is 85 µs a process, and
+    // making it a column would put that back in the sample loop (PRD §5.4, §71.2).
+    //
+    // Added after the list, because docked children claim their edge in reverse order and a Fill
+    // child always takes what is left — so the label gets its band and the list keeps the rest.
+    this._handleSummary.Dock = DockStyle.Top;
+    this._handleSummary.Height = 20;
+    this._tabs.TabPages[^1].Controls.Add(this._handleSummary);
     AddList("Environment", this._environment, ("Variable", 220), ("Value", 700));
     AddList(
       "Network",
@@ -252,21 +293,58 @@ public sealed class DetailPane {
   private void FillModules() {
     var modules = this._probe.GetModules(this._key);
     Fill(this._modules, modules.Count, i => [
-      modules[i].Path,
-      "0x" + modules[i].BaseAddress.ToString("x", CultureInfo.InvariantCulture),
+      // A deleted image is still mapped and still running; saying so on the path is the only warning
+      // that the file on disk is no longer the code in memory (PRD §31).
+      modules[i].IsDeleted ? modules[i].Path + "  (deleted)" : modules[i].Path,
+      Humanize.Address(modules[i].BaseAddress),
+      Humanize.Address(modules[i].EndAddress),
       Humanize.Bytes(modules[i].Size),
+      Humanize.Bytes(modules[i].ResidentBytes),
+      // The kernel's own four characters: read, write, execute, and shared-or-private. Three of §31's
+      // flags in one column, in the notation anybody who has read a maps file already knows.
       modules[i].Permissions.Length > 0 ? modules[i].Permissions : "—",
+      Humanize.ImageType(modules[i].Type),
+      modules[i].Architecture ?? "—",
+      modules[i].Soname ?? "—",
+      Humanize.Address(modules[i].FileOffset),
+      modules[i].Device ?? "—",
+      Humanize.Count(modules[i].Inode),
+      Humanize.Bytes(modules[i].FileSizeBytes),
+      Humanize.Timestamp(modules[i].FileModifiedUtcTicks),
+      modules[i].MappingCount.ToString(CultureInfo.InvariantCulture),
+      modules[i].Interpreter ?? "—",
     ]);
   }
 
   private void FillHandles() {
     var handles = this._probe.GetHandles(this._key);
+
+    // The socket join, done once for the list rather than once per row: the five network tables are
+    // read whole either way, and a per-row lookup would read them once per socket the process holds.
+    var endpoints = new Dictionary<ulong, string>();
+    foreach (var connection in this._probe.GetConnections(this._key))
+      endpoints[connection.Inode] = connection.RemotePort == 0
+        ? $"{Humanize.LocalEndpoint(connection)} {connection.State}"
+        : $"{Humanize.LocalEndpoint(connection)} → {Humanize.RemoteEndpoint(connection)}";
+
+    this._handleSummary.Text = HandleTally.From(handles).Describe();
     Fill(this._handles, handles.Count, i => [
-      handles[i].Kind.ToString(),
+      Humanize.ResourceKind(handles[i].Kind),
       handles[i].Handle.ToString(CultureInfo.InvariantCulture),
+      handles[i].Access ?? "—",
+      Humanize.Count(handles[i].Position),
+      Humanize.Count(handles[i].Inode),
+      handles[i].Inode.TryGetValue(out var inode) && endpoints.TryGetValue(inode, out var endpoint)
+        ? endpoint
+        // A socket with no row in the five tables closed between the two reads — and every other kind
+        // of descriptor has no endpoint at all, which is the same dash for a different reason.
+        : "—",
+      DescriptorParser.DescribeFlags(handles[i].OpenFlags) ?? Humanize.Placeholder(handles[i].OpenFlags.Reason),
       // A handle the kernel would not name is a normal outcome on Windows, not a failure — see
       // HandleNameResolver. Saying so beats a blank cell nobody can interpret.
-      handles[i].Name ?? "<not named>",
+      handles[i].TargetPid.TryGetValue(out var target)
+        ? $"{handles[i].Name} → pid {target}"
+        : handles[i].Name ?? "<not named>",
     ]);
   }
 
@@ -303,6 +381,7 @@ public sealed class DetailPane {
       Array.Fill(cells, string.Empty);
       cells[0] = EMPTY;
       list.Nodes.Add(new TreeNode(EMPTY) { Tag = cells });
+
       return;
     }
 

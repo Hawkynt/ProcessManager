@@ -17,6 +17,7 @@ public static class Humanize {
     UnknownReason.NotSupportedOnPlatform => "n/a",
     UnknownReason.NotImplementedHere => "n/i",
     UnknownReason.ProcessExited => "×",
+    UnknownReason.SourceGone => "gone",
     UnknownReason.NotSampledYet => "…",
     UnknownReason.CounterInvalid => "?",
     _ => string.Empty,
@@ -93,6 +94,7 @@ public static class Humanize {
     UnknownReason.NotSupportedOnPlatform => "This operating system does not report this value.",
     UnknownReason.NotImplementedHere => "This operating system reports it; ProcessManager does not read it yet.",
     UnknownReason.ProcessExited => "The process ended while it was being read.",
+    UnknownReason.SourceGone => "What this describes no longer exists — a deleted file that is still mapped.",
     UnknownReason.NotSampledYet => "Needs a second sample; wait one interval.",
     UnknownReason.CounterInvalid => "The counter moved backwards or the interval was zero.",
     _ => string.Empty,
@@ -194,6 +196,24 @@ public static class Humanize {
       : $"{span.Minutes}:{span.Seconds:00}";
   }
 
+  /// <summary>An address in the notation every debugger and every map file writes it in.</summary>
+  public static string Address(ulong value)
+    => "0x" + value.ToString("x", CultureInfo.InvariantCulture);
+
+  public static string Address(Counter counter) => counter.HasValue
+    ? Address(counter.Value)
+    : Placeholder(counter.Reason);
+
+  /// <summary>What an image says it is, in words rather than in an enumeration member's spelling.</summary>
+  public static string ImageType(ModuleType type) => type switch {
+    ModuleType.Executable => "executable",
+    ModuleType.SharedObject => "shared object",
+    ModuleType.Relocatable => "relocatable",
+    ModuleType.CoreDump => "core dump",
+    ModuleType.Data => "data",
+    _ => "—",
+  };
+
   /// <summary>
   /// A point in time as local <c>yyyy-MM-dd HH:mm:ss</c>, or the em dash when there is none.
   /// </summary>
@@ -270,6 +290,35 @@ public static class Humanize {
 
   /// <summary>What a socket delivers, or a dash where the platform did not say.</summary>
   public static string SocketKindName(SocketKind kind) => kind == SocketKind.Unknown ? "—" : kind.ToString();
+
+  /// <summary>
+  /// The kind of a handle or descriptor, in the platform's own vocabulary (PRD §5.3).
+  /// </summary>
+  /// <remarks>
+  /// Not <c>Kind.ToString()</c>: the enumeration is shared across platforms and its member names are
+  /// a compromise between them, whereas the reader is looking at one machine and already knows what
+  /// the thing in front of them is called there.
+  /// </remarks>
+  public static string ResourceKind(HandleKind kind) => kind switch {
+    HandleKind.File => "file",
+    HandleKind.Directory => "directory",
+    HandleKind.Socket => "socket",
+    HandleKind.Pipe => "pipe",
+    HandleKind.Event => "eventfd",
+    HandleKind.EventPoll => "epoll",
+    HandleKind.Timer => "timerfd",
+    HandleKind.Signal => "signalfd",
+    HandleKind.Notify => "notify",
+    HandleKind.SharedMemory => "shared memory",
+    HandleKind.Device => "device",
+    HandleKind.Process => "process",
+    HandleKind.Thread => "thread",
+    HandleKind.Mutex => "mutex",
+    HandleKind.Section => "section",
+    HandleKind.Key => "key",
+    HandleKind.AnonInode => "kernel object",
+    _ => "—",
+  };
 
   public static string State(ProcessState state) => state switch {
     ProcessState.Running => "run",

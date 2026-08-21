@@ -88,8 +88,39 @@ public sealed class ResourceSearchTests {
 
   private static (StubProbe Probe, SystemSnapshot Snapshot) Machine() {
     var probe = new StubProbe();
-    probe.Handles[200] = [new(42, HandleKind.File, "/home/alice/report.txt", "rw")];
-    probe.Modules[100] = [new("/usr/lib/libssl.so.3", 0x1000, 4096, "r-xp")];
+    // Only the fields the search reads are stated; everything else carries the reason it is not
+    // there, because a stub that answers 0 where a probe would answer "unknown" tests the wrong
+    // thing (PRD §72.3).
+    probe.Handles[200] = [new(
+      Handle: 42,
+      Kind: HandleKind.File,
+      Name: "/home/alice/report.txt",
+      Access: "rw",
+      Position: Counter.NotSampledYet,
+      OpenFlags: Counter.NotSampledYet,
+      Inode: Counter.NotSampledYet,
+      TargetPid: Counter.NotSampledYet
+    )];
+    probe.Modules[100] = [new(
+      Path: "/usr/lib/libssl.so.3",
+      BaseAddress: 0x1000,
+      Size: 4096,
+      Permissions: "r-xp",
+      EndAddress: 0x2000,
+      ResidentBytes: Counter.NotSampledYet,
+      FileOffset: Counter.Of(0ul),
+      Inode: Counter.Of(7ul),
+      Device: "00:1e",
+      IsDeleted: false,
+      MappingCount: 1,
+      FileSizeBytes: Counter.NotSampledYet,
+      FileModifiedUtcTicks: 0,
+      Type: ModuleType.SharedObject,
+      Architecture: "x86-64",
+      EntryPoint: Counter.NotSampledYet,
+      Soname: "libssl.so.3",
+      Interpreter: null
+    )];
     probe.Connections[100] = [
       new(
         ConnectionProtocol.Tcp,

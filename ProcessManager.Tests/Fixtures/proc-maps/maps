@@ -1,0 +1,26 @@
+556a67580000-556a67582000 r--p 00000000 00:1e 18094                      /usr/bin/cat
+556a67582000-556a67589000 r-xp 00002000 00:1e 18094                      /usr/bin/cat
+556a67589000-556a6758c000 r--p 00009000 00:1e 18094                      /usr/bin/cat
+556a6758c000-556a6758d000 r--p 0000b000 00:1e 18094                      /usr/bin/cat
+556a6758d000-556a6758e000 rw-p 0000c000 00:1e 18094                      /usr/bin/cat
+556a739e2000-556a73a03000 rw-p 00000000 00:00 0                          [heap]
+7fb177e00000-7fb1780ed000 r--p 00000000 00:1e 871476                     /usr/lib/locale/locale-archive
+7fb178200000-7fb178224000 r--p 00000000 00:1e 680249                     /usr/lib/libc.so.6
+7fb178224000-7fb17839c000 r-xp 00024000 00:1e 680249                     /usr/lib/libc.so.6
+7fb17839c000-7fb178412000 r--p 0019c000 00:1e 680249                     /usr/lib/libc.so.6
+7fb178412000-7fb178416000 r--p 00211000 00:1e 680249                     /usr/lib/libc.so.6
+7fb178416000-7fb178418000 rw-p 00215000 00:1e 680249                     /usr/lib/libc.so.6
+7fb178418000-7fb178420000 rw-p 00000000 00:00 0 
+7fb178475000-7fb17847a000 rw-p 00000000 00:00 0 
+7fb17847a000-7fb1784a7000 r--p 00000000 00:1e 893233                     /etc/ld.so.cache
+7fb1784a7000-7fb1784ab000 r--p 00000000 00:00 0                          [vvar]
+7fb1784ab000-7fb1784ad000 r--p 00000000 00:00 0                          [vvar_vclock]
+7fb1784ad000-7fb1784af000 r-xp 00000000 00:00 0                          [vdso]
+7fb1784af000-7fb1784b0000 r--p 00000000 00:1e 680240                     /usr/lib/ld-linux-x86-64.so.2
+7fb1784b0000-7fb1784dd000 r-xp 00001000 00:1e 680240                     /usr/lib/ld-linux-x86-64.so.2
+7fb1784dd000-7fb1784ec000 r--p 0002e000 00:1e 680240                     /usr/lib/ld-linux-x86-64.so.2
+7fb1784ec000-7fb1784ee000 r--p 0003d000 00:1e 680240                     /usr/lib/ld-linux-x86-64.so.2
+7fb1784ee000-7fb1784ef000 rw-p 0003f000 00:1e 680240                     /usr/lib/ld-linux-x86-64.so.2
+7fb1784ef000-7fb1784f0000 rw-p 00000000 00:00 0 
+7ffff6f96000-7ffff6fb7000 rw-p 00000000 00:00 0                          [stack]
+ffffffffff600000-ffffffffff601000 --xp 00000000 00:00 0                  [vsyscall]

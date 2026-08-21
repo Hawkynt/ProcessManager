@@ -27,6 +27,9 @@ public sealed class LinuxProbe : ISystemProbe {
   private readonly ProcIo _io;
   private readonly ProcFileReader _reader;
   private readonly UserNameResolver _users;
+  // Kept on the probe rather than made per call, because its whole value is that the second process
+  // somebody inspects does not re-read the ELF header of the libc both of them map.
+  private readonly ModuleImageReader _images = new();
   private readonly Dictionary<ProcessKey, ProcessCache> _cache = [];
   private readonly List<ProcessKey> _stale = [];
   private readonly List<int> _pids = [];
@@ -643,7 +646,7 @@ public sealed class LinuxProbe : ISystemProbe {
         // trimming only spaces left the tab in front of it and ParseHex stopped on the first
         // non-hex byte, reporting every process as having no capabilities at all.
         var mask = line["CapEff:"u8.Length..].TrimStart((byte)' ').TrimStart((byte)'\t');
-        record.EffectiveCapabilities = Counter.Of(ParseHex(mask));
+        record.EffectiveCapabilities = Counter.Of(AsciiScanner.ParseHex(mask));
       }
       else if (TryValue(line, "RssAnon:"u8, out var value)) {
         rssAnon = value * 1024;
@@ -1060,47 +1063,64 @@ public sealed class LinuxProbe : ISystemProbe {
     return result;
   }
 
+  /// <summary>
+  /// The images mapped into a process (PRD §31).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// <c>smaps</c> first, <c>maps</c> second. They carry the same header lines, and <c>smaps</c> adds
+  /// the per-mapping counter block that says how much of an image is actually resident — the one
+  /// number that distinguishes a library the process is running from one it merely linked against.
+  /// It costs a walk of the page table, which is why it is asked for here and not in the sample loop
+  /// (PRD §5.4), and why the cheaper file is still tried when it is refused.
+  /// </para>
+  /// <para>
+  /// The parse is in <see cref="MapsParser"/> so the Windows and macOS CI legs run it too (PRD §9.2);
+  /// only the two reads and the on-disk enrichment are here.
+  /// </para>
+  /// </remarks>
   public IReadOnlyList<ModuleRecord> GetModules(ProcessKey key) {
-    var result = new List<ModuleRecord>();
-    if (!this._reader.TryRead($"{this._procRoot}/{key.Pid}/maps", out var content, out _))
-      return result;
+    List<ModuleRecord> modules;
+    if (this._reader.TryReadWhole($"{this._procRoot}/{key.Pid}/smaps", out var content, out _))
+      // A header line with no counter block behind it does not happen on a kernel that produced the
+      // header at all, so this reason is a statement about a kernel we have never met rather than
+      // about this one.
+      modules = MapsParser.Collect(content, Counter.NotSupported);
+    else if (this._reader.TryReadWhole($"{this._procRoot}/{key.Pid}/maps", out content, out var errno))
+      modules = MapsParser.Collect(
+        content,
+        errno is Native.EACCES or Native.EPERM ? Counter.NotPermitted : Counter.NotSupported
+      );
+    else
+      return [];
 
-    // One entry per distinct backing file rather than per mapping: a shared library shows up as four
-    // consecutive lines (text, rodata, data, bss) and listing it four times helps nobody.
-    var seen = new HashSet<string>(StringComparer.Ordinal);
-    var scanner = new AsciiScanner(content);
-    while (!scanner.IsEmpty) {
-      var line = scanner.NextLine();
-      if (line.IsEmpty)
-        continue;
+    // Whether the file behind each mapping can be read is a separate question from whether the
+    // process could be: /proc said "libfoo.so", and the answer to "how big is it, and what does its
+    // header say" is on the file system.
+    for (var i = 0; i < modules.Count; ++i)
+      modules[i] = this._images.Describe(modules[i]);
 
-      var lineScanner = new AsciiScanner(line);
-      var range = lineScanner.NextField();
-      var permissions = lineScanner.NextField();
-      lineScanner.Skip(3);                                 // offset, dev, inode
-      var pathBytes = lineScanner.NextField();
-      if (pathBytes.IsEmpty || pathBytes[0] != (byte)'/')
-        continue;
-
-      var path = Encoding.UTF8.GetString(pathBytes);
-      if (!seen.Add(path))
-        continue;
-
-      var dash = range.IndexOf((byte)'-');
-      var start = dash > 0 ? ParseHex(range[..dash]) : 0;
-      var end = dash > 0 ? ParseHex(range[(dash + 1)..]) : 0;
-      result.Add(new(path, start, end > start ? end - start : 0, Encoding.ASCII.GetString(permissions)));
-    }
-
-    return result;
+    return modules;
   }
 
+  /// <summary>
+  /// Every descriptor a process holds, with what <c>fdinfo</c> says about each (PRD §32).
+  /// </summary>
+  /// <remarks>
+  /// Two reads per descriptor — the symlink for what it points at, <c>fdinfo</c> for the position,
+  /// the flags and the inode. The inode is what makes the list useful beyond a name: it is the join
+  /// key from a socket descriptor to a row of <c>/proc/net/tcp</c>, which is the difference between
+  /// "holds a socket" and "holds this connection" (PRD §40).
+  /// </remarks>
   public IReadOnlyList<HandleRecord> GetHandles(ProcessKey key) {
     var result = new List<HandleRecord>();
     var fdRoot = $"{this._procRoot}/{key.Pid}/fd";
     string[] entries;
     try {
-      entries = Directory.GetFiles(fdRoot);
+      // Every entry, not GetFiles: a descriptor on a directory is a symlink to a directory, and the
+      // managed enumerator classifies those as directories. Listing only the files silently dropped
+      // every open directory a process held, which is most of what a file manager or an indexer has.
+      entries = Directory.GetFileSystemEntries(fdRoot);
     } catch (UnauthorizedAccessException) {
       return this.HandlesThroughHelper(key, result);
     } catch (IOException) {
@@ -1108,14 +1128,54 @@ public sealed class LinuxProbe : ISystemProbe {
     }
 
     foreach (var entry in entries) {
-      if (!int.TryParse(Path.GetFileName(entry), out var fd))
+      var name = Path.GetFileName(entry);
+      if (!int.TryParse(name, out var fd))
         continue;
 
       var target = this._reader.TryReadLink(entry);
-      result.Add(new((ulong)fd, ClassifyFd(target), target, null));
+      var info = this._reader.TryRead($"{this._procRoot}/{key.Pid}/fdinfo/{name}", out var content, out var errno)
+        ? DescriptorParser.ParseFdInfo(content)
+        : errno is Native.EACCES or Native.EPERM
+          ? DescriptorParser.Refused
+          : DescriptorParser.Unread;
+
+      result.Add(Build((ulong)fd, target, info));
     }
 
     return result;
+  }
+
+  /// <summary>
+  /// One descriptor, from its target and its <c>fdinfo</c>.
+  /// </summary>
+  /// <remarks>
+  /// The inode is taken from <c>fdinfo</c> when it is there and from the <c>socket:[n]</c> name when
+  /// it is not: the <c>ino:</c> line is recent, the bracketed number has been in the link target for
+  /// as long as <c>/proc</c> has had one, and the socket join must not stop working on an older
+  /// kernel.
+  /// </remarks>
+  private static HandleRecord Build(ulong fd, string? target, DescriptorParser.DescriptorInfo info) {
+    var inode = info.Inode;
+    if (!inode.HasValue && DescriptorParser.TryParsePseudoInode(target, out var fromName))
+      inode = Counter.Of(fromName);
+
+    var kind = DescriptorParser.Classify(target, info.OpenFlags);
+    // O_DIRECTORY is not compulsory — open(2) on a directory succeeds without it — so a descriptor
+    // that the flags did not settle is asked of the file system, which is what the previous version
+    // did for every descriptor.
+    if (kind == HandleKind.File && target is not null && Directory.Exists(target))
+      kind = HandleKind.Directory;
+
+    return new(
+      fd,
+      kind,
+      target,
+      DescriptorParser.DescribeAccess(info.OpenFlags),
+      info.Position,
+      info.OpenFlags,
+      inode,
+      info.TargetPid
+    );
   }
 
   /// <summary>
@@ -1137,30 +1197,29 @@ public sealed class LinuxProbe : ISystemProbe {
         continue;
 
       var target = line[(tab + 1)..];
-      result.Add(new((ulong)fd, ClassifyFd(target.Length == 0 ? null : target), target.Length == 0 ? null : target, null));
+      // The helper answers with the name and nothing else. Everything fdinfo would have added is
+      // therefore missing because the protocol does not carry it yet — a fact about this program, not
+      // about the kernel, and the two must not render the same (PRD §7).
+      result.Add(Build((ulong)fd, target.Length == 0 ? null : target, DescriptorParser.NotRelayed));
     }
 
     return result;
   }
-
-  private static HandleKind ClassifyFd(string? target) => target switch {
-    null => HandleKind.Unknown,
-    _ when target.StartsWith("socket:", StringComparison.Ordinal) => HandleKind.Socket,
-    _ when target.StartsWith("pipe:", StringComparison.Ordinal) => HandleKind.Pipe,
-    _ when target.StartsWith("anon_inode:", StringComparison.Ordinal) => HandleKind.AnonInode,
-    _ when Directory.Exists(target) => HandleKind.Directory,
-    _ when target.StartsWith("/dev/", StringComparison.Ordinal) => HandleKind.Device,
-    _ => HandleKind.File,
-  };
 
   public IReadOnlyList<ConnectionRecord> GetConnections(ProcessKey key) {
     // The socket inodes this process holds, joined against the five network tables. The join runs
     // once per request rather than once per process, which is what keeps it off the sampling path
     // (PRD §5.1).
     var inodes = new HashSet<ulong>();
-    foreach (var handle in this.GetHandles(key))
-      if (handle.Name is { } target && ProcNetParser.TryParseSocketInode(target, out var inode))
+    // The descriptor's own inode, which fdinfo reports directly and the socket:[n] name still
+    // carries on a kernel too old to write it (PRD §32).
+    foreach (var handle in this.GetHandles(key)) {
+      if (handle.Kind != HandleKind.Socket)
+        continue;
+
+      if (handle.Inode.TryGetValue(out var inode))
         inodes.Add(inode);
+    }
 
     var result = new List<ConnectionRecord>();
     if (inodes.Count == 0)
@@ -1306,26 +1365,6 @@ public sealed class LinuxProbe : ISystemProbe {
     => this._reader.TryReadWhole(this._procRoot + relativePath, out var content, out _)
       ? Encoding.UTF8.GetString(content)
       : null;
-
-  private static ulong ParseHex(ReadOnlySpan<byte> field) {
-    ulong value = 0;
-    for (var i = 0; i < field.Length; ++i) {
-      var c = field[i];
-      var digit = c switch {
-        >= (byte)'0' and <= (byte)'9' => c - (byte)'0',
-        >= (byte)'a' and <= (byte)'f' => c - (byte)'a' + 10,
-        >= (byte)'A' and <= (byte)'F' => c - (byte)'A' + 10,
-        _ => -1,
-      };
-
-      if (digit < 0)
-        break;
-
-      value = value * 16 + (ulong)digit;
-    }
-
-    return value;
-  }
 
   public IReadOnlyList<KeyValuePair<string, string>> GetEnvironment(ProcessKey key) {
     var result = new List<KeyValuePair<string, string>>();
