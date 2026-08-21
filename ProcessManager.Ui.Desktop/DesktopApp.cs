@@ -232,9 +232,19 @@ public static class DesktopApp {
               ("Memory map", "properties-memory-map.png"),
               ("Security", "properties-security.png"),
               ("cgroup", "properties-cgroup.png"),
+              // The two lists §31 and §32 are about. Never photographed until now, which is how a
+              // twenty-one-column module list and an eleven-column descriptor list stayed a layout
+              // nobody had ever looked at: both scroll sideways, and a column whose width is wrong
+              // takes the ones after it off the edge without failing a single test (PRD §9.6).
+              ("Modules", "properties-modules.png"),
+              ("Handles", "properties-handles.png"),
             ]) {
               properties.ShowPage(tab);
               properties.ApplyLayout();
+              // What the page holds, before the picture of it. A list photographed as an empty
+              // rectangle and a list of nought rows look identical in a PNG, and only one of them
+              // is a layout fault (PRD §9.6).
+              description += "  " + properties.Pane.DescribeForCapture();
               var pngPath = Path.Combine(directory, image);
               description += GtkCapture.Window(pngPath, out var pageFail, properties.Text) is { } shot
                 ? $"properties {tab}: {shot.Width}x{shot.Height} -> {pngPath}\n"
