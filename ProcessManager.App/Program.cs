@@ -51,7 +51,8 @@ internal static class Program {
       options.WantsSecurityContext,
       options.WantsProportionalSetSize,
       options.WantsSupplementaryGroups,
-      options.WantsGpuUsage
+      options.WantsGpuUsage,
+      options.WantsHandleCount
     );
     if (probe is null) {
       Console.Error.WriteLine($"procman: there is no probe for this platform yet ({Environment.OSVersion.Platform}).");

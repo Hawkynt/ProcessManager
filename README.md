@@ -103,6 +103,9 @@ procman --host                # what this machine is: processor, cache, memory, 
 procman --startup             # what will run when you log in, and what will not, and why
 procman --users               # who is logged in, and what their processes cost
 procman --services            # which services exist and which are running
+procman --connections         # every socket and who owns it; --resolve names the addresses
+procman --limits 1234         # what a process's cgroup allows it, and what it is using of that
+procman --run PROGRAM ARG…    # start a program, in a directory, with a variable, at a priority
 procman --find "libssl"       # which process is using this? files, mappings, sockets, services
 procman --find '/^kwin/'      # …by regular expression
 procman --kill 1234 --tree    # end a process and its descendants
@@ -119,6 +122,7 @@ procman --list --columns @security --format=json
 procman --list --columns @memory --sort=private.delta
 procman --help-fields         # every field, its aliases, and the filter grammar
 
+procman --gpu                 # account for what each process does to the graphics adapters
 procman --flat                # start as a sorted list rather than a tree
 procman --save-settings       # keep this run's columns, sort and interval
 procman --self-test           # ask the probe about itself; the runtime checks its answer
@@ -140,7 +144,7 @@ Explorer users already have in their eyes: plots and per-core meters on top, the
 them, and a tabbed detail pane under that — overview, threads, modules, handles, environment,
 network — and double-clicking a row opens that process in a window of its own, so two of them can be
 compared side by side. Click a header to sort by it, click it again to reverse; **View → Select columns** chooses
-from forty-five, **View → Performance** (or clicking any plot) opens the system information window —
+from ninety, **View → Performance** (or clicking any plot) opens the system information window —
 a rail of every processor, disk and adapter with its current reading, and a large graph of whichever
 is selected — and **View → Colour legend** says what every row colour means.
 
@@ -169,10 +173,12 @@ probe collects, and a colour that is sometimes right is worse than none.
 
 | Area                    | Contents                                                                                                                                                                                                                  |
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Process tree**        | Forty-five fields: identity and lineage · CPU as a share of the machine or of one core, CPU time, cycles and context switches per second, last processor · private bytes and how fast they are moving, private and total working set with their peaks, virtual size, swap, pool quotas, page faults per second · I/O read, write and total rates · threads, handles, priority, session, start time · elevation, integrity, seccomp, no-new-privs, capabilities, LSM label · cgroup, image path, command line |
+| **Process tree**        | Ninety fields: identity and lineage · CPU as a share of the machine or of one core, CPU time, cycles and context switches per second, last processor · private bytes and how fast they are moving, private and total working set with their peaks, virtual size, swap, pool quotas, page faults per second · I/O read, write and total rates · threads, handles, priority, session, start time · elevation, integrity, seccomp, no-new-privs, capabilities, LSM label · cgroup, image path, command line |
 | **Per-process details** | Threads (TID, name, state, CPU split into user and kernel, context switches, last processor, and what it is blocked in) · modules and mappings · handles and open files · environment block · TCP/UDP endpoints · memory regions |
+| **Graphics**            | Per process: which adapter, dedicated and shared video memory and how fast it is moving, and time on each engine — graphics, compute, copy, encode, decode. NVIDIA through NVML, AMD and Intel through the kernel's own `drm-usage-stats`. Per adapter: model, driver, utilisation, memory, temperature, clocks, fan and power against both its limits |
 | **Performance**         | Processor model and vendor, base and current speed, sockets, physical cores, logical processors, NUMA nodes, L1/L2/L3 cache · memory total, in use, available, cached, swap · per disk: model, capacity, media type, active time, read and write rates, IOPS · per network interface: state, link speed, MAC, MTU, send and receive rates, errors and drops · uptime, load average, process and thread counts |
 | **System overview**     | Per-core CPU history, load average, memory and swap with cache breakdown, I/O throughput, uptime, context switches, interrupts |
+| **Sockets**             | Every TCP, UDP and Unix endpoint with the process behind it, queue depths and retransmits; ports named from the machine's own `/etc/services`, addresses resolved only when asked |
 | **Filter**              | `field:value` with comparisons, booleans, regex and unit-aware sizes, over every field — plus the "who is holding this file" search across open files, mapped modules and endpoints |
 
 Rows are coloured the way Process Explorer colours them — new green, exited red — in both front-ends.
@@ -268,14 +274,18 @@ These are consequences of the design, not a to-do list; the to-do list is the PR
   `--users` answer all three of Task Manager's missing tabs on Linux, and none of them has a view in
   either front-end. Windows has none of the three, and nothing can be started, stopped or disabled
   from here yet. PRD §41–§43.
-- **Only some things are persisted.** Columns, sort order, tree mode and the sample interval survive
-  a restart, in a `key=value` file meant to be edited by hand. Window size, the highlight colours and
-  everything else in PRD §67 do not.
+- **Some things are still not persisted.** Columns, sort order, tree mode, the sample interval, the
+  window's size and split, the row colours and the heat thresholds all survive a restart, in a
+  `key=value` file meant to be edited by hand. The rest of PRD §67 does not.
 - **Per-process network capture needs the helper.** Linux attributes sockets to processes through
   `/proc/net` plus inode matching, which is unprivileged but coarse; anything finer needs root.
 - **No kernel driver, ever.** Everything Process Explorer does through its driver — real thread
   stacks with symbols, kernel object inspection, protected-process access — is out of reach here and
   stated as a non-goal in the PRD, rather than promised and quietly missing.
+- **Nothing attributes power to a process.** The adapters report their own draw against their own
+  limits, and the processor package reports its energy counter. Neither NVML nor the kernel splits
+  either figure per process, and dividing a card's watts by a process's share of its engines is a
+  model rather than a reading — so those columns are absent instead of estimated. PRD §22.
 - **Sampled, not traced.** Rates come from differencing counters at an interval. A process that lives
   and dies inside one interval is a gap in the data, and the UI says so instead of drawing a zero.
 

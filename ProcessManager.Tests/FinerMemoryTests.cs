@@ -178,6 +178,19 @@ public sealed class FinerMemoryTests {
   public void FilteringOnItCountsAsAskingToo() =>
     Assert.That(Parse("--filter=pss>10M").WantsProportionalSetSize, Is.True);
 
+  /// <summary>
+  /// The same rule for the descriptor count, which had no rule at all: nothing in the program ever
+  /// turned the read on, so the column came back empty however it was asked for (PRD §5.4).
+  /// </summary>
+  [Test]
+  public void NamingTheDescriptorCountTurnsItOnToo() {
+    Assert.That(Parse("--columns=name,handles").WantsHandleCount, Is.True);
+    Assert.That(Parse("--filter=handles>100").WantsHandleCount, Is.True);
+    // And it stays off otherwise: a getdents loop over every process every sample is the most
+    // expensive thing the sampler can be asked to do.
+    Assert.That(Parse("--columns=name,ws").WantsHandleCount, Is.False);
+  }
+
   private static Hawkynt.ProcessManager.App.CommandLineOptions Parse(string argument)
     => Hawkynt.ProcessManager.App.CommandLineOptions.Parse([argument], null);
 
