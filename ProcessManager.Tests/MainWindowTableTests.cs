@@ -87,6 +87,37 @@ public sealed class MainWindowTableTests {
     Assert.That(window.DescribeSettings().DesktopColumnWidths, Is.Empty);
   }
 
+  /// <summary>
+  /// The pinned run is a count into the column order, so it has to be restored after the order is —
+  /// restoring it first clamps it against whatever the window happened to open with (PRD §11).
+  /// </summary>
+  [Test]
+  public void ThePinnedColumnsSurviveARestart() {
+    var window = Window();
+    window.ApplySettings(new() {
+      DesktopColumns = [ProcessField.Name, ProcessField.Pid, ProcessField.UserName, ProcessField.CpuPercent],
+      PinnedDesktopColumns = 3,
+    }, _ => true);
+
+    Assert.That(window.DescribeSettings().PinnedDesktopColumns, Is.EqualTo(3));
+    Assert.That(window.DescribeForCapture(), Does.Contain("pinned:       3 of them"));
+  }
+
+  /// <summary>
+  /// A file asking for more pinned columns than it lists gets what it can have rather than a table
+  /// the toolkit will not scroll at all.
+  /// </summary>
+  [Test]
+  public void MorePinnedColumnsThanThereAreIsClampedToWhatIsThere() {
+    var window = Window();
+    window.ApplySettings(new() {
+      DesktopColumns = [ProcessField.Name, ProcessField.Pid],
+      PinnedDesktopColumns = 9,
+    }, _ => true);
+
+    Assert.That(window.DescribeSettings().PinnedDesktopColumns, Is.EqualTo(2));
+  }
+
   [Test]
   public void TheGroupingSurvivesARestart() {
     var window = Window();

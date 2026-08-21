@@ -160,9 +160,14 @@ public sealed class ColumnLayout {
   /// <summary>Pins every column up to and including the cursor, or unpins them all.</summary>
   public void ToggleFreeze() {
     var wanted = this.Current + 1;
-    this.Frozen = this.Frozen == wanted ? 0 : wanted;
-    this.Scroll = Math.Max(this.Scroll, this.Frozen);
+    this.SetFrozen(this.Frozen == wanted ? 0 : wanted);
     this.Customised = true;
+  }
+
+  /// <summary>Pins the first <paramref name="count"/> columns — what the settings file restores.</summary>
+  public void SetFrozen(int count) {
+    this.Frozen = Math.Clamp(count, 0, this._columns.Count);
+    this.Scroll = Math.Max(this.Scroll, this.Frozen);
   }
 
   public void ScrollBy(int delta) => this.Scroll = Math.Clamp(this.Scroll + delta, this.Frozen, Math.Max(this.Frozen, this._columns.Count - 1));

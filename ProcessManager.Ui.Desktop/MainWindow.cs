@@ -130,6 +130,10 @@ public sealed class MainWindow : Form {
     foreach (var (field, width) in settings.DesktopColumnWidths)
       this._columns.Restore(field, width);
 
+    // After the set as well, for the same reason: the pinned run is a count of columns, and a count
+    // restored before the list it counts into would be clamped against the old one.
+    this._columns.SetFrozen(settings.PinnedDesktopColumns);
+
     this._view.Grouping = settings.Grouping;
 
     if (settings.WindowWidth > 0 && settings.WindowHeight > 0)
@@ -159,6 +163,7 @@ public sealed class MainWindow : Form {
       CpuMode = this._sampler.CpuPercentMode,
       DesktopColumns = this._columns.Fields,
       DesktopColumnWidths = this._columns.ChosenWidths,
+      PinnedDesktopColumns = this._columns.Frozen,
       Grouping = this._view.Grouping,
       Thresholds = ProcessRow.Thresholds,
       WindowWidth = this.Width,
@@ -185,6 +190,7 @@ public sealed class MainWindow : Form {
     builder.AppendLine($"controls:     {this.Controls.Count}");
     builder.AppendLine($"process rows: {this._tree.Nodes.Count} roots, {this._tree.VisibleNodeCount} visible");
     builder.AppendLine($"columns:      {this._tree.Columns.Count} — {this.DescribeColumns()}");
+    builder.AppendLine($"pinned:       {this._columns.Frozen} of them, scrolled {this._tree.HorizontalOffset} px of {this._tree.MaxHorizontalOffset}");
     builder.AppendLine($"sorted by:    {this.DescribeSort()}");
     builder.AppendLine(
       $"grouped by:   {Settings.UserSettings.NameOfGrouping(this._view.Grouping)}, "
@@ -208,14 +214,34 @@ public sealed class MainWindow : Form {
     return builder.ToString();
   }
 
-  /// <summary>The columns as they stand — their order and the width each ended up with.</summary>
+  /// <summary>
+  /// The columns as they stand — their order, the width each ended up with, and where the pinned
+  /// run ends.
+  /// </summary>
+  /// <remarks>
+  /// The boundary is a bar rather than a count on a line of its own, because what a reader of the
+  /// shoot log is checking is <em>which</em> columns are pinned after a move: reordering a table
+  /// with two pinned columns changes what is held still, and a count says nothing about that.
+  /// <para>
+  /// Drawn at both ends as well as in the middle. Leaving it off when nothing is pinned would make
+  /// that line identical to one where <em>everything</em> is, and those are the two states where
+  /// the table stops scrolling for opposite reasons.
+  /// </para>
+  /// </remarks>
   private string DescribeColumns() {
-    var parts = new List<string>(this._columns.Count);
-    for (var i = 0; i < this._columns.Count; ++i)
+    var parts = new List<string>(this._columns.Count + 1);
+    for (var i = 0; i < this._columns.Count; ++i) {
+      if (i == this._columns.Frozen)
+        parts.Add("|");
+
       parts.Add(
         $"{ColumnSet.Info(this._columns.FieldAt(i)).Key}:{this._columns.WidthAt(i).ToString(CultureInfo.InvariantCulture)}"
         + (i == this._columns.Current ? "*" : string.Empty)
       );
+    }
+
+    if (this._columns.Frozen >= this._columns.Count)
+      parts.Add("|");
 
     return string.Join(" ", parts);
   }
@@ -445,6 +471,28 @@ public sealed class MainWindow : Form {
   private bool IsHeader(int y) => this._tree.ShowColumnHeaders && y >= 0 && y < this._tree.ItemHeight;
 
   /// <summary>
+  /// Turns an x on the control into an x in the columns (PRD §11).
+  /// </summary>
+  /// <remarks>
+  /// A pinned column is where it looks; everything else has moved left by the scroll offset. Adding
+  /// the offset to both — which is what this did while nothing could be pinned — makes a click on a
+  /// pinned caption pick whichever column has scrolled underneath it, and a resize started there
+  /// drag the wrong boundary.
+  /// <para>
+  /// The widths come from the header rather than from <see cref="DesktopColumns"/> so that this and
+  /// the drawing cannot disagree: the last column is stretched to fill the list, and the copy of the
+  /// widths on this side does not know that.
+  /// </para>
+  /// </remarks>
+  private int ColumnCoordinate(int x) {
+    var frozenWidth = 0;
+    for (var i = 0; i < this._columns.Frozen && i < this._tree.Columns.Count; ++i)
+      frozenWidth += this._tree.Columns[i].Width;
+
+    return x < frozenWidth ? x : x + this._tree.HorizontalOffset;
+  }
+
+  /// <summary>
   /// A press in the header: near a boundary it grabs the boundary, otherwise it grabs the column.
   /// </summary>
   /// <remarks>
@@ -460,7 +508,7 @@ public sealed class MainWindow : Form {
     if (e.Button != MouseButtons.Left || !this.IsHeader(e.Y))
       return;
 
-    var x = e.X + this._tree.HorizontalOffset;
+    var x = this.ColumnCoordinate(e.X);
     this._pressX = x;
     var edge = this._columns.EdgeAt(x);
     if (edge >= 0) {
@@ -477,14 +525,14 @@ public sealed class MainWindow : Form {
   private void OnTreeMouseMove(object? sender, MouseEventArgs e) {
     if (this._resizingColumn >= 0) {
       this._dragged = true;
-      this._columns.SetWidth(this._resizingColumn, this._pressWidth + (e.X + this._tree.HorizontalOffset - this._pressX));
+      this._columns.SetWidth(this._resizingColumn, this._pressWidth + (this.ColumnCoordinate(e.X) - this._pressX));
       // The widths, not the whole header: rebuilding the columns on every pointer move would drop
       // and recreate six controls a frame, and the header would flicker under the hand doing it.
       this.ApplyWidths();
       return;
     }
 
-    if (this._pressedColumn >= 0 && Math.Abs(e.X + this._tree.HorizontalOffset - this._pressX) > _DragSlop)
+    if (this._pressedColumn >= 0 && Math.Abs(this.ColumnCoordinate(e.X) - this._pressX) > _DragSlop)
       this._dragged = true;
   }
 
@@ -512,7 +560,7 @@ public sealed class MainWindow : Form {
       return;
 
     if (dragged) {
-      var target = this._columns.HitTest(e.X + this._tree.HorizontalOffset);
+      var target = this._columns.HitTest(this.ColumnCoordinate(e.X));
       if (target >= 0 && this._columns.MoveTo(pressed, target)) {
         this.RebuildColumns();
         this.Rebind();
@@ -591,6 +639,10 @@ public sealed class MainWindow : Form {
       var which = column;
       this._tree.Columns.Add(new(header, this._columns.WidthAt(i), Cell) {
         TextAlign = info.RightAligned ? ContentAlignment.MiddleRight : ContentAlignment.MiddleLeft,
+        // The pinned run, which the list holds still while the rest scroll under it (PRD §11). The
+        // toolkit reads it as the leading run of pinned columns and stops at the first one that is
+        // not, which is the same rule the terminal's layout follows.
+        Frozen = this._columns.IsFrozen(i),
       });
 
       // A grouping heading is not a process, so it has no cell in any column but the first — where
@@ -660,6 +712,15 @@ public sealed class MainWindow : Form {
     if ((uint)e.ColumnIndex >= (uint)this._columns.Count)
       return;
 
+    // Before anything else, and only for a table that has actually scrolled: the pinned columns are
+    // drawn in a second pass over whatever slid underneath them, and the control fills the row's
+    // ground once for the whole row before either pass runs. So a pinned cell arrives here with
+    // somebody else's value already drawn in it and has to clear its own ground first — without
+    // this, every pinned cell in a scrolled table shows two values one on top of the other, which
+    // is how the first picture of this came out (PRD §11).
+    if (this._tree.HorizontalOffset > 0 && this._columns.IsFrozen(e.ColumnIndex))
+      e.Graphics.FillRectangle(GroundOf(e), e.Bounds);
+
     // Under everything else, and for every cell: this runs before the control draws its text, so a
     // rule laid down here is a rule the text sits on rather than one drawn over it.
     DrawGridLines(e);
@@ -695,6 +756,25 @@ public sealed class MainWindow : Form {
     // Handled: the cell has no text, and letting the control draw an empty string over the plot
     // would only cost a measure.
     e.Handled = true;
+  }
+
+  /// <summary>
+  /// The colour the control filled this row with, so a pinned cell can clear its own ground.
+  /// </summary>
+  /// <remarks>
+  /// The third duplication of the toolkit's own drawing on this side, and written down as one for
+  /// the same reason the cell insets are: if <c>TreeListView</c> ever fills its rows differently,
+  /// the pinned columns end up a different colour from the rest of their row and this is the line to
+  /// change. The order matches the control's — selection first, then the row's own colour, then the
+  /// field's.
+  /// </remarks>
+  private static Color GroundOf(TreeListViewCellPaintEventArgs e) {
+    if (e.Selected)
+      return e.Theme.SelectionBackground;
+
+    return e.Node.Tag is ProcessRow row
+      ? RowPalette.BackColorOf(row.Category, e.Theme) ?? e.Theme.FieldBackground
+      : e.Theme.FieldBackground;
   }
 
   /// <summary>
@@ -2358,6 +2438,35 @@ public sealed class MainWindow : Form {
     return this.DescribeForCapture();
   }
 
+  /// <summary>The columns that are showing, and how many of them are pinned (PRD §11).</summary>
+  /// <remarks>Enough for a caller to put the table back the way it found it.</remarks>
+  public (ProcessField[] Fields, int Pinned) ShownColumns => (this._columns.Fields, this._columns.Frozen);
+
+  /// <summary>
+  /// Shows a set of columns, pins a run of them, and optionally scrolls the rest to the far end
+  /// (PRD §11, §9.6).
+  /// </summary>
+  /// <remarks>
+  /// The one state a picture of the default layout cannot show. Six columns fit a window, so nothing
+  /// scrolls and nothing is held still, and a pinned run that had stopped working would photograph
+  /// exactly like one that had not. Ten columns do not fit, and a table scrolled to its right-hand
+  /// end either still has its names down the left or it does not.
+  /// </remarks>
+  public string ShowColumns(IReadOnlyList<ProcessField> fields, int pinned, bool scrollToTheEnd = false) {
+    ArgumentNullException.ThrowIfNull(fields);
+
+    this._columns.Apply(fields);
+    this._columns.SetFrozen(pinned);
+    this._columns.SetCurrent(0);
+    this.RebuildColumns();
+    this.Rebind();
+    // Asked for after the rebuild: the ceiling is computed from the columns, so a table asked to
+    // scroll before it had them is a table clamped to nought.
+    this._tree.HorizontalOffset = scrollToTheEnd ? this._tree.MaxHorizontalOffset : 0;
+    this.SelectFirstRow();
+    return this.DescribeForCapture();
+  }
+
   /// <summary>
   /// Puts the columns through the moves §11 asks for, and says what each did (PRD §9.6).
   /// </summary>
@@ -2372,6 +2481,7 @@ public sealed class MainWindow : Form {
     // throw away the layout of whoever regenerated the screenshots.
     var opened = this._columns.Fields;
     var openedWidths = this._columns.ChosenWidths;
+    var openedPins = this._columns.Frozen;
 
     var builder = new System.Text.StringBuilder();
     builder.AppendLine($"columns opened:  {this.DescribeColumns()}");
@@ -2382,6 +2492,11 @@ public sealed class MainWindow : Form {
     builder.AppendLine($"columns moved:   {this.DescribeColumns()}");
     this.ResizeColumn(_ResizeStep * 4);
     builder.AppendLine($"columns resized: {this.DescribeColumns()}");
+    this._columns.SetCurrent(2);
+    this.PinColumns();
+    builder.AppendLine($"columns pinned:  {this.DescribeColumns()}");
+    this.PinColumns();
+    builder.AppendLine($"columns loosed:  {this.DescribeColumns()}");
     this.ResetColumns();
     builder.AppendLine($"columns reset:   {this.DescribeColumns()}");
 
@@ -2389,6 +2504,7 @@ public sealed class MainWindow : Form {
     foreach (var (field, width) in openedWidths)
       this._columns.Restore(field, width);
 
+    this._columns.SetFrozen(openedPins);
     this._columns.SetCurrent(0);
     this.RebuildColumns();
     this.Rebind();
@@ -2536,6 +2652,8 @@ public sealed class MainWindow : Form {
     menu.DropDownItems.Add(Shortcut("Narrower", Keys.Control | Keys.OemMinus, () => this.ResizeColumn(-_ResizeStep)));
     menu.DropDownItems.Add(Shortcut("Wider", Keys.Control | Keys.Oemplus, () => this.ResizeColumn(_ResizeStep)));
     menu.DropDownItems.Add(new ToolStripSeparator());
+    menu.DropDownItems.Add(Shortcut("Pin up to this column", Keys.Control | Keys.Shift | Keys.P, this.PinColumns));
+    menu.DropDownItems.Add(new ToolStripSeparator());
     menu.DropDownItems.Add(Shortcut("Fit this column", Keys.Control | Keys.D1, () => this.AutoSize(false)));
     menu.DropDownItems.Add(Shortcut("Fit every column", Keys.Control | Keys.D2, () => this.AutoSize(true)));
     menu.DropDownItems.Add(Shortcut("Reset columns", Keys.Control | Keys.D0, this.ResetColumns));
@@ -2574,6 +2692,22 @@ public sealed class MainWindow : Form {
     this.RebuildColumns();
     this.Rebind();
     this.SayCurrentColumn();
+  }
+
+  /// <summary>
+  /// Pins the columns up to the cursor, or releases them all (PRD §11).
+  /// </summary>
+  /// <remarks>
+  /// The status line says what happened because the header cannot. The toolkit draws its own
+  /// captions and offers nothing to mark one with, so a table that had just pinned three columns and
+  /// a table that had not would be told apart only by scrolling it sideways and watching.
+  /// </remarks>
+  private void PinColumns() {
+    this._columns.ToggleFreeze();
+    this.RebuildColumns();
+    this._status.Text = this._columns.Frozen == 0
+      ? "no columns are pinned; the whole table scrolls"
+      : $"pinned {this._columns.Frozen} column(s), up to {ColumnSet.Info(this._columns.FieldAt(this._columns.Frozen - 1)).Header}";
   }
 
   private void ResizeColumn(int delta) {

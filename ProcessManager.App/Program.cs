@@ -114,6 +114,7 @@ internal static class Program {
         SortDescending = options.SortDescending,
         Grouping = options.Grouping,
         Columns = options.TerminalColumns,
+        PinnedColumns = options.PinnedTerminalColumns,
         // Only when this run said so: otherwise the terminal decides from the locale, which is the
         // one thing a capture may not do and a person watching wants.
         Graphs = options.AsciiOnly ? GraphStyle.Ascii : options.GraphStyle == GraphStyle.Blocks ? null : options.GraphStyle,
@@ -139,6 +140,10 @@ internal static class Program {
     // test that looks at a whole frame (PRD §9.6).
     if (options.TerminalColumns is { Length: > 0 } columns)
       ui.Columns.Apply(columns);
+
+    // After the columns, because Apply resets the pinned run to the one column a fresh set opens
+    // with, and a capture has to photograph the layout the settings file actually describes.
+    ui.Columns.SetFrozen(options.PinnedTerminalColumns);
 
     for (var i = 0; i < options.CaptureSamples; ++i) {
       ui.Update();

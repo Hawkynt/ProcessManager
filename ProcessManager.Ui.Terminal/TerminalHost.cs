@@ -31,6 +31,9 @@ public sealed record TerminalStartup {
   /// <summary>The saved columns, or null to let the width decide (PRD §57.1).</summary>
   public ProcessField[]? Columns { get; init; }
 
+  /// <summary>How many leading columns are pinned (PRD §11, §57.2).</summary>
+  public int PinnedColumns { get; init; } = 1;
+
   public GraphStyle? Graphs { get; init; }
 
 }
@@ -77,6 +80,10 @@ public sealed class TerminalHost : IDisposable {
 
       if (startup.Columns is { Length: > 0 } columns)
         ui.Columns.Apply(columns);
+
+      // After the columns, because a pinned run is a count into the list the line above just
+      // replaced — and Apply resets it, which is what a fresh set of columns should do.
+      ui.Columns.SetFrozen(startup.PinnedColumns);
     }
 
     foreach (var problem in ui.Keys.Errors)

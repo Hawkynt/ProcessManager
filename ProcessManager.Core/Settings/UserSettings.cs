@@ -58,6 +58,23 @@ public sealed record UserSettings {
   public ProcessField[] TerminalColumns { get; init; } = [];
 
   /// <summary>
+  /// How many leading columns are pinned in each front-end (PRD §11).
+  /// </summary>
+  /// <remarks>
+  /// A count rather than a list of fields, because that is what pinning is: the leading run of the
+  /// column order, which moves when the order does. One apiece by default, so a table scrolled
+  /// sideways always has a name column left on it.
+  /// <para>
+  /// Two keys and not one. The window and the terminal keep their own column orders, and a machine
+  /// they share is a machine where five pinned columns in a 200-pixel-wide list mean nothing at all
+  /// in an eighty-column terminal.
+  /// </para>
+  /// </remarks>
+  public int PinnedDesktopColumns { get; init; } = 1;
+
+  public int PinnedTerminalColumns { get; init; } = 1;
+
+  /// <summary>
   /// Widths somebody dragged in the window, by field (PRD §11).
   /// </summary>
   /// <remarks>
@@ -319,6 +336,18 @@ public sealed record UserSettings {
 
           break;
 
+        case "columns.desktop.pinned":
+          if (TryParseCount(value, out var pinnedDesktop))
+            settings = settings with { PinnedDesktopColumns = pinnedDesktop };
+
+          break;
+
+        case "columns.terminal.pinned":
+          if (TryParseCount(value, out var pinnedTerminal))
+            settings = settings with { PinnedTerminalColumns = pinnedTerminal };
+
+          break;
+
         case "columns.desktop.widths":
           if (TryParseWidths(value, out var widths))
             settings = settings with { DesktopColumnWidths = widths };
@@ -428,6 +457,14 @@ public sealed record UserSettings {
 
     if (this.TerminalColumns.Length > 0)
       text.Append("columns.terminal=").AppendLine(Join(this.TerminalColumns));
+
+    // Only when they are not the one column every table opens with. A line in everybody's file
+    // saying the first column is pinned is a line nobody reads.
+    if (this.PinnedDesktopColumns != 1)
+      text.Append("columns.desktop.pinned=").AppendLine(this.PinnedDesktopColumns.ToString(CultureInfo.InvariantCulture));
+
+    if (this.PinnedTerminalColumns != 1)
+      text.Append("columns.terminal.pinned=").AppendLine(this.PinnedTerminalColumns.ToString(CultureInfo.InvariantCulture));
 
     if (this.DesktopColumnWidths.Count > 0) {
       var widths = new List<string>(this.DesktopColumnWidths.Count);
@@ -635,6 +672,13 @@ public sealed record UserSettings {
     => double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var value) && value >= 0
       ? value
       : fallback;
+
+  /// <summary>
+  /// A count of columns. Negative is a typo rather than a preference, and so is a number larger than
+  /// any column list anybody will ever have — both leave the setting alone.
+  /// </summary>
+  private static bool TryParseCount(string text, out int value)
+    => int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out value) && value is >= 0 and <= 64;
 
   private static bool TryParseBool(string text, out bool value) {
     switch (text.ToLowerInvariant()) {
