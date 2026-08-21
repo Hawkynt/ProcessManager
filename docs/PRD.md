@@ -2660,6 +2660,15 @@ people install Process Explorer at all.
       has nowhere to go: there is no handle view to land in
 - [x] The tree expands every ancestor of the process it selects, because a process nested under a
       collapsed parent cannot be brought into view and looking at it was the entire point
+- [x] **Who is holding the lock somebody else is waiting for** — `/proc/locks` lists every waiter
+      beside the holder it is queued behind, both by pid, and the properties window's General page
+      says which. This is the answer to "why is this hanging" for the case a kernel answers it for.
+      Read when the row refreshes rather than remembered, because the whole reason to look is that a
+      process is stuck *now*. A waiter whose holder has gone between the kernel writing the two lines
+      is left out rather than reported as blocked by pid nought, and nobody is ever reported as
+      waiting for themselves. The wording is "nothing is holding a file lock this process wants"
+      rather than "not blocked": a process waiting on a futex, a pipe or a socket is blocked and is
+      not in this table at all (§5.3, §72.3)
 
 Reported one reason per process for the three that are really one thing. A pattern matching a name
 usually matches the command line and the path too, so the most specific one that answered wins:
@@ -4735,7 +4744,12 @@ that has a tab for it. That drift is what made an earlier version of this matrix
 - [x] Affinity
 - ∅ Efficiency / QoS — refused rather than unwritten: the nearest Linux relatives are the scheduling class and the I/O class, both already settable, and mapping a QoS class onto them is the false equivalence §5.3 forbids
 - [ ] Dumps
-- [ ] 🟡 Wait chains — each thread says what it is blocked in and which syscall it is in; nothing follows the chain from one process to the next
+- [ ] 🟡 Wait chains — each thread says what it is blocked in and which syscall it is in, and the
+      chain is followed for the one case a kernel states outright: a process queued behind a file
+      lock names the process holding it, on the properties window's General page. The other cases
+      are not followed and cannot be. Nothing publishes who holds a futex, and reconstructing it from
+      outside needs the debugger interface §4 rules out — so a general "wait chain" here would be
+      this one special case wearing a general name, which is what §5.3 forbids
 - [x] Process search / filter
 - [x] Startup enable / disable
 - [ ] User session control

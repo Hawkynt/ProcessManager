@@ -1002,6 +1002,33 @@ public sealed class ProcessPropertiesWindow : Form {
   /// running process — and if the file on disk is replaced, the mapping in memory is still the old
   /// one, which is a fact the Modules page reports rather than something to re-read every second.
   /// </remarks>
+  /// <summary>
+  /// Which process is holding the file lock this one is queued behind, if any.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Read when the row is refreshed rather than cached: the whole reason to look is that a process
+  /// is stuck now, and a remembered answer would go on saying so after it was freed. The table is
+  /// small — sixty-odd rows on an ordinary desktop — and this is one open of one file.
+  /// </para>
+  /// <para>
+  /// The wording says what was and was not looked at. "Nothing is holding a file lock it wants" is
+  /// what the table supports; it is not "this process is not blocked", because a process waiting on
+  /// a futex, a pipe or a socket is blocked and is not in this table at all. Saying the stronger
+  /// thing would be exactly the false equivalence §5.3 forbids.
+  /// </para>
+  /// </remarks>
+  private string BlockedBy(int pid) {
+    var waits = this._probe.DescribeLockWaits();
+    if (!waits.TryGetValue(pid, out var holder))
+      return "nothing is holding a file lock this process wants";
+
+    // The pid alone. This window has the probe and not the table, and naming the holder would mean
+    // sampling the machine again from here just to turn a number into a word — the main window's
+    // "Go to" already does that, and it is one step away.
+    return $"PID {holder.ToString(CultureInfo.InvariantCulture)}, on a file lock";
+  }
+
   private List<KeyValuePair<string, string>> GeneralExtras(in ProcessRecord process, Counter descriptors) {
     var extras = new List<KeyValuePair<string, string>> {
       new("Handles", Humanize.Count(descriptors)),
@@ -1012,6 +1039,11 @@ public sealed class ProcessPropertiesWindow : Form {
       // unit itself says is a page of its own, because it is a fact about the service rather than
       // about this process.
       new("Service", CgroupUnit.Of(process.ContainerPath) ?? "none — this process is under no systemd unit"),
+      // The one wait chain a kernel states outright, and the answer to "why is this hanging" for the
+      // case it can answer it for. A thread's wait channel says what a process is blocked in and
+      // stops there — nothing publishes who holds a futex — but the lock table lists every waiter
+      // beside the holder it is queued behind, both by pid (PRD §33, §91).
+      new("Blocked by", this.BlockedBy(process.Pid)),
     };
 
     if (!this._imageRead) {
