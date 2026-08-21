@@ -969,6 +969,7 @@ public sealed partial class LinuxProbe : ISystemProbe {
     this.ReadStatus(cache, ref record);
     this.ReadIo(cache, ref record);
     this.ReadIoPriority(ref record);
+    this.ReadMappedFileBytes(pid, ref record);
     this.ReadFileDescriptorCount(cache, ref record);
     // After the key exists, and keyed on the pid only within this one sample: the GPU figures were
     // gathered a moment ago from the same instant, and nothing is carried over between samples, so a
@@ -1088,6 +1089,16 @@ public sealed partial class LinuxProbe : ISystemProbe {
     record.FilesystemGroupId = -1;
     record.PrivateBytes = Counter.NotSupported;
     record.PrivateWorkingSetBytes = Counter.NotSupported;
+    // Linux keeps no high-water mark of VmData anywhere. VmPeak is the peak of the address space and
+    // VmHWM the peak of the resident set, and both are already their own columns — reporting either
+    // under the peak-commit heading would be a different number wearing that one's name (PRD §5.3).
+    record.PeakPrivateBytes = Counter.NotSupported;
+    // A Windows priority class is a band; nice is a scalar inside SCHED_OTHER and the class is
+    // sched.class. Neither is the other (PRD §5.3).
+    record.PriorityClass = Counter.NotSupported;
+    // Nobody has read maps yet, and a nought would say the process has nothing file-backed mapped —
+    // which is true of no process that runs a program (PRD §72.3).
+    record.MappedFileBytes = Counter.NotSampledYet;
     // default(Counter) is a confident zero, so a field nobody fills claims the process has none of
     // whatever it counts. Every one of these has to be stated (PRD §5.3).
     record.FileBackedBytes = Counter.NotSupported;
@@ -2043,6 +2054,44 @@ public sealed partial class LinuxProbe : ISystemProbe {
 
     reason = UnknownReason.None;
     return RuntimeDetector.Detect(maps);
+  }
+
+  /// <summary>
+  /// How much of the process's address space is backed by a file (PRD §16).
+  /// </summary>
+  /// <remarks>
+  /// A read of <c>maps</c> per process per sample, which is why nothing does it unless a column asked
+  /// (PRD §5.4). Unlike the runtime, this cannot be worked out once and kept: a process maps and
+  /// unmaps files for as long as it runs.
+  /// <para>
+  /// Three different nothings and each says which it is: nobody asked, somebody else's process whose
+  /// map this user may not read, and a process that went away between the two reads. A kernel thread
+  /// maps nothing at all, which is a real nought and reads as one — its <c>maps</c> is empty and
+  /// opens perfectly well.
+  /// </para>
+  /// </remarks>
+  private void ReadMappedFileBytes(int pid, ref ProcessRecord record) {
+    if (!this._options.ReadMappedFileBytes) {
+      record.MappedFileBytes = Counter.NotSampledYet;
+      return;
+    }
+
+    if (!this.MayRead(record)) {
+      record.MappedFileBytes = Counter.NotPermitted;
+      return;
+    }
+
+    // Whole rather than a page at a time, for the same reason the runtime read is: the kernel
+    // formats this file one page per call and a browser tab's is tens of kilobytes.
+    if (!this._reader.TryReadWhole($"{this._procRoot}/{pid}/maps", out var maps, out var errno)) {
+      record.MappedFileBytes = Counter.Unknown(
+        errno is Native.EACCES or Native.EPERM ? UnknownReason.NotPermitted : UnknownReason.ProcessExited
+      );
+
+      return;
+    }
+
+    record.MappedFileBytes = Counter.Of(MapsParser.MappedFileBytes(maps));
   }
 
   /// <summary>

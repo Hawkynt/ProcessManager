@@ -86,6 +86,18 @@ public sealed record UserSettings {
   /// <summary>Which convention CPU percentages are expressed in (PRD §3.2).</summary>
   public CpuPercentMode CpuMode { get; init; } = CpuPercentMode.Normalized;
 
+  /// <summary>
+  /// How many decimals a percentage is written with (PRD §15).
+  /// </summary>
+  /// <remarks>
+  /// §15 asks for this of the processor's percentage and it governs every percentage the program
+  /// prints, which is the same decision rather than a wider one: a window writing CPU to two decimals
+  /// and memory to one would be claiming a precision about one of them it does not have about the
+  /// other. Nought for a column that does not flicker, two for chasing a process that uses a
+  /// twentieth of a core.
+  /// </remarks>
+  public int PercentDecimals { get; init; } = Humanize.DefaultPercentDecimals;
+
   /// <summary>Draw the terminal's history columns with block characters rather than ASCII.</summary>
   public bool BlockCharacters { get; init; } = true;
 
@@ -433,6 +445,16 @@ public sealed record UserSettings {
 
           break;
 
+        case "percent.decimals":
+          // Out of range is a typo rather than a preference and leaves the setting where it was; a
+          // percentage written to nine decimals would be nine digits of a number sampled once a
+          // second.
+          if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var decimals)
+              && decimals is >= 0 and <= Humanize.MaximumPercentDecimals)
+            settings = settings with { PercentDecimals = decimals };
+
+          break;
+
         case "blocks":
           if (TryParseBool(value, out var blocks))
             settings = settings with { BlockCharacters = blocks };
@@ -607,6 +629,7 @@ public sealed record UserSettings {
     text.Append("sort.descending=").AppendLine(this.SortDescending ? "true" : "false");
     text.Append("tree=").AppendLine(this.TreeMode ? "true" : "false");
     text.Append("cpu.mode=").AppendLine(this.CpuMode == CpuPercentMode.PerCore ? "percore" : "normalized");
+    text.Append("percent.decimals=").AppendLine(this.PercentDecimals.ToString(CultureInfo.InvariantCulture));
     text.Append("blocks=").AppendLine(this.BlockCharacters ? "true" : "false");
 
     if (this.DesktopColumns.Length > 0)

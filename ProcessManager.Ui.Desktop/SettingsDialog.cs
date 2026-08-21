@@ -106,6 +106,8 @@ public sealed class SettingsDialog : Form {
   private readonly ComboBox _interval = new() { DropDownStyle = ComboBoxStyle.DropDownList };
   private readonly Label _cpuCaption = new() { Text = "CPU percentages are" };
   private readonly ComboBox _cpuMode = new() { DropDownStyle = ComboBoxStyle.DropDownList };
+  private readonly Label _decimalsCaption = new() { Text = "Percentages are written with" };
+  private readonly ComboBox _decimals = new() { DropDownStyle = ComboBoxStyle.DropDownList };
   private readonly Label _groupingCaption = new() { Text = "Group the process list by" };
   private readonly ComboBox _grouping = new() { DropDownStyle = ComboBoxStyle.DropDownList };
 
@@ -187,6 +189,11 @@ public sealed class SettingsDialog : Form {
     this._cpuMode.Items.Add("a share of the whole machine");
     this._cpuMode.Items.Add("a share of one core");
 
+    // Worded as what the reader will see rather than as a count of digits: "1 decimal (12.3%)" says
+    // what the column will look like, and "1" does not (PRD §15).
+    for (var decimals = 0; decimals <= Humanize.MaximumPercentDecimals; ++decimals)
+      this._decimals.Items.Add(NameOfPrecision(decimals));
+
     foreach (var grouping in _Groupings)
       this._grouping.Items.Add(Describe(grouping));
 
@@ -232,6 +239,7 @@ public sealed class SettingsDialog : Form {
     this.Section("How often, and what the numbers mean", _HeadingGap);
     this.Pair(this._intervalCaption, this._interval);
     this.Pair(this._cpuCaption, this._cpuMode);
+    this.Pair(this._decimalsCaption, this._decimals);
     this.Pair(this._groupingCaption, this._grouping);
 
     this.Section("The terminal front-end", _HeadingGap);
@@ -306,6 +314,7 @@ public sealed class SettingsDialog : Form {
         PerformanceOpensOnBusiest = this._busiest.Checked,
         CompactPerformancePage = this._compact.Checked,
         CpuMode = this._cpuMode.SelectedIndex == 1 ? CpuPercentMode.PerCore : CpuPercentMode.Normalized,
+        PercentDecimals = Math.Clamp(this._decimals.SelectedIndex, 0, Humanize.MaximumPercentDecimals),
         Grouping = _Groupings[Math.Clamp(this._grouping.SelectedIndex, 0, _Groupings.Length - 1)],
         // The older key is kept in step rather than left behind: a build without tui.graphs reads
         // only that one, and it must not come back saying ASCII because somebody chose braille here.
@@ -379,6 +388,7 @@ public sealed class SettingsDialog : Form {
     (this._cpuMode, this._cpuCaption),
     (this._grouping, this._groupingCaption),
     (this._graphs, this._graphsCaption),
+    (this._decimals, this._decimalsCaption),
   ];
 
   private string CaptionOf(ComboBox picker) {
@@ -387,6 +397,22 @@ public sealed class SettingsDialog : Form {
         return caption.Text;
 
     return string.Empty;
+  }
+
+  /// <summary>
+  /// What a precision is called on screen: the count of digits and what a number will look like at it.
+  /// </summary>
+  /// <remarks>
+  /// The example is the half that answers the question. "2" is a number somebody has to imagine a
+  /// column of, and "2 decimals (12.34%)" is the column.
+  /// </remarks>
+  private static string NameOfPrecision(int decimals) {
+    var example = 12.3456.ToString("F" + decimals.ToString(CultureInfo.InvariantCulture), CultureInfo.InvariantCulture);
+    return decimals switch {
+      0 => $"no decimals ({example}%)",
+      1 => $"1 decimal ({example}%)",
+      _ => $"{decimals.ToString(CultureInfo.InvariantCulture)} decimals ({example}%)",
+    };
   }
 
   #region filling and reading back
@@ -412,6 +438,7 @@ public sealed class SettingsDialog : Form {
       }
     this._mouse.Checked = settings.TerminalMouse;
     this._cpuMode.SelectedIndex = settings.CpuMode == CpuPercentMode.PerCore ? 1 : 0;
+    this._decimals.SelectedIndex = Math.Clamp(settings.PercentDecimals, 0, Humanize.MaximumPercentDecimals);
 
     var grouping = Array.IndexOf(_Groupings, settings.Grouping);
     this._grouping.SelectedIndex = grouping < 0 ? 0 : grouping;

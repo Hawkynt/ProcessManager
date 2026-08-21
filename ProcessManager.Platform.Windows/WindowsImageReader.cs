@@ -134,6 +134,51 @@ internal sealed class WindowsImageReader {
     return new(length, modified, facts, signature, UnknownReason.None);
   }
 
+  /// <summary>
+  /// When the running image was created, in UTC ticks (PRD §14).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// NTFS has recorded a creation time for every file since it was written, so on Windows this is
+  /// the one field of §14 that answers more reliably than the Linux half does — there, most file
+  /// systems carry no birth time at all. Which is why the two <em>still</em> keep their reasons
+  /// apart: a file system with nothing to say and a file this user may not stat are different
+  /// findings and must not be the same cell (PRD §72.3).
+  /// </para>
+  /// <para>
+  /// Not cached, and deliberately: this is a stat rather than a read of the file, it is behind its
+  /// own switch, and a cache keyed on the path would have to be invalidated by the very stat it was
+  /// meant to save. The version resource above is the other case — there the stat is what tells the
+  /// cache whether the expensive read is still valid.
+  /// </para>
+  /// <para>
+  /// A file system that carries no creation time hands back the epoch of a <c>FILETIME</c>, which is
+  /// 1601 and not nought — so the test is against that instant rather than against zero. A column of
+  /// 1601 would be a lie the width of the table, exactly as a column of 1970 would be on Linux.
+  /// </para>
+  /// </remarks>
+  public static Counter Created(string? path) {
+    if (path is not { Length: > 0 })
+      return Counter.NotPermitted;
+
+    try {
+      var info = new FileInfo(path);
+      if (!info.Exists)
+        // The running image can be deleted underneath the process, which keeps running from it.
+        return Counter.Unknown(UnknownReason.SourceGone);
+
+      var ticks = info.CreationTimeUtc.Ticks;
+      return ticks > _FileTimeEpochTicks
+        ? Counter.Of((ulong)ticks)
+        : Counter.NotSupported;
+    } catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException) {
+      return Counter.NotPermitted;
+    }
+  }
+
+  /// <summary>1601-01-01 UTC in <see cref="DateTime"/> ticks: what "no creation time" comes back as.</summary>
+  private static readonly long _FileTimeEpochTicks = new DateTime(1601, 1, 1, 0, 0, 0, DateTimeKind.Utc).Ticks;
+
   /// <summary>Drops entries for images nothing is running any more.</summary>
   /// <remarks>
   /// Bounded rather than swept every sample: the set of distinct images on a machine is small and

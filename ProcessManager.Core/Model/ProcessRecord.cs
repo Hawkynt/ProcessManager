@@ -104,6 +104,12 @@ public struct ProcessRecord {
     record.RegistryKeyCount = Counter.NotSupported;
     record.UserObjectCount = Counter.NotSupported;
     record.GdiObjectCount = Counter.NotSupported;
+    // PRD §15, §16. The two Windows readings that need a handle per process per sample, and so are
+    // filled after this runs rather than before it. Nought would be a claim in both of them: the
+    // lowest page priority there is, and a processor set of none.
+    record.PagePriority = Counter.NotSupported;
+    record.CpuSets = null;
+    record.CpuSetsReason = UnknownReason.NotSupportedOnPlatform;
     record.ImageDescription = null;
     record.ImageCompany = null;
     record.ImageProduct = null;
@@ -168,6 +174,65 @@ public struct ProcessRecord {
 
   /// <summary>Unix nice value; 0 elsewhere.</summary>
   public int Nice;
+
+  /// <summary>
+  /// The Windows priority class, as its <c>*_PRIORITY_CLASS</c> band rather than as a number
+  /// (PRD §15).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Windows orders processes by a band and not by a scalar the way <c>nice</c> does, and the band is
+  /// what every Windows tool shows and what <c>SetPriorityClass</c> takes. Linux has no such thing —
+  /// <c>nice</c> orders tasks inside <c>SCHED_OTHER</c> and the class is
+  /// <see cref="SchedulingPolicy"/> — so folding either into the other would be the false equivalence
+  /// §5.3 forbids, and on Linux this is not applicable rather than unknown.
+  /// </para>
+  /// <para>
+  /// Derived from <see cref="Priority"/>, which the bulk query already carries, rather than from
+  /// <c>GetPriorityClass</c> on a handle. Not to save the call: the class is settable — this program
+  /// sets it (§25.2) — so an answer cached for a process's lifetime would be wrong the moment
+  /// somebody changed it, and an answer read per process per sample is the <c>OpenProcess</c> in the
+  /// sampling loop §5.2 forbids. The base priority is refreshed by every sample and the kernel
+  /// derives it from the class by a fixed table, so inverting that table is both free and current.
+  /// A base priority outside the table is left unknown rather than rounded to the nearest band.
+  /// </para>
+  /// </remarks>
+  public Counter PriorityClass;
+
+  /// <summary>
+  /// The memory-manager page priority, 0–5, where Windows reports one (PRD §16).
+  /// </summary>
+  /// <remarks>
+  /// Which pages the memory manager takes back first when the machine is short. A backup or an
+  /// indexer sets itself low so that its pages are trimmed before anybody else's, and no other column
+  /// on the row says that. Nought is a real value — the lowest priority there is — which is why this
+  /// is a <see cref="Counter"/> and not a number with a magic default (PRD §72.3).
+  /// <para>
+  /// Linux has no per-process page priority: reclaim there is driven by the LRU lists and by the
+  /// cgroup's own knobs, neither of which is a property of a process.
+  /// </para>
+  /// </remarks>
+  public Counter PagePriority;
+
+  /// <summary>
+  /// The CPU sets the process has been assigned to, as the numbers Windows uses for them, or
+  /// <see langword="null"/> (PRD §15).
+  /// </summary>
+  /// <remarks>
+  /// Not the affinity mask, and deliberately its own field: an affinity mask is a hard restriction
+  /// the process cannot run outside, while a CPU set is a preference the scheduler honours when it
+  /// can — which is the whole reason Windows grew a second mechanism (PRD §5.3). The empty string is
+  /// a real answer and the ordinary one: a process with no set assigned gets the system's default
+  /// set, which is every processor.
+  /// </remarks>
+  public string? CpuSets;
+
+  /// <summary>
+  /// Why <see cref="CpuSets"/> is <see langword="null"/>: not asked for, not readable, or a platform
+  /// with no such notion. A string cannot carry its own reason the way a <see cref="Counter"/> does,
+  /// and "no answer" needs one just as much (PRD §72.3).
+  /// </summary>
+  public UnknownReason CpuSetsReason;
 
   /// <summary>
   /// The scheduler class, or <see cref="SchedulingPolicy.Unknown"/> where the platform has no such
@@ -248,6 +313,23 @@ public struct ProcessRecord {
   /// </remarks>
   public Counter PrivateWorkingSetBytes;
 
+  /// <summary>
+  /// The largest <see cref="PrivateBytes"/> this process has ever held (PRD §16).
+  /// </summary>
+  /// <remarks>
+  /// The peak of the <em>same</em> charge the private column reports, which is what makes the pair
+  /// worth having: a process sitting at fifty megabytes with a peak of four gigabytes has been
+  /// somewhere the current row cannot show. Windows keeps it as <c>PeakPagefileUsage</c>, beside the
+  /// commit charge in the structure the sampler already reads.
+  /// <para>
+  /// Linux keeps no such high-water mark. <c>status</c> carries <c>VmPeak</c>, which is the peak of
+  /// the address space, and <c>VmHWM</c>, which is the peak of the resident set — neither is the peak
+  /// of <c>VmData</c>, and reporting either under this name would be a different number wearing this
+  /// one's label (PRD §5.3).
+  /// </para>
+  /// </remarks>
+  public Counter PeakPrivateBytes;
+
   /// <summary>Resident set / working set, shared pages included.</summary>
   public Counter WorkingSetBytes;
 
@@ -286,6 +368,27 @@ public struct ProcessRecord {
   /// "stacks" — the larger number is real and this is not it (PRD §5.3).
   /// </remarks>
   public Counter StackBytes;
+
+  /// <summary>
+  /// How much of the address space is backed by a file rather than by anonymous memory (PRD §16).
+  /// </summary>
+  /// <remarks>
+  /// The <em>mapped</em> size and not the resident one: <see cref="FileBackedBytes"/> is how much of
+  /// this is in memory at the moment, and the two answer different questions. A process that has
+  /// mapped a four-gigabyte database and touched a megabyte of it reports four gigabytes here and a
+  /// megabyte there, and neither figure is the other's approximation.
+  /// <para>
+  /// Summed from <c>/proc/[pid]/maps</c> over every mapping that names a file. The pseudo-mappings —
+  /// <c>[heap]</c>, <c>[stack]</c>, <c>[vdso]</c> and the rest — name no file and are excluded,
+  /// which is why the test for them is the bracket rather than a list of their names: the kernel
+  /// adds new ones.
+  /// </para>
+  /// <para>
+  /// A file per process per sample, and one the kernel formats a page at a time, so it is filled only
+  /// when a column or a filter names it (PRD §5.4).
+  /// </para>
+  /// </remarks>
+  public Counter MappedFileBytes;
 
   /// <summary>
   /// Proportional set size: private pages in full, plus each shared page divided by the number of

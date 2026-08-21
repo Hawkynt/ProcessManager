@@ -266,6 +266,7 @@ public sealed class WindowsProbe : ISystemProbe {
       record.IsAppContainer = identity.IsAppContainer;
       record.Emulation = identity.Emulation;
       record.ImagePath = identity.ImagePath;
+      record.Package = identity.Package;
       // Windows has no notion of a real-versus-effective uid; the token is the whole answer.
       record.EffectiveUserId = identity.UserId;
 
@@ -277,8 +278,8 @@ public sealed class WindowsProbe : ISystemProbe {
       record.BinarySignaturePolicy = mitigations.BinarySignature;
 
       this.ApplyObjectCounts(ref record);
-      this.ApplyPowerThrottling(ref record);
       this.ApplyImageFacts(ref record);
+      this.ApplyProcessDetails(ref record);
 
       if (this._commandLines.TryGetValue(record.Key, out var commandLine)) {
         record.CommandLine = commandLine;
@@ -309,6 +310,12 @@ public sealed class WindowsProbe : ISystemProbe {
     if (record.ImagePath is { Length: > 0 } path)
       this._liveImages.Add(path);
 
+    // The creation time is its own reading and its own switch: it costs one stat of a path that is
+    // already known, where the version resource and the certificate table both cost the file.
+    record.ImageCreatedUtcTicks = this._options.ReadImageCreationTime
+      ? WindowsImageReader.Created(record.ImagePath)
+      : Counter.NotSampledYet;
+
     var wantVersions = this._options.ReadImageVersions;
     var wantSignature = this._options.ReadSignatures;
     if (!wantVersions && !wantSignature) {
@@ -334,6 +341,175 @@ public sealed class WindowsProbe : ISystemProbe {
     else
       WindowsImageReader.NotAsked(ref record);
   }
+
+  #region the three readings that need a handle every sample (PRD §15, §16)
+
+  /// <summary>
+  /// The page priority, the power-throttling state and the CPU sets, or why there are none.
+  /// </summary>
+  /// <remarks>
+  /// One open for three calls, and one switch in front of all of it. None of the three can be cached
+  /// for a process's lifetime the way the identity is: every one of them is settable while the
+  /// process runs, and two of them are settable from this program's own menus — a cached answer
+  /// would be wrong the instant somebody used one (PRD §5.2, §5.4).
+  /// </remarks>
+  private void ApplyProcessDetails(ref ProcessRecord record) {
+    // Two switches, one handle. The page priority and the CPU sets are one question and the
+    // throttling state is another, and each used to open a handle of its own — an OpenProcess per
+    // process per sample, twice, for readings that come off the same one. Each half still reports
+    // "not asked" when only the other was, so naming one column does not make the other's cell
+    // claim a measurement nobody took (PRD §5.2, §72.3).
+    var wantDetails = this._options.ReadProcessDetails;
+    var wantThrottling = this._options.ReadPowerThrottling;
+    if (!wantDetails && !wantThrottling) {
+      record.PagePriority = Counter.NotSampledYet;
+      record.PowerThrottling = Counter.NotSampledYet;
+      record.CpuSets = null;
+      record.CpuSetsReason = UnknownReason.NotSampledYet;
+      return;
+    }
+
+    var process = Native.OpenProcess(Native.PROCESS_QUERY_LIMITED_INFORMATION, false, record.Pid);
+    if (process == 0) {
+      record.PagePriority = wantDetails ? Counter.NotPermitted : Counter.NotSampledYet;
+      record.PowerThrottling = wantThrottling ? Counter.NotPermitted : Counter.NotSampledYet;
+      record.CpuSets = null;
+      record.CpuSetsReason = wantDetails ? UnknownReason.NotPermitted : UnknownReason.NotSampledYet;
+      return;
+    }
+
+    try {
+      record.PagePriority = wantDetails ? ReadPagePriority(process) : Counter.NotSampledYet;
+      record.PowerThrottling = wantThrottling ? ReadPowerThrottling(process) : Counter.NotSampledYet;
+      if (wantDetails) {
+        record.CpuSets = ReadCpuSets(process, out var reason);
+        record.CpuSetsReason = reason;
+      } else {
+        record.CpuSets = null;
+        record.CpuSetsReason = UnknownReason.NotSampledYet;
+      }
+    } finally {
+      Native.CloseHandle(process);
+    }
+  }
+
+  /// <summary>
+  /// Which of the process's pages the memory manager takes back first (PRD §16).
+  /// </summary>
+  /// <remarks>
+  /// <c>MEMORY_PRIORITY_INFORMATION</c> is a single <c>ULONG</c>, so four bytes is the whole of it.
+  /// Nought is <c>MEMORY_PRIORITY_LOWEST</c> and a real answer, which is why the buffer is cleared
+  /// first and the call's own success is what decides whether it is read (PRD §72.3).
+  /// </remarks>
+  private static Counter ReadPagePriority(nint process) {
+    var buffer = Marshal.AllocHGlobal(sizeof(uint));
+    try {
+      Marshal.WriteInt32(buffer, 0);
+      return Native.GetProcessInformation(process, Native.ProcessMemoryPriority, buffer, sizeof(uint))
+        ? Counter.Of((uint)Marshal.ReadInt32(buffer))
+        : Native.WhyItFailed();
+    } finally {
+      Marshal.FreeHGlobal(buffer);
+    }
+  }
+
+  /// <summary>
+  /// What the OS has been asked to do about the process's energy use (PRD §15).
+  /// </summary>
+  /// <remarks>
+  /// <c>PROCESS_POWER_THROTTLING_STATE</c> is a version and two masks, twelve bytes, and the version
+  /// has to be written in before the call or it refuses. Both masks are kept — the control mask
+  /// below, the state mask above — because neither means anything alone: a control bit that is clear
+  /// says the process expressed no preference and Windows decides, and the state bit only says which
+  /// way when the control bit is set.
+  /// </remarks>
+  private static Counter ReadPowerThrottling(nint process) {
+    const int Size = 12;
+    var buffer = Marshal.AllocHGlobal(Size);
+    try {
+      Marshal.WriteInt32(buffer, 0, (int)Native.PROCESS_POWER_THROTTLING_CURRENT_VERSION);
+      Marshal.WriteInt32(buffer, 4, 0);
+      Marshal.WriteInt32(buffer, 8, 0);
+      if (!Native.GetProcessInformation(process, Native.ProcessPowerThrottling, buffer, Size))
+        return Native.WhyItFailed();
+
+      var control = (uint)Marshal.ReadInt32(buffer, 4);
+      var state = (uint)Marshal.ReadInt32(buffer, 8);
+      return Counter.Of(control | ((ulong)state << 32));
+    } finally {
+      Marshal.FreeHGlobal(buffer);
+    }
+  }
+
+  /// <summary>
+  /// The CPU sets the process has been assigned to, in the kernel's own numbering (PRD §15).
+  /// </summary>
+  /// <remarks>
+  /// Asked with a buffer that is already big enough rather than with a length probe first, and that
+  /// is deliberate: a probe call has to be believed when it says nought, and nought is also the
+  /// answer for a process with no set assigned — so a call that filled nothing and a process that
+  /// has nothing would be the same reply. A set has one entry per logical processor at most, so a
+  /// buffer of 256 covers every machine anybody will run this on and the second call happens only
+  /// beyond that.
+  /// <para>
+  /// The empty string is the ordinary answer and a real one — a process with no set assigned uses the
+  /// system's default set, which is every processor — so it is returned as a string rather than as a
+  /// reason (PRD §72.3). A Windows before 1607 has no such call, which is a fact about the machine
+  /// and is reported as one.
+  /// </para>
+  /// </remarks>
+  private static string? ReadCpuSets(nint process, out UnknownReason reason) {
+    reason = UnknownReason.None;
+    try {
+      Span<uint> ids = stackalloc uint[256];
+      if (!Native.GetProcessDefaultCpuSets(process, ref MemoryMarshal.GetReference(ids), (uint)ids.Length, out var required)) {
+        reason = Native.WhyItFailed().Reason;
+        return null;
+      }
+
+      if (required == 0)
+        return string.Empty;
+
+      // A machine with more than two hundred and fifty-six CPU sets exists; one with more than four
+      // thousand does not, and a reply that large is a reply nobody should allocate against.
+      if (required > (uint)ids.Length) {
+        if (required > 4096) {
+          reason = UnknownReason.CounterInvalid;
+          return null;
+        }
+
+        var larger = new uint[required];
+        if (!Native.GetProcessDefaultCpuSets(process, ref larger[0], required, out var written)) {
+          reason = Native.WhyItFailed().Reason;
+          return null;
+        }
+
+        return Join(larger.AsSpan(0, (int)Math.Min(written, required)));
+      }
+
+      return Join(ids[..(int)required]);
+    } catch (EntryPointNotFoundException) {
+      reason = UnknownReason.NotSupportedOnPlatform;
+      return null;
+    }
+  }
+
+  private static string Join(ReadOnlySpan<uint> ids) {
+    if (ids.IsEmpty)
+      return string.Empty;
+
+    var text = new System.Text.StringBuilder();
+    foreach (var id in ids) {
+      if (text.Length > 0)
+        text.Append(',');
+
+      text.Append(id.ToString(System.Globalization.CultureInfo.InvariantCulture));
+    }
+
+    return text.ToString();
+  }
+
+  #endregion
 
   #region object counts (PRD §20)
 
@@ -498,75 +674,6 @@ public sealed class WindowsProbe : ISystemProbe {
 
   private static Counter Tallied(ushort index, uint count)
     => index == ObjectTypeIndices.Unknown ? Counter.Unknown(UnknownReason.NotPermitted) : Counter.Of(count);
-
-  /// <summary>
-  /// What Windows has been asked to do about the process's energy use (PRD §22).
-  /// </summary>
-  /// <remarks>
-  /// <para>
-  /// Per sample rather than once per process, unlike everything the identity resolver caches. A
-  /// power-throttling state is not fixed for a process's life: an application may set its own at any
-  /// moment, and a person may tick "efficiency mode" against any row of Task Manager — so a cached
-  /// answer would go on reporting a state that had been changed underneath it, which is the one
-  /// failure a column watching for exactly that change cannot afford.
-  /// </para>
-  /// <para>
-  /// That is what makes it opt-in: an <c>OpenProcess</c> per process per sample is the shape of cost
-  /// §5.2 keeps out of the sampling loop, so nothing pays it unless a column or a filter names one of
-  /// the two words it answers (PRD §5.4).
-  /// </para>
-  /// </remarks>
-  private void ApplyPowerThrottling(ref ProcessRecord record) {
-    if (!this._options.ReadPowerThrottling) {
-      record.PowerThrottling = Counter.NotSampledYet;
-      return;
-    }
-
-    var process = Native.OpenProcess(Native.PROCESS_QUERY_LIMITED_INFORMATION, false, record.Pid);
-    if (process == 0) {
-      record.PowerThrottling = Counter.NotPermitted;
-      return;
-    }
-
-    try {
-      record.PowerThrottling = ReadPowerThrottling(process);
-    } finally {
-      Native.CloseHandle(process);
-    }
-  }
-
-  /// <summary>
-  /// <c>PROCESS_POWER_THROTTLING_STATE</c>: a version and two masks, twelve bytes.
-  /// </summary>
-  /// <remarks>
-  /// The version is written before the call rather than left at whatever the allocation held, and
-  /// the two masks are packed into one counter with the state above the control — the same
-  /// arrangement the DEP policy uses for its trailing boolean, and for the same reason: two facts
-  /// that must be read together have no business being two counters that could disagree.
-  /// <para>
-  /// The call arrived in Windows 10 1809. An older Windows fails it rather than filling the buffer,
-  /// and the failure is reported as itself — a process reported as unthrottled on a Windows that has
-  /// never heard of throttling would be a confident answer to a question nobody could ask
-  /// (PRD §72.3).
-  /// </para>
-  /// </remarks>
-  private static Counter ReadPowerThrottling(nint process) {
-    const int size = 12;
-    var buffer = Marshal.AllocHGlobal(size);
-    try {
-      Marshal.WriteInt32(buffer, 0, (int)Native.PROCESS_POWER_THROTTLING_CURRENT_VERSION);
-      Marshal.WriteInt32(buffer, 4, 0);
-      Marshal.WriteInt32(buffer, 8, 0);
-      if (!Native.GetProcessInformation(process, Native.ProcessPowerThrottling, buffer, size))
-        return Native.WhyItFailed();
-
-      var control = (uint)Marshal.ReadInt32(buffer, 4);
-      var state = (uint)Marshal.ReadInt32(buffer, 8);
-      return Counter.Of(control | ((ulong)state << 32));
-    } finally {
-      Marshal.FreeHGlobal(buffer);
-    }
-  }
 
   /// <summary>
   /// One of the two desktop quotas.

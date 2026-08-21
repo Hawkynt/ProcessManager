@@ -21,6 +21,9 @@ namespace Hawkynt.ProcessManager.Platform.Windows;
 /// The full path of the running image, which the bulk query does not carry — it holds the file name
 /// alone — and which a great many other answers are keyed on.
 /// </param>
+/// <param name="Package">
+/// Which MSIX package the process came from, or the finding that it came from none (PRD §14).
+/// </param>
 internal readonly record struct WindowsProcessIdentity(
   string? UserName,
   int UserId,
@@ -29,7 +32,8 @@ internal readonly record struct WindowsProcessIdentity(
   Counter ProtectionLevel,
   Counter IsAppContainer,
   Counter Emulation,
-  string? ImagePath
+  string? ImagePath,
+  PackageIdentity Package
 ) {
 
   /// <summary>What a process that would not open at all looks like: no answers, and a reason.</summary>
@@ -41,7 +45,8 @@ internal readonly record struct WindowsProcessIdentity(
     Counter.NotPermitted,
     Counter.NotPermitted,
     Counter.NotPermitted,
-    null
+    null,
+    PackageIdentity.Unknown(UnknownReason.NotPermitted)
   );
 
 }
@@ -190,6 +195,7 @@ internal sealed class WindowsIdentityResolver {
       var protection = ReadProtectionLevel(process);
       var emulation = this.ReadEmulation(process);
       var imagePath = ReadImagePath(process);
+      var package = this.ReadPackage(process);
 
       if (!Native.OpenProcessToken(process, Native.TOKEN_QUERY, out var token))
         return new(
@@ -200,7 +206,8 @@ internal sealed class WindowsIdentityResolver {
           protection,
           Counter.NotPermitted,
           emulation,
-          imagePath
+          imagePath,
+          package
         );
 
       try {
@@ -214,7 +221,8 @@ internal sealed class WindowsIdentityResolver {
           protection,
           ReadAppContainer(token),
           emulation,
-          imagePath
+          imagePath,
+          package
         );
       } finally {
         Native.CloseHandle(token);
@@ -341,6 +349,91 @@ internal sealed class WindowsIdentityResolver {
     // The size comes back as the character count without the terminator.
     var length = (int)Math.Min(size, (uint)buffer.Length);
     return length > 0 ? new string(buffer[..length]) : null;
+  }
+
+  /// <summary>Whether this Windows has the package model at all. Before Windows 8 it does not.</summary>
+  private bool _packagesUnavailable;
+
+  /// <summary>
+  /// Which MSIX package the process came from (PRD §14).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Two calls on a handle the owner lookup already holds, and no switch in front of them — unlike
+  /// the Linux half of this column, which reads every installed package's file list to build an
+  /// index and is opt-in for exactly that reason (PRD §5.4). There is no index here: the package
+  /// manager is asked about one process and answers immediately, the answer is fixed for the life of
+  /// that process, and it is cached with the rest of the identity. Making it opt-in would buy
+  /// nothing and would leave the column empty for anybody who forgot the switch.
+  /// </para>
+  /// <para>
+  /// <c>APPMODEL_ERROR_NO_PACKAGE</c> is the answer for nearly every process on a machine and is a
+  /// <em>finding</em> — this program came from no package — rather than a failure, so it reads as
+  /// "not packaged" the way the Linux half does. Anything else that goes wrong is not that finding
+  /// and does not borrow its word (PRD §72.3).
+  /// </para>
+  /// <para>
+  /// The family name is the application id and not a second spelling of the package: a family is the
+  /// name and the publisher hash and is what survives every version of the package, which is exactly
+  /// what an application id has to be. It is asked for separately because it is not a substring of
+  /// the full name — the version and the architecture sit between the two halves.
+  /// </para>
+  /// </remarks>
+  private PackageIdentity ReadPackage(nint process) {
+    if (this._packagesUnavailable)
+      return PackageIdentity.Unknown(UnknownReason.NotSupportedOnPlatform);
+
+    string? fullName;
+    try {
+      if (!TryReadPackageName(Native.GetPackageFullName, process, out fullName))
+        return PackageIdentity.Unknown(UnknownReason.NotPermitted);
+    } catch (EntryPointNotFoundException) {
+      // A Windows older than 8 exports neither call, which is a fact about the machine and is worked
+      // out once rather than for every process on the table.
+      this._packagesUnavailable = true;
+      return PackageIdentity.Unknown(UnknownReason.NotSupportedOnPlatform);
+    }
+
+    if (fullName is null)
+      return PackageIdentity.NotPackaged;
+
+    TryReadPackageName(Native.GetPackageFamilyName, process, out var familyName);
+    // Read by portable code, so that what the two names mean is exercised on every CI leg rather
+    // than only on the one platform that can make the calls (PRD §9.4).
+    return MsixIdentity.Describe(fullName, familyName);
+  }
+
+  private delegate int PackageNameQuery(nint process, ref uint length, ref char buffer);
+
+  /// <summary>
+  /// One of the two package-name calls, sized the way it asks to be.
+  /// </summary>
+  /// <returns>
+  /// False when the call failed for a reason that is not "there is no package"; true with
+  /// <paramref name="name"/> null when there is genuinely no package.
+  /// </returns>
+  private static bool TryReadPackageName(PackageNameQuery query, nint process, out string? name) {
+    name = null;
+
+    // A package full name is bounded at 127 characters plus a terminator by the package manager
+    // itself, so one buffer is always enough — but the length is still passed and honoured, because
+    // a call that comes back ERROR_INSUFFICIENT_BUFFER must not be read as a name.
+    Span<char> buffer = stackalloc char[256];
+    var length = (uint)buffer.Length;
+    var status = query(process, ref length, ref MemoryMarshal.GetReference(buffer));
+    if (status == Native.APPMODEL_ERROR_NO_PACKAGE)
+      return true;
+
+    if (status != 0)
+      return false;
+
+    // The length comes back including the terminator, which is not part of the name.
+    var characters = (int)Math.Min(length, (uint)buffer.Length);
+    while (characters > 0 && buffer[characters - 1] == '\0')
+      --characters;
+
+    name = characters > 0 ? new string(buffer[..characters]) : null;
+    return true;
   }
 
   /// <summary>

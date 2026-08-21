@@ -248,6 +248,17 @@ public sealed record LinuxProbeOptions {
   public bool ReadRuntime { get; init; }
 
   /// <summary>
+  /// Add up how much of each process's address space is backed by a file (PRD §16).
+  /// </summary>
+  /// <remarks>
+  /// Off, and unlike the runtime it cannot be worked out once and kept: a process maps and unmaps
+  /// files for as long as it runs, and a figure cached at exec would be the answer to a question
+  /// nobody asked. So it is a read of <c>maps</c> per process per <em>sample</em> — the same file the
+  /// runtime reads once — and nothing turns it on but somebody naming the column (PRD §5.4).
+  /// </remarks>
+  public bool ReadMappedFileBytes { get; init; }
+
+  /// <summary>
   /// Ask the file system when each image was created (PRD §14).
   /// </summary>
   /// <remarks>

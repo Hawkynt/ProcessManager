@@ -48,6 +48,33 @@ public sealed record WindowsProbeOptions {
   public bool ReadGuiObjectCounts { get; init; }
 
   /// <summary>
+  /// Ask the file system when each running image was created (PRD §14).
+  /// </summary>
+  /// <remarks>
+  /// Off, and a stat per process per sample rather than a read of the file. NTFS has recorded a
+  /// creation time for every file since it was written, so unlike the Linux half this answers for
+  /// everything — which is a reason to have the column, not a reason to pay for it unasked.
+  /// </remarks>
+  public bool ReadImageCreationTime { get; init; }
+
+  /// <summary>
+  /// Read the page priority and the CPU sets of each process (PRD §15, §16).
+  /// </summary>
+  /// <remarks>
+  /// Off, and one switch for two readings because they share the one thing that makes them
+  /// expensive: an <c>OpenProcess</c> per process per <em>sample</em>. Not per process — both are
+  /// settable while a process runs, and this program has a menu item that sets one of them, so an
+  /// answer cached for a process's lifetime would be wrong the moment anybody changed it. That is
+  /// what keeps them out of the identity cache and behind a switch (PRD §5.2, §5.4).
+  /// <para>
+  /// <see cref="ReadPowerThrottling"/> is the same shape and is its own switch: it answers §22's
+  /// question rather than §15's and §16's, and a run that named one column should not pay for the
+  /// other's call.
+  /// </para>
+  /// </remarks>
+  public bool ReadProcessDetails { get; init; }
+
+  /// <summary>
   /// Read each running image's version resource and subsystem (PRD §14).
   /// </summary>
   /// <remarks>

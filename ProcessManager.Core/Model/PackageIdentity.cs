@@ -31,6 +31,17 @@ public enum PackageSource : byte {
   /// <summary>An AppImage, running out of the mount its own runtime made for it.</summary>
   AppImage,
 
+  /// <summary>
+  /// A Windows MSIX package, which the package manager names rather than the image (PRD §14).
+  /// </summary>
+  /// <remarks>
+  /// Its own source and not "the distribution's own", because it is not the machine's ordinary way
+  /// of installing anything: nearly every program on a Windows machine comes from no package at all,
+  /// and a column that lumped an MSIX in with the Linux systems' own databases would be claiming a
+  /// symmetry that is not there (PRD §5.3).
+  /// </remarks>
+  Msix,
+
 }
 
 /// <summary>
@@ -88,6 +99,7 @@ public readonly record struct PackageIdentity(
     PackageSource.None => "not packaged",
     PackageSource.Pacman or PackageSource.Dpkg => Join(this.Name, this.Version),
     PackageSource.Flatpak => Prefix("flatpak", this.Name ?? this.ApplicationId, this.Version),
+    PackageSource.Msix => Prefix("msix", this.Name, this.Version),
     PackageSource.Snap => Prefix("snap", this.Name, this.Version),
     PackageSource.AppImage => Prefix("appimage", this.Name, this.Version),
     _ => null,
