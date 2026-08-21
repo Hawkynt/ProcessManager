@@ -577,6 +577,12 @@ everybody's settings could never be improved again.
 
 §94 defines the presets' contents.
 
+**Known and reproducible:** a right-aligned caption sits flush against the next column's caption, so
+"CPU %" and "Working set" touch with no gap between them. Three separate changes have reported it and
+none has fixed it: the header cell clips and pads within its own bounds, so the captions do not
+overlap — they simply abut, and the eye reads the join as a clipped letter. It wants measuring in the
+shared header painter rather than guessing, and widening a column to hide it would be the wrong fix.
+
 ---
 
 # 12. Update / refresh system
