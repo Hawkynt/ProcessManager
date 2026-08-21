@@ -47,7 +47,7 @@ public sealed class LinuxThreadTests(bool portable) {
   [Test]
   public void EveryThreadInTheTaskDirectoryIsEnumerated() {
     var threads = this.Threads();
-    Assert.That(threads, Has.Count.EqualTo(2));
+    Assert.That(threads, Has.Count.EqualTo(4));
   }
 
   /// <summary>
@@ -80,6 +80,113 @@ public sealed class LinuxThreadTests(bool portable) {
 
     Assert.That(One(threads, 1001).ContextSwitches.Value, Is.EqualTo(990ul), "90 voluntary + 900 not");
     Assert.That(One(threads, 1007).ContextSwitches.Value, Is.EqualTo(10ul));
+  }
+
+  /// <summary>
+  /// The two halves mean opposite things — a thread that yields is waiting on something, a thread
+  /// that is preempted is losing a contended processor — and the total cannot tell them apart.
+  /// </summary>
+  [Test]
+  public void TheVoluntaryAndInvoluntaryHalvesAreReportedSeparately() {
+    var main = One(this.Threads(), 1001);
+
+    Assert.That(main.VoluntaryContextSwitches.Value, Is.EqualTo(90ul));
+    Assert.That(main.InvoluntaryContextSwitches.Value, Is.EqualTo(900ul));
+    Assert.That(
+      main.ContextSwitches.Value,
+      Is.EqualTo(main.VoluntaryContextSwitches.Value + main.InvoluntaryContextSwitches.Value)
+    );
+  }
+
+  /// <summary>
+  /// A kernel built without <c>CONFIG_SCHEDSTATS</c> writes no switch lines at all. That is not a
+  /// thread which has never been switched, and the total must not become a confident zero either.
+  /// </summary>
+  [Test]
+  public void AStatusWithoutTheSwitchLinesReportsUnknownRatherThanZero() {
+    var thread = One(this.Threads(), 1017);
+
+    Assert.That(thread.VoluntaryContextSwitches.HasValue, Is.False);
+    Assert.That(thread.VoluntaryContextSwitches.Reason, Is.EqualTo(UnknownReason.NotSupportedOnPlatform));
+    Assert.That(thread.InvoluntaryContextSwitches.Reason, Is.EqualTo(UnknownReason.NotSupportedOnPlatform));
+    Assert.That(thread.ContextSwitches.HasValue, Is.False, "a total of two unknowns is not zero");
+    // The rest of the status was readable, so the affinity is still an answer.
+    Assert.That(thread.Affinity, Is.EqualTo("2-3"));
+  }
+
+  /// <summary>
+  /// A thread that exits between the task listing and the status read leaves an ENOENT behind. That
+  /// is a thread that is gone, not a thread we lack the privilege for — and the old reading called
+  /// every failure a permission problem, which sends the reader hunting for a right they already had.
+  /// </summary>
+  [Test]
+  public void AThreadThatVanishedBeforeItsStatusWasReadSaysSo() {
+    var thread = One(this.Threads(), 1027);
+
+    Assert.That(thread.ContextSwitches.Reason, Is.EqualTo(UnknownReason.ProcessExited));
+    Assert.That(thread.VoluntaryContextSwitches.Reason, Is.EqualTo(UnknownReason.ProcessExited));
+    Assert.That(thread.InvoluntaryContextSwitches.Reason, Is.EqualTo(UnknownReason.ProcessExited));
+    Assert.That(thread.Affinity, Is.Null);
+    // Everything stat carried is still there: one unreadable file is not an unreadable thread.
+    Assert.That(thread.Name, Is.EqualTo("gone"));
+    Assert.That(thread.LastCpu, Is.EqualTo(5));
+  }
+
+  /// <summary>
+  /// The nice value, which is the priority the thread was <em>given</em>: the effective priority in
+  /// <c>Priority</c> moves with the load, and only the pair says whether a busy thread is being
+  /// polite or was simply never asked to be.
+  /// </summary>
+  [Test]
+  public void TheBasePriorityIsTheNiceValue() {
+    var threads = this.Threads();
+
+    Assert.That(One(threads, 1001).BasePriority, Is.EqualTo(-5));
+    Assert.That(One(threads, 1007).BasePriority, Is.EqualTo(0));
+  }
+
+  /// <summary>
+  /// Field 41 sits two past the processor, behind fields nothing else reads, and every one of its
+  /// neighbours is a plausible small integer — so a miscount produces a scheduling class rather than
+  /// an error. The realtime thread is the guard: only the right field reads 1.
+  /// </summary>
+  [Test]
+  public void TheSchedulingPolicyIsReadFromTheRightFieldOfStat() {
+    var threads = this.Threads();
+
+    Assert.That(One(threads, 1001).Policy, Is.EqualTo(SchedulingPolicy.Other));
+    Assert.That(One(threads, 1017).Policy, Is.EqualTo(SchedulingPolicy.Fifo));
+    // The effective priority the kernel derives from a realtime priority of 50, which is what makes
+    // the policy column worth having: -51 on its own says nothing a reader can act on.
+    Assert.That(One(threads, 1017).Priority, Is.EqualTo(-51));
+  }
+
+  /// <summary>
+  /// Kept in the kernel's own list notation rather than expanded to a mask: on a wide machine the
+  /// list is the readable form, and it is what <c>taskset</c> both prints and accepts.
+  /// </summary>
+  [Test]
+  public void TheAffinityIsTheListTheKernelWrote() {
+    var threads = this.Threads();
+
+    Assert.That(One(threads, 1001).Affinity, Is.EqualTo("0-3"));
+    Assert.That(One(threads, 1007).Affinity, Is.EqualTo("0,2"), "a comma list, not only a range");
+  }
+
+  /// <summary>
+  /// Threads start after the process that made them, and the difference is what identifies a worker
+  /// pool that grew under load. The tick base is the process's, so an off-by-one boot time would
+  /// move every thread at once — hence the comparison against the process rather than a constant.
+  /// </summary>
+  [Test]
+  public void EachThreadCarriesItsOwnStartTime() {
+    var threads = this.Threads();
+    var main = One(threads, 1001);
+    var worker = One(threads, 1007);
+
+    Assert.That(main.StartTimeUtcTicks, Is.GreaterThan(0));
+    // 100 clock ticks at 100 Hz is one second, in 100 ns units.
+    Assert.That(worker.StartTimeUtcTicks - main.StartTimeUtcTicks, Is.EqualTo(TimeSpan.TicksPerSecond));
   }
 
   /// <summary>

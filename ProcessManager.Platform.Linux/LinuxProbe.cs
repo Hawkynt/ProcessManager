@@ -479,10 +479,20 @@ public sealed class LinuxProbe : ISystemProbe {
     var startTicks = scanner.NextUInt64();                 // 22
     var virtualBytes = scanner.NextUInt64();               // 23
     var rssPages = scanner.NextUInt64();                   // 24
-    scanner.Skip(14);                                      // 25 rsslim .. 38 delayacct_blkio_ticks
+    scanner.Skip(14);                                      // 25 rsslim .. 38 exit_signal
     record.LastCpu = scanner.NextInt32();                  // 39 processor
+    scanner.Skip(1);                                       // 40 rt_priority
+    // Read here rather than re-scanned where it is wanted: two fields past the processor is two more
+    // chances to miscount a positional line whose next-door neighbours are all plausible small
+    // integers, and one parser that counts once cannot disagree with itself.
+    var policy = scanner.NextField();                      // 41 policy
 
     record.Key = new(0, startTicks);
+    // A stat line that stops short — an old kernel, a truncated read, a fixture — leaves the class
+    // unknown. Defaulting to the ordinary class would be a confident answer nobody gave us.
+    record.SchedulingPolicy = policy.IsEmpty
+      ? SchedulingPolicy.Unknown
+      : MapSchedulingPolicy(AsciiScanner.ParseUInt64(policy));
     record.UserTimeNs = Counter.Of((ulong)(utime * nanosecondsPerTick));
     record.KernelTimeNs = Counter.Of((ulong)(stime * nanosecondsPerTick));
     record.CpuTimeNs = Counter.Of((ulong)((utime + stime) * nanosecondsPerTick));
@@ -519,6 +529,26 @@ public sealed class LinuxProbe : ISystemProbe {
     record.Name = string.Empty;
     return true;
   }
+
+  /// <summary>
+  /// The number in field 41 of <c>stat</c>, as a scheduler class.
+  /// </summary>
+  /// <remarks>
+  /// The values are the <c>SCHED_*</c> constants from <c>uapi/linux/sched.h</c> and have never been
+  /// renumbered — 4 is the abandoned <c>SCHED_ISO</c>, which no released kernel implements, and 7 is
+  /// <c>SCHED_EXT</c> from 6.12. A number this does not know is left unknown rather than folded into
+  /// the ordinary class, because the next class Linux adds will not be an ordinary one either.
+  /// </remarks>
+  private static SchedulingPolicy MapSchedulingPolicy(ulong policy) => policy switch {
+    0 => SchedulingPolicy.Other,
+    1 => SchedulingPolicy.Fifo,
+    2 => SchedulingPolicy.RoundRobin,
+    3 => SchedulingPolicy.Batch,
+    5 => SchedulingPolicy.Idle,
+    6 => SchedulingPolicy.Deadline,
+    7 => SchedulingPolicy.Extensible,
+    _ => SchedulingPolicy.Unknown,
+  };
 
   private static ProcessState MapState(byte c) => c switch {
     (byte)'R' => ProcessState.Running,
@@ -869,25 +899,32 @@ public sealed class LinuxProbe : ISystemProbe {
     return System.Text.Encoding.UTF8.GetString(content);
   }
 
-  private Counter ReadThreadContextSwitches(string taskDirectory) {
-    if (!this._reader.TryRead(taskDirectory + "/status", out var content, out _))
-      return Counter.NotPermitted;
+  /// <summary>
+  /// The context-switch counts and the affinity of one thread, from its own <c>status</c>.
+  /// </summary>
+  /// <remarks>
+  /// Which failure it was matters more than that there was one: a status we were refused is
+  /// <see cref="UnknownReason.NotPermitted"/> and the elevated helper could answer it, while a
+  /// thread that exited between the directory listing and this read is gone and always will be. The
+  /// old reading called every failure a permission problem, which sent the reader looking for a
+  /// privilege they already had (PRD §72.3).
+  /// </remarks>
+  private ThreadStatus ReadThreadStatus(string taskDirectory) {
+    if (!this._reader.TryRead(taskDirectory + "/status", out var content, out var errno))
+      return ThreadStatus.Unreadable(errno switch {
+        Native.EACCES or Native.EPERM => UnknownReason.NotPermitted,
+        Native.ENOENT or Native.ESRCH => UnknownReason.ProcessExited,
+        _ => UnknownReason.NotSupportedOnPlatform,
+      });
 
-    ulong voluntary = 0, involuntary = 0;
-    var found = false;
-    var scanner = new AsciiScanner(content);
-    while (!scanner.IsEmpty) {
-      var line = scanner.NextLine();
-      if (TryValue(line, "voluntary_ctxt_switches:"u8, out var value)) {
-        voluntary = value;
-        found = true;
-      } else if (TryValue(line, "nonvoluntary_ctxt_switches:"u8, out value)) {
-        involuntary = value;
-        found = true;
-      }
-    }
+    // Widened rather than decoded: status is ASCII by construction — the only field that could carry
+    // anything else is the name, which this parser does not read — and one array beats the string per
+    // line a decode-then-split would make. The parser itself is in Core so it is tested everywhere.
+    Span<char> text = content.Length <= 4096 ? stackalloc char[content.Length] : new char[content.Length];
+    for (var i = 0; i < content.Length; ++i)
+      text[i] = (char)content[i];
 
-    return found ? Counter.Of(voluntary + involuntary) : Counter.NotSupported;
+    return ThreadStatusParser.Parse(text);
   }
 
   /// <summary>
@@ -966,6 +1003,11 @@ public sealed class LinuxProbe : ISystemProbe {
       if (!ParseStat(content, this._nanosecondsPerTick, this._options.PageSize, ref record))
         continue;
 
+      // Per-thread switch counts and affinity live in the thread's own status, which is one more
+      // file each. Threads are enumerated for one process on demand, so it is affordable here in a
+      // way it would not be in the sample loop (PRD §5.4).
+      var status = this.ReadThreadStatus(directory);
+
       result.Add(new(
         tid,
         record.State,
@@ -977,12 +1019,17 @@ public sealed class LinuxProbe : ISystemProbe {
         Name: threadName,
         UserTimeNs: record.UserTimeNs,
         KernelTimeNs: record.KernelTimeNs,
-        // Per-thread switch counts live in the thread's own status, which is one more file each.
-        // Threads are enumerated for one process on demand, so it is affordable here in a way it
-        // would not be in the sample loop (PRD §5.4).
-        ContextSwitches: this.ReadThreadContextSwitches(directory),
+        ContextSwitches: status.TotalContextSwitches,
         LastCpu: record.LastCpu,
-        WaitReason: this.ReadWaitChannel(directory)
+        WaitReason: this.ReadWaitChannel(directory),
+        VoluntaryContextSwitches: status.VoluntaryContextSwitches,
+        InvoluntaryContextSwitches: status.InvoluntaryContextSwitches,
+        // Nice, which is the priority the thread was *given*: a thread reniced to 19 still shows an
+        // effective priority that moves with the load, and the two together are what say whether a
+        // busy thread is being polite or was simply never asked to be.
+        BasePriority: record.Nice,
+        Policy: record.SchedulingPolicy,
+        Affinity: status.Affinity
       ));
     }
 

@@ -1,0 +1,3 @@
+Name:	rt-audio
+Cpus_allowed:	00000000,0000000c
+Cpus_allowed_list:	2-3

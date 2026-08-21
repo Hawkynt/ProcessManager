@@ -173,6 +173,16 @@ public static class Humanize {
     ? counter.Value.ToString(CultureInfo.InvariantCulture)
     : Placeholder(counter.Reason);
 
+  /// <summary>
+  /// Two halves of one reading in a single cell, as <c>a / b</c>.
+  /// </summary>
+  /// <remarks>
+  /// Each half keeps its own placeholder rather than the pair collapsing to one: a platform that
+  /// counts context switches but does not split them has a total and no halves, and "n/a / n/a"
+  /// beside a real total is the honest way to say so (PRD §72.3).
+  /// </remarks>
+  public static string Pair(Counter first, Counter second) => Count(first) + " / " + Count(second);
+
   /// <summary>A CPU-time total as <c>h:mm:ss</c>, the way top and Process Explorer show it.</summary>
   public static string Duration(Counter nanoseconds) {
     if (!nanoseconds.HasValue)
@@ -183,6 +193,36 @@ public static class Humanize {
       ? $"{(int)span.TotalHours}:{span.Minutes:00}:{span.Seconds:00}"
       : $"{span.Minutes}:{span.Seconds:00}";
   }
+
+  /// <summary>
+  /// A point in time as local <c>yyyy-MM-dd HH:mm:ss</c>, or the em dash when there is none.
+  /// </summary>
+  /// <remarks>
+  /// Sortable rather than pretty, and local rather than UTC: the reader is comparing a start time
+  /// against their own log files, which are in their own timezone.
+  /// </remarks>
+  public static string Timestamp(long utcTicks) => utcTicks > 0
+    ? new DateTime(utcTicks, DateTimeKind.Utc).ToLocalTime()
+      .ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture)
+    : "—";
+
+  /// <summary>
+  /// A scheduler class under the kernel's own name, because that is what a person will search for.
+  /// </summary>
+  /// <remarks>
+  /// "SCHED_FIFO" is greppable, matches <c>chrt</c> and matches every manual page; "First in, first
+  /// out" is none of those things (PRD §5.3).
+  /// </remarks>
+  public static string SchedulingPolicy(Model.SchedulingPolicy policy) => policy switch {
+    Model.SchedulingPolicy.Other => "SCHED_OTHER",
+    Model.SchedulingPolicy.Fifo => "SCHED_FIFO",
+    Model.SchedulingPolicy.RoundRobin => "SCHED_RR",
+    Model.SchedulingPolicy.Batch => "SCHED_BATCH",
+    Model.SchedulingPolicy.Idle => "SCHED_IDLE",
+    Model.SchedulingPolicy.Deadline => "SCHED_DEADLINE",
+    Model.SchedulingPolicy.Extensible => "SCHED_EXT",
+    _ => "—",
+  };
 
   public static string State(ProcessState state) => state switch {
     ProcessState.Running => "run",
