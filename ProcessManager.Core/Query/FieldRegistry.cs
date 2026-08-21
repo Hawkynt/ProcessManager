@@ -527,7 +527,10 @@ public static class FieldRegistry {
       FieldKind.Identifier, FieldUnit.None, _ALL, FieldCost.Free, 74, 5, true, false),
     new(ProcessField.StartTime, "start", "Start time", "Started",
       "When the process was created.",
-      FieldKind.Instant, FieldUnit.Timestamp, _ALL, FieldCost.Free, 140, 19, false, true,
+      // 152 rather than 140: the value is nineteen characters exactly and the old width fitted
+      // eighteen of them, so every timestamp in the window lost the units digit of its seconds —
+      // 22:03:2, which reads as a time rather than as a truncation and so went unnoticed.
+      FieldKind.Instant, FieldUnit.Timestamp, _ALL, FieldCost.Free, 152, 19, false, true,
       Aliases: "started starttime"),
     new(ProcessField.Container, "cgroup", "Container / cgroup", "Cgroup",
       "The cgroup or container the process belongs to.",
