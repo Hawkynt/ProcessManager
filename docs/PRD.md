@@ -58,8 +58,13 @@ The application shall provide:
 - [x] A shared system-information and process-inspection engine
 - [ ] 🟡 A stable CLI and machine-readable API — the CLI exists; the JSON schema and API do not
 - [x] Basic task-management workflows suitable for ordinary users
-- [ ] 🟡 Advanced process, thread, module, handle, memory, network, security, service and resource
-      inspection — the engine reads most of it; the views for it are largely unbuilt
+- [x] Advanced process, thread, module, handle, memory, network, security, service and resource
+      inspection — **and the views are built now**, which this box went on denying long after they
+      were. Seventeen tabs on a process: threads, modules, handles, the memory map, the environment,
+      the network, the security context, the cgroup, the owning unit, its windows, its stacks and the
+      rest. Nine views behind the window's rail and twenty-two resources on the performance page's
+      own. A binary inspector with sixteen pages, and a strings view. The command line reaches each
+      of them, which §102's audit checked field by field rather than by inspection
 - [ ] Platform-specific advanced capabilities wherever the OS exposes them
 - [x] Predictable fallbacks when a capability does not exist on a platform
 - [x] An information architecture familiar to users of the named tools without copying their
