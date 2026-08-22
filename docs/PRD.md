@@ -4500,14 +4500,16 @@ class 3, because the request nobody sorted is the one nobody thought about (§72
       (§25.1); **thaw a cgroup**, because it is the reversal of the freeze and costs nothing; and
       **putting a login entry back**, because the entry beside it takes it out again. All three are
       the reversal half of a pair, and a prompt on the way back teaches people to dismiss prompts
-- [x] **Class 2 — potential data loss.** Terminate, terminate a tree, restart, stop or restart a
-      service, take a login entry out of the next boot. The setting decides — **except against a
-      system target, where it asks whatever the setting says.** That switch is turned off by people
-      who end their own editors all day, and not by people who meant to stop `systemd`. A system
+- [x] **Class 2 — potential data loss.** Terminate, restart, stop or restart a service, take a login
+      entry out of the next boot. The setting decides — **except against a system target, where it
+      asks whatever the setting says.** That switch is turned off by people who end their own editors
+      all day, and not by people who meant to stop `systemd`. A system
       target is root's, or one of the four lowest pids, read off the snapshot rather than guessed; it
       under-reports rather than over-reports; and the confirmation says *which kind* of process it
       is, because a reader can check "this belongs to root" against the user column and cannot check
-      "this is critical" against anything
+      "this is critical" against anything. **A bulk action is class 2 and never skips**, whatever the
+      setting says and whoever owns the rows: ending a tree and ending the ticked rows both ask,
+      because there the count is the whole of what the confirmation is for (§67, §90)
 - [x] **Class 3 — expert / unsafe.** Any signal from the chooser, either real-time scheduling class,
       freezing a whole cgroup. **Always warned, and no preference switches it off.** Two of these
       were wrong until this section was checked against the code rather than against itself: the
