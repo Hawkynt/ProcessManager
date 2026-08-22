@@ -32,7 +32,7 @@ it is not known*. An unticked box must never become a zero on screen. This is re
 it is the single requirement most likely to be broken while filling the tables in.
 
 **Counting, as of the last update:** **1115 of 1320 boxes are ticked** — 171 of 190 in the field
-registry (§14–22), 944 of 1130 across the capabilities. A further 162 are marked 🟡, meaning some of
+registry (§14–22), 944 of 1130 across the capabilities. A further 163 are marked 🟡, meaning some of
 the work behind them is already done. §100 tracks the phases; §101 defines when this may be called
 finished.
 
@@ -3528,11 +3528,41 @@ Shared columns:
 
 Windows-specific:
 
-- [ ] Service type · service group · accepted controls · error control · start account ·
-      delayed start · trigger information · required privileges · preshutdown timeout ·
-      key modification time · driver service indicator — **blocked on the reading half**: nothing
-      opens the service control manager, so `WindowsProbe.GetServices` answers with an empty list and
-      there are no rows for any of these to be columns of
+- [ ] 🟡 Service type ✔ · start account ✔ · driver service indicator ✔ · service group ·
+      accepted controls · error control · delayed start · trigger information · required privileges ·
+      preshutdown timeout · key modification time. **No longer blocked on the reading half.** The
+      service control manager is opened now — `EnumServicesStatusEx` for the list, then
+      `QueryServiceConfig` and `QueryServiceConfig2` per service — so a Windows machine has rows in
+      the services view where it used to have a view that looked like a machine with no services.
+
+      Read-only by construction: the handles are asked for `SERVICE_QUERY_CONFIG` and
+      `SERVICE_QUERY_STATUS` and nothing else, so this path cannot start or stop anything even by
+      accident. Commanding a service is `IServiceControl`'s job and asks for its own rights when it
+      is used. Nothing needs elevation — `SC_MANAGER_ENUMERATE_SERVICE` is granted to Authenticated
+      Users — and it is read on demand rather than on the tick, for the reason the systemd side is:
+      two queries per service, several hundred times, once a second, is the monitor becoming the
+      thing worth monitoring (§5.4).
+
+      **Drivers are rows.** The driver-service indicator is a column that can only exist if they are,
+      and a view that silently omitted half the service control manager would answer a narrower
+      question than the one it appears to.
+
+      What the state map does *not* do is invent a systemd word for a Windows state. A pending start
+      is reported as running because that is what the manager said and where it is going; **paused**
+      is `Unknown`, because Windows has a state systemd does not and folding it into either of the
+      other two would say something untrue about a service that is neither (§5.3).
+
+      The remaining seven are further queries against the same open handle rather than another
+      blocker — the failure actions, the trigger table, the required-privileges list — and the
+      restart policy is among them, which is why that column is still null here.
+
+      The text half — splitting `ImagePath` into a program and its arguments — is in Core with no
+      platform attribute, so it is tested on every CI leg (§9.2). It is not a split on the first
+      space: most Windows program paths have one, so that would name `C:\Program` for the majority of
+      services on the machine, and the wrong program is worse than none because it looks like an
+      answer. It also does not pretend to resolve the unquoted-path ambiguity Windows itself resolves
+      by trying each prefix — reporting what the registry says is a reading, and deciding what the
+      loader would pick is a claim about a filesystem nobody looked at
 
 systemd-specific:
 
