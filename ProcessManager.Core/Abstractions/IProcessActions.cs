@@ -12,6 +12,19 @@ public enum ActionOutcome : byte {
   IdentityMismatch,
 
   NotSupportedOnPlatform,
+
+  /// <summary>
+  /// This platform could do it and nothing here does it yet.
+  /// </summary>
+  /// <remarks>
+  /// The distinction <see cref="Model.UnknownReason"/> has drawn for readings since it was written,
+  /// and which actions did without: every unwritten action reported
+  /// <see cref="NotSupportedOnPlatform"/>, so a program running on Windows told people their
+  /// computer could not start a process. One of the two is a fact about the machine and the other is
+  /// a fact about this program, and only the first is a reason to stop looking (PRD §7, §72.3).
+  /// </remarks>
+  NotImplementedHere,
+
   Refused,
   Failed,
 }
@@ -78,6 +91,22 @@ public enum WindowCommand : byte {
 /// Every method takes a <see cref="ProcessKey"/>, never a bare pid, and every implementation
 /// re-validates the identity immediately before acting. A pid recycled between the click and the
 /// syscall must be refused, not acted on — this is the whole reason the key is a pair (PRD §8.2).
+/// </remarks>
+/// <remarks>
+/// <para>
+/// <b>A default here says "nobody has written this", not "your machine cannot do it".</b> Six of
+/// these used to say the second about things every supported platform plainly does: Windows starts
+/// processes, restarts them, commands windows, and has a thread priority, a thread affinity and an
+/// I/O priority — and it implements six of the eighteen members below, so it reached those messages
+/// for the other twelve. A person told "this platform cannot start processes here" by a program
+/// running on Windows learns something false about their computer.
+/// </para>
+/// <para>
+/// The four that really are platform limits keep saying so, and they are the ones where the concept
+/// does not exist rather than the code: an out-of-memory score, a POSIX resource limit, a cgroup
+/// freezer and a scheduler class. Mapping Windows' priority classes onto <c>SCHED_*</c> to fill that
+/// last one is exactly the false equivalence §5.3 forbids.
+/// </para>
 /// </remarks>
 public interface IProcessActions {
 
@@ -163,7 +192,10 @@ public interface IProcessActions {
   /// string that was joined for a person to read.
   /// </remarks>
   LaunchResult Restart(ProcessKey key)
-    => LaunchResult.Failed(ActionOutcome.NotSupportedOnPlatform, "this platform cannot restart a process here");
+    => LaunchResult.Failed(
+      ActionOutcome.NotImplementedHere,
+      "nothing here restarts a process on this platform yet"
+    );
 
   /// <summary>Nice value on Unix, priority class on Windows; the caller passes the platform's scale.</summary>
   ActionResult SetPriority(ProcessKey key, int priority);
@@ -238,7 +270,10 @@ public interface IProcessActions {
   /// else that wants it. Raising into the real-time class needs privilege; lowering does not.
   /// </remarks>
   ActionResult SetIoPriority(ProcessKey key, IoPriority priority)
-    => ActionResult.Fail(ActionOutcome.NotSupportedOnPlatform, "this platform has no I/O priority");
+    => ActionResult.Fail(
+      ActionOutcome.NotImplementedHere,
+      "nothing here sets an I/O priority on this platform yet"
+    );
 
   /// <summary>
   /// Which scheduler class runs the process, rather than where it sits inside one (PRD §25.2).
@@ -266,11 +301,17 @@ public interface IProcessActions {
   /// something else entirely (PRD §8.2).
   /// </remarks>
   ActionResult SetThreadPriority(ProcessKey key, int threadId, int priority)
-    => ActionResult.Fail(ActionOutcome.NotSupportedOnPlatform, "this platform has no per-thread priority");
+    => ActionResult.Fail(
+      ActionOutcome.NotImplementedHere,
+      "nothing here sets a thread's priority on this platform yet"
+    );
 
   /// <summary>One thread's CPU affinity, as a bit mask of logical cores.</summary>
   ActionResult SetThreadAffinity(ProcessKey key, int threadId, ulong mask)
-    => ActionResult.Fail(ActionOutcome.NotSupportedOnPlatform, "this platform has no per-thread affinity");
+    => ActionResult.Fail(
+      ActionOutcome.NotImplementedHere,
+      "nothing here sets a thread's affinity on this platform yet"
+    );
 
   /// <summary>
   /// Asks one of a process's windows to come forward, go away, grow, shrink or close (PRD §39).
@@ -293,7 +334,10 @@ public interface IProcessActions {
   /// </para>
   /// </remarks>
   ActionResult CommandWindow(ProcessKey key, ulong window, WindowCommand command)
-    => ActionResult.Fail(ActionOutcome.NotSupportedOnPlatform, "this platform's windows cannot be commanded here");
+    => ActionResult.Fail(
+      ActionOutcome.NotImplementedHere,
+      "nothing here commands a window on this platform yet"
+    );
 
   /// <summary>
   /// Starts a process (PRD §54).
@@ -305,6 +349,9 @@ public interface IProcessActions {
   /// that is now running.
   /// </remarks>
   LaunchResult Launch(LaunchRequest request)
-    => LaunchResult.Failed(ActionOutcome.NotSupportedOnPlatform, "this platform cannot start processes here");
+    => LaunchResult.Failed(
+      ActionOutcome.NotImplementedHere,
+      "nothing here starts a process on this platform yet"
+    );
 
 }
