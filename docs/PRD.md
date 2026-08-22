@@ -639,13 +639,29 @@ now reorders each sibling group to match the view, skipping the work when it alr
 
 # 13. Process presentation modes
 
-- [ ] **Friendly / grouped** — applications, background processes, system processes, categorised
-      per platform
+- [x] **Friendly / grouped** — group by Kind, in both front-ends and settable from the file, which
+      arranges the table as "these are your programs, these are the machine's": yours, the system's,
+      elevated, services, suspended, zombies, newly started, packaged, running a managed runtime. It
+      is §23's own classifier rather than a second opinion beside it, so a heading and the colour of
+      a row underneath it cannot come to disagree.
+
+      **Building it found the classification broken in exactly the case it exists for.** Whether a
+      process was a service was decided by looking for `.service` anywhere in its cgroup path — and
+      every process in a desktop session has `user@1000.service` as an ancestor, because that is the
+      name of the user's own systemd manager. So on the machine this was written on, 207 of the
+      user's own programs were classified as services and one as theirs. The innermost unit decides
+      now, which is the rule the owning-service column already followed: a `.scope` is a group
+      systemd adopted — a terminal, an application the desktop launched — and is not a service in the
+      sense anybody means. The same walk of `/proc` afterwards: 115 yours, 94 services
 - [x] **Process tree** — parent/child hierarchy, expand/collapse per row
 - [x] **Flat expert** — one row per process, optimised for sorting and density
 
 - [x] When a parent disappears, surviving children remain visible and become orphaned roots
-- [ ] …or attach to the closest surviving ancestor, per configured behaviour
+- [ ] …or attach to the closest surviving ancestor, per configured behaviour — deliberately still
+      open. On Linux the kernel reparents an orphan to `init` or to the nearest subreaper and writes
+      that in `ppid`, so "the closest surviving ancestor" is a chain this program never saw: the
+      parent it would climb to has already gone, and remembering the tree across samples to guess at
+      it would be inventing a relationship the kernel has forgotten
 
 ---
 

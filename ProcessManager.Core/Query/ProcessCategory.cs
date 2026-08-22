@@ -221,9 +221,23 @@ public static class ProcessCategories {
   /// wrong about anything it says in words.
   /// </remarks>
   private static bool IsService(in ProcessRecord process) {
-    if (process.ContainerPath is { } cgroup)
-      return cgroup.Contains("system.slice", StringComparison.Ordinal)
-          || cgroup.Contains(".service", StringComparison.Ordinal);
+    if (process.ContainerPath is { } cgroup) {
+      // The innermost unit, not any substring of the path. Searching the whole path for ".service"
+      // matched "user@1000.service" — the user's own systemd manager, which is an ancestor of every
+      // single process in a desktop session. So on this machine 207 of the user's own programs
+      // classified as services and one as theirs, which makes both the colour and §13's friendly
+      // grouping useless in exactly the case they were built for.
+      //
+      // What a process lives in is the last unit on its path, which is what CgroupUnit answers and
+      // what the owning-service column already shows. A ".scope" is a group systemd adopted — a
+      // terminal, an application the desktop launched — and is not a service in the sense anybody
+      // means when they ask which processes are services.
+      if (CgroupUnit.Of(cgroup) is not { } unit)
+        return false;
+
+      return unit.EndsWith(".service", StringComparison.Ordinal)
+          || unit.EndsWith(".socket", StringComparison.Ordinal);
+    }
 
     return process.Name.Equals("svchost.exe", StringComparison.OrdinalIgnoreCase)
         || process.Name.Equals("services.exe", StringComparison.OrdinalIgnoreCase);

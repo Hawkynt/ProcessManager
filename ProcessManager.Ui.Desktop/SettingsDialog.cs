@@ -295,6 +295,7 @@ public sealed class SettingsDialog : Form {
     ProcessGrouping.Container,
     ProcessGrouping.Cgroup,
     ProcessGrouping.Package,
+    ProcessGrouping.Category,
   ];
 
   /// <summary>True when the box was closed with OK.</summary>

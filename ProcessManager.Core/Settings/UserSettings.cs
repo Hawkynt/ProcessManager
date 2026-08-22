@@ -899,6 +899,7 @@ public sealed record UserSettings {
     ProcessGrouping.Executable => "executable",
     ProcessGrouping.Container => "container",
     ProcessGrouping.Package => "package",
+    ProcessGrouping.Category => "category",
     _ => "cgroup",
   };
 
@@ -918,6 +919,7 @@ public sealed record UserSettings {
       case "container": grouping = ProcessGrouping.Container; return true;
       case "cgroup": grouping = ProcessGrouping.Cgroup; return true;
       case "package" or "pkg": grouping = ProcessGrouping.Package; return true;
+      case "category" or "kind" or "friendly": grouping = ProcessGrouping.Category; return true;
       default: return false;
     }
   }
