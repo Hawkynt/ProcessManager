@@ -170,6 +170,27 @@ public interface ISystemProbe : IDisposable {
   Query.ServiceNames DescribePortNames() => Query.ServiceNames.Empty;
 
   /// <summary>
+  /// Which process is blocking each waiting one on a file lock (PRD §33, §91).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The one wait chain a kernel states outright. A thread's wait channel says <em>what</em> it is
+  /// blocked in and stops there — nothing publishes who holds a futex, and working it out from
+  /// outside needs the debugger interface §4 rules out. File locks are the exception: the kernel
+  /// lists every waiter beside the holder it is queued behind, both by pid.
+  /// </para>
+  /// <para>
+  /// Empty from a probe that has not learnt to look, which is never a claim that nothing on the
+  /// machine is waiting. Read on demand rather than every sample: a table with sixty-odd rows costs
+  /// one open, but a process waiting on a lock is not something anybody watches change per second —
+  /// it is something they go and look at once they have noticed a process is stuck.
+  /// </para>
+  /// </remarks>
+  IReadOnlyDictionary<int, int> DescribeLockWaits() => _NoLockWaits;
+
+  private static readonly Dictionary<int, int> _NoLockWaits = [];
+
+  /// <summary>
   /// The machine's services (PRD §41), or an empty list where they are not read yet.
   /// </summary>
   IReadOnlyList<ServiceRecord> GetServices();

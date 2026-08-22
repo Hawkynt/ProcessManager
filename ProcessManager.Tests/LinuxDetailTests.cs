@@ -68,7 +68,19 @@ public sealed partial class LinuxDetailTests {
       var after = probe.GetHandleCount(Self);
 
       Assert.That(before.HasValue && after.HasValue, Is.True);
-      Assert.That(after.Value, Is.EqualTo(before.Value + 8), "eight more descriptors, eight more counted");
+      // Near enough, the same tolerance the test above uses and for the same reason: this counts a
+      // live process from inside itself, and the runtime opens and closes descriptors on its own
+      // threads — a socket for the thread pool, an assembly being loaded, a finalizer closing a
+      // file. Demanding exactly eight made this fail on a loaded CI runner while passing every time
+      // on an idle desktop, which is the shape of a test that measures the machine's mood.
+      //
+      // It still does its job. What it exists to catch is a count that is plausible but fixed, and
+      // a fixed count is off by the whole eight rather than by one or two.
+      Assert.That(
+        (long)after.Value,
+        Is.EqualTo((long)before.Value + 8).Within(4),
+        "eight more descriptors, eight more counted"
+      );
     } finally {
       foreach (var file in files)
         file.Dispose();

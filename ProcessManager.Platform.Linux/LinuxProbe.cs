@@ -926,6 +926,30 @@ public sealed partial class LinuxProbe : ISystemProbe {
 
   private Query.ServiceNames? _portNames;
 
+  /// <summary>
+  /// Who is waiting for a file lock, and who is holding it (PRD §33, §91).
+  /// </summary>
+  /// <remarks>
+  /// Read fresh every time it is asked for, and deliberately not cached the way the port names are:
+  /// a lock table is the current state of a queue and the whole reason to look at it is that
+  /// somebody is stuck now. The file is small — sixty-odd lines on an ordinary desktop — and this is
+  /// asked when a reader goes looking rather than on every sample.
+  /// </remarks>
+  public IReadOnlyDictionary<int, int> DescribeLockWaits() {
+    var path = $"{this._options.ProcRoot.TrimEnd('/')}/locks";
+    try {
+      return FileLockParser.BlockedBy(FileLockParser.Parse(File.ReadAllText(path)));
+    } catch (IOException) {
+      // A kernel built without the file, or a /proc that is not mounted. Nothing is waiting that we
+      // know of, which is not the same as nothing waiting — the caller's own wording says so.
+      return _NoWaits;
+    } catch (UnauthorizedAccessException) {
+      return _NoWaits;
+    }
+  }
+
+  private static readonly Dictionary<int, int> _NoWaits = [];
+
   /// <summary>What each interface is, read once (PRD §49).</summary>
   public NetworkInterfaceInfo DescribeInterface(string name) {
     if (this._interfaceInfo.TryGetValue(name, out var known))
