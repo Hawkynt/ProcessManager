@@ -22,11 +22,28 @@ namespace Hawkynt.ProcessManager.Ui.Terminal;
 /// </remarks>
 public static class BlockSparkline {
 
-  /// <summary>Index 0 is "nothing", 1..8 are the eighth-blocks.</summary>
+  /// <summary>Index 0 is a measured nought, 1..8 are the eighth-blocks.</summary>
   private static ReadOnlySpan<char> Blocks => [' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
 
   /// <summary>The fallback ramp: five levels an ASCII-only terminal can definitely draw.</summary>
   private static ReadOnlySpan<char> Ascii => [' ', '.', ':', '-', '=', '+', '*', '#', '#'];
+
+  /// <summary>
+  /// What a sample nobody could read looks like, as against one that was read and was nought.
+  /// </summary>
+  /// <remarks>
+  /// The two used to be the same character. Level nought of both ramps is a space, and so was a gap,
+  /// under a comment claiming "a gap is a gap: a space, not a zero-height block that reads as idle" —
+  /// which described an intention rather than the code beneath it. An idle process and one whose
+  /// counter was refused drew identically, which is the thing §102 will not ship without: an
+  /// unavailable reading has to be distinguishable from a nought one.
+  ///
+  /// A middle dot where the terminal has one, a question mark where it does not. Both are quiet
+  /// enough not to shout over a plot and different enough from a blank to be seen in one.
+  /// </remarks>
+  private const char _UnicodeGap = '·';
+
+  private const char _AsciiGap = '?';
 
   /// <summary>Whether the terminal can be trusted with the block characters.</summary>
   /// <remarks>
@@ -74,8 +91,9 @@ public static class BlockSparkline {
     for (var i = 0; i < visible; ++i) {
       var value = history[first + i];
       if (!value.HasValue) {
-        // A gap is a gap: a space, not a zero-height block that reads as "idle".
-        destination[offset + i] = ' ';
+        // A gap is a gap, and now looks like one: a space is what a measured nought draws, and a
+        // reading nobody could take is not a measurement of nought (PRD §72.3, §102).
+        destination[offset + i] = unicode ? _UnicodeGap : _AsciiGap;
         continue;
       }
 

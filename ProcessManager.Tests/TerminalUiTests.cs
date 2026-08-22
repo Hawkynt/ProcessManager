@@ -277,14 +277,19 @@ public sealed class DetailViewTests {
       EffectiveUserId = 0,
     });
 
-    using var sampler = new Sampler(probe);
-    var blocks = Compose(sampler, probe, true);
-    var ascii = Compose(sampler, probe, false);
+    var blocks = Compose(probe, true);
+    var ascii = Compose(probe, false);
 
     Assert.That(blocks, Is.Not.EqualTo(ascii), "the two ramps really do render differently");
-    Assert.That(Compose(sampler, probe, true), Is.EqualTo(blocks), "and each is stable");
+    Assert.That(Compose(probe, true), Is.EqualTo(blocks), "and each is stable");
 
-    static string Compose(Sampler sampler, LinuxProbe probe, bool unicode) {
+    // A sampler of its own each time. Sharing one made the third composition see six samples of
+    // history where the first saw two, and the assertion below passed only because an unread sample
+    // and a nought one used to draw as the same blank — so a longer ring changed nothing on screen.
+    // Once a gap had a mark of its own it changed the plot, and the test was measuring the ring's
+    // length rather than the thing it names.
+    static string Compose(LinuxProbe probe, bool unicode) {
+      using var sampler = new Sampler(probe);
       var ui = new TerminalUi(sampler, probe, null, 120, 40, ColorDepth.None) {
         ShowTiming = false,
         UseBlockCharacters = unicode,
