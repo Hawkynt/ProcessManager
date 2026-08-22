@@ -31,8 +31,8 @@ shorthand:
 it is not known*. An unticked box must never become a zero on screen. This is restated here because
 it is the single requirement most likely to be broken while filling the tables in.
 
-**Counting, as of the last update:** **996 of 1340 boxes are ticked** — 168 of 189 in the field
-registry (§14–22), 828 of 1151 across the capabilities. A further 153 are marked 🟡, meaning some of
+**Counting, as of the last update:** **1012 of 1330 boxes are ticked** — 168 of 189 in the field
+registry (§14–22), 844 of 1141 across the capabilities. A further 148 are marked 🟡, meaning some of
 the work behind them is already done. §100 tracks the phases; §101 defines when this may be called
 finished.
 
@@ -4680,19 +4680,28 @@ JVM, later:
 
 A major reason to replace an ordinary task manager is to remain usable when the system is unhealthy.
 
-- [ ] `procman --minimal` disables icons · signatures · symbols · module enumeration ·
-      handle enumeration · history · GPU · hostname resolution · reputation · plugins
-- [ ] Minimal mode prioritises PID · process name · CPU · memory · user · state · terminate
+- [x] `procman --minimal` disables icons · signatures · symbols · module enumeration ·
+      handle enumeration · history · GPU · hostname resolution · reputation · plugins — every
+      opt-in switch is forced off, and which readings are expensive is read from the registry's own
+      `FieldCost.High` rather than from a second list that would drift from it. A named column it
+      cannot then fill is reported on standard error by name — "collects nothing that costs a read,
+      so handles, pss will be empty" — rather than silently printing a column of placeholders
+- [x] Minimal mode prioritises PID · process name · CPU · memory · user · state · terminate — those
+      are what it opens on when no columns are named
 - [x] The TUI is suitable for recovery shells and SSH sessions
 
 The single-file AOT binary is most of the way to this already: 3.2 MB, no runtime to load, no
 dependencies to be missing on a broken machine.
 
-**The `minimal` column preset is not this, and measuring proved it.** On sixteen cores at load 12.5
-with 1,144 processes, `--columns @minimal` takes 1.52–1.65 s against 1.54–1.74 s for the default
-listing — no difference worth the name. Choosing fewer columns changes what is *printed*; the
-collectors that cost the time are chosen by §5.4's opt-in switches, and the preset touches none of
-them. The flag above is what would, and until it exists this section is describing an intention.
+**The `minimal` column preset was never this, and measuring is what proved it.** `--columns @minimal`
+takes 1.52–1.65 s against 1.54–1.74 s for the default listing — no difference worth the name.
+Choosing fewer columns changes what is *printed*; the collectors that cost the time are chosen by
+§5.4's opt-in switches, and the preset touches none of them.
+
+**The flag does.** Asking for four expensive columns over 1,206 processes: 1.93 s without it, 1.23 s
+with — and a second of each of those is the deliberate wait between the two samples a rate needs, so
+the work itself went from about 930 ms to about 230 ms. Measured twice, on two different machines'
+worth of load, by two people who wrote it and checked it separately.
 
 ---
 
@@ -5053,7 +5062,7 @@ a naive parser hands the attacker the parse.
 
 # 99. Testing strategy
 
-**2078 tests pass on every leg, under both a UTF-8 and a `C` locale.**
+**2156 tests pass on every leg, under both a UTF-8 and a `C` locale.**
 
 ## Unit tests
 
@@ -5259,25 +5268,19 @@ ProcessManager may claim to replace the named applications only when all ten are
       rather than passing over an empty loop. The same fields export as nothing rather than as a mark
       meant for a person, and no mark parses as a number or is wide enough to be mistaken for one
 - [x] Common actions work without running the whole program elevated
-- [ ] 🟡 Recovery/minimal mode remains functional under significant load — **measured, and the
-      measurement found the gap.** On sixteen cores at load 12.5 with 1,144 processes, a full listing
-      returns every row in 1.54–1.74 s, of which a second is the deliberate wait between the two
-      samples a rate needs: 540–740 ms of actual work against 150 ms on an idle machine with a third
-      of the processes. The forensic preset — every expensive reading at once — costs 2.46 s, about
-      2.7× the default, which is the §5.4 opt-in trade behaving as designed and now with a number on
-      it. Peak resident for that heaviest case was 117 MiB, though that is the framework build rather
-      than the single-file one that ships.
+- [x] Recovery/minimal mode remains functional under significant load — **measured, and the
+      measurement is what produced the mode.** On sixteen cores at load 12.5 with 1,144 processes a
+      full listing returns every row in 1.54–1.74 s, of which a second is the deliberate wait between
+      the two samples a rate needs: 540–740 ms of work against 150 ms on an idle machine with a third
+      of the processes. The forensic preset — every expensive reading at once — costs 2.46 s, which
+      is the §5.4 opt-in trade with a number against it. Peak resident for that heaviest case was
+      117 MiB, and that is the framework build rather than the single-file one that ships.
 
-      **What the measurement showed is that the `minimal` column preset saves nothing**: 1.52–1.65 s,
-      indistinguishable from the default. Choosing fewer columns does not turn a collector off, and
-      §81's `procman --minimal` — which would — is not written. The preset is not a substitute for
-      the mode and this box stays open until the mode exists
-- [x] Data can be copied, exported and scripted — six formats over every field the registry holds
-      (text, CSV, TSV, JSON, JSON lines, Markdown), a filter language shared by all three front-ends,
-      a cell, a row and a column copyable from either of them, and three exit codes a script can
-      branch on: nought for a match, two for none, one for a query it could not parse. 155 of the
-      158 fields export; the three that refuse are drawn histories and say so by name rather than
-      exporting a picture as text
+      What the measurement found was that the `minimal` column *preset* saved nothing, because
+      choosing fewer columns does not turn a collector off. §81's `procman --minimal` now does: four
+      expensive columns over 1,206 processes take 1.93 s without it and 1.23 s with, and once the
+      inter-sample second is taken off both, the work went from about 930 ms to about 230 ms.
+
 - [ ] The product is stable enough that administrators trust it while diagnosing an already
       unstable machine — no soak has been run, and one run of anything is not the evidence this asks
       for. What is known: under the load above it returned all 1,144 rows on every attempt with no
@@ -5332,7 +5335,12 @@ v1 does not ship unless every one of these is true:
 - [x] Unavailable platform fields are distinguishable from zero-valued fields
 - [x] Destructive actions identify their exact target — the action, the name, the pid and the count
       of what runs underneath it
-- [ ] Minimal recovery mode operates independently of expensive collectors and plugins
+- [x] Minimal recovery mode operates independently of expensive collectors and plugins —
+      `--minimal` forces every §5.4 opt-in switch off, including the two that used to bypass the
+      general gate, and reads which readings count as expensive from the registry's own cost rather
+      than from a list beside it. Four expensive columns over 1,206 processes: 1.93 s without it,
+      1.23 s with. A named column it cannot fill is reported by name rather than printed as a column
+      of placeholders
 
 ---
 
