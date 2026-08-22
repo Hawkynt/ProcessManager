@@ -156,7 +156,7 @@ thread continuously consuming logical CPU 7."
       script can branch on: nought for a match, two for none, one for a query it could not parse.
       **There is still no library API**, and that is what keeps this partial — everything above is a
       program somebody shells out to, which is not the same as something they can reference
-- [x] Provide a portable, no-install distribution — single-file NativeAOT binary, 3.2 MB, no runtime
+- [x] Provide a portable, no-install distribution — single-file NativeAOT binary, 6.7 MB, no runtime
 - [x] Support dark, light and system themes
 - [x] 🟡 Provide an optional tray / menu-bar mode — indicators for the processor and memory, named
       one at a time in the settings file and absent unless somebody asks. Disk, network and graphics
@@ -448,8 +448,10 @@ interesting bug in a tool of this kind is a division that should not have been p
       dereferenced as absolute addresses — this is what makes a captured buffer replayable in a test
 - [x] Single-file publish produces exactly one binary with no loose native assets
 
-Verified: `dotnet publish -r linux-x64 --self-contained -p:PublishAot=true` → one 3.2 MB ELF, which
-runs, passes the self-test 21/21 and opens the window.
+Verified: `dotnet publish -r linux-x64 --self-contained -p:PublishAot=true` → one 6.7 MB ELF, which
+runs, passes the self-test 37/37 and opens the window. It was 3.2 MB when this was first written and
+has roughly doubled since, which is what a year of columns, readers and views costs; the figure is
+re-measured rather than left at the flattering one.
 
 ## 8.4 Engineering rule — see §103
 
@@ -5128,7 +5130,7 @@ A major reason to replace an ordinary task manager is to remain usable when the 
       are what it opens on when no columns are named
 - [x] The TUI is suitable for recovery shells and SSH sessions
 
-The single-file AOT binary is most of the way to this already: 3.2 MB, no runtime to load, no
+The single-file AOT binary is most of the way to this already: 6.7 MB, no runtime to load, no
 dependencies to be missing on a broken machine.
 
 **The `minimal` column preset was never this, and measuring is what proved it.** `--columns @minimal`
