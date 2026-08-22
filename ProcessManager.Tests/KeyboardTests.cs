@@ -28,7 +28,23 @@ public sealed class KeyboardTests {
   private sealed class StubProbe : ISystemProbe {
     public string Description => "stub";
     public HostInfo DescribeHost() => new();
-    public void Sample(SystemSnapshot snapshot) => snapshot.PrepareProcesses(0);
+
+    /// <summary>The processes the table holds. Empty for the tests that only read the menus.</summary>
+    public IReadOnlyList<(int Pid, string Name)> Processes { get; init; } = [];
+
+    public void Sample(SystemSnapshot snapshot) {
+      var records = snapshot.PrepareProcesses(this.Processes.Count);
+      for (var i = 0; i < this.Processes.Count; ++i) {
+        records[i] = default;
+        records[i].Key = new(this.Processes[i].Pid, 100);
+        records[i].Name = this.Processes[i].Name;
+        records[i].UserName = "alice";
+        // Not sampled rather than nought: an unread counter that reports zero is the defect this
+        // whole document is written against (PRD §72.3).
+        records[i].HandleCount = Counter.NotSampledYet;
+      }
+    }
+
     public Counter GetHandleCount(ProcessKey key) => Counter.NotSupported;
     public IReadOnlyList<ThreadRecord> GetThreads(ProcessKey key) => [];
     public IReadOnlyList<ModuleRecord> GetModules(ProcessKey key) => [];
@@ -207,5 +223,94 @@ public sealed class KeyboardTests {
       );
     }
   }
+
+  #region the two things that are not menu items (PRD §74)
+
+  /// <summary>
+  /// The row tick and the splitter were the two parts of this window with no key at all, and they
+  /// are the two that are not menu items: both belong to a control, so both are worked by pressing
+  /// something while that control has the focus rather than by an accelerator.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// What is asserted here is the half that lives in this repository. The toolkit maps Space to the
+  /// check box of the row under the cursor and the arrow keys to the splitter, and has its own tests
+  /// for both; what a window can get wrong is leaving the check boxes off, keeping a control out of
+  /// the tab order so the key never arrives, or claiming one of those keys as an accelerator — the
+  /// form's dialog chain runs menu shortcuts <em>before</em> the focused control sees the key, so an
+  /// accelerator on Space would silently take the tick away again.
+  /// </para>
+  /// <para>
+  /// The last of the three is already covered from the other side by the rule that no chord is a
+  /// bare key, and it is asserted again by name here: that rule could be relaxed one day for a
+  /// reason that has nothing to do with either of these, and this is the assertion that would then
+  /// notice.
+  /// </para>
+  /// </remarks>
+  [Test]
+  public void TheRowTickIsReachableWithoutAMouse() {
+    var window = Window();
+    var tree = Descendants(window).OfType<TreeListView>().FirstOrDefault();
+
+    Assert.That(tree, Is.Not.Null, "the window has no process list");
+    Assert.That(tree!.CheckBoxes, Is.True, "there is nothing for Space to tick");
+    Assert.That(tree.TabStop, Is.True, "the list cannot take the focus, so no key ever reaches it");
+    Assert.That(
+      Accelerators(window).ConvertAll(entry => entry.Chord & Keys.KeyCode),
+      Does.Not.Contain(Keys.Space),
+      "an accelerator on Space would run instead of the tick"
+    );
+  }
+
+  [Test]
+  public void TheSplitterIsReachableWithoutAMouse() {
+    var window = Window();
+    var split = Descendants(window).OfType<SplitContainer>().FirstOrDefault();
+
+    Assert.That(split, Is.Not.Null, "the window has no splitter");
+    Assert.That(split!.TabStop, Is.True, "the splitter cannot take the focus, so the arrows never reach it");
+
+    // The pane the splitter divides is the one it is worth dividing. A splitter that had ended up
+    // between two things nobody resizes would satisfy everything above and be worth nothing.
+    Assert.That(split.Panel1.Controls, Is.Not.Empty);
+    Assert.That(split.Panel2.Controls, Is.Not.Empty);
+
+    foreach (var arrow in (Keys[])[Keys.Up, Keys.Down, Keys.Left, Keys.Right])
+      Assert.That(
+        Accelerators(window).ConvertAll(entry => entry.Chord),
+        Does.Not.Contain(arrow),
+        $"an accelerator on {arrow} would run instead of moving the splitter"
+      );
+  }
+
+  /// <summary>
+  /// And the tick says so. The three bulk verbs in the menu each wrote a line to the status bar and
+  /// the check box itself wrote none, so the one gesture somebody would try first was the one that
+  /// looked like it had not worked.
+  /// </summary>
+  [Test]
+  public void TickingARowSaysHowManyAreTickedNow() {
+    var probe = new StubProbe { Processes = [(4242, "sshd"), (99, "bash")] };
+    var window = new MainWindow(new Sampler(probe), probe, null);
+    // One sample, through the public route that also refills the tree. Start() would do it and would
+    // also start a timer this test has no message loop to run.
+    window.RefreshOnce();
+    window.ShowGrouping(Query.ProcessGrouping.None);
+
+    var tree = Descendants(window).OfType<TreeListView>().First();
+    var status = Descendants(window).First(control => control.AccessibleName == "Status");
+
+    Assert.That(tree.NodeAt(0), Is.Not.Null, "the sample produced no rows to tick");
+
+    tree.NodeAt(0)!.Checked = true;
+    tree.NodeAt(1)!.Checked = true;
+    Assert.That(status.Text, Is.EqualTo("2 rows ticked"));
+
+    tree.NodeAt(0)!.Checked = false;
+    tree.NodeAt(1)!.Checked = false;
+    Assert.That(status.Text, Is.EqualTo("nothing is ticked now"));
+  }
+
+  #endregion
 
 }

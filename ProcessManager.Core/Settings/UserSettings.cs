@@ -244,6 +244,26 @@ public sealed record UserSettings {
     = new Dictionary<string, uint>(StringComparer.OrdinalIgnoreCase);
 
   /// <summary>
+  /// The terminal's own palette, by the names <see cref="TerminalColourNames"/> lists (PRD §67).
+  /// </summary>
+  /// <remarks>
+  /// Separate from <see cref="Colours"/> and deliberately, because the two name different things.
+  /// That map names what a <em>process</em> is — a zombie, a service, something of yours — and the
+  /// window paints each of those in its own colour. The terminal has ten appearances and no more:
+  /// everything it draws is one of them, so half a dozen meanings share an ink and naming a meaning
+  /// here would be a promise the renderer cannot keep.
+  /// <para>
+  /// A key is <c>tui.color.&lt;name&gt;</c> for the ink and <c>tui.color.&lt;name&gt;.bg</c> for the
+  /// ground, and naming either replaces the appearance outright rather than tinting the built-in
+  /// one. Three of the ten paint a ground of their own, so an ink named alone puts them on the
+  /// terminal's background — which is a visible answer to what was actually asked rather than a
+  /// half-applied one.
+  /// </para>
+  /// </remarks>
+  public IReadOnlyDictionary<string, uint> TerminalColours { get; init; }
+    = new Dictionary<string, uint>(StringComparer.OrdinalIgnoreCase);
+
+  /// <summary>
   /// When a cell is busy enough to be marked (PRD §23).
   /// </summary>
   /// <remarks>
@@ -351,6 +371,8 @@ public sealed record UserSettings {
 
   private const string _ColumnSetPrefix = "columnset.";
   private const string _ColourPrefix = "color.";
+  private const string _TerminalColourPrefix = "tui.color.";
+  private const string _BackgroundSuffix = ".bg";
 
   /// <summary>
   /// Parses a settings file. A line that cannot be understood is kept verbatim and never thrown
@@ -363,6 +385,7 @@ public sealed record UserSettings {
     var settings = new UserSettings();
     var sets = new Dictionary<string, ProcessField[]>(StringComparer.OrdinalIgnoreCase);
     var colours = new Dictionary<string, uint>(StringComparer.OrdinalIgnoreCase);
+    var terminalColours = new Dictionary<string, uint>(StringComparer.OrdinalIgnoreCase);
     var unknown = new List<string>();
 
     foreach (var raw in text.Split('\n')) {
@@ -378,6 +401,18 @@ public sealed record UserSettings {
 
       var key = line[..separator].Trim();
       var value = line[(separator + 1)..].Trim();
+
+      // Before the window's palette, because "tui.color.good" is not "color.good" and a reader
+      // skimming the two branches should not have to work that out.
+      if (key.StartsWith(_TerminalColourPrefix, StringComparison.OrdinalIgnoreCase)) {
+        var slot = key[_TerminalColourPrefix.Length..];
+        if (IsTerminalColourKey(slot) && TryParseColour(value, out var ink))
+          terminalColours[slot] = ink;
+        else
+          unknown.Add(line);
+
+        continue;
+      }
 
       if (key.StartsWith(_ColourPrefix, StringComparison.OrdinalIgnoreCase)) {
         var name = key[_ColourPrefix.Length..];
@@ -609,7 +644,12 @@ public sealed record UserSettings {
       }
     }
 
-    return settings with { ColumnSets = sets, Colours = colours, Unknown = unknown };
+    return settings with {
+      ColumnSets = sets,
+      Colours = colours,
+      TerminalColours = terminalColours,
+      Unknown = unknown,
+    };
   }
 
   public string Write() {
@@ -746,6 +786,18 @@ public sealed record UserSettings {
         text.Append(_ColourPrefix).Append(name).Append("=#").AppendLine((argb & 0xFFFFFFu).ToString("x6", CultureInfo.InvariantCulture));
     }
 
+    if (this.TerminalColours.Count > 0) {
+      text.AppendLine();
+      text.AppendLine("# The terminal's own palette, as #rrggbb. `<name>` is the ink and `<name>.bg`");
+      text.AppendLine("# the ground; naming either replaces that appearance outright, so header,");
+      text.AppendLine("# marked and match — the three that paint a ground — want both. A terminal");
+      text.AppendLine("# that cannot show the exact colour is given the nearest it has, and one with");
+      text.AppendLine("# no colour at all keeps its reverse video and its bold.");
+      text.AppendLine($"# The names are: {string.Join(", ", TerminalColourNames)}");
+      foreach (var (slot, argb) in this.TerminalColours)
+        text.Append(_TerminalColourPrefix).Append(slot).Append("=#").AppendLine((argb & 0xFFFFFFu).ToString("x6", CultureInfo.InvariantCulture));
+    }
+
     if (this.ColumnSets.Count > 0) {
       text.AppendLine();
       text.AppendLine("# Named column sets. Ones with the same name as a built-in preset replace it.");
@@ -850,6 +902,44 @@ public sealed record UserSettings {
     "image.replaced", "packaged", "managed",
     "cpu", "cpu.kernel", "memory", "io", "plot.background", "plot.grid",
   ];
+
+  /// <summary>
+  /// Every appearance the terminal draws with, and so every name <c>tui.color.</c> may carry
+  /// (PRD §57.4, §67).
+  /// </summary>
+  /// <remarks>
+  /// Ten and not one per meaning, because ten is what the renderer has: a cell's appearance is one
+  /// byte, and half a dozen meanings share each of these inks. <c>header</c>, <c>marked</c> and
+  /// <c>match</c> paint a ground as well as an ink, which is what <c>.bg</c> is for.
+  /// <para>
+  /// Here rather than beside the renderer for the reason <c>GraphStyle</c> is: the settings file has
+  /// to be able to tell a name it does not know from a name a newer build added, and it cannot do
+  /// that from inside a front-end this assembly does not reference.
+  /// </para>
+  /// </remarks>
+  public static IReadOnlyList<string> TerminalColourNames { get; } = [
+    "normal", "dim", "accent", "good", "warn", "bad", "header", "selected", "marked", "match",
+  ];
+
+  /// <summary>
+  /// Whether <paramref name="slot"/> is one of the ten, with or without the <c>.bg</c> half.
+  /// </summary>
+  /// <remarks>
+  /// A name that is not one of them is kept verbatim rather than dropped, like every other line this
+  /// build does not understand: an eleventh appearance in a later build must survive being read by
+  /// this one.
+  /// </remarks>
+  private static bool IsTerminalColourKey(string slot) {
+    var name = slot.EndsWith(_BackgroundSuffix, StringComparison.OrdinalIgnoreCase)
+      ? slot[..^_BackgroundSuffix.Length]
+      : slot;
+
+    foreach (var known in TerminalColourNames)
+      if (name.Equals(known, StringComparison.OrdinalIgnoreCase))
+        return true;
+
+    return false;
+  }
 
   /// <summary>
   /// <c>#rrggbb</c>, with or without the hash, and <c>#rgb</c> for the people who write CSS. The

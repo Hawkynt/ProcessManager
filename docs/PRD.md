@@ -4261,7 +4261,8 @@ so an older build cannot eat a newer one's settings.
 behind them and deliberately not the ones that have not. A control writing a key nothing reads is
 worse than no control: it tells the person who set it that they have changed something. Symbols,
 reputation, history retention, privacy and the advanced group are absent from it for exactly that
-reason, and each is unticked below rather than half-built.
+reason, and each is marked below for what it actually is — refused, or waiting on the feature it
+would configure — rather than left looking half-built.
 
 **It saves itself.** The window used to require `--save-settings` from a terminal, which meant every
 preference set through the window was gone by the next start. The saver runs from the sample tick
@@ -4284,20 +4285,56 @@ about a preferences file (§81).
 - [x] **Refresh** — the interval persists, and the window writes it back when it is changed
 - [x] **Processes** — tree-or-flat, the sort column and its direction all persist
 - [x] **Columns** — saved column sets, and the columns each front-end opens with
-- [ ] **Symbols** — enable resolution · search paths · cache directory
-- [ ] **Reputation** — disabled by default · provider configuration · privacy disclosure
-- [ ] **History** — enable persistence · retention · storage size
-- [ ] **Privacy** — telemetry · crash reporting · recent commands · saved searches
-- [ ] 🟡 **TUI** — key bindings are a `keys.conf` beside the settings file (§57.3), the mouse is
-      `tui.mouse`, and how a history column is drawn is `tui.graphs`: blocks, braille, punctuation,
-      the figures, or `auto` to let the terminal decide from what it can draw. `GraphStyle` moved
-      into Core to make that possible, which is the whole of why it lives there rather than beside
-      the painter. Saying nothing and saying `auto` are the same thing, and the older `blocks=false`
-      still means punctuation. The picker in the settings box replaced a tickbox that could only ever
-      say "these two or those two", which left braille — twice the samples in the same width —
-      reachable from a flag and from nowhere a person would look. **The colours are still not
-      settable at all**, and that is what keeps this partial
-- [ ] **Advanced** — expensive collectors · debugging functionality · plugins · experimental APIs
+- ∅ **Symbols** — enable resolution · search paths · cache directory. **Refused, and not for want
+      of symbols**: §30 resolves them, a kernel frame arriving already named by `kallsyms` and a user
+      frame looked up in the image's own `.symtab` or `.dynsym`. All three of these controls belong
+      to a symbol *server* — a switch to turn the lookup on, the paths to search, somewhere to cache
+      what came back — and there is no server to ask. §97 promises that nothing about an executable
+      leaves this machine unasked, so there will not be one here by default. Resolution is already
+      asked for per stack rather than once for all of them, because it is the expensive half and §5.4
+      says the expensive half is asked for: "View stack…" and "View stack with symbols…" are two menu
+      items, which is a finer control than a tickbox in a preferences page could be
+- [ ] **Reputation** — disabled by default · provider configuration · privacy disclosure. Deferred
+      rather than refused, and waiting on what §70's last box waits on: there is no provider to
+      configure. A switch reading "reputation: disabled" over nothing at all is the one control that
+      would lie twice — once about the feature existing, and once about having turned it off
+- [ ] **History** — enable persistence · retention · storage size. Waiting on §44 and on §85's
+      "persistent history, separate and optional", neither of which exists: the ring buffers are in
+      memory and go when the program does, so there is nothing yet to retain, to size, or to switch
+      off. §44's own rule is that a file recording what somebody ran must not appear without being
+      asked for, and these three controls are that asking — so they arrive with it, not before it
+- ∅ **Privacy** — telemetry · crash reporting · recent commands · saved searches. **Refused, because
+      there is nothing here to control.** §97 does not say collection is off by default; it says the
+      program contains no network client at all, keeps no command history and saves no searches. A
+      page of switches reading "telemetry: off" tells whoever found it that there is telemetry, which
+      is worse than saying nothing and is the reverse of what they opened that page to find out
+- [x] **TUI** — key bindings are a `keys.conf` beside the settings file (§57.3), the mouse is
+      `tui.mouse`, how a history column is drawn is `tui.graphs` — blocks, braille, punctuation, the
+      figures, or `auto` to let the terminal decide from what it can draw — and the colours are
+      `tui.color.<name>`. `GraphStyle` moved into Core to make the first of those possible and the
+      list of appearance names lives there for the same reason: the file has to tell a name it does
+      not know from a name a newer build added, and it cannot do that from inside a front-end Core
+      does not reference. Saying nothing and saying `auto` are the same thing, and the older
+      `blocks=false` still means punctuation. The picker in the settings box replaced a tickbox that
+      could only ever say "these two or those two", which left braille — twice the samples in the
+      same width — reachable from a flag and from nowhere a person would look.
+      **The colours name appearances rather than meanings**, and there are ten of them because ten is
+      what a cell's attribute byte can say. The window's `color.` lines name kinds of process and
+      each gets an ink of its own; in the terminal half a dozen meanings share every one of these, so
+      a colour per meaning would be a promise the renderer cannot keep. `<name>` is the ink and
+      `<name>.bg` the ground, and naming either replaces that appearance outright rather than tinting
+      the built-in — a header that kept a cyan bar nobody asked for is not what choosing a colour
+      means, and tinting would leave no way to say "no bar" at all. A terminal that cannot show the
+      figure written is given the nearest it has rather than the built-in it was told to replace,
+      which is the one outcome that would read as the line having been ignored; a terminal with no
+      colour keeps its reverse video and its bold, because there is no escape to put a colour in and
+      everything it draws already carries its meaning in a glyph as well (§57.4)
+- ∅ **Advanced** — expensive collectors · debugging functionality · plugins · experimental APIs. The
+      first is refused and the other three have nothing behind them. Expensive collection is already
+      opt-in and the opt-in is naming the column (§5.4); a switch beside that would only be a way to
+      get an empty column by forgetting it, which is the failure the inference was written to stop.
+      Debugging functionality and experimental APIs are not things this program has. Plugins are
+      §79's box, and a second one here would count one unbuilt thing twice
 
 ---
 
@@ -4474,8 +4511,17 @@ absolute address, or it dangles the moment the buffer moves.
 
 GUI:
 
-- [ ] 🟡 Full keyboard operation — every menu item, the sort, the columns, the filter and the
-      settings box all have keys; what has none is the row tick and the splitter
+- [x] Full keyboard operation — every menu item, the sort, the columns, the filter and the
+      settings box have chords, and the two parts of the window that are *not* menu items — the row
+      tick and the splitter — are worked from the control that owns them: Space over the row under
+      the cursor, and the arrow keys on a splitter that has the focus. Both mappings were already in
+      the toolkit, and neither was reachable here for want of the same three things — the check boxes
+      switched on, the control left in the tab order, and no accelerator claiming the key. The last
+      is the one that would have been invisible: the form runs its menu shortcuts *before* the
+      focused control sees a keystroke, so a chord on Space would have taken the tick away again
+      while everything else still looked right. A test holds all three. The tick also says how many
+      rows are ticked now — the menu's three bulk verbs each wrote that line and the check box itself
+      wrote none, which made the gesture somebody tries first the one that looked like it had failed
 - [x] Logical tab order — the reading order, which is *not* the order the children were added in:
       the toolkit docks by walking its children backwards, so the strip added last is the one at the
       top of the window and insertion order is very nearly the reverse of reading order. A test holds
@@ -4493,13 +4539,14 @@ GUI:
       CPU" as the selection moves — so a reader lands
       on the process list, is told it is a tree, and finds nothing inside it. That is a gap in
       NativeForms rather than here, and this box stays open until it is closed there
-- [ ] Scalable text — **and this is a refusal rather than an omission.** Scaling only this program's
-      layout constants gives tall rows with small text: every painter in the window, and every one
-      inside the toolkit that draws a header or a cell, takes its font from `ITheme.DefaultFont`, and
-      that font is the desktop's rather than anything this program picks. `Control.LogicalToDevice`
-      exists and is called in exactly one place in the whole toolkit. Half of this belongs in
-      NativeForms, and a `ui.scale` here that moved the boxes and not the letters would look like
-      progress and photograph as a defect
+- ∅ Scalable text — **a refusal rather than an omission, and it is still one.** Scaling only this
+      program's layout constants gives tall rows with small text: every painter in the window, and
+      every one inside the toolkit that draws a header or a cell, takes its font from
+      `ITheme.DefaultFont`, and that font is the desktop's rather than anything this program picks.
+      `Control.LogicalToDevice` exists and is called in two places in the whole toolkit — a tool tip
+      and a tool strip — so the geometry everywhere else is device pixels by construction. Half of
+      this therefore belongs in NativeForms, and a `ui.scale` here that moved the boxes and not the
+      letters would look like progress and photograph as a defect
 - [x] High contrast — `ITheme.IsHighContrast` is populated by all three backends and was read by
       nothing here. Under that scheme no row wash and no cell mark is painted: each is a third colour
       laid between a foreground and background the theme promised would be readable, and every state
@@ -4532,10 +4579,12 @@ TUI:
 - [x] ASCII fallback — and the way to check it is `--ascii`, not a hostile locale. `--capture-frame`
       pins the block ramp on purpose, because a golden frame is compared byte for byte and may not
       depend on the capturing machine's `LANG`; the interactive path is the one that reads the locale
-- [ ] Conventional terminal screen readers — untouched, and not something an accessible name can
-      reach: a full-screen alternate-buffer program that repaints a grid once a second is the shape
-      a terminal screen reader has the most trouble with, and the honest answer is a mode that gives
-      up the grid rather than a label on it. Named here so it is a decision
+- ∅ Conventional terminal screen readers — refused in this shape, and not something an accessible
+      name could reach anyway: a full-screen alternate-buffer program that repaints a grid once a
+      second is exactly what a terminal screen reader has the most trouble with, and the honest
+      answer is a mode that gives up the grid rather than a label stuck on one. That mode is a
+      different program from the one §57 describes, so it is a thing to build beside this rather than
+      a box this can ever tick
 
 # 75. Localisation
 

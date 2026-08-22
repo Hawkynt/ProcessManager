@@ -172,6 +172,9 @@ internal static class Program {
         Graphs = options.AsciiOnly ? GraphStyle.Ascii
           : options.GraphStyleWasStated || options.GraphStyle != GraphStyle.Blocks ? options.GraphStyle
           : null,
+        // The interactive path only. A capture is compared byte for byte, so its colours may no more
+        // come from the settings file than its block characters may come from the locale.
+        Colours = options.TerminalColours,
       }, ProbeFactory.CreateServiceControl());
 
       return _ExitOk;

@@ -656,6 +656,14 @@ public sealed class MainWindow : Form {
     // the row rather than a colour so that it survives a monochrome theme and a reader who cannot
     // see one (PRD §11, §74).
     this._tree.CheckBoxes = true;
+    // Space over the row under the cursor is what actually works one of them from the keyboard, and
+    // it is the toolkit's key rather than a menu accelerator — so nothing in this window would have
+    // said the count had changed. The menu's three bulk verbs each wrote a line and the gesture
+    // people would reach for first wrote none, which reads as a tick that did not take (PRD §74).
+    this._tree.AfterCheck += (_, _) => {
+      if (!this._tickingInBulk)
+        this.ReportTheTicks();
+    };
 
     // The three history columns are drawn, not written.
     this._tree.CellPaint += this.OnCellPaint;
@@ -3513,20 +3521,53 @@ public sealed class MainWindow : Form {
     return ticked;
   }
 
-  private void TickAll(bool invert) {
-    for (var row = 0; row < this._tree.VisibleNodeCount; ++row)
-      if (this._tree.NodeAt(row) is { Tag: ProcessRow } node)
-        node.Checked = invert ? !node.Checked : true;
+  /// <summary>
+  /// Says how many rows are ticked now, however they came to be (PRD §11, §74).
+  /// </summary>
+  /// <remarks>
+  /// One line for the menu's three verbs and for the check box itself, rather than each writing its
+  /// own: a count that appears when the menu is used and not when the box is is a count somebody
+  /// stops believing. The words are the terminal's, because they are the same sentence.
+  /// </remarks>
+  private void ReportTheTicks() {
+    var ticked = this.TickedKeys().Count;
+    this._status.Text = ticked == 0 ? "nothing is ticked now" : $"{ticked} rows ticked";
+  }
 
-    this._status.Text = $"{this.TickedKeys().Count} rows ticked";
+  /// <summary>
+  /// Set while a bulk verb walks the rows, so the report is written once rather than per row.
+  /// </summary>
+  /// <remarks>
+  /// Counting the ticks means walking the tree, and walking the tree once per row of it is the
+  /// quadratic somebody finds on a machine with four hundred processes and not on the one this was
+  /// written on.
+  /// </remarks>
+  private bool _tickingInBulk;
+
+  private void TickAll(bool invert) {
+    this._tickingInBulk = true;
+    try {
+      for (var row = 0; row < this._tree.VisibleNodeCount; ++row)
+        if (this._tree.NodeAt(row) is { Tag: ProcessRow } node)
+          node.Checked = invert ? !node.Checked : true;
+    } finally {
+      this._tickingInBulk = false;
+    }
+
+    this.ReportTheTicks();
   }
 
   private void ClearTicks() {
-    for (var row = 0; row < this._tree.VisibleNodeCount; ++row)
-      if (this._tree.NodeAt(row) is { Tag: ProcessRow } node)
-        node.Checked = false;
+    this._tickingInBulk = true;
+    try {
+      for (var row = 0; row < this._tree.VisibleNodeCount; ++row)
+        if (this._tree.NodeAt(row) is { Tag: ProcessRow } node)
+          node.Checked = false;
+    } finally {
+      this._tickingInBulk = false;
+    }
 
-    this._status.Text = "nothing is ticked now";
+    this.ReportTheTicks();
   }
 
   /// <summary>What the status bar adds when rows are ticked, so the count is never a surprise.</summary>

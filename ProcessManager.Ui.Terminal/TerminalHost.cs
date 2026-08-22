@@ -40,6 +40,16 @@ public sealed record TerminalStartup {
 
   public GraphStyle? Graphs { get; init; }
 
+  /// <summary>
+  /// The palette the settings file named, by <see cref="Attributes.SlotNames"/> (PRD §67).
+  /// </summary>
+  /// <remarks>
+  /// Carried here rather than set from the caller, so that everything the file says about the
+  /// terminal arrives by the one route and a front-end started any other way opens with the
+  /// built-in palette rather than with whatever the last run happened to install.
+  /// </remarks>
+  public IReadOnlyDictionary<string, uint>? Colours { get; init; }
+
 }
 
 /// <summary>
@@ -77,6 +87,9 @@ public sealed class TerminalHost : IDisposable {
     IServiceControl? services = null
   ) {
     var (width, height) = ReadSize();
+    // Before the first frame is composed, because the palette is read while a cell is written and a
+    // frame drawn in the built-in colours would have to be repainted to pick these up.
+    Attributes.Apply(startup?.Colours);
     var ui = new TerminalUi(sampler, probe, actions, width, height, DetectColorDepth(), services) {
       Keys = KeyBindings.Load(),
       ClipboardOutput = this._output,

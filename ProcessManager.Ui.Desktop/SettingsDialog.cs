@@ -206,6 +206,7 @@ public sealed class SettingsDialog : Form {
       // column sets. The whole-file reset is `--reset-settings`, and it says what it removes.
       ColumnSets = this._carried.ColumnSets,
       Colours = this._carried.Colours,
+      TerminalColours = this._carried.TerminalColours,
       Unknown = this._carried.Unknown,
       DesktopColumns = this._carried.DesktopColumns,
       TerminalColumns = this._carried.TerminalColumns,
