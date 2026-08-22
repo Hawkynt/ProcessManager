@@ -788,7 +788,15 @@ public sealed class WindowsProbe : ISystemProbe {
   /// Not read yet: Windows services come from the service control manager
   /// (EnumServicesStatusEx), which is not written (PRD §41).
   /// </summary>
-  public IReadOnlyList<ServiceRecord> GetServices() => [];
+  /// <summary>
+  /// Every service and driver the service control manager knows about (PRD §41).
+  /// </summary>
+  /// <remarks>
+  /// On demand and never on the tick, for the reason the systemd side is: two queries per service
+  /// after one for the list, several hundred times, is the monitor becoming the thing worth
+  /// monitoring (§5.4).
+  /// </remarks>
+  public IReadOnlyList<ServiceRecord> GetServices() => WindowsServiceReader.Read();
 
   /// <summary>What this machine calls its port numbers, read once (PRD §40).</summary>
   public Query.ServiceNames DescribePortNames() => WindowsServiceNameReader.Read();
