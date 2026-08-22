@@ -158,7 +158,9 @@ thread continuously consuming logical CPU 7."
       program somebody shells out to, which is not the same as something they can reference
 - [x] Provide a portable, no-install distribution — single-file NativeAOT binary, 3.2 MB, no runtime
 - [x] Support dark, light and system themes
-- [ ] Provide an optional tray / menu-bar mode
+- [x] 🟡 Provide an optional tray / menu-bar mode — indicators for the processor and memory, named
+      one at a time in the settings file and absent unless somebody asks. Disk, network and graphics
+      have no reading behind them yet and are not drawn rather than drawn flat (§65)
 
 ---
 
@@ -4623,10 +4625,26 @@ recorded; a notification nobody was looking at is gone, which is what the timeli
 
 # 65. Tray / menu bar
 
-- [ ] Indicators: CPU · memory · disk · network · GPU
-- [ ] Click opens a compact popover with current values and top CPU/memory/disk/network processes
-- [ ] Double-click opens the full application
-- [ ] Individual indicators can be enabled and disabled
+- [x] 🟡 Indicators: CPU ✔ · memory ✔ · disk · network · GPU — each is the recent history of its
+      resource rather than a number, because at twenty-two pixels square a number is unreadable and a
+      shape is not, which is why every tray monitor ever written draws the same little graph. The
+      arithmetic is in Core and returns pixels, so it is tested without a panel: an icon that is
+      wrong is wrong in a way nobody reports — a smudge in the corner that somebody quietly stops
+      trusting. A sample nobody could read leaves its column clear rather than drawing a bar of no
+      height, and the unfilled part is transparent so the panel's own background shows through.
+
+      **Disk, network and graphics have no reading here yet** and say so rather than drawing a flat
+      line, which would read as an idle device
+- [ ] 🟡 Click opens a compact popover — a click opens that resource's own page, which has the
+      current values and the top processes on it. The popover itself is not written: it would be a
+      third place the same figures are laid out, and the argument for it is that it is quicker than
+      a window, which is worth measuring before it is worth building
+- [x] Double-click opens the full application — and puts the keyboard in it, because raising a
+      window and leaving the focus elsewhere is half of the gesture
+- [x] Individual indicators can be enabled and disabled — `tray=` names them one at a time, in the
+      order they appear in the panel, so turning one off does not mean turning the tray off. The
+      default is none at all: a program that puts icons in somebody's panel without being asked has
+      taken a decision about their screen that was theirs to take
 
 # 66. Persistent process notes and rules
 

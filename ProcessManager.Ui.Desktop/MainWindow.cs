@@ -34,6 +34,13 @@ public sealed class MainWindow : Form {
   /// </remarks>
   private readonly ToolTip _quick = new();
 
+  /// <summary>The panel indicators, or null when nobody asked for any (PRD §65).</summary>
+  /// <remarks>
+  /// Null rather than an empty one, because the difference is whether a tray exists at all — and a
+  /// program that puts an icon in somebody's panel unasked has taken a decision that is theirs.
+  /// </remarks>
+  private TrayIndicators? _tray;
+
   /// <summary>Which row the tooltip is currently describing, so it is not rebuilt on every pixel.</summary>
   private int _quickRow = -1;
   private readonly HistoryPlot _cpuPlot = new();
@@ -385,6 +392,10 @@ public sealed class MainWindow : Form {
 
     builder.AppendLine($"ticked rows:  {this.TickedKeys().Count}");
     builder.AppendLine($"split at:     {this._split.SplitterDistance}, lower pane {(this.LowerPaneVisible ? "shown" : "hidden")}");
+    // The one part of this window that is not in the picture, so the log is the only place it can be
+    // checked at all — an icon nobody asked about is exactly the sort of thing that stops appearing
+    // without anything going red.
+    builder.AppendLine($"tray:         {this._tray?.Count ?? 0} indicator(s)");
     builder.AppendLine($"rail:         {this._rail.Bounds}, {this._rail.Items.Count} entries — {string.Join(", ", this._rail.Items)}");
     builder.AppendLine($"command bar:  {this._commands.Bounds}, {this._commands.Items.Count} items");
     builder.AppendLine($"content:      {this._content.Bounds} showing {this._shown?.Title ?? "nothing"}");
@@ -527,6 +538,13 @@ public sealed class MainWindow : Form {
 
   public void Start() {
     this._binder.CurrentUserId = CurrentUserId();
+    this.BuildTray(this._settings.TrayIndicators);
+    // Out of the panel when the window goes. An icon that outlives the program that drew it is the
+    // one somebody clicks and nothing happens.
+    this.FormClosed += (_, _) => {
+      this._tray?.Dispose();
+      this._tray = null;
+    };
     // And the classifier behind the Kind column, which every front-end reaches through the shared
     // accessor and so cannot be handed an identity of its own.
     Query.ProcessCategories.CurrentUserId = this._binder.CurrentUserId;
@@ -2395,6 +2413,9 @@ public sealed class MainWindow : Form {
 
     this._cpuHistory.Add(delta.SystemCpuPercent);
     this._memoryHistory.Add(MemoryPercent(snapshot.System));
+    // The panel's icons off the same tick as everything else, so what is in the corner of the screen
+    // and what is in the table are the same moment (PRD §65).
+    this._tray?.Update(delta, snapshot);
 
     this._view.Rebuild(snapshot, delta);
 
@@ -4337,6 +4358,35 @@ public sealed class MainWindow : Form {
   }
 
   #endregion
+
+  /// <summary>
+  /// Puts an indicator in the panel for each resource somebody named (PRD §65).
+  /// </summary>
+  /// <remarks>
+  /// A click opens that resource's page, because an indicator somebody watched go up is a question
+  /// about that resource and about nothing else — landing them on the processor page when they
+  /// clicked the memory one would make them find it themselves. A double-click brings the whole
+  /// program up, which is what a double-click on a tray icon has meant since there were trays.
+  /// </remarks>
+  private void BuildTray(IReadOnlyList<IndicatorKind> kinds) {
+    if (kinds is not { Count: > 0 })
+      return;
+
+    var tray = new TrayIndicators(kinds);
+    tray.Chosen += (_, kind) => {
+      this.ShowPerformance();
+      this._performance?.Show(IndicatorIcon.Describe(kind));
+    };
+
+    tray.Opened += (_, _) => {
+      this.Show();
+      // Focus rather than an activate the toolkit does not have: bringing a window up and leaving
+      // the keyboard somewhere else is half of the gesture.
+      this.Focus();
+    };
+
+    this._tray = tray;
+  }
 
   private void ShowPerformance() {
     if (this._performance is not null) {
