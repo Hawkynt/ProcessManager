@@ -45,7 +45,9 @@ public sealed class WindowsThreadPriorityTests {
       KernelTime = 1_000,
       UserTime = 2_000,
       CreateTime = 133_100_000_000_000_000L,
-      StartAddress = (nint)0x7FF6_0000_1000L,
+      // Unchecked because a 64-bit address does not fit an nint on a 32-bit build, and this buffer
+      // describes a 64-bit kernel either way.
+      StartAddress = unchecked((nint)0x7FF6_0000_1000L),
       ClientId = new() { UniqueProcess = 1234, UniqueThread = 5678 },
       Priority = priority,
       BasePriority = basePriority,
