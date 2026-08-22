@@ -29,7 +29,18 @@ public enum SignatureStatus : byte {
   /// <summary>Nobody asked. Verification is opt-in and costs a hash of the file (PRD §5.4).</summary>
   NotChecked = 0,
 
-  /// <summary>The signature is good and its chain is trusted.</summary>
+  /// <summary>
+  /// Whatever this slot's question asked, the answer is yes.
+  /// </summary>
+  /// <remarks>
+  /// Not "good signature and trusted chain": that reads two slots off one word, which is the exact
+  /// conflation §70's first requirement forbids, and it is not what any producer here means. In
+  /// <see cref="ImageTrust.Signature"/> it says the bytes are the ones a signature or a package
+  /// digest covers — the Windows verifier reaches it without looking at a root store at all, and
+  /// says so in its detail line. In <see cref="ImageTrust.TrustChain"/> it says somebody this
+  /// machine trusts signed for them. The slot carries the question; the word only ever carries the
+  /// answer.
+  /// </remarks>
   Verified,
 
   /// <summary>
@@ -125,9 +136,13 @@ public static class SignatureStatusText {
 /// <see cref="SignatureStatus.Unsigned"/> (PRD §72.3).
 /// </param>
 /// <param name="Reputation">
-/// Online reputation, question four. Always <see cref="SignatureStatus.NotChecked"/> until somebody
-/// configures a provider: §3 promises this program transmits nothing about an executable without
-/// being asked, and there is no provider to ask (PRD §70, §97).
+/// Online reputation, question four. Always <see cref="SignatureStatus.NotChecked"/>, and not as a
+/// placeholder for a provider that is coming: §70 refuses one outright, because asking costs a
+/// transmission and §97's promise is kept by this program owning no network client rather than by a
+/// switch somebody could be talked into. The slot stays because the question is real and somebody
+/// will answer it elsewhere — with the SHA-256 in the column beside this one, carried wherever they
+/// choose — and a row with no slot for it is a row where a local digest quietly becomes a verdict
+/// (PRD §4, §70, §97).
 /// </param>
 /// <param name="Submitted">
 /// File submission, question five — sending the bytes themselves somewhere. Never true: nothing in

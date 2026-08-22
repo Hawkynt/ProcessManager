@@ -63,4 +63,22 @@ public enum UnknownReason : byte {
   /// </remarks>
   NoLimit,
 
+  /// <summary>
+  /// The question was never put, and this program will not put it.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Deliberately distinct from <see cref="NotImplementedHere"/>, which is the fourth kind of unread
+  /// and reads as a promise: "this could be answered and we have not written it yet". This one is a
+  /// decision that has already been taken and will not be revisited, so a reader who waits for it to
+  /// fill in is waiting for something that is not coming.
+  /// </para>
+  /// <para>
+  /// §70's reputation is the case it was added for. There is no provider, none ships, and none will
+  /// be added here — §97's promise is that this program holds no network client at all, and an
+  /// answer that says "not built yet" tells whoever reads it that one is on the way (PRD §70, §97).
+  /// </para>
+  /// </remarks>
+  NotAskedByDesign,
+
 }

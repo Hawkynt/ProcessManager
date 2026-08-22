@@ -285,11 +285,12 @@ public static class FieldAccessor {
           ? Humanize.Placeholder(process.TrustChainReason)
           : process.TrustChain.Text();
       case ProcessField.Reputation:
-        // Always this, and the field exists to say it out loud. There is no provider to ask, none
-        // ships, and nothing about the executable leaves the machine — so the honest mark is the one
-        // that means "this program has not built it" rather than "your machine cannot do it"
-        // (PRD §3, §70, §97).
-        return Humanize.Placeholder(UnknownReason.NotImplementedHere);
+        // Always this, and the field exists to say it out loud. "n/i" was wrong here in the one way
+        // that matters: it is the mark for a reading this program has not got round to, and it read
+        // as a promise that a provider was on the way. There is none, and §70 now refuses one
+        // outright — so the cell says the program did not ask, which is the only thing about this
+        // column a reader needs before they read the ones beside it (PRD §3, §70, §97).
+        return Humanize.Placeholder(UnknownReason.NotAskedByDesign);
       case ProcessField.Runtime:
         return process.Runtime == ProcessRuntime.Unknown
           ? Humanize.Placeholder(process.RuntimeReason)

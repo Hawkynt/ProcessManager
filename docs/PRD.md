@@ -1466,9 +1466,11 @@ per sample and cannot be cached — have a switch of their own (§5.4).
       service rather than an OS reading, so there is no OS to write it against and no platform it is
       missing from. The one line in this section that is unbuilt everywhere for a reason that is not
       about any operating system. Partial rather than open because the half that can exist without a
-      provider does: the column, the vocabulary and the slot are there and say `n/i` out loud, which
-      is what stops a digest computed on this machine from ever being read as a file sent from it.
-      What is missing is a provider, and that box belongs to §70
+      provider does: the column, the vocabulary and the slot are there and say **"not asked"** out
+      loud, which is what stops a digest computed on this machine from ever being read as a file sent
+      from it. It said `n/i` until §70.1 refused the provider outright rather than deferring it —
+      `n/i` is this program's mark for a reading it has not got round to, and over a settled decision
+      it read as a promise. What is missing is a provider, and §70.1 is why there will not be one
 - [x] `dep` — **Windows only.** Linux has NX on every mapping and no per-process policy to report.
 
       All six mitigation lines are read the same way and share one switch, and the six are worth
@@ -5070,10 +5072,13 @@ about a preferences file (§81).
       asked for per stack rather than once for all of them, because it is the expensive half and §5.4
       says the expensive half is asked for: "View stack…" and "View stack with symbols…" are two menu
       items, which is a finer control than a tickbox in a preferences page could be
-- [ ] **Reputation** — disabled by default · provider configuration · privacy disclosure. Deferred
-      rather than refused, and waiting on what §70's last box waits on: there is no provider to
-      configure. A switch reading "reputation: disabled" over nothing at all is the one control that
-      would lie twice — once about the feature existing, and once about having turned it off
+- ∅ **Reputation** — disabled by default · provider configuration · privacy disclosure. **Refused,
+      and no longer waiting on anything**: §70.1 refuses the provider outright rather than deferring
+      it, on the same ground the symbols group above is refused, so there is nothing here to
+      configure now or later. All three controls would lie, and the first would lie twice — once
+      about the feature existing, and once about having turned it off. The disclosure is the worst of
+      the three: a sentence describing what gets transmitted, over a program that transmits nothing,
+      teaches the person who went looking for reassurance the opposite of what is true
 - [ ] **History** — enable persistence · retention · storage size. Waiting on §44 and on §85's
       "persistent history, separate and optional", neither of which exists: the ring buffers are in
       memory and go when the program does, so there is nothing yet to retain, to size, or to switch
@@ -5211,19 +5216,80 @@ The wording of a confirmation is §90's business. The class decides only whether
 - [x] The program distinguishes, and never conflates: hash calculation · local signature verification ·
       trust-chain verification · online reputation query · file submission
 
-Status vocabulary — exactly these, no synonyms:
+Status vocabulary — exactly these, no synonyms. **The word carries the answer and the column carries
+the question**, so each of these is read against two kinds of evidence: a signature the publisher put
+inside a PE, and the digest a Linux package database wrote down about a file it shipped.
 
-- [x] Verified — the image still matches the digest its package recorded
-- [ ] Valid but untrusted chain — a package database records that something signed, not who, so
-      this needs a real chain and Linux packaging does not offer one
-- [x] Unsigned — nothing signed for the package, which is most of a machine that builds its own
-- [x] Invalid signature — the image no longer matches the digest its package recorded
-- [ ] Revoked — needs a revocation list, which no package database keeps
-- [ ] Expired — needs a certificate with a validity period, which a package signature is not
-- [x] Verification error — the databases could not be read
+- [x] Verified — the image still matches what was recorded for it: its package's digest, or the
+      digest its own Authenticode signature covers with the signature over that digest checked
+      against the signing certificate's key
+- [ ] Valid but untrusted chain — **nothing produces it, and the reason is no longer only Linux's.**
+      A package database records that *something* signed, not who — `pacman` writes `pgp` and stops
+      there — so there is no chain in it to distrust. Windows is the half that changed: the images
+      carry real certificates and this program reads them, but it deliberately does not walk them to
+      a root store, and `trust.chain` is not even a column there. Reaching this word needs a chain
+      built against the machine's own store with revocation off, which is local, buildable and
+      simply not built
+- [x] Unsigned — nothing signed for the package, which is most of a machine that builds its own; on
+      Windows, an image carrying no certificate table at all
+- [x] Invalid signature — the image no longer matches what was recorded: the package's digest, or
+      the one inside its signature, or a signature that is not the one the certificate's key makes
+- ∅ Revoked — **refused, because it is question four wearing question two's clothes.** A revocation
+      answer comes from a CRL distribution point or an OCSP responder, and both are network fetches,
+      which §97 rules out outright rather than by default. The offline alternative is worse than
+      none: a cached revocation
+      list on a machine that never fetched one reports every revoked certificate as fine, which is
+      the confident zero this project keeps finding inside ticked boxes. A verdict that reads "clean"
+      because nothing was downloaded is not a verdict
+- [x] Expired — the signature is good and the certificate behind it was not valid at the instant it
+      is judged against. **Which instant is the timestamp column's answer, not this one's**: a
+      countersigned signature is judged as of the day it was countersigned and survives its
+      certificate, and one nothing dated has only now to be judged against, which is why a great deal
+      of correctly signed software reaches this word and is not broken
+- [x] Verification error — the databases could not be read, or the image's digest is one this build
+      declines to accept as evidence, which is what MD5 gets
 - [x] Not checked — nobody asked; verification is opt-in and costs a read of the file
 
-- [ ] Online providers are plugins or integrations with explicit privacy controls
+## 70.1 The provider, and why there is not one
+
+- ∅ **Online providers are plugins or integrations with explicit privacy controls.** Refused, not
+  deferred, and this section is the decision.
+
+The question a provider answers is real: somebody looking at an unfamiliar image wants to know what
+the world thinks of it. The objection is not to the question, it is to this program being the thing
+that asks it.
+
+**§4 already drew the line.** No antivirus scanner, no endpoint detection and response product. A
+verdict about an executable, fetched from a service, is the defining output of both. Shipping the
+query is shipping the thin end of two things this document says permanently that it is not.
+
+**§97 is currently a fact, and a seam would demote it to a promise.** The program contains no network
+client at all. That is enforced by there being no socket, which needs no discipline to keep; a
+provider seam replaces it with a setting that defaults to off, which needs discipline from everybody
+who ever touches the code afterwards. Trading an invariant for an intention is a bad trade even when
+nobody defects, because the reader can no longer verify it by looking.
+
+**§67 refused the identical shape one bullet earlier.** The symbol group is a switch, a provider to
+configure and somewhere to cache what came back, and it was refused on §97's grounds. A reputation
+group is the same three controls over the same promise. Refusing one and building the other would
+make the document say two things.
+
+**And the honest opt-in already exists, one column to the left.** `hash.sha256` is computed locally,
+on request, and can be copied and exported. Handing somebody the digest and letting them carry it to
+whatever service they trust is a *better* opt-in than any in-program provider with a disclosure
+dialog: the transmission happens in their browser, under their account, with their eyes on it, and
+this program stays one that has never opened a socket. §4's own escape clause is exactly this —
+"may integrate with or launch specialised tools when deeper analysis is required" — and a hash in
+the clipboard is that integration, with the consent step built out of the mechanism rather than
+bolted onto it.
+
+**What stays, and why.** Refusing the provider does not mean deleting the question. `ImageTrust`
+keeps its `Reputation` and `Submitted` slots, and `reputation` keeps its column on every platform,
+because they are what stops a digest computed here from ever being read as a file sent from here.
+The column now reads **"not asked"** rather than `n/i`: `n/i` is the mark for a reading this program
+has not got round to, and over a settled refusal it was a promise nobody made. The column has no sort
+key and no filter text, so an unasked question cannot sort or match as though it had an answer,
+however consistent that answer would be.
 
 ---
 
@@ -5874,9 +5940,12 @@ will render the same values.
 
 # 97. Privacy requirements
 
-- [x] **Default operation involves no external communication whatsoever.** Not update checks, not
-      symbol servers, not reputation — the program contains no network client at all today, and any
-      future one is opt-in per §70.
+- [x] **Operation involves no external communication whatsoever** — not "default operation", because
+      there is no other kind. Not update checks, not symbol servers, not reputation: the program
+      contains no network client at all, and §70 refuses the one thing that would have needed one
+      rather than deferring it behind a switch. This is kept as a fact about the code rather than as
+      a promise about a setting, which is the stronger of the two — an invariant a reader can check
+      by looking, instead of an intention every later change has to honour.
 - [x] Crash reporting and usage telemetry are opt-in — there are none
 - [x] Command lines, environment variables, memory, file contents, usernames and paths are treated as
       potentially sensitive
