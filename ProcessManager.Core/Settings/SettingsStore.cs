@@ -150,6 +150,95 @@ public static class SettingsStore {
     }
   }
 
+  /// <summary>The name the usage record goes by, beside the settings (PRD §44).</summary>
+  /// <remarks>
+  /// A separate file rather than a section of the settings, for two reasons that point the same way.
+  /// It is data rather than preference and it grows, so a settings file somebody edits by hand would
+  /// fill with rows they never wrote; and turning the feature off should be able to delete the record
+  /// without touching anything else they have set.
+  /// </remarks>
+  public const string UsageFileName = "usage.tsv";
+
+  /// <summary>
+  /// Where the usage record lives: beside the settings, wherever those turned out to be.
+  /// </summary>
+  /// <param name="settingsPath">
+  /// The settings file actually in use, which is not always the default one — `--settings`,
+  /// `PROCMAN_SETTINGS` and a portable marker each move it. The record has to follow it: a portable
+  /// install on a stick that wrote its record into the profile directory would leave behind exactly
+  /// the file it exists to keep off the machine.
+  /// </param>
+  public static string UsagePathFor(string? settingsPath = null) {
+    var directory = System.IO.Path.GetDirectoryName(settingsPath ?? Path);
+    return string.IsNullOrEmpty(directory) ? UsageFileName : System.IO.Path.Combine(directory, UsageFileName);
+  }
+
+  /// <summary>Beside the settings file this run resolved to.</summary>
+  public static string UsagePath => UsagePathFor();
+
+  /// <summary>
+  /// Reads the usage record, or an empty one where there is none to read.
+  /// </summary>
+  /// <remarks>
+  /// A missing file is the ordinary state — the feature is off by default — and is not a failure.
+  /// </remarks>
+  public static Sampling.UsageHistory LoadUsage(string? path = null) {
+    path ??= UsagePath;
+    var history = new Sampling.UsageHistory();
+    try {
+      if (File.Exists(path))
+        history.Restore(Sampling.UsageHistory.Parse(File.ReadAllText(path)));
+    } catch (IOException) {
+    } catch (UnauthorizedAccessException) {
+    }
+
+    return history;
+  }
+
+  /// <summary>
+  /// Writes it, the same way the settings are written: whole, then moved into place.
+  /// </summary>
+  public static bool SaveUsage(Sampling.UsageHistory history, string? path = null) {
+    ArgumentNullException.ThrowIfNull(history);
+    path ??= UsagePath;
+
+    try {
+      var directory = System.IO.Path.GetDirectoryName(path);
+      if (!string.IsNullOrEmpty(directory))
+        Directory.CreateDirectory(directory);
+
+      var temporary = path + ".new";
+      File.WriteAllText(temporary, history.Write());
+      File.Move(temporary, path, overwrite: true);
+      return true;
+    } catch (IOException) {
+      return false;
+    } catch (UnauthorizedAccessException) {
+      return false;
+    }
+  }
+
+  /// <summary>
+  /// Removes the usage record, which is what turning the feature off has to be able to do (PRD §44).
+  /// </summary>
+  /// <remarks>
+  /// Deleting rather than emptying. Somebody switching this off is asking for the record to stop
+  /// existing, and a file left behind holding a header and no rows still says the feature was on.
+  /// </remarks>
+  public static bool ForgetUsage(string? path = null) {
+    path ??= UsagePath;
+    try {
+      if (File.Exists(path))
+        File.Delete(path);
+
+      return true;
+    } catch (IOException) {
+      return false;
+    } catch (UnauthorizedAccessException) {
+      return false;
+    }
+  }
+
   /// <summary>
   /// Removes the file, so the next start is a fresh install (PRD §67).
   /// </summary>

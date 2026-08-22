@@ -131,33 +131,57 @@ internal static class Program {
       var actions = ProbeFactory.CreateActions(options.ProbeRoot);
       using var sampler = new Sampler(probe);
 
-      return options.Mode switch {
-        RunMode.List => RunList(sampler, options),
-        RunMode.Find => RunFind(sampler, probe, options),
-        RunMode.Kill => RunKill(sampler, actions, options),
-        RunMode.EndTask => RunEndTask(sampler, actions, options),
-        RunMode.Restart => RunRestart(sampler, actions, options),
-        RunMode.Scheduling => RunScheduling(sampler, actions, options),
-        RunMode.Signal => RunSignal(sampler, actions, options),
-        RunMode.ResourceLimit => RunResourceLimit(sampler, actions, options),
-        RunMode.OutOfMemory => RunOutOfMemory(sampler, actions, options),
-        RunMode.Freezer => RunFreezer(sampler, actions, options),
-        RunMode.Host => HostReport.Run(sampler, probe),
-        RunMode.Limits => LimitsReport.Run(sampler, probe, options.TargetPid),
-        RunMode.Environment => EnvironmentReport.Run(sampler, probe, options.TargetPid, options.Format),
-        RunMode.ProcessDetail => ProcessReport.Run(sampler, probe, options.TargetPid, options.DetailPage),
-        RunMode.Performance => PerformanceCommand.Run(sampler, probe, options),
-        RunMode.Run => LaunchCommand.Run(actions, options),
-        RunMode.Startup => StartupReport.Run(probe, options),
-        RunMode.Users => UsersReport.Run(sampler, probe),
-        RunMode.Services => ServicesReport.Run(probe, options),
-        RunMode.ServiceControl => ServiceControlCommand.Run(options.ServiceVerb, options.ServiceUnit),
-        RunMode.Connections => ConnectionsReport.Run(sampler, probe, options),
-        RunMode.SelfTest => SelfTest.Run(sampler, probe.Description, probe),
-        RunMode.HelperCheck => HelperCheck.Run(),
-        RunMode.Terminal => RunTerminal(sampler, probe, actions, options),
-        _ => RunDesktop(sampler, probe, actions, options, settings, settingsPath),
-      };
+      // Only when the file says so, and only for the two modes that keep sampling. A one-shot
+      // listing takes two samples a second apart and would write a record consisting of one
+      // interval, which is a file created for nothing (PRD §44).
+      var keepsSampling = options.Mode is RunMode.Desktop or RunMode.Terminal;
+      string? usagePath = null;
+      if (settings.UsageHistory && keepsSampling) {
+        // Beside whichever settings file this run resolved to, not the default one: --settings,
+        // PROCMAN_SETTINGS and a portable marker each move it, and a portable install that wrote
+        // its record into the profile would leave behind the one file it exists to keep off the
+        // machine.
+        usagePath = Settings.SettingsStore.UsagePathFor(settingsPath ?? options.SettingsPath);
+        sampler.Usage = Settings.SettingsStore.LoadUsage(usagePath);
+        if (settings.UsageHistoryDays > 0)
+          sampler.Usage.Forget(DateTime.UtcNow.AddDays(-settings.UsageHistoryDays).Ticks);
+      }
+
+      try {
+        return options.Mode switch {
+          RunMode.List => RunList(sampler, options),
+          RunMode.Find => RunFind(sampler, probe, options),
+          RunMode.Kill => RunKill(sampler, actions, options),
+          RunMode.EndTask => RunEndTask(sampler, actions, options),
+          RunMode.Restart => RunRestart(sampler, actions, options),
+          RunMode.Scheduling => RunScheduling(sampler, actions, options),
+          RunMode.Signal => RunSignal(sampler, actions, options),
+          RunMode.ResourceLimit => RunResourceLimit(sampler, actions, options),
+          RunMode.OutOfMemory => RunOutOfMemory(sampler, actions, options),
+          RunMode.Freezer => RunFreezer(sampler, actions, options),
+          RunMode.Host => HostReport.Run(sampler, probe),
+          RunMode.Limits => LimitsReport.Run(sampler, probe, options.TargetPid),
+          RunMode.Environment => EnvironmentReport.Run(sampler, probe, options.TargetPid, options.Format),
+          RunMode.ProcessDetail => ProcessReport.Run(sampler, probe, options.TargetPid, options.DetailPage),
+          RunMode.Performance => PerformanceCommand.Run(sampler, probe, options),
+          RunMode.Run => LaunchCommand.Run(actions, options),
+          RunMode.Startup => StartupReport.Run(probe, options),
+          RunMode.Users => UsersReport.Run(sampler, probe),
+          RunMode.Services => ServicesReport.Run(probe, options),
+          RunMode.ServiceControl => ServiceControlCommand.Run(options.ServiceVerb, options.ServiceUnit),
+          RunMode.Connections => ConnectionsReport.Run(sampler, probe, options),
+          RunMode.SelfTest => SelfTest.Run(sampler, probe.Description, probe),
+          RunMode.HelperCheck => HelperCheck.Run(),
+          RunMode.Terminal => RunTerminal(sampler, probe, actions, options),
+          _ => RunDesktop(sampler, probe, actions, options, settings, settingsPath),
+        };
+      } finally {
+        // Written on the way out however the run ended, including badly. A record that is only
+        // written on a clean exit is one that a crash — the thing somebody was watching for —
+        // silently discards.
+        if (sampler.Usage is { } usage)
+          Settings.SettingsStore.SaveUsage(usage, usagePath);
+      }
     }
   }
 

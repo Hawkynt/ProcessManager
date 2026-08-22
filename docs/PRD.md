@@ -3209,13 +3209,41 @@ knowing where it came from — so it reads "local" rather than leaving the colum
 
 # 44. Application / usage history
 
-- [ ] Metrics: application · executable identity · publisher · CPU time · foreground CPU time ·
-      background CPU time · disk read · disk write · network sent · network received ·
-      metered-network usage · GPU time · average memory · peak memory · launch count ·
-      cumulative runtime · last launch · history start date
-- [ ] Controls: enable/disable history · reset · export · retention period
-- [ ] **Off by default.** A file recording which applications a person ran and for how long is
+- [ ] 🟡 Metrics: application ✔ · executable identity ✔ · CPU time ✔ · disk read ✔ · disk write ✔ ·
+      average memory ✔ · peak memory ✔ · launch count ✔ · cumulative runtime ✔ · last launch ✔ ·
+      history start date ✔.
+
+      The application is the image path. Not the name, which is what a program calls itself and which
+      two programs may share; not a digest either, which would make an upgraded program a different
+      application and lose everything the old one had done — the question this answers is "what has
+      this program cost me", and the answer has to survive its updates.
+
+      The average is the working set integrated over time rather than a mean of means. A run lasting
+      a second and one lasting a day would otherwise count equally, and the day is what the machine
+      actually spent.
+
+      **Foreground and background CPU time are not separable on Linux**: nothing in the kernel knows
+      which window has focus, and the desktop that does knows nothing about processor time. **Network
+      sent and received are refused** for the reason §18 gives at length — there is no per-process
+      byte counter with a portable source, and every workaround is wrong in a way nothing on screen
+      would betray. **Metered-network usage** needs a notion of a metered connection that no Linux
+      desktop publishes. **Publisher** and **GPU time** are readable and are not written yet
+- [ ] 🟡 Controls: enable ✔ (`history.usage`) · retention period ✔ (`history.usage.days`, counted
+      from when a program was last seen rather than from when its record began — a program run every
+      day since January is not old, and dropping it because its record is old would delete exactly
+      the rows worth keeping) · export ✔, in the sense that the record *is* a documented
+      tab-separated file with a header, which anybody can read, filter or delete a line out of
+      without a tool. **Reset has no control of its own yet** — deleting the file is reset, and that
+      is a thing somebody has to know rather than something the program offers
+- [x] **Off by default.** A file recording which applications a person ran and for how long is
       surveillance if it appears without being asked for, however useful it is when it is asked for.
+      Nothing is accumulated and the file is not created until `history.usage` says otherwise —
+      verified by running with the setting absent and checking that no file appeared. It lives beside
+      whichever settings file is in use rather than beside the default one, because `--settings`,
+      `PROCMAN_SETTINGS` and a portable marker each move that: a portable install on a stick that
+      wrote its record into the profile directory would leave behind exactly the file it exists to
+      keep off the machine. That was wrong when first written and only a run against a real path
+      showed it
 
 ---
 
@@ -4751,7 +4779,11 @@ sorted the table to find.
 - [x] Every eligible metric has an in-memory ring buffer
 - [x] 60 seconds at high resolution by default
 - [ ] Configurable 5 min · 15 min · 1 h
-- [ ] Persistent history, separate and optional
+- [x] Persistent history, separate and optional — §44's usage record: a separate file, off unless
+      asked for, holding totals per program rather than a series per metric. Deliberately not the
+      ring buffers above written to disk: sixty seconds at high resolution is a thing to look at
+      while it happens, and keeping every sample of every metric for every process would be a
+      database rather than a file somebody can read
 - [x] **Graphs distinguish a missing sample from a zero value**
 
 # 86. Selection persistence

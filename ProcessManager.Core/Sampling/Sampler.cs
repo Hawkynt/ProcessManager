@@ -33,6 +33,16 @@ public sealed class Sampler : IDisposable {
 
   public SnapshotDelta Delta { get; } = new();
 
+  /// <summary>
+  /// What each program has cost across sessions, or null when nobody asked for it (PRD §44).
+  /// </summary>
+  /// <remarks>
+  /// Off is the default and is the whole design of this feature rather than a preference about it.
+  /// Null here means nothing is accumulated and no file is written, so a build nobody has configured
+  /// keeps no record of what was run on it.
+  /// </remarks>
+  public UsageHistory? Usage { get; set; }
+
   /// <summary>How long the last <see cref="Sample"/> took. Surfaced in the status bar (PRD §4).</summary>
   public TimeSpan LastSampleDuration { get; private set; }
 
@@ -61,6 +71,13 @@ public sealed class Sampler : IDisposable {
     this.LastSampleDuration = Stopwatch.GetElapsedTime(startedAt);
 
     this.Delta.Update(this._hasPrevious ? this._previous : null, this._current, this.CpuPercentMode);
+
+    // Here rather than in each front-end, because this is the one place all three pass through and
+    // three copies of "add this interval" would be three chances to add it twice. Null unless
+    // somebody asked for it: a file recording which programs a person ran is surveillance if it
+    // appears unasked, however useful it is once asked for (PRD §44).
+    this.Usage?.Add(this._current, this._hasPrevious ? this.Delta.ElapsedSeconds : 0, DateTime.UtcNow.Ticks);
+
     this._hasPrevious = true;
     ++this.SampleCount;
   }
