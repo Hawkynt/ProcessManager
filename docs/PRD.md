@@ -4409,11 +4409,24 @@ drag and drop.
 
 Owed and named rather than assumed: **send a signal, set a resource limit, set the out-of-memory
 priority and freeze a cgroup** reached the window and the command line together and have no terminal
-command yet (§25). The information each of them acts on is reachable from the TUI — `--limits` prints
+command yet (§25).
+
+One smaller disagreement of the same kind, now closed: the window read `confirm.destructive` and the
+terminal did not, so one preference produced two programs — the terminal asked about a terminate
+whatever the file said. Stricter, so never unsafe, and exactly the sort of gap nobody sees until
+somebody sets the preference and finds half of it took. Both front-ends read the same table now, and
+the classes still overrule it in the two places that matter: an unsafe action, and anything aimed at
+a process the machine depends on (§69). The information each of them acts on is reachable from the TUI — `--limits` prints
 every ceiling and the out-of-memory standing — so the second clause above holds; the actions
 themselves do not, and this is where that is written down instead of being discovered later.
 
-- [ ] The information such a feature retrieves is still accessible elsewhere
+- [x] The information such a feature retrieves is still accessible elsewhere — the second clause
+      above, held in both directions and checked over the registry rather than by inspection: every
+      field the window can show is exportable from the command line except the three drawn histories,
+      which refuse by name rather than exporting a picture as text, and every view behind the rail
+      has a verb. The audit that established it found exactly one gap — the environment block, which
+      the window had a page for and neither of the others could reach at all — and `--environment`
+      closed it (§102)
 
 ---
 

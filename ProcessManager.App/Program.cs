@@ -197,6 +197,9 @@ internal static class Program {
         Columns = options.TerminalColumns,
         PinnedColumns = options.PinnedTerminalColumns,
         ManualRefresh = options.ManualRefresh,
+        // The window has read this since the setting existed; the terminal asked whatever the file
+        // said, which is stricter and so never unsafe, but made one preference into two programs.
+        ConfirmSingleActions = options.ConfirmSingleActions,
         // Only when somebody said so: otherwise the terminal decides from the locale, which is the
         // one thing a capture may not do and a person watching wants. Saying so includes saying so
         // in the settings file, which is what tui.graphs is for — before it existed, a preference

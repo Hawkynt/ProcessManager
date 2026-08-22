@@ -29,6 +29,17 @@ public sealed record TerminalStartup {
   /// <summary>What the rows are grouped by (PRD §83). The tree is one of the answers.</summary>
   public ProcessGrouping Grouping { get; init; }
 
+  /// <summary>
+  /// Whether a single-process action asks first (PRD §67, §69).
+  /// </summary>
+  /// <remarks>
+  /// The window has read this since the setting existed and the terminal never did — it asked about
+  /// a terminate whatever the file said. Stricter, so it was never unsafe, but it meant the same
+  /// preference produced two different programs, which is the front-end disagreement §58 exists to
+  /// stop. The default is to ask, which is what a settings file that says nothing means.
+  /// </remarks>
+  public bool ConfirmSingleActions { get; init; } = true;
+
   /// <summary>The saved columns, or null to let the width decide (PRD §57.1).</summary>
   public ProcessField[]? Columns { get; init; }
 
@@ -98,6 +109,7 @@ public sealed class TerminalHost : IDisposable {
     // frame drawn in the built-in colours would have to be repainted to pick these up.
     Attributes.Apply(startup?.Colours);
     var ui = new TerminalUi(sampler, probe, actions, width, height, DetectColorDepth(), services) {
+      ConfirmSingleActions = startup?.ConfirmSingleActions ?? true,
       Keys = KeyBindings.Load(),
       ClipboardOutput = this._output,
     };

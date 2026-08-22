@@ -746,6 +746,16 @@ internal sealed record CommandLineOptions {
   /// </remarks>
   public bool GraphStyleWasStated { get; init; }
 
+  /// <summary>
+  /// Whether a single-process action asks first (PRD §67, §69).
+  /// </summary>
+  /// <remarks>
+  /// Carried on the options rather than read from the settings where it is used, so the terminal and
+  /// the window get it by the same route as every other preference — and so the terminal gets it at
+  /// all, which it did not: it asked about a terminate whatever the file said.
+  /// </remarks>
+  public bool ConfirmSingleActions { get; init; } = true;
+
   /// <summary>Whether the terminal asks for mouse reports (PRD §57.5).</summary>
   public bool UseMouse { get; init; } = true;
 
@@ -832,6 +842,7 @@ internal sealed record CommandLineOptions {
       ManualRefresh = settings.ManualRefresh,
       DesktopColumns = settings.DesktopColumns.Length > 0 ? settings.DesktopColumns : null,
       UseMouse = settings.TerminalMouse,
+      ConfirmSingleActions = settings.ConfirmDestructiveActions,
       TerminalColours = settings.TerminalColours,
       Notifications = settings.Notifications,
     };
