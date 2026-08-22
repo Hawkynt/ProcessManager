@@ -297,7 +297,9 @@ shared one is released by the abandoned worker into the next worker's wait and t
 - [ ] ARM64 — should work; never built or run
 - [x] `/proc` and `/sys` native collectors
 - [x] cgroup v2 first-class
-- [ ] 🟡 systemd as the primary service-management target — no service view yet (§41)
+- [x] systemd as the primary service-management target — a view of every unit and its state, read
+      from the unit files and the cgroup tree without D-Bus and without spawning anything, and all
+      six verbs systemd offers from the window, the terminal and the command line (§41)
 
 **Implementation.** Raw `open`/`read`/`close`/`getdents64` syscalls against UTF-8 byte paths, parsed
 from `ReadOnlySpan<byte>` into pooled buffers. Managed file APIs were the original implementation and
@@ -1987,7 +1989,12 @@ which is a subprocess per query against a database whose format is the distribut
 ## 25.4 Diagnostics
 
 - [ ] Create memory dump — **baseline Windows parity requirement**; Task Manager has it
-- [ ] Analyse wait chain — **baseline Windows parity requirement**
+- [ ] 🟡 Analyse wait chain — **baseline Windows parity requirement.** The one chain a kernel states
+      outright is followed: a process queued behind a file lock names the process holding it, on the
+      properties window's General page, from `/proc/locks` where the kernel writes every waiter beside
+      its holder. The rest cannot be followed from outside. Nothing publishes who holds a futex, and
+      reconstructing it needs the debugger interface §4 rules out — so what is here is one real case
+      rather than a general "wait chain" that is that case wearing a general name (§33, §91)
 - [x] Inspect threads
 - [x] Inspect stacks (§30) — Inspect ▸ Stacks…, in a window that resolves symbols and saves the
       frames it found
@@ -2502,7 +2509,8 @@ most of the address space.
       column — two copies of a library is two sets of its global state, and a live `dotnet` has
       forty-eight of its ninety-four mapped files loaded more than once. Windows has both counts in
       the Toolhelp entry and does not read them yet
-- [ ] ∅ on Linux — **Load time.** Nothing records when a mapping was made. The loader knows and
+- ∅ **Load time** — and on Windows too, which is why this is the one here with no box at all.
+      Nothing records when a mapping was made. The loader knows and
       publishes nothing; `/proc/[pid]/maps` has no timestamp column; and the one date near a mapping
       is the file's own modification time, which is a different fact and already a column. Windows'
       Toolhelp has no such field either, so this is unanswered on both, for two different reasons
@@ -2533,11 +2541,14 @@ filled, because the lookup indexes every path every installed package owns (§5.
       a package nobody signed is exactly as unsigned as one from nowhere. Behind the same button as
       the hash, because it is the same read of the file. Windows has Authenticode and does not read
       it yet
-- [ ] ∅ on Linux — **Signer.** Nothing names one. `pacman` records *that* a signature was verified
+- [ ] **Signer** — ∅ on Linux, unwritten on Windows. Nothing on Linux names one. `pacman` records *that* a signature was verified
       at install time, not whose; `dpkg` records no signature over an installed file at all; and the
       signature itself went with the downloaded archive. Naming the packager here would answer a
       question about identity with a name from the changelog. Windows' certificate subject is a real
-      signer and is not read yet
+      signer and **is now read — for a process's own image, not for each module it has mapped.**
+      `ImageSigner` is a field of the process record and there is no equivalent on the module record,
+      so the machinery exists and this row is the work of applying it per row rather than a question
+      nobody has answered
 - [x] 🟡 SHA-256 — a button in the file properties box and never a side effect, because it is the one
       reading whose cost is the size of the file: hashing every module a process has mapped would
       read a gigabyte to fill a column nobody looked at. **A hash is not a verdict** (§70)
@@ -2588,7 +2599,7 @@ named pipes (§6.1).
       a mask of independent bits. Windows has the mask in the table entry and does not decode it yet
 - [x] 🟡 Flags — the `O_*` word, spelled out; a bit the list does not name is shown as a hex
       remainder rather than dropped. Windows reports `n/a`: its equivalent is the access mask
-- [ ] ∅ on Linux — **Object address.** The five `/proc/net` tables do print a pointer beside every
+- [ ] **Object address** — ∅ on Linux, unwritten on Windows. The five `/proc/net` tables do print a pointer beside every
       socket, and it is not an address: the kernel writes it with `%pK`, which since 4.15 hands an
       unprivileged reader a *hash* of the pointer and hands one a `kptr_restrict` of 1 sixteen zeros.
       Measured on the machine this was written on with `kptr_restrict` at nought — the value has eight
@@ -2624,7 +2635,7 @@ named pipes (§6.1).
       as the fallback for a kernel too old to write it
 - [x] Socket endpoint — the descriptor's inode joins it to a row of the five `/proc/net` tables, and
       the handles view shows the endpoint and state beside the descriptor
-- [ ] ∅ on Linux — **Creation / open time.** The kernel records no time at which a descriptor was
+- [ ] **Creation / open time** — ∅ on Linux, unwritten on Windows. The kernel records no time at which a descriptor was
       opened. The timestamps on `/proc/[pid]/fd/[n]` belong to the `procfs` directory entry, and a
       test proves it by reusing a descriptor number: a file is opened and its link looked at, the
       descriptor is closed, a different file is opened over a second later on the same number, and
@@ -2660,7 +2671,7 @@ Actions:
       process the pane is showing, so the navigation that is worth having is to the process a
       descriptor *names*: the target of a pidfd. Nothing else names one, and this says so rather than
       opening the window the reader is already in
-- [ ] ∅ on Linux — **Close resource.** No supported mechanism exists for closing a descriptor in
+- [ ] **Close resource** — ∅ on Linux, unwritten on Windows. No supported mechanism exists for closing a descriptor in
       another process, and an item that could only ever refuse is a lie dressed as a feature. Windows
       has `DuplicateHandle` with `DUPLICATE_CLOSE_SOURCE` and it is not wired up, which is why this
       is a refusal on one platform and unwritten work on the other
