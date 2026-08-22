@@ -146,9 +146,15 @@ public sealed class ServiceTests {
     try {
       File.WriteAllText(invocation, "an invocation id");
       File.SetLastWriteTimeUtc(invocation, _Activated);
-      // Written, and actually there under that name — on Windows the write above succeeds by making
-      // an alternate data stream, and nothing is created that a directory listing would show.
-      this._colonNamesWork = File.Exists(invocation);
+      // Written, and actually there under that name. Not File.Exists: on Windows that answers true
+      // for an alternate data stream, which is exactly what the write above made instead of a file.
+      // A directory listing is the honest test, because a stream never appears in one.
+      this._colonNamesWork = false;
+      foreach (var found in Directory.EnumerateFiles(this._runtime))
+        if (Path.GetFileName(found) == "invocation:lingering.service") {
+          this._colonNamesWork = true;
+          break;
+        }
     } catch (Exception problem) when (problem is IOException or UnauthorizedAccessException or NotSupportedException) {
       this._colonNamesWork = false;
     }
