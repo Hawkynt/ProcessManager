@@ -437,6 +437,31 @@ public sealed class SystemSnapshot {
     this.System = SystemCounters.Unread;
   }
 
+  /// <summary>
+  /// Finds a process by identity and says where it is, which is what the rate accessors want.
+  /// </summary>
+  /// <remarks>
+  /// The record alone is not enough for anything measured over an interval: a rate lives in the
+  /// delta, indexed by position in this snapshot, so a caller holding only a key cannot ask for one.
+  /// Linear, like the overload below it, and for the same callers — one lookup when something is
+  /// pointed at, not one per row per frame.
+  /// </remarks>
+  public bool TryGetProcess(ProcessKey key, out ProcessRecord record, out int index) {
+    var processes = this.Processes;
+    for (var i = 0; i < processes.Length; ++i) {
+      if (processes[i].Key != key)
+        continue;
+
+      record = processes[i];
+      index = i;
+      return true;
+    }
+
+    record = default;
+    index = -1;
+    return false;
+  }
+
   /// <summary>Finds a process by identity. Linear — callers in a loop want the delta's index map.</summary>
   public bool TryGetProcess(ProcessKey key, out ProcessRecord record) {
     var processes = this.Processes;

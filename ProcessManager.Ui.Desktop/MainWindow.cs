@@ -24,6 +24,18 @@ public sealed class MainWindow : Form {
   private readonly ProcessView _view = new() { TreeMode = true, SortColumn = ProcessField.CpuPercent, SortDescending = true };
   private readonly ProcessTreeBinder _binder;
   private readonly TreeListView _tree = new();
+
+  /// <summary>
+  /// The quick inspector: what the row under the pointer is (PRD §24).
+  /// </summary>
+  /// <remarks>
+  /// A tooltip rather than a window, because it must not take the focus — the whole value is reading
+  /// a row without disturbing what is selected or where the keyboard is.
+  /// </remarks>
+  private readonly ToolTip _quick = new();
+
+  /// <summary>Which row the tooltip is currently describing, so it is not rebuilt on every pixel.</summary>
+  private int _quickRow = -1;
   private readonly HistoryPlot _cpuPlot = new();
   private readonly HistoryPlot _memoryPlot = new();
   private readonly CoreHeatmap _cores = new();
@@ -631,6 +643,46 @@ public sealed class MainWindow : Form {
     this.Controls.Add(this._content);
   }
 
+  /// <summary>
+  /// Puts the facts about the row under a point into the quick inspector (PRD §24).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// <b>Nothing is collected here.</b> Every line comes from the record already in the snapshot,
+  /// through the same accessor the columns use, so a field this run never asked for renders as the
+  /// mark for "nobody looked" rather than sending the pointer's movement to a file. That is what §24
+  /// means by a tooltip performing no synchronous collection, and it is a property of where the text
+  /// comes from rather than a rule somebody has to keep remembering.
+  /// </para>
+  /// <para>
+  /// Rebuilt only when the pointer crosses into a different row. Composing seventeen fields on every
+  /// mouse-move message is work done hundreds of times a second to produce the same string.
+  /// </para>
+  /// </remarks>
+  private void DescribeRowUnder(Point point) {
+    var row = this._tree.RowAt(point);
+    if (row == this._quickRow)
+      return;
+
+    this._quickRow = row;
+    if (row < 0 || this._tree.NodeAt(row)?.Tag is not ProcessRow chosen) {
+      this._quick.Hide();
+      return;
+    }
+
+    if (!this._sampler.Current.TryGetProcess(chosen.Key, out var process, out var index)) {
+      // The row is drawn from the last sample and the process has gone since. Saying so is better
+      // than describing a record that is no longer about anything (PRD §8.2).
+      this._quick.SetToolTip(this._tree, $"{chosen.Name} (PID {chosen.Pid}) has ended.");
+      return;
+    }
+
+    this._quick.SetToolTip(
+      this._tree,
+      QuickFacts.Describe(in process, this._sampler.Delta, index)
+    );
+  }
+
   private void BuildTree() {
     this._tree.Dock = DockStyle.Fill;
     this._tree.ShowColumnHeaders = true;
@@ -638,6 +690,12 @@ public sealed class MainWindow : Form {
     // laptop screen where the toolkit's default fits twenty-five, and forty is the difference
     // between scrolling to find a process and seeing it (PRD §93).
     this._tree.ItemHeight = 17;
+
+    // What the row under the pointer is, without selecting it (PRD §24). The lower pane describes
+    // the row somebody chose; this describes the one they are looking at, and on a table of four
+    // hundred rows those are usually different questions.
+    this._tree.MouseMove += (_, e) => this.DescribeRowUnder(e.Location);
+    this._tree.MouseLeave += (_, _) => this._quick.Hide();
 
     this.RebuildColumns();
 
