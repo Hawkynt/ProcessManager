@@ -128,6 +128,25 @@ internal sealed class ProcessPerformancePage {
 
   public Control Control => this._panel;
 
+  /// <summary>
+  /// Which fields this page keeps an hour of, in the order <see cref="Append"/> stores them (PRD §28).
+  /// </summary>
+  /// <remarks>
+  /// Named as fields of the catalogue rather than only as captions, so that "an hour of this is
+  /// kept" is a statement the catalogue can be checked against: every one of these declares
+  /// <see cref="FieldHistory.Process"/>, and nothing else does (PRD §5.1).
+  /// </remarks>
+  public static readonly ProcessField[] Plotted = [
+    ProcessField.CpuPercent,
+    ProcessField.PrivateBytes,
+    ProcessField.WorkingSetBytes,
+    ProcessField.ReadBytesPerSecond,
+    ProcessField.WriteBytesPerSecond,
+    ProcessField.GpuEnginePercent,
+    ProcessField.HandleCount,
+    ProcessField.ThreadCount,
+  ];
+
   /// <summary>The graphs, in the order they are tiled — so a test can point at one (PRD §28).</summary>
   public IReadOnlyList<HistoryPlot> Plots => this._plots;
 
@@ -192,6 +211,10 @@ internal sealed class ProcessPerformancePage {
   public void Append(in ProcessRecord process, SnapshotDelta delta, int index, Counter handles) {
     ArgumentNullException.ThrowIfNull(delta);
 
+    // One ring per field of <see cref="Plotted"/>, in that order. Which fields an hour is kept for
+    // is the catalogue's declaration and not this page's opinion — a test asserts the two lists are
+    // the same set, so a seventh plot added here without declaring the field historical fails a
+    // build (PRD §5.1, §28).
     this._cpu.Add(delta.CpuPercent(index));
     this._private.Add(AsRate(process.PrivateBytes));
     this._workingSet.Add(AsRate(process.WorkingSetBytes));

@@ -231,6 +231,28 @@ public sealed class ExporterTests {
     Assert.That(rows[1], Is.EqualTo("100\tchrome"), "no quoting needed here");
   }
 
+  /// <summary>
+  /// Every field the catalogue calls a timestamp, and not the start time alone.
+  /// </summary>
+  /// <remarks>
+  /// The exporter named one field where it should have asked what the field was, so the image's
+  /// creation time and a signature's countersigning date — both added to the catalogue afterwards —
+  /// wrote <c>null</c> into every row while the column beside them showed a date. The declaration is
+  /// the catalogue's now, and this is the row that would have failed the day it was introduced.
+  /// </remarks>
+  [Test]
+  public void EveryTimestampFieldIsExportedAsIso8601AndNotOnlyTheStartTime() {
+    var records = this._snapshot.PrepareProcesses(3);
+    records[0].ImageCreatedUtcTicks =
+      Counter.Of((ulong)new DateTime(2025, 12, 31, 23, 45, 6, DateTimeKind.Utc).Ticks);
+
+    var csv = this.Export(ExportFormat.Csv, [ProcessField.ImageCreated]);
+    Assert.Multiple(() => {
+      Assert.That(csv.Split('\n')[1], Is.EqualTo("2025-12-31T23:45:06.000Z"));
+      Assert.That(csv.Split('\n')[2], Is.Empty, "a process whose image was never read exports nothing");
+    });
+  }
+
   [Test]
   public void AStartTimeIsExportedAsIso8601() {
     var csv = this.Export(ExportFormat.Csv, [ProcessField.StartTime]);

@@ -682,7 +682,14 @@ internal sealed record CommandLineOptions {
           ? string.Empty
           : $" [{descriptor.Platforms.ToString().Replace(", ", "/", StringComparison.Ordinal)} only]";
 
-        text.AppendLine($"  {descriptor.Key,-20} {aliases,-24} {descriptor.Description}{note}");
+        // What it costs in authority, from the catalogue's own declaration (PRD §5.1). Worth the
+        // three words: a column of em dashes over somebody else's processes is a question this
+        // answers before it is asked, and the answer is a thing the reader can act on.
+        var privilege = descriptor.Privilege == FieldPrivilege.Owner
+          ? " [your own processes; another user's needs the elevated helper]"
+          : string.Empty;
+
+        text.AppendLine($"  {descriptor.Key,-20} {aliases,-24} {descriptor.Description}{note}{privilege}");
       }
 
       text.AppendLine();

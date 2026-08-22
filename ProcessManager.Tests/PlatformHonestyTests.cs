@@ -81,8 +81,10 @@ public sealed class PlatformHonestyTests {
         if (descriptor.Platforms.HasFlag(FieldPlatforms.Linux))
           continue;
 
-        // A drawn history has no text at all; it is a plot, and the registry marks it as one.
-        if (descriptor.Series is not null)
+        // A drawn history has no text at all; it is a plot, and the registry marks it as one. The
+        // kind and not the series: a series says the readings are kept, which is true of the CPU
+        // column as well as of the plot beside it (PRD §5.1).
+        if (descriptor.IsGraph)
           continue;
 
         var text = FieldAccessor.Text(descriptor.Id, in process, null, 0);
@@ -105,7 +107,7 @@ public sealed class PlatformHonestyTests {
 
     Assert.Multiple(() => {
       foreach (var descriptor in FieldRegistry.All) {
-        if (descriptor.Platforms.HasFlag(FieldPlatforms.Linux) || descriptor.Series is not null)
+        if (descriptor.Platforms.HasFlag(FieldPlatforms.Linux) || descriptor.IsGraph)
           continue;
 
         var raw = FieldAccessor.RawText(descriptor.Id, in process, null, 0);

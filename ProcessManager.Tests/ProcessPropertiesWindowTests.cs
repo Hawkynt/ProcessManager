@@ -1,5 +1,6 @@
 using Hawkynt.ProcessManager.Abstractions;
 using Hawkynt.ProcessManager.Model;
+using Hawkynt.ProcessManager.Query;
 using Hawkynt.ProcessManager.Sampling;
 using Hawkynt.ProcessManager.Ui.Desktop;
 
@@ -222,15 +223,32 @@ public sealed class ProcessPropertiesWindowTests {
   /// A properties window that checked no signature must not read as one that checked and was happy.
   /// A blank row is exactly that, so the page says which it is (PRD §70).
   /// </summary>
+  /// <remarks>
+  /// The package and the digest are the same silence and get the same treatment: a row saying the
+  /// question has not been asked, and where the button that asks it is. Each costs the size of the
+  /// image or a walk of every installed package, so neither is paid for on opening (PRD §5.2, §5.4,
+  /// §27).
+  /// </remarks>
   [Test]
-  public void TheGeneralPageSaysNoSignatureWasChecked() {
+  public void TheGeneralPageSaysWhichQuestionsAboutTheImageItHasNotAsked() {
     var (snapshot, delta, row, key) = Machine();
     var window = new ProcessPropertiesWindow(new StubProbe(), key, row.Name);
 
     window.UpdateFromSample(snapshot, delta, row, Counter.NotSampledYet);
 
-    Assert.That(window.GeneralText, Does.Contain("Signature"));
-    Assert.That(window.GeneralText, Does.Contain("not read"));
+    Assert.Multiple(() => {
+      foreach (var (label, said) in (ReadOnlySpan<(string, string)>)[
+        ("Signature", "not checked"),
+        ("Package", "not looked up"),
+        ("Image hash", "not computed"),
+      ]) {
+        Assert.That(window.GeneralText, Does.Contain(label), label);
+        Assert.That(window.GeneralText, Does.Contain(said), label);
+      }
+
+      // And each names the way to the answer rather than merely refusing.
+      Assert.That(window.GeneralText, Does.Contain("File properties…"));
+    });
   }
 
   /// <summary>
@@ -247,6 +265,26 @@ public sealed class ProcessPropertiesWindowTests {
 
     foreach (var caption in new[] { "CPU", "Memory", "Disk", "GPU", "Descriptors", "Threads" })
       Assert.That(window.PerformanceText, Does.Contain(caption), caption);
+  }
+
+  /// <summary>
+  /// And every one of them is a field the catalogue says an hour is kept of.
+  /// </summary>
+  /// <remarks>
+  /// The page draws six plots over eight series and the catalogue declares which fields are kept
+  /// per process (PRD §5.1). Two statements about one thing, so a test holds them to each other: a
+  /// seventh plot added without declaring its field — or a field declared historical that nothing
+  /// keeps — fails here rather than leaving the catalogue describing a program that no longer
+  /// exists.
+  /// </remarks>
+  [Test]
+  public void EveryPlottedSeriesIsAFieldTheCatalogueKeepsPerProcess() {
+    var declared = new List<ProcessField>();
+    foreach (var descriptor in FieldRegistry.All)
+      if (descriptor.History.HasFlag(FieldHistory.Process))
+        declared.Add(descriptor.Id);
+
+    Assert.That(ProcessPropertiesWindow.PlottedFields, Is.EquivalentTo(declared));
   }
 
   /// <summary>
