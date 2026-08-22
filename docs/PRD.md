@@ -1772,11 +1772,30 @@ direction. Somebody who switched one on is looking for exactly this.
 
 # 24. Process tooltip / quick inspector
 
-- [ ] Hover or keyboard inspection shows: name, PID, parent, user, path, command line, start time,
-      CPU, memory, I/O, network, signature, service names, package/container, detected runtime,
-      window title, current state
-- [ ] **Tooltips perform no expensive synchronous collection** — everything is either already in the
-      snapshot or fetched asynchronously with `…` shown until it arrives
+- [x] 🟡 Hover inspection shows: name ✔ (as the heading, because it is what the pointer is on) ·
+      PID ✔ · parent ✔ and its name ✔ · user ✔ · state ✔ · kind ✔ · start time ✔ · CPU ✔ · memory ✔
+      (private and working set) · I/O ✔ · threads ✔ · detected runtime ✔ · package ✔ · container ✔ ·
+      path ✔ · command line ✔.
+
+      **Network and window title are missing on purpose.** Per-process network bytes have no portable
+      source at all, which §18 refuses rather than approximates, and a window belongs to a process
+      only on a compositor that will say so — §39's finding is that most of them will not. Signature
+      and service names are readable and are not in the list yet.
+
+      It answers "what is this?" without changing what is selected, which is the one thing the lower
+      pane cannot do: the pane describes the row somebody chose and this describes the row they are
+      looking at, and on a table of four hundred rows those are usually different questions
+- [x] **Tooltips perform no expensive synchronous collection** — and this holds by where the text
+      comes from rather than by a rule somebody has to keep remembering. Every line is the same
+      `FieldAccessor` the columns use, against the record already in the snapshot, and that accessor
+      reads the record and nothing else: there is no path from a mouse-move message to a file. A
+      field this run never asked for renders as the mark for "nobody looked", which is what a tooltip
+      should say about it. Asserted by describing a record nobody ever filled in — anything that went
+      and looked would find something, and this cannot.
+
+      It is also rebuilt only when the pointer crosses into a different row, because composing
+      seventeen fields on every mouse-move message is work done hundreds of times a second to produce
+      the same string
 
 ---
 
