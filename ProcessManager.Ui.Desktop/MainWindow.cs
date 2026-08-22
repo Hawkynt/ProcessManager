@@ -3691,7 +3691,12 @@ public sealed class MainWindow : Form {
       row.Name,
       this._actions,
       this._settings.HideUnavailableTabs ? UnavailableTabs.Hidden : UnavailableTabs.Disabled
-    ) { SecondsPerSample = this.Interval / 1000d };
+    ) {
+      SecondsPerSample = this.Interval / 1000d,
+      // The window's own ring rather than one per properties window: two logs of the same machine
+      // would have two bounds, two start times and two chances to disagree (PRD §63).
+      Timeline = this._timeline,
+    };
 
     window.FormClosed += (_, _) => this._properties.Remove(window);
     this._properties.Add(window);

@@ -31,8 +31,8 @@ shorthand:
 it is not known*. An unticked box must never become a zero on screen. This is restated here because
 it is the single requirement most likely to be broken while filling the tables in.
 
-**Counting, as of the last update:** **1112 of 1320 boxes are ticked** — 171 of 190 in the field
-registry (§14–22), 941 of 1130 across the capabilities. A further 162 are marked 🟡, meaning some of
+**Counting, as of the last update:** **1114 of 1320 boxes are ticked** — 171 of 190 in the field
+registry (§14–22), 943 of 1130 across the capabilities. A further 162 are marked 🟡, meaning some of
 the work behind them is already done. §100 tracks the phases; §101 defines when this may be called
 finished.
 
@@ -2350,18 +2350,41 @@ Tabs:
       process, read from its module list and shown as a column. A version, an assembly list, a
       managed stack and a heap summary are all unwritten, and a tab holding one row would be a tab
       promising the other four
-- [ ] 🟡 Strings (§35) — **no longer blocked, and no longer a tab that does not exist.** Core has a
-      strings scanner now: ASCII, UTF-8 and UTF-16 over an image on disk, with a configurable minimum
-      length, reachable through the binary inspector. What is still missing here is the tab — a page
-      of this window showing the strings of *this process's* image, which is one call away rather
-      than a feature away. Scanning the process's own memory stays refused on §25.5's grounds and is
-      a different thing entirely
-- [ ] 🟡 Timeline (§63) — **no longer blocked either.** Events are recorded now: a bounded ring, fed
-      from what the sampler already computed, and every entry carries the pid it was about. A page of
-      this window would be that ring filtered to one process, which is a filter rather than a
-      feature. The rest of §63's own list — connections appearing, a signature changing — is still
-      unrecorded, so a per-process page would show starts, ends, thresholds crossed and what the
-      person did to it, and not more than that
+- [x] 🟡 Strings (§35) — the tab exists: ASCII, UTF-8 and UTF-16 runs of this process's own image,
+      offset and encoding beside each. Scanned when the tab is opened rather than when the window is,
+      and once rather than per tick — the one reading in this window whose cost is the size of the
+      file, where every other page reads a few kilobytes of structure (§5.4). Bounded to the first
+      16 MB, said out loud in the heading when it bites: this runs on the thread that draws the
+      window, and the binary inspector is where somebody goes to read a whole file on purpose. A
+      process whose image cannot be named gets a sentence rather than an empty table, because an
+      empty list and a list this user may not read are the same picture and opposite conclusions.
+
+      Partial because **scanning the process's own memory stays refused** on §25.5's grounds:
+      `process_vm_readv` and `/proc/[pid]/mem` are both governed by `PTRACE_MODE_ATTACH`, which Yama
+      declines by default for anything this program did not start, and a memory reverse-engineering
+      suite is §4's first non-goal. That half is a decision rather than a gap.
+
+      Photographed: 8,936 runs out of 1,973,888 bytes of a real image, symbol names legible in the
+      capture
+**Nineteen tabs is more than 1280 pixels of strip holds**, and the capture shows the last of them
+behind the toolkit's scroll arrows. Not a fault — the arrows work and the window can be widened — but
+it is the point at which one row of tabs stops being a good way to hold this window's pages, and it
+is recorded here rather than discovered by somebody looking for a tab that is off the edge.
+
+- [x] 🟡 Timeline (§63) — the tab exists: the window's own ring, filtered to this pid, newest first,
+      refilled on the tick because the whole point is that something happened while somebody was
+      looking. The ring is handed in rather than made here — one log per program and not one per
+      properties window, or there would be two bounds, two start times and two chances to disagree
+      about what happened.
+
+      **Three states and three sentences**, because the first two are the same empty table and mean
+      opposite things: nothing is recording, nothing has been recorded yet, and nothing has happened
+      *to this process* while *n* things happened to others. A blank list with no heading would read
+      as the third when it was the first.
+
+      Partial because the rest of §63's own list — a connection appearing, a signature changing — is
+      still unrecorded, so what a page can show is starts, ends, thresholds crossed and what the
+      person did, and not more than that
 # 27. General process properties
 
 - [ ] 🟡 name ✔ · PID ✔ · PPID ✔ · parent process ✔ · start time ✔ · running duration ✔ · state ✔ ·
