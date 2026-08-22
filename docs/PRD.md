@@ -31,8 +31,8 @@ shorthand:
 it is not known*. An unticked box must never become a zero on screen. This is restated here because
 it is the single requirement most likely to be broken while filling the tables in.
 
-**Counting, as of the last update:** **1108 of 1320 boxes are ticked** — 171 of 190 in the field
-registry (§14–22), 937 of 1130 across the capabilities. A further 162 are marked 🟡, meaning some of
+**Counting, as of the last update:** **1112 of 1320 boxes are ticked** — 171 of 190 in the field
+registry (§14–22), 941 of 1130 across the capabilities. A further 162 are marked 🟡, meaning some of
 the work behind them is already done. §100 tracks the phases; §101 defines when this may be called
 finished.
 
@@ -5083,10 +5083,63 @@ recorded; a notification nobody was looking at is gone, which is what the timeli
 
 # 66. Persistent process notes and rules
 
-- [ ] Attach: note/comment · colour · category · expected publisher · preferred priority ·
+- [x] Attach: note/comment · colour · category · expected publisher · preferred priority ·
       preferred affinity · preferred I/O priority
-- [ ] Matching by: executable path · executable hash · process name · command-line pattern · signer
-- [ ] **Automatic application of scheduling settings is opt-in**
+- [x] Matching by: executable path · executable hash · process name · command-line pattern · signer
+- [x] **Automatic application of scheduling settings is opt-in**
+
+`rules.tsv`, beside the settings and following them wherever `--settings`, `PROCMAN_SETTINGS` or a
+portable marker put them — the same shape §44's usage record has, and for the same two reasons: it is
+a list that grows rather than a set of preferences, and somebody throwing away every note they have
+written should not lose the rest of their settings with it. Tab-separated, one rule to a line, so it
+diffs and can be read without this program.
+
+**Order decides, and the first match wins.** Not "the most specific", which sounds better and cannot
+be defined — is a path more specific than a digest, or a command line than a signer? A file read top
+to bottom is a rule somebody can predict by looking at it.
+
+**The pattern language is `*` and `?` and nothing else.** A rule file is edited by hand by somebody
+who wants to say "anything under /usr/bin", and every character of a path — the dots, the plus in a
+package name, the brackets a build system leaves behind — is a metacharacter in a regular expression
+and an ordinary character here. A digest is compared and never globbed: an asterisk in a hash is a
+typo, and treating it as a wildcard would quietly turn one rule into a rule about most of the machine.
+
+**A rule keyed on a reading nobody took is a third answer.** The digest and the signer are read on
+request rather than every sample (§5.4), so a hash rule against a table that has not been asked to
+hash anything has not failed to match — `RuleVerdict.Unknown`, and the collection says so, because
+calling it "no" would silently drop every hash rule and leave a person watching their rule do nothing
+with nothing to tell them why (§72.3).
+
+**The third box is the dangerous one and is the reason the opt-in is per rule.** Recording that a
+backup job ought to run at idle priority is a note; reniceing it is this program reaching out and
+changing the machine because of a line in a file. So `apply` is a column rather than a global
+preference — somebody can keep twenty notes and have exactly one of them act — anything that is not
+an explicit `yes` leaves the machine alone, and a file written by a version without that column
+cannot start acting because a field was missing.
+
+**Once per process, and never again for that process.** A person who lowers a priority by hand after
+the rule ran has overruled it, and a program putting it back every second would be fighting them with
+no way to win. A rule says what a program should start at, not what it must stay at. Keyed on the
+identity pair, so a recycled pid is a new process and gets the rule applied again rather than being
+mistaken for one already handled (§8.2).
+
+Reachable from all three: the note, the category and the publisher comparison are rows on the
+overview page, so `--process`, the terminal's detail view and the window show the same sentences; the
+colour is a row's background in the window, where it beats the derived category — one is what this
+program worked out and the other is what a person decided — and still yields to a high-contrast
+desktop, because somebody who set that did not exempt one program from it by giving it a colour last
+year (§45.9, §74). Both front-ends run the applier, or a rule would act depending on which program
+you happened to open (§58).
+
+The publisher is shown as a comparison and not as a value. "Expected: Mozilla Corporation" beside a
+signer field somebody has to scroll back to is two facts a reader has to join, and whether they agree
+is the question they were asking. Where the signature has not been read it says that instead: a
+publisher nobody checked and a publisher that did not match are opposite conclusions.
+
+Verified against the kernel rather than against the suite. A rule matching `*sleep 200*` with
+`apply=yes` and `15 / 0-1 / idle` took a real process from nice 0 to 15, affinity `0-15` to `0,1` and
+I/O class none to idle, read back out of `/proc/[pid]/stat`, `taskset` and `ionice`; the same rule
+with `apply=no` left all three exactly as they were.
 
 # 67. Settings
 
@@ -6082,14 +6135,12 @@ that has a tab for it. That drift is what made an earlier version of this matrix
       neighbours. The introspection half — a runtime's own threads, its loader contexts, its heap —
       is §80's and unbuilt on both, and it is the half that cannot be had from the outside: it needs
       the runtime to answer about itself
-- [ ] Process notes / rules — §66 in full, and nothing behind it: no note, colour, category, expected
-      publisher or preferred priority is attached to anything, and no rule matches an image to one.
-      Left open rather than refused because nothing is in the way. The store exists — §67's settings
-      file is already a documented `key=value` file at the platform's own config location, and §44
-      already keeps a per-image record across sessions, so persistence-by-image-path is a solved
-      problem here. The matching evidence exists too: §21 reads a digest, §70 reads what the package
-      database recorded, and §14 reads the command line. This is unwritten work with its dependencies
-      already met, which is a different thing from a blocked box and should not be filed as one
+- [x] Process notes / rules — §66 in full. `rules.tsv` beside the settings; a note, colour, category
+      and expected publisher attach to a program, and five matchers recognise one: path, digest,
+      name, command line and signer. The note, the category and the publisher comparison are rows on
+      the overview page all three front-ends build from, and the colour is a row's background in the
+      window. Scheduling is applied only where a rule says so, once per process — see §66 for why
+      that opt-in is per rule rather than global
 - [x] Configurable columns
 
 ## DBC Task Manager

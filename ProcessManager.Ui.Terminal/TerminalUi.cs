@@ -19,6 +19,9 @@ public sealed class TerminalUi {
 
   private readonly Sampler _sampler;
   private readonly IProcessActions? _actions;
+
+  /// <summary>The part of a rule that changes the machine, which only opted-in rules reach (§66).</summary>
+  private readonly RuleApplier _applier = new();
   private readonly IServiceControl? _services;
 
   /// <summary>
@@ -104,7 +107,10 @@ public sealed class TerminalUi {
     this._actions = actions;
     this._services = services;
     this._screen = new(width, height, depth);
-    this._detail = new(probe);
+    this._detail = new(probe) {
+      // Read once, here. A page rebuilt on every keypress must not open a file to do it (PRD §66).
+      Rules = SettingsStore.LoadRules(),
+    };
     this._columns = new(Layout.ColumnsFor(width));
     this._view.TreeMode = false;
     this._view.SortColumn = ProcessField.CpuPercent;
@@ -269,6 +275,13 @@ public sealed class TerminalUi {
     this._memoryHistory.Add(this.MemoryPercent());
     this._swapHistory.Add(this.SwapPercent());
     this._view.Rebuild(this._sampler.Current, this._sampler.Delta);
+
+    // The same rules the window applies, applied here — once per process, and only where a rule said
+    // apply=yes. A rule that acted in one front-end and not the other would be a machine behaving
+    // differently depending on which program you happened to open (PRD §58, §66).
+    if (this._actions is { } ruleActions && this._detail.Rules is { Count: > 0 } activeRules)
+      this._applier.Apply(activeRules, ruleActions, this._sampler.Current);
+
     this.RestoreSelection();
     this.FollowNewProcess();
     this.ForgetMarksOfProcessesThatEnded();

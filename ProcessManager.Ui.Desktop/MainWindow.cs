@@ -19,6 +19,12 @@ public sealed class MainWindow : Form {
   private readonly Sampler _sampler;
   private readonly ISystemProbe _probe;
   private readonly IProcessActions? _actions;
+
+  /// <summary>What somebody has written about programs, read from the rules file (PRD §66).</summary>
+  private ProcessRules? _rules;
+
+  /// <summary>And the part of it that changes the machine, which only opted-in rules reach.</summary>
+  private readonly RuleApplier _applier = new();
   private readonly IServiceControl? _services;
   private readonly IStartupControl? _startup;
 
@@ -314,6 +320,7 @@ public sealed class MainWindow : Form {
     // the sets somebody wrote by hand arrive with the file.
     this.RefreshColumnSets();
     this.RebuildColumns();
+    this.LoadRules();
 
     this._autoSaver = new(this.DescribeSettings, save);
     this._autoSaver.Prime(settings);
@@ -762,7 +769,7 @@ public sealed class MainWindow : Form {
     // runs just before the cells of the same row, so it is one frame behind on start-up — and the
     // first frame is drawn in the toolkit's default palette, which nobody sees at a 1 Hz refresh.
     this._tree.RowBackColorSelector = node =>
-      node.Tag is ProcessRow row ? RowPalette.BackColorOf(row.Category, this._theme) : null;
+      node.Tag is ProcessRow row ? BackColorOf(row, this._theme) : null;
 
     // Tick boxes, for the bulk actions §11 asks every table for. The terminal has had a gutter of
     // them since it grew a mouse; this is the same thing said with a check box, and it is a mark on
@@ -997,6 +1004,19 @@ public sealed class MainWindow : Form {
 
   private void TellTheBinderWhatIsRead() => this._binder.WantedFields = this.FieldsRead();
 
+  /// <summary>
+  /// Reads the rules file and hands it to everything that shows what it says (PRD §66).
+  /// </summary>
+  /// <remarks>
+  /// Once, here, and again only when somebody changes them. A table rebuilt every second must not
+  /// open a file to draw itself.
+  /// </remarks>
+  private void LoadRules() {
+    this._rules = SettingsStore.LoadRules();
+    this._binder.Rules = this._rules;
+    this._applier.Reset();
+  }
+
   private void RebuildColumns() {
     this.TellTheBinderWhatIsRead();
     this._tree.Columns.Clear();
@@ -1152,7 +1172,7 @@ public sealed class MainWindow : Form {
       return e.Theme.SelectionBackground;
 
     return e.Node.Tag is ProcessRow row
-      ? RowPalette.BackColorOf(row.Category, e.Theme) ?? e.Theme.FieldBackground
+      ? BackColorOf(row, e.Theme) ?? e.Theme.FieldBackground
       : e.Theme.FieldBackground;
   }
 
@@ -1239,7 +1259,7 @@ public sealed class MainWindow : Form {
     var ground = e.Selected
       ? e.Theme.SelectionBackground
       : e.Node.Tag is ProcessRow row
-        ? RowPalette.BackColorOf(row.Category, e.Theme) ?? e.Theme.FieldBackground
+        ? BackColorOf(row, e.Theme) ?? e.Theme.FieldBackground
         : e.Theme.FieldBackground;
 
     var line = Shade(ground);
@@ -1258,6 +1278,25 @@ public sealed class MainWindow : Form {
   /// Darkening a light row and lightening a dark one keeps the rule visible in both themes without
   /// a second palette, and keeps it subordinate to the text in either.
   /// </remarks>
+  /// <summary>
+  /// What a row is painted, which is a rule's colour where somebody gave it one (PRD §7.1, §66).
+  /// </summary>
+  /// <remarks>
+  /// A rule beats the category, and only a rule does. The category is what this program worked out
+  /// about a process; a colour on a rule is what a person decided about a program, and a derived
+  /// answer that overrode a stated one would make the setting look broken. It still goes through the
+  /// theme's own question about whether washes are painted at all — a high-contrast desktop is a
+  /// promise, and a rule is not permission to break it (§45.9, §74).
+  /// </remarks>
+  private static Color? BackColorOf(ProcessRow row, ITheme theme) {
+    if (row.RuleColour is not { } argb)
+      return RowPalette.BackColorOf(row.Category, theme);
+
+    return RowPalette.PaintsWashes(theme)
+      ? Color.FromArgb(unchecked((int)argb))
+      : RowPalette.BackColorOf(row.Category, theme);
+  }
+
   private static Color Shade(Color ground) {
     var luminance = (0.299 * ground.R) + (0.587 * ground.G) + (0.114 * ground.B);
     var shift = luminance > 128 ? -34 : 34;
@@ -2552,6 +2591,13 @@ public sealed class MainWindow : Form {
     this._timelineStarted = true;
 
     this._view.Rebuild(snapshot, delta);
+
+    // Rules that asked to act, acting — once per process and never again for that process. Nothing
+    // happens at all unless a rule says apply=yes, which is the whole of §66's third box: recording
+    // that a backup job ought to run at idle priority is a note, and reniceing it is this program
+    // changing the machine because of a line in a file.
+    if (this._actions is { } ruleActions && this._rules is { Count: > 0 } activeRules)
+      this._applier.Apply(activeRules, ruleActions, snapshot);
 
     // History only for the rows on screen (PRD §3.3, §71.5). TopIndex and the height of the viewport
     // come from the control, so scrolling changes which processes are tracked rather than tracking
