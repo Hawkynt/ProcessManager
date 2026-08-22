@@ -436,7 +436,8 @@ Primary navigation:
 - [ ] 🟡 Performance — reachable from the rail, but as a window of its own rather than a page in the
       content region: it is modeless, has its own timer and its own lifetime, and a second copy of it
       in here would mean two of everything it samples (§45)
-- [ ] Applications / usage history (§44)
+- [ ] 🟡 Applications / usage history (§44) — the record is kept and is a documented file anybody
+      can read, and there is no view of it behind the rail yet
 - [x] Startup (§42)
 - [x] Users / sessions (§43)
 - [x] Services — a view, and all six verbs on a right-click (§41)
@@ -4853,7 +4854,12 @@ that has a tab for it. That drift is what made an earlier version of this matrix
 
 - [x] Processes
 - [x] Performance — twenty-two resources on the rail, each with its own graphs and figures
-- [ ] App / usage history — nothing keeps a per-application total across sessions
+- [x] App / usage history — a per-application total kept across sessions: processor time, bytes read
+      and written, peak and time-weighted average memory, launch count, cumulative runtime, last
+      launch and the date the record began. Off unless asked for, which is §44's design rather than a
+      preference about it. Foreground and background time are not separated, because nothing in the
+      Linux kernel knows which window has focus and the desktop that does knows nothing about
+      processor time; network bytes are refused for §18's reasons
 - [x] Startup — a window view listing every entry and which will run, and a right-click that turns
       one on or off
 - [x] Users — a window view of who is logged in and what their processes cost
