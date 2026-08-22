@@ -135,13 +135,18 @@ public static class ElevatedProtocol {
     }
 
     var opcode = body[0];
-    if (opcode is 0 or > (byte)ElevatedOpcode.SetAffinity) {
+    if (!IsKnown(opcode)) {
       problem = ElevatedStatus.UnknownOpcode;
       return true;
     }
 
     var pid = BinaryPrimitives.ReadInt64LittleEndian(body[1..]);
-    if (pid is <= 0 or > int.MaxValue) {
+    // Only where the opcode is about a process. The firmware table is about the machine and carries
+    // no pid, so requiring one would reject the request the helper is written to answer — which is
+    // what happened: the range check above stopped at the second-to-last opcode and this one demanded
+    // a pid for a request that has none, and between them the whole path was dead while the helper
+    // had a case for it.
+    if (NamesAProcess((ElevatedOpcode)opcode) && pid is <= 0 or > int.MaxValue) {
       problem = ElevatedStatus.Malformed;
       return true;
     }
@@ -154,6 +159,41 @@ public static class ElevatedProtocol {
 
     return true;
   }
+
+  /// <summary>
+  /// Whether this is an opcode the helper knows.
+  /// </summary>
+  /// <remarks>
+  /// Every one named rather than a range ending at whichever member happens to be last. The range
+  /// was <c>&gt; SetAffinity</c> and stopped being right the moment an opcode was added after it,
+  /// which is exactly what happened — the helper grew a case for the firmware table and the parser
+  /// went on rejecting it, so the feature was dead and nothing failed. A list cannot go stale
+  /// silently: the test beside it walks the enum and requires every member to be here.
+  /// </remarks>
+  private static bool IsKnown(byte opcode) => (ElevatedOpcode)opcode switch {
+    ElevatedOpcode.ReadProcIo => true,
+    ElevatedOpcode.ReadCmdline => true,
+    ElevatedOpcode.ReadEnviron => true,
+    ElevatedOpcode.ListFds => true,
+    ElevatedOpcode.Terminate => true,
+    ElevatedOpcode.Suspend => true,
+    ElevatedOpcode.Resume => true,
+    ElevatedOpcode.SetPriority => true,
+    ElevatedOpcode.SetAffinity => true,
+    ElevatedOpcode.ReadSmbios => true,
+    // Including None, which is what a zeroed byte parses as and must never be a request.
+    _ => false,
+  };
+
+  /// <summary>
+  /// Whether this opcode is about a process, and so has to carry an identity worth checking.
+  /// </summary>
+  /// <remarks>
+  /// The split is by opcode rather than by whether a key happened to be sent, so a caller cannot
+  /// talk its way past the recycled-pid check by leaving one out (PRD §8.2). Exactly one opcode is
+  /// about the machine instead.
+  /// </remarks>
+  public static bool NamesAProcess(ElevatedOpcode opcode) => opcode != ElevatedOpcode.ReadSmbios;
 
   public static void WriteResponse(Stream stream, ElevatedStatus status, ReadOnlySpan<byte> payload = default) {
     ArgumentNullException.ThrowIfNull(stream);
