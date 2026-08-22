@@ -23,6 +23,18 @@ public sealed class ServiceTests {
   private bool _symlinksWork;
 
   /// <summary>
+  /// Whether this filesystem will hold a name with a colon in it.
+  /// </summary>
+  /// <remarks>
+  /// systemd names every invocation entry <c>invocation:the-unit.service</c>, and on Windows a colon
+  /// in a path opens an alternate data stream instead of making a file — so the fixture silently
+  /// becomes a stream on a file called "invocation" and the entry the reader looks for is not there.
+  /// The reader is right and the fixture cannot exist, which is a reason to say so rather than to
+  /// fail: these are Linux runtime files and the parse of them is what is being tested.
+  /// </remarks>
+  private bool _colonNamesWork;
+
+  /// <summary>
   /// When the fixture claims <c>lingering.service</c>'s invocation began.
   /// </summary>
   /// <remarks>
@@ -130,8 +142,16 @@ public sealed class ServiceTests {
       ExecStart=/usr/bin/set-up
       """);
 
-    File.WriteAllText(Path.Combine(this._runtime, "invocation:lingering.service"), "an invocation id");
-    File.SetLastWriteTimeUtc(Path.Combine(this._runtime, "invocation:lingering.service"), _Activated);
+    var invocation = Path.Combine(this._runtime, "invocation:lingering.service");
+    try {
+      File.WriteAllText(invocation, "an invocation id");
+      File.SetLastWriteTimeUtc(invocation, _Activated);
+      // Written, and actually there under that name — on Windows the write above succeeds by making
+      // an alternate data stream, and nothing is created that a directory listing would show.
+      this._colonNamesWork = File.Exists(invocation);
+    } catch (Exception problem) when (problem is IOException or UnauthorizedAccessException or NotSupportedException) {
+      this._colonNamesWork = false;
+    }
 
     // The administrator's copy replaces the vendor's entirely, which is how a packaged unit is
     // overridden. Both files exist; only one may be reported.
@@ -533,6 +553,9 @@ public sealed class ServiceTests {
   /// </summary>
   [Test]
   public void AUnitWithAnInvocationAndNoProcessesIsActiveRatherThanInactive() {
+    if (!this._colonNamesWork)
+      Assert.Ignore("this filesystem will not hold a name with a colon in it, so there is no invocation entry to read");
+
     var lingering = this.One("lingering.service");
 
     Assert.Multiple(() => {
@@ -544,6 +567,9 @@ public sealed class ServiceTests {
 
   [Test]
   public void TheActivationTimeIsTheInvocationFilesOwn() {
+    if (!this._colonNamesWork)
+      Assert.Ignore("this filesystem will not hold a name with a colon in it, so there is no invocation entry to read");
+
     Assert.That(this.One("lingering.service").ActivatedUtcTicks.TryGetValue(out var ticks), Is.True);
     Assert.That(new DateTime((long)ticks, DateTimeKind.Utc), Is.EqualTo(_Activated));
   }
@@ -554,8 +580,8 @@ public sealed class ServiceTests {
   /// </summary>
   [Test]
   public void ADanglingInvocationSymlinkStillCarriesItsTime() {
-    if (!this._symlinksWork)
-      Assert.Ignore("this platform would not let the test create a symlink");
+    if (!this._symlinksWork || !this._colonNamesWork)
+      Assert.Ignore("this platform will not hold a symlink named with a colon");
 
     var link = Path.Combine(this._runtime, "invocation:linked.service");
     File.CreateSymbolicLink(link, "0123456789abcdef0123456789abcdef");
