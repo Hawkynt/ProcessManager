@@ -21,6 +21,16 @@ public sealed class MainWindow : Form {
   private readonly IProcessActions? _actions;
   private readonly IServiceControl? _services;
   private readonly IStartupControl? _startup;
+
+  /// <summary>
+  /// What can end somebody's login, or null on a machine where nothing can (PRD §43).
+  /// </summary>
+  /// <remarks>
+  /// Null rather than an object that refuses everything, for the same reason the service control is:
+  /// a menu whose every item answers "not on this platform" is worse than a menu without them.
+  /// </remarks>
+  private readonly ISessionControl? _sessions;
+
   private readonly ProcessView _view = new() { TreeMode = true, SortColumn = ProcessField.CpuPercent, SortDescending = true };
   private readonly ProcessTreeBinder _binder;
   private readonly TreeListView _tree = new();
@@ -98,7 +108,8 @@ public sealed class MainWindow : Form {
     ISystemProbe probe,
     IProcessActions? actions,
     IServiceControl? services = null,
-    IStartupControl? startup = null
+    IStartupControl? startup = null,
+    ISessionControl? sessions = null
   ) {
     ArgumentNullException.ThrowIfNull(sampler);
     ArgumentNullException.ThrowIfNull(probe);
@@ -108,9 +119,10 @@ public sealed class MainWindow : Form {
     this._actions = actions;
     this._services = services;
     this._startup = startup;
+    this._sessions = sessions;
     this._binder = new(this._tree);
     this._details = new(probe) { Actions = actions };
-    this._shell = new(probe);
+    this._shell = new(probe, sampler);
 
     this.Text = "Process Manager";
     this.Bounds = new(0, 0, 1240, 820);
@@ -2042,6 +2054,10 @@ public sealed class MainWindow : Form {
     this._shell.StartupIsSwitchable(switchable);
 
     this.AddView("Users", this._shell.SessionsControl, this._shell.RefreshSessions, () => this._shell.SessionsText, () => this._shell.SessionsRows);
+    // The same rule the services menu follows: a machine with no login manager keeps the items that
+    // only read a row and loses the ones that would end a session, rather than losing the menu
+    // (PRD §7, §43).
+    this._shell.SessionsMenu = this.SessionMenu(this._sessions is { IsAvailable: true });
     this.AddView("Services", this._shell.ServicesControl, this._shell.RefreshServices, () => this._shell.ServicesText, () => this._shell.ServicesRows);
     var commandable = this._services is { IsAvailable: true };
     this._shell.ServicesMenu = this.ServiceMenu(commandable);
@@ -3077,6 +3093,119 @@ public sealed class MainWindow : Form {
   /// only read a unit — which is the difference between a machine that cannot be commanded and one
   /// whose service list may not be inspected either (PRD §7).
   /// </param>
+  #region what may be done to a login (PRD §43)
+
+  /// <param name="commandable">
+  /// Whether there is a login manager here to ask. False drops the three verbs and keeps the two
+  /// items that only read a row — a machine with no logind cannot end a session and can still be
+  /// asked who is on it (PRD §7).
+  /// </param>
+  /// <remarks>
+  /// <b>There is no "disconnect".</b> Windows has one because a terminal-services session survives
+  /// without a client attached; nothing on Linux has that state, so an item for it could only ever
+  /// refuse — and an item that can only refuse is a lie dressed as a feature (PRD §32).
+  /// </remarks>
+  private ContextMenuStrip SessionMenu(bool commandable) {
+    var menu = new ContextMenuStrip();
+    if (commandable) {
+      menu.Items.Add(Item("Log this session off…", () => this.CommandSession(SessionCommand.Terminate)));
+      menu.Items.Add(Item("Lock its screen", () => this.CommandSession(SessionCommand.Lock)));
+      menu.Items.Add(Item("Unlock its screen", () => this.CommandSession(SessionCommand.Unlock)));
+      menu.Items.Add(new ToolStripSeparator());
+    }
+
+    menu.Items.Add(Item("Show this user's processes", this.ShowSessionProcesses));
+    menu.Items.Add(Item("Copy session information", () => Clipboard.SetText(this._shell.DescribeSelectedSession())));
+    menu.Items.Add(Item("Copy all sessions", () => Clipboard.SetText(this._shell.DescribeSessions())));
+    return menu;
+  }
+
+  /// <summary>
+  /// Asks the login manager to do something to a session, having asked the person first.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Ending a session is §69's class 2 and is confirmed under the same setting that guards ending a
+  /// process — and the confirmation names the account, the terminal and how many processes go with
+  /// it, because §90 forbids a dialog that says only "are you sure". The count is the part that makes
+  /// it real: "this will close 318 programs" is a sentence somebody can act on where "log off?" is
+  /// not.
+  /// </para>
+  /// <para>
+  /// A row with no session id cannot be acted on at all. logind is the only thing that can end a
+  /// session and it knows a session by its id; a login it did not open — an <c>agetty</c> nobody has
+  /// answered, a record left by something older — has none, and the honest answer is to say which
+  /// row it is and why rather than to send a command that would fail.
+  /// </para>
+  /// </remarks>
+  private void CommandSession(SessionCommand command) {
+    if (this._sessions is not { } control || this._shell.SelectedSession is not { } session)
+      return;
+
+    if (session.SessionId is not { Length: > 0 } id) {
+      this.Say(
+        $"{session.UserName} on {session.Terminal} has no session id, so there is nothing for the login "
+        + "manager to act on. systemd did not open this login: the id is read off the session leader's "
+        + "cgroup, and this leader is in none."
+      );
+
+      return;
+    }
+
+    if (command == SessionCommand.Terminate) {
+      var processes = this.CountProcessesOf(session.UserName);
+      // systemTarget, which makes it unconditional: the preference that switches confirmations off
+      // is switched off by people who end their own editors all day, not by people who meant to log
+      // somebody out of a machine they share (PRD §43, §69).
+      if (ActionSafety.MustAsk(ISessionControl.ClassOf(command), this._settings.ConfirmDestructiveActions, systemTarget: true)
+        && !this.Confirm(
+          $"Log {session.UserName} off session {id} ({session.Terminal})?\n\n"
+          + $"Everything in the session stops, including whatever has not been saved. "
+          + $"{processes.ToString(CultureInfo.InvariantCulture)} processes currently belong to that account."
+        ))
+        return;
+    }
+
+    this.Report(control.Apply(command, id));
+    this._shell.RefreshSessions();
+  }
+
+  /// <summary>How many processes the account owns, for a confirmation that names a consequence.</summary>
+  /// <remarks>
+  /// The account's, not the session's, and the dialog says so. Nothing in a process record says
+  /// which login started it — the kernel's session id is a process group thing and not logind's — so
+  /// counting per session would be an invented number where this is a true one about a slightly
+  /// wider set (PRD §5.3).
+  /// </remarks>
+  private int CountProcessesOf(string user) {
+    var processes = this._sampler.Current.Processes;
+    var count = 0;
+    for (var i = 0; i < processes.Length; ++i)
+      if (string.Equals(processes[i].UserName, user, StringComparison.Ordinal))
+        ++count;
+
+    return count;
+  }
+
+  /// <summary>
+  /// Goes from a login to what that person is running (PRD §25.3, §43).
+  /// </summary>
+  /// <remarks>
+  /// The process list grouped by user rather than a list of its own, because that view already
+  /// exists, already sorts and already has every column — and a second list of processes is a second
+  /// thing to keep in step with the first (PRD §5.1).
+  /// </remarks>
+  private void ShowSessionProcesses() {
+    if (this._shell.SelectedSession is not { } session)
+      return;
+
+    this._rail.SelectedIndex = 0;
+    this.GroupBy(ProcessGrouping.User);
+    this.Say($"Processes are grouped by account; {session.UserName}'s are under their name.");
+  }
+
+  #endregion
+
   private ContextMenuStrip ServiceMenu(bool commandable) {
     var menu = new ContextMenuStrip();
     if (commandable) {

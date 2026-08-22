@@ -518,14 +518,17 @@ public sealed class ProcessPropertiesWindow : Form {
     // The two kinds of ceiling are never added together and never share a heading: RLIMIT_NPROC is a
     // limit on the user, pids.max is a limit on the cgroup, and one combined number would be the
     // false equivalence §5.3 forbids. The process's own ceilings are on the Limits dialog (§25.2).
-    this._cgroup.Update([
+    var rows = new List<KeyValuePair<string, string>> {
       new("cgroup", cgroup.Path),
+      new("Container", Container(cgroup.Path)),
       new("Controllers enabled here", cgroup.Controllers.Count > 0 ? string.Join(", ", cgroup.Controllers) : "none"),
       new("Processor", Limited(cgroup, "cpu", Cores(cgroup.CpuQuotaCores))),
+      new("Processor, in force", EffectiveCores(cgroup)),
       new("Throttled", Limited(cgroup, "cpu", Humanize.Count(cgroup.ThrottledCount))),
       new("Memory in use", Humanize.Bytes(cgroup.MemoryCurrentBytes)),
       new("Memory, hard cap", Limited(cgroup, "memory", Limit(cgroup.MemoryMaxBytes))),
       new("Memory, soft cap", Limited(cgroup, "memory", Limit(cgroup.MemoryHighBytes))),
+      new("Memory, in force", Effective(cgroup.TightestMemoryLimit(), static value => Humanize.Bytes(value))),
       // Tasks and not processes, which is not a quibble: pids.current counts threads. The cgroup
       // this program's own window was in reported 892 against 58 entries in cgroup.procs — a figure
       // fifteen times the one a row headed "processes" would have been read as. It is what systemd
@@ -534,12 +537,157 @@ public sealed class ProcessPropertiesWindow : Form {
       // pixels, and "Tasks — processes and their threads" photographed running into the number
       // beside it.
       new("Tasks", $"{Humanize.Count(cgroup.PidsCurrent)} — a task is a thread, so this counts every thread of every process in the group"),
-      new("Tasks, limit", Limited(cgroup, "pids", Limit(cgroup.PidsMax))),
-      new("Stalled on CPU", Pressure(cgroup.CpuPressure)),
-      new("Stalled on memory", Pressure(cgroup.MemoryPressure)),
-      new("Stalled on I/O", Pressure(cgroup.IoPressure)),
-      new("Frozen", Frozen(cgroup.Freezer)),
-    ]);
+      new("Tasks, limit", Limited(cgroup, "pids", TaskLimit(cgroup.PidsMax))),
+      new("Tasks, in force", Effective(cgroup.TightestTaskLimit(), static value => Humanize.Count(value))),
+    };
+
+    // One row per capped device rather than one row headed "disk". The limit is per device — a group
+    // may be held to a megabyte a second on the disk its database is on and left alone on the one
+    // its logs are on — and a single figure could not say that (PRD §38).
+    rows.Add(new("Disk, allowed here", DiskLimits(cgroup)));
+    foreach (var limit in cgroup.Io)
+      if (limit.IsLimited)
+        rows.Add(new($"  {limit.Name}", Device(limit)));
+
+    rows.Add(new("Stalled on CPU", Pressure(cgroup.CpuPressure)));
+    rows.Add(new("Stalled on memory", Pressure(cgroup.MemoryPressure)));
+    rows.Add(new("Stalled on I/O", Pressure(cgroup.IoPressure)));
+    rows.Add(new("Frozen", Frozen(cgroup.Freezer)));
+
+    // The chain last, because it is the explanation for the three "in force" rows above rather than
+    // a reading of its own: a reader who has seen a ceiling they did not set comes down here to find
+    // out who did (PRD §38).
+    if (cgroup.Chain.Count > 0) {
+      rows.Add(new("Hierarchy", $"{cgroup.Chain.Count.ToString(CultureInfo.InvariantCulture)} levels, outermost first — each one's limit applies to everything below it"));
+
+      // The path goes in the value and the label carries only the depth. The label column is a fixed
+      // 220 pixels and a cgroup path is routinely three times that: the first version put the path in
+      // the label, and the capture showed "/user.slice/user-1000.slice," with the next level's limit
+      // starting where the rest of the path had been cut off.
+      for (var level = 0; level < cgroup.Chain.Count; ++level)
+        rows.Add(new(
+          $"  {(level + 1).ToString(CultureInfo.InvariantCulture)}",
+          $"{cgroup.Chain[level].Path} — {Level(cgroup.Chain[level])}"
+        ));
+    }
+
+    this._cgroup.Update(rows);
+  }
+
+  /// <summary>
+  /// What is running this process, where something other than the machine is (PRD §38).
+  /// </summary>
+  /// <remarks>
+  /// The runtime always, and then whichever of the id and the name the machine itself can answer.
+  /// Docker and its relatives keep the name in a daemon rather than on the filesystem, and the row
+  /// says so instead of leaving a blank that reads as "it has no name".
+  /// </remarks>
+  private static string Container(string? path) {
+    var container = ContainerDetector.Of(path);
+    if (!container.IsIdentified)
+      return container.Runtime == ContainerRuntime.None
+        ? "no — the cgroup path names none, though a chroot or a bare namespace would look like this too"
+        : "not known";
+
+    if (container.Name is { Length: > 0 } name)
+      return $"{container.RuntimeName} · {name}";
+
+    return container.Id is { Length: > 0 } id
+      ? $"{container.RuntimeName} · {id} — the name is in the runtime's own daemon rather than on this machine"
+      : container.RuntimeName;
+  }
+
+  /// <summary>The tightest quota anywhere in the chain, and which cgroup imposes it.</summary>
+  private static string EffectiveCores(CgroupInfo cgroup) {
+    if (cgroup.Chain.Count == 0)
+      return "the hierarchy above this cgroup was not read";
+
+    var (cores, reason, path, unit) = cgroup.TightestCpuQuota();
+    if (cores is not null)
+      return $"{Cores(cores)} — set by {unit ?? path}";
+
+    return reason switch {
+      UnknownReason.NoLimit => "no quota anywhere above it either",
+      UnknownReason.NotSupportedOnPlatform => "no cgroup in the chain has the cpu controller on",
+      // A cpu.max that was there and would not read. "No quota" would be the reassuring half of
+      // §72.3's mistake, and the half a reader acts on by going to look somewhere else.
+      _ => $"{Humanize.Placeholder(reason)} — a cpu.max in the chain could not be read",
+    };
+  }
+
+  /// <summary>A ceiling from the chain, with the level that set it.</summary>
+  private static string Effective(CgroupCeiling ceiling, Func<Counter, string> format) {
+    if (ceiling.Path is not null)
+      return $"{format(ceiling.Value)} — set by {ceiling.Unit ?? ceiling.Path}";
+
+    return ceiling.Value.Reason switch {
+      UnknownReason.NoLimit => "no limit anywhere above it either",
+      UnknownReason.NotSupportedOnPlatform => "no cgroup above it has that controller on",
+      var reason => $"{Humanize.Placeholder(reason)} — a limit in the chain could not be read",
+    };
+  }
+
+  /// <summary>
+  /// How many devices are actually capped here.
+  /// </summary>
+  /// <remarks>
+  /// Counted on <see cref="CgroupIoLimit.IsLimited"/> and not on the number of lines. The kernel
+  /// writes a line for a device with all four directions set to <c>max</c>, which is a device it is
+  /// not throttling: counting lines said "2 device(s) capped" above a list with one device in it.
+  /// </remarks>
+  private static string DiskLimits(CgroupInfo cgroup) {
+    if (cgroup.IoLimitsReason != UnknownReason.None)
+      return cgroup.IoLimitsReason == UnknownReason.NoLimit
+        ? "the io controller is on here and nothing is capped"
+        : "the io controller is not enabled here — an ancestor's throttling applies instead";
+
+    var capped = 0;
+    foreach (var limit in cgroup.Io)
+      if (limit.IsLimited)
+        ++capped;
+
+    return capped == 0
+      ? "the io controller is on here and nothing is capped"
+      : $"{capped.ToString(CultureInfo.InvariantCulture)} device(s) capped";
+  }
+
+  private static string Device(CgroupIoLimit limit) => string.Join(" · ", (string[])[
+    $"read {Rate(limit.ReadBytesPerSecond, "/s")}",
+    $"write {Rate(limit.WriteBytesPerSecond, "/s")}",
+    $"read {Operations(limit.ReadOperationsPerSecond)}",
+    $"write {Operations(limit.WriteOperationsPerSecond)}",
+  ]);
+
+  /// <summary>As <see cref="Limit"/>: only the literal <c>max</c> is unlimited, and a hole is a hole.</summary>
+  private static string Rate(Counter counter, string suffix) => counter.Reason switch {
+    UnknownReason.None => Humanize.Bytes(counter) + suffix,
+    UnknownReason.NoLimit => "unlimited",
+    _ => Humanize.Placeholder(counter.Reason),
+  };
+
+  private static string Operations(Counter counter) => counter.Reason switch {
+    UnknownReason.None => Humanize.Count(counter) + " ops/s",
+    UnknownReason.NoLimit => "unlimited",
+    _ => Humanize.Placeholder(counter.Reason),
+  };
+
+  /// <summary>One level of the chain, in one line: what it sets, and nothing about what it does not.</summary>
+  private static string Level(CgroupLevel level) {
+    var parts = new List<string>();
+    if (level.CpuQuotaCores is { } cores)
+      parts.Add(Cores(cores));
+
+    if (level.MemoryMaxBytes.HasValue)
+      parts.Add(Humanize.Bytes(level.MemoryMaxBytes) + " memory");
+
+    if (level.PidsMax.HasValue)
+      parts.Add(Humanize.Count(level.PidsMax) + " tasks");
+
+    foreach (var limit in level.IoLimits)
+      if (limit.IsLimited)
+        parts.Add(limit.Name + " capped");
+
+    return parts.Count == 0 ? "sets no limit" : string.Join(" · ", parts);
   }
 
   /// <summary>
@@ -578,7 +726,34 @@ public sealed class ProcessPropertiesWindow : Form {
       ? string.Format(CultureInfo.InvariantCulture, "{0:0.##} core{1}", cores, cores == 1 ? string.Empty : "s")
       : "unlimited";
 
-  private static string Limit(Counter counter) => counter.HasValue ? Humanize.Bytes(counter) : "no limit";
+  /// <summary>
+  /// A ceiling, or which kind of "no ceiling" this is.
+  /// </summary>
+  /// <remarks>
+  /// Only the literal word <c>max</c> is "no limit". A file that was there and could not be read is
+  /// a hole and renders as one: saying "no limit" over it would turn something nobody measured into
+  /// a promise that nothing is holding the group back — the confident answer §72.3 forbids, in the
+  /// form where being wrong is reassuring rather than alarming.
+  /// </remarks>
+  private static string Limit(Counter counter) => counter.Reason switch {
+    UnknownReason.None => Humanize.Bytes(counter),
+    UnknownReason.NoLimit => "no limit",
+    _ => Humanize.Placeholder(counter.Reason),
+  };
+
+  /// <summary>
+  /// A ceiling that counts things rather than measuring them.
+  /// </summary>
+  /// <remarks>
+  /// <c>pids.max</c> went through the byte formatter, which divides by 1024 and appends a binary
+  /// suffix: a limit of 153 425 tasks appeared as <c>150K</c>, which is the wrong number in a unit
+  /// tasks do not have. They are counted one at a time (PRD §5.3).
+  /// </remarks>
+  private static string TaskLimit(Counter counter) => counter.Reason switch {
+    UnknownReason.None => Humanize.Count(counter),
+    UnknownReason.NoLimit => "no limit",
+    _ => Humanize.Placeholder(counter.Reason),
+  };
 
   /// <summary>
   /// A ceiling, but only where the controller that enforces it is switched on here.

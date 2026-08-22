@@ -25,7 +25,12 @@ internal static class CgroupReader {
   /// </summary>
   /// <param name="cgroupRoot">Where the unified hierarchy is mounted.</param>
   /// <param name="path">The cgroup path from <c>/proc/[pid]/cgroup</c>.</param>
-  public static CgroupInfo? Read(string cgroupRoot, string? path) {
+  /// <param name="blockDeviceRoot">
+  /// Where a major and minor number can be turned into a device name — <c>/sys/dev/block</c> on a
+  /// real machine. A root that is not there leaves the numbers unnamed rather than failing: a
+  /// device whose name could not be looked up is still a device with a limit on it.
+  /// </param>
+  public static CgroupInfo? Read(string cgroupRoot, string? path, string? blockDeviceRoot) {
     if (path is not { Length: > 0 })
       return null;
 
@@ -35,6 +40,7 @@ internal static class CgroupReader {
     if (!Directory.Exists(directory))
       return null;
 
+    var (limits, reason) = IoLimits(directory, blockDeviceRoot);
     return new(
       path,
       Words(ReadText(directory, "cgroup.controllers")),
@@ -48,8 +54,141 @@ internal static class CgroupReader {
       Pressure(directory, "cpu.pressure"),
       Pressure(directory, "memory.pressure"),
       Pressure(directory, "io.pressure"),
-      Freezer(directory)
+      Freezer(directory),
+      limits,
+      reason,
+      Hierarchy(cgroupRoot, path, blockDeviceRoot)
     );
+  }
+
+  /// <summary>
+  /// Every cgroup from the root down to this one, outermost first (PRD §38).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A limit on an ancestor governs everything below it, and the group a process is actually in
+  /// very often sets nothing at all — a desktop application's own scope carries no <c>cpu.max</c>
+  /// and is nonetheless inside whatever <c>user.slice</c> was given. Reading one directory answers
+  /// "no limit" about a process that is being held to a fraction of a core two levels up.
+  /// </para>
+  /// <para>
+  /// Four small files a level and rarely more than five levels, on demand only: the same budget the
+  /// rest of this reader spends, and for the question the page exists to answer (PRD §5.4). A level
+  /// whose directory has gone between one read and the next is skipped rather than failing the lot —
+  /// cgroups are removed the moment their last process leaves.
+  /// </para>
+  /// </remarks>
+  private static IReadOnlyList<CgroupLevel> Hierarchy(string cgroupRoot, string path, string? blockDeviceRoot) {
+    var levels = new List<CgroupLevel>();
+    var trimmed = path.Trim('/');
+
+    // The root itself first. It is a real level with real files, and it is the one place a machine's
+    // own global settings would show up.
+    Add(levels, cgroupRoot, "/", blockDeviceRoot);
+
+    var walked = string.Empty;
+    foreach (var segment in trimmed.Split('/', StringSplitOptions.RemoveEmptyEntries)) {
+      walked = walked + "/" + segment;
+      Add(levels, Path.Combine(cgroupRoot, walked.TrimStart('/')), walked, blockDeviceRoot);
+    }
+
+    return levels;
+  }
+
+  private static void Add(List<CgroupLevel> levels, string directory, string path, string? blockDeviceRoot) {
+    if (!Directory.Exists(directory))
+      return;
+
+    var (limits, reason) = IoLimits(directory, blockDeviceRoot);
+    var quota = ReadText(directory, "cpu.max");
+    levels.Add(new(
+      path,
+      CgroupUnit.Of(path),
+      Words(ReadText(directory, "cgroup.controllers")),
+      Cores(quota),
+      Bytes(ReadText(directory, "memory.max")),
+      Bytes(ReadText(directory, "memory.high")),
+      Number(ReadText(directory, "pids.max")),
+      limits,
+      reason,
+      QuotaReason(quota)
+    ));
+  }
+
+  /// <summary>
+  /// Why a level has no processor quota, when it has none (PRD §38).
+  /// </summary>
+  /// <remarks>
+  /// <see cref="Cores"/> answers null four different ways and only two of them are answers. No file
+  /// means the controller is not enabled here; the literal word <c>max</c> means somebody left it
+  /// unbounded; a line that will not parse and a period of nought are holes. A chain that reported
+  /// all four as "no quota anywhere" would tell a reader nothing is holding their process back on
+  /// the strength of a file nobody could read.
+  /// </remarks>
+  private static UnknownReason QuotaReason(string? text) {
+    if (text is not { Length: > 0 })
+      return UnknownReason.NotSupportedOnPlatform;
+
+    var space = text.IndexOf(' ');
+    if (space <= 0)
+      return UnknownReason.CounterInvalid;
+
+    if (text[..space] is "max")
+      return UnknownReason.NoLimit;
+
+    return Cores(text) is null ? UnknownReason.CounterInvalid : UnknownReason.None;
+  }
+
+  /// <summary>
+  /// What each device is allowed here, from <c>io.max</c>.
+  /// </summary>
+  /// <remarks>
+  /// The distinction the pair carries is the one this whole page is careful about: no file at all
+  /// means the I/O controller is not enabled here and an ancestor's throttling is what governs; a
+  /// file with nothing in it means the controller is on and nothing has been capped. Both are an
+  /// empty list and they are not the same statement (PRD §5.3).
+  /// </remarks>
+  private static (IReadOnlyList<CgroupIoLimit> Limits, UnknownReason Reason) IoLimits(
+    string directory,
+    string? blockDeviceRoot
+  ) {
+    if (ReadText(directory, "io.max") is not { } text)
+      return ([], UnknownReason.NotSupportedOnPlatform);
+
+    var parsed = CgroupIoMaxParser.Parse(text);
+    if (parsed.Count == 0)
+      return ([], UnknownReason.NoLimit);
+
+    var named = new List<CgroupIoLimit>(parsed.Count);
+    foreach (var limit in parsed)
+      named.Add(limit with { Device = DeviceName(blockDeviceRoot, limit.Major, limit.Minor) });
+
+    return (named, UnknownReason.None);
+  }
+
+  /// <summary>
+  /// The name behind a major and minor number, from <c>/sys/dev/block</c>.
+  /// </summary>
+  /// <remarks>
+  /// A symlink whose target's last component is the name: <c>259:0</c> points at
+  /// <c>../../devices/.../nvme0n1</c>. Resolved rather than read, because the link is the whole of
+  /// the answer. Null where the machine has no such directory or the device is not in it, which is
+  /// a name that could not be looked up rather than a device that has none — the numbers are shown
+  /// instead, and they are what the kernel itself calls it.
+  /// </remarks>
+  private static string? DeviceName(string? blockDeviceRoot, int major, int minor) {
+    if (blockDeviceRoot is not { Length: > 0 } root || !Directory.Exists(root))
+      return null;
+
+    try {
+      var entry = Path.Combine(root, $"{major.ToString(CultureInfo.InvariantCulture)}:{minor.ToString(CultureInfo.InvariantCulture)}");
+      var target = Directory.ResolveLinkTarget(entry, returnFinalTarget: true);
+      return target is null ? null : Path.GetFileName(target.FullName) is { Length: > 0 } name ? name : null;
+    } catch (IOException) {
+      return null;
+    } catch (UnauthorizedAccessException) {
+      return null;
+    }
   }
 
   /// <summary>

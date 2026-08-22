@@ -138,8 +138,30 @@ public sealed record LinuxProbeOptions {
   /// </remarks>
   public string CgroupRoot { get; init; } = "/sys/fs/cgroup";
 
+  /// <summary>
+  /// Where a block device's major and minor numbers can be turned into its name (PRD §38).
+  /// </summary>
+  /// <remarks>
+  /// <c>io.max</c> names the devices it throttles by number, and <c>nvme0n1</c> is a device somebody
+  /// recognises where <c>259:0</c> is not. Its own option so that a replay against a recorded
+  /// hierarchy does not go looking at this machine's disks — the numbers in a fixture are somebody
+  /// else's, and resolving them here would put a name from the wrong computer beside them.
+  /// </remarks>
+  public string? BlockDeviceRoot { get; init; } = "/sys/dev/block";
+
   /// <summary>Where the password file is, for uid → name.</summary>
   public string PasswdPath { get; init; } = "/etc/passwd";
+
+  /// <summary>
+  /// Where the terminal devices are, for a session's idle time (PRD §43).
+  /// </summary>
+  /// <remarks>
+  /// Its own option so that a replay against a recorded utmp does not stat this machine's terminals:
+  /// a fixture's <c>pts/0</c> is somebody else's, and the idle time of the terminal this test is
+  /// running in is not an answer about it. Null switches the reading off, and the column then says
+  /// it does not know rather than saying nought.
+  /// </remarks>
+  public string? DeviceRoot { get; init; } = "/dev";
 
   /// <summary>Where the group file is, for gid → name (PRD §36).</summary>
   /// <remarks>

@@ -60,6 +60,7 @@ internal static class LimitsReport {
     OwnLimits(probe, key);
     Console.WriteLine("its cgroup");
     Console.WriteLine($"  cgroup               {cgroup.Path}");
+    Console.WriteLine($"  container            {Container(cgroup.Path)}");
     Console.WriteLine($"  controllers          {(cgroup.Controllers.Count > 0 ? string.Join(", ", cgroup.Controllers) : "none enabled here")}");
 
     // A limit and what is being used against it, on one line each: either alone answers half the
@@ -71,14 +72,187 @@ internal static class LimitsReport {
     // Tasks and not processes. `pids.current` counts threads, so a cgroup with 58 processes in it
     // routinely reports 892 — and printing that under a heading of "processes" is a figure wrong by
     // an order of magnitude with nothing to say so. It is what systemd calls TasksMax (PRD §5.3).
-    Console.WriteLine($"  tasks                {Humanize.Count(cgroup.PidsCurrent)} of {Limit(cgroup.PidsMax)}");
+    Console.WriteLine($"  tasks                {Humanize.Count(cgroup.PidsCurrent)} of {TaskLimit(cgroup.PidsMax)}");
     Console.WriteLine("  a task is a thread, so a process with eight threads counts as eight");
     Console.WriteLine();
     Console.WriteLine($"  stalled on CPU       {Pressure(cgroup.CpuPressure)}");
     Console.WriteLine($"  stalled on memory    {Pressure(cgroup.MemoryPressure)}");
     Console.WriteLine($"  stalled on I/O       {Pressure(cgroup.IoPressure)}");
     Console.WriteLine($"  frozen               {Frozen(cgroup.Freezer)}");
+    Disk(cgroup);
+    Hierarchy(cgroup);
     return 0;
+  }
+
+  /// <summary>
+  /// What each block device is allowed, from <c>io.max</c> (PRD §38).
+  /// </summary>
+  /// <remarks>
+  /// Per device, because that is what the limit is. And an absent file is not an absent limit: where
+  /// the controller is not enabled here, whatever an ancestor throttles is what governs, and saying
+  /// "unlimited" would send somebody looking anywhere but at the thing holding their process up.
+  /// </remarks>
+  private static void Disk(CgroupInfo cgroup) {
+    switch (cgroup.IoLimitsReason) {
+      case UnknownReason.NotSupportedOnPlatform:
+        Console.WriteLine("  disk                 no such controller here — an ancestor's throttling applies");
+        return;
+      case UnknownReason.NoLimit:
+        Console.WriteLine("  disk                 the io controller is on here and nothing is capped");
+        return;
+    }
+
+    // On IsLimited and not on the number of lines: the kernel writes a line for a device with all
+    // four directions set to max, which is a device it is not throttling. A bare "disk" heading with
+    // nothing under it is what counting lines produced.
+    var capped = 0;
+    foreach (var limit in cgroup.Io)
+      if (limit.IsLimited)
+        ++capped;
+
+    if (capped == 0) {
+      Console.WriteLine("  disk                 the io controller is on here and nothing is capped");
+      return;
+    }
+
+    Console.WriteLine("  disk");
+    foreach (var limit in cgroup.Io) {
+      if (!limit.IsLimited)
+        continue;
+
+      Console.WriteLine(
+        $"    {limit.Name,-16} read {Throughput(limit.ReadBytesPerSecond)}, write {Throughput(limit.WriteBytesPerSecond)}"
+        + $", read {Operations(limit.ReadOperationsPerSecond)}, write {Operations(limit.WriteOperationsPerSecond)}"
+      );
+    }
+  }
+
+  /// <summary>
+  /// Every cgroup between the root and this one, and which of them sets each ceiling (PRD §38).
+  /// </summary>
+  /// <remarks>
+  /// The half of the answer that a single cgroup cannot give. A quota on an ancestor governs
+  /// everything below it, and the group a process is actually in very often sets nothing at all — so
+  /// reading only that group reports "unlimited" about a process being held to a tenth of a core two
+  /// levels up, which is precisely the situation somebody runs this for.
+  /// </remarks>
+  private static void Hierarchy(CgroupInfo cgroup) {
+    if (cgroup.Chain.Count == 0)
+      return;
+
+    Console.WriteLine();
+    Console.WriteLine("what is in force, and which cgroup sets it");
+
+    var (cores, quotaReason, path, unit) = cgroup.TightestCpuQuota();
+    Console.WriteLine($"  processor            {InForceCores(cores, quotaReason, path, unit)}");
+
+    Console.WriteLine($"  memory               {InForce(cgroup.TightestMemoryLimit(), static counter => Humanize.Bytes(counter))}");
+    Console.WriteLine($"  tasks                {InForce(cgroup.TightestTaskLimit(), static counter => Humanize.Count(counter))}");
+    Console.WriteLine();
+    Console.WriteLine("the chain, outermost first — each level's limit applies to everything below it");
+    foreach (var level in cgroup.Chain)
+      Console.WriteLine($"  {level.Path,-52} {Level(level)}");
+  }
+
+  /// <summary>
+  /// The quota in force, and which of the four kinds of "none" it is when there is none.
+  /// </summary>
+  /// <remarks>
+  /// A file that would not parse is not a chain with no quota in it. Saying "no quota anywhere"
+  /// about a <c>cpu.max</c> nobody could read is the reassuring half of §72.3's mistake, and it is
+  /// the half somebody acts on by going to look somewhere else.
+  /// </remarks>
+  private static string InForceCores(double? cores, UnknownReason reason, string? path, string? unit) {
+    if (cores is { } value)
+      return string.Format(
+        CultureInfo.InvariantCulture,
+        "{0:0.##} core{1} — set by {2}",
+        value,
+        value == 1 ? string.Empty : "s",
+        unit ?? path
+      );
+
+    return reason switch {
+      UnknownReason.NoLimit => "unlimited all the way up",
+      UnknownReason.NotSupportedOnPlatform => "no cgroup in the chain has the cpu controller on",
+      _ => $"{Humanize.Placeholder(reason)} — a cpu.max in the chain could not be read",
+    };
+  }
+
+  private static string InForce(CgroupCeiling ceiling, Func<Counter, string> format) {
+    if (ceiling.Path is not null)
+      return $"{format(ceiling.Value)} — set by {ceiling.Unit ?? ceiling.Path}";
+
+    return ceiling.Value.Reason switch {
+      UnknownReason.NoLimit => "unlimited all the way up",
+      UnknownReason.NotSupportedOnPlatform => "no cgroup in the chain has that controller on",
+      // A limit file that was there and would not read. Not the same as there being none, and the
+      // difference is what somebody would act on (PRD §72.3).
+      var reason => $"{Humanize.Placeholder(reason)} — a limit in the chain could not be read",
+    };
+  }
+
+  /// <summary>What one level sets, and nothing about what it does not.</summary>
+  private static string Level(CgroupLevel level) {
+    var parts = new List<string>();
+    if (level.CpuQuotaCores is { } cores)
+      parts.Add(string.Format(CultureInfo.InvariantCulture, "{0:0.##} core{1}", cores, cores == 1 ? string.Empty : "s"));
+
+    if (level.MemoryMaxBytes.HasValue)
+      parts.Add(Humanize.Bytes(level.MemoryMaxBytes) + " memory");
+
+    if (level.PidsMax.HasValue)
+      parts.Add(Humanize.Count(level.PidsMax) + " tasks");
+
+    foreach (var limit in level.IoLimits)
+      if (limit.IsLimited)
+        parts.Add(limit.Name + " capped");
+
+    return parts.Count == 0 ? "sets no limit" : string.Join(", ", parts);
+  }
+
+  /// <summary>
+  /// A throughput ceiling, or which kind of "no ceiling" this is.
+  /// </summary>
+  /// <remarks>
+  /// Only the literal word <c>max</c> is "unlimited". A value the parser could not read is a hole
+  /// and says so: printing "unlimited" over it would turn a file nobody could read into a promise
+  /// that nothing is holding the group back, which is the confident answer §72.3 exists to stop —
+  /// and the inverted form of it, since the wrong answer here is reassuring rather than alarming.
+  /// </remarks>
+  private static string Throughput(Counter counter) => counter.Reason switch {
+    UnknownReason.None => Humanize.Bytes(counter) + "/s",
+    UnknownReason.NoLimit => "unlimited",
+    _ => Humanize.Placeholder(counter.Reason),
+  };
+
+  private static string Operations(Counter counter) => counter.Reason switch {
+    UnknownReason.None => Humanize.Count(counter) + " ops/s",
+    UnknownReason.NoLimit => "unlimited",
+    _ => Humanize.Placeholder(counter.Reason),
+  };
+
+  /// <summary>
+  /// What is running the process, where something other than the machine is (PRD §38).
+  /// </summary>
+  /// <remarks>
+  /// The name only where the machine itself knows it. LXC and <c>machined</c> put it in the cgroup
+  /// path; Docker and its relatives put an id there and keep the name in their own daemon, and the
+  /// line says which of those it is rather than leaving a blank that reads as "it has none".
+  /// </remarks>
+  private static string Container(string? path) {
+    var container = ContainerDetector.Of(path);
+    if (!container.IsIdentified)
+      return container.Runtime == ContainerRuntime.None
+        ? "none — the cgroup path names no container"
+        : "not known";
+
+    if (container.Name is { Length: > 0 } name)
+      return $"{container.RuntimeName}, {name}";
+
+    return container.Id is { Length: > 0 } id
+      ? $"{container.RuntimeName}, {id} — its name is in the runtime's own daemon rather than on this machine"
+      : container.RuntimeName;
   }
 
   /// <summary>
@@ -226,6 +400,21 @@ internal static class LimitsReport {
   /// </remarks>
   private static string Limit(Counter counter) => counter.Reason switch {
     UnknownReason.None => Humanize.Bytes(counter),
+    UnknownReason.NoLimit => "unlimited",
+    UnknownReason.NotSupportedOnPlatform => "no such controller here — an ancestor's limit applies",
+    _ => Humanize.Placeholder(counter.Reason),
+  };
+
+  /// <summary>
+  /// The same three answers, for a ceiling that is a count of things rather than a size.
+  /// </summary>
+  /// <remarks>
+  /// <c>pids.max</c> went through the byte formatter, which divides by 1024 and appends a binary
+  /// suffix: a limit of 153 425 tasks printed as <c>150K</c>, which is both the wrong number and a
+  /// unit the thing being counted does not have. Tasks are counted one at a time (PRD §5.3).
+  /// </remarks>
+  private static string TaskLimit(Counter counter) => counter.Reason switch {
+    UnknownReason.None => Humanize.Count(counter),
     UnknownReason.NoLimit => "unlimited",
     UnknownReason.NotSupportedOnPlatform => "no such controller here — an ancestor's limit applies",
     _ => Humanize.Placeholder(counter.Reason),

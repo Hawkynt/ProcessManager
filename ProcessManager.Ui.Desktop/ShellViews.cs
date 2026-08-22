@@ -44,9 +44,20 @@ internal sealed record ShellView(
 /// complaint was that there was no view. This is the view: the same probe calls the reports make,
 /// in a table, behind the rail.
 /// </remarks>
-internal sealed class ShellViews(ISystemProbe probe) {
+internal sealed class ShellViews(ISystemProbe probe, Sampling.Sampler? sampler = null) {
 
   private readonly ISystemProbe _probe = probe ?? throw new ArgumentNullException(nameof(probe));
+
+  /// <summary>
+  /// The window's own sampler, for the views that need what a process is costing as well as what it
+  /// is (PRD §43).
+  /// </summary>
+  /// <remarks>
+  /// Optional, because most of these views need nothing but the probe and a test that builds one
+  /// should not have to raise a sampler to check a column of unit names. A view that has none says
+  /// so in its cells rather than showing nought.
+  /// </remarks>
+  private readonly Sampling.Sampler? _sampler = sampler;
 
   #region what starts when you log in (PRD §42)
 
@@ -327,11 +338,27 @@ internal sealed class ShellViews(ISystemProbe probe) {
   private readonly RecordTable _sessions = new(
     "Sessions",
     ("User", 140),
+    // The account's own description, where the password file has one. Most system accounts have
+    // none, so the column is narrow and mostly empty — which is what "this machine does not know"
+    // looks like, and is better than a made-up name.
+    ("Full name", 170),
     ("Terminal", 100),
+    ("Session", 74),
+    ("Type", 96),
+    ("State", 74),
+    ("Idle", 70),
     ("Kind", 110),
     ("Logged in", 170),
     ("PID", 70),
-    ("From", 200)
+    ("From", 200),
+    // What the login is costing. These were on the command line and nowhere in the window, so the
+    // view answered who was logged in and nothing about what that cost — which is the half of the
+    // page anybody opens it for (PRD §58).
+    ("Processes", 84),
+    ("CPU %", 74),
+    ("Memory", 90),
+    ("Disk", 90),
+    ("GPU %", 74)
   );
 
   public Control SessionsControl => this._sessions.Control;
@@ -340,28 +367,103 @@ internal sealed class ShellViews(ISystemProbe probe) {
 
   public int SessionsRows => this._sessions.RowCount;
 
+  /// <summary>
+  /// The records behind the rows, kept because a menu item needs more than a cell holds.
+  /// </summary>
+  /// <remarks>
+  /// The session id especially: it is the only thing <c>loginctl</c> will accept, it is a dash on
+  /// every row that has none, and reading it back out of a cell would turn that dash into an id.
+  /// </remarks>
+  private IReadOnlyList<SessionRecord> _sessionRows = [];
+
+  /// <summary>The record behind the selected row, or null when the cursor is on nothing.</summary>
+  /// <remarks>
+  /// Matched on the pid, which is the one cell that is unique across the file: two of a person's
+  /// logins share a name, a kind and often a terminal, and matching on the name would act on
+  /// whichever of them came first.
+  /// </remarks>
+  public SessionRecord? SelectedSession {
+    get {
+      if (this._sessions.Selected is not { Length: > 10 } cells
+          || !int.TryParse(cells[9], NumberStyles.Integer, CultureInfo.InvariantCulture, out var pid))
+        return null;
+
+      foreach (var session in this._sessionRows)
+        if (session.Pid == pid)
+          return session;
+
+      return null;
+    }
+  }
+
+  /// <summary>Every session as text, in the order the table shows them (PRD §43, §95).</summary>
+  public string DescribeSessions() => this._sessions.Describe();
+
+  /// <summary>The selected session as text, headers included.</summary>
+  public string DescribeSelectedSession() => this._sessions.DescribeSelected();
+
+  /// <summary>
+  /// What may be done to the session under the pointer, hung on the sessions table.
+  /// </summary>
+  /// <remarks>
+  /// Built by the window for the same reason the services menu is: ending somebody's session means
+  /// asking a person first and then showing them what the login manager said, and neither is
+  /// something a class that owns tables can do.
+  /// </remarks>
+  public ContextMenuStrip? SessionsMenu {
+    get => this._sessions.ContextMenuStrip;
+    set => this._sessions.ContextMenuStrip = value;
+  }
+
   public void RefreshSessions() {
     var sessions = this._probe.GetSessions();
+    this._sessionRows = sessions;
     var people = 0;
     foreach (var session in sessions)
       if (session.Kind == SessionKind.User)
         ++people;
 
+    // The same sums the command line's report makes, from the same function in Core: two additions
+    // of the same column that could disagree are two answers to one question (PRD §5.1).
+    var totals = this._sampler is { } sampler
+      ? SessionTotals.Of(sampler.Current, sampler.Delta)
+      : [];
+
+    var now = DateTime.UtcNow;
     this._sessions.Fill(
       sessions.Count == 0
         ? "No sessions came back — the login database is empty or unreadable from here."
         : $"{sessions.Count} records, {people} of them somebody logged in.  {AsOf()}",
       sessions.Count,
-      i => [
-        sessions[i].UserName,
-        sessions[i].Terminal,
-        sessions[i].Kind.ToString(),
-        Humanize.Timestamp(sessions[i].LoginTimeUtcTicks),
-        sessions[i].Pid > 0 ? sessions[i].Pid.ToString(CultureInfo.InvariantCulture) : "—",
-        // Null and empty are different: null is a login at the machine's own keyboard, and an empty
-        // string is a remote host the file did not name.
-        sessions[i].RemoteHost ?? "this machine",
-      ]
+      i => {
+        var session = sessions[i];
+        var total = totals.TryGetValue(session.UserName, out var found) ? found : UserTotals.None;
+
+        // Only a login has processes to total. A boot record and a dead slot have an account name in
+        // them and no account behind them, and putting a user's figures on those rows would count the
+        // same processes three times down the page.
+        var person = session.Kind == SessionKind.User;
+        return [
+          session.UserName,
+          session.FullName ?? "—",
+          session.Terminal,
+          session.SessionId ?? "—",
+          SessionFacts.Describe(session.Type),
+          SessionFacts.Describe(session.State),
+          SessionFacts.DescribeIdle(SessionFacts.IdleFor(session.LastInputUtcTicks, now)),
+          session.Kind.ToString(),
+          Humanize.Timestamp(session.LoginTimeUtcTicks),
+          session.Pid > 0 ? session.Pid.ToString(CultureInfo.InvariantCulture) : "—",
+          // Null and empty are different: null is a login at the machine's own keyboard, and an empty
+          // string is a remote host the file did not name.
+          session.RemoteHost ?? "this machine",
+          person ? Humanize.Count(total.Processes) : "—",
+          person ? Humanize.Percent(total.CpuPercent) : "—",
+          person ? Humanize.Bytes(total.PrivateBytes) : "—",
+          person ? Humanize.BytesPerSecond(total.DiskBytesPerSecond) : "—",
+          person ? Humanize.Percent(total.GpuPercent) : "—",
+        ];
+      }
     );
   }
 

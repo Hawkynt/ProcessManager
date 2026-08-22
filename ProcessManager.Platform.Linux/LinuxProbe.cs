@@ -790,7 +790,7 @@ public sealed partial class LinuxProbe : ISystemProbe {
         continue;
 
       var path = System.Text.Encoding.UTF8.GetString(line[3..]);
-      return CgroupReader.Read(this._options.CgroupRoot, path);
+      return CgroupReader.Read(this._options.CgroupRoot, path, this._options.BlockDeviceRoot);
     }
 
     return null;
@@ -2448,7 +2448,109 @@ public sealed partial class LinuxProbe : ISystemProbe {
 
     var buffer = new SessionRecord[Math.Max(1, content.Length / UtmpParser.RecordSize)];
     var count = UtmpParser.Parse(content, buffer);
+    for (var i = 0; i < count; ++i)
+      buffer[i] = this.Enrich(buffer[i]);
+
     return buffer[..count];
+  }
+
+  /// <summary>
+  /// The columns utmp does not carry, from the machine around it (PRD §43).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Four questions the login record cannot answer, each from the cheapest place that can. The
+  /// session id from the leader's cgroup, because a session <em>is</em> a scope and logind's own
+  /// state file says on its first line that it is private and not to be parsed. Whether the leader
+  /// is still there from whether its directory is. The idle time from the terminal's modification
+  /// time, which is what <c>who -u</c> and <c>w</c> both measure. The full name from the password
+  /// file that is already open for the process table.
+  /// </para>
+  /// <para>
+  /// Only for records that describe a person. A boot record has no terminal and no leader, and
+  /// stat-ing <c>/dev/~</c> for it would be four syscalls to learn nothing.
+  /// </para>
+  /// </remarks>
+  private SessionRecord Enrich(SessionRecord session) {
+    if (session.Kind != SessionKind.User)
+      return session;
+
+    var alive = session.Pid > 0 && Directory.Exists($"{this._procRoot}/{session.Pid.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
+    return session with {
+      SessionId = alive ? SessionFacts.IdFromCgroup(this.CgroupPathOf(session.Pid)) : null,
+      FullName = this._users.FullName(session.UserName),
+      Type = SessionFacts.Type(session.Terminal, session.RemoteHost),
+      State = alive ? SessionState.Alive : SessionState.Stale,
+      // Only while the login is live. Pseudo-terminal numbers are reused the moment they are freed,
+      // so the modification time of pts/9 belongs to whoever holds pts/9 now — and presenting that
+      // as a dead login's idle time is a reading taken from the wrong session (PRD §72.3).
+      LastInputUtcTicks = alive ? this.TerminalWrittenAt(session.Terminal) : 0,
+    };
+  }
+
+  /// <summary>The unified hierarchy's line for a pid, or null where there is none to read.</summary>
+  private string? CgroupPathOf(int pid) {
+    Span<byte> pathBuffer = stackalloc byte[ProcPath.MaxLength];
+    if (!this._reader.TryRead(ProcPath.Build(pathBuffer, this._procRootUtf8, pid, "cgroup"u8), out var content, out _))
+      return null;
+
+    var scanner = new AsciiScanner(content);
+    while (!scanner.IsEmpty) {
+      var line = scanner.NextLine();
+      if (AsciiScanner.StartsWith(line, "0::"u8))
+        return Encoding.UTF8.GetString(line[3..]);
+    }
+
+    return null;
+  }
+
+  /// <summary>
+  /// When the session's terminal was last written to.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Nought where there is no terminal, where the name is not one, or where the timestamp could not
+  /// be read — and nought is not a time. A caller must render it as "not known" rather than as the
+  /// epoch or as this instant, because the sessions this cannot see are exactly the graphical ones,
+  /// and reporting those as never idle would be wrong about the busiest session on most desktops
+  /// (PRD §72.3).
+  /// </para>
+  /// <para>
+  /// The name is checked before it is joined to a path, and then the join is checked too. It comes
+  /// out of a file any root process may write, and a terminal name has no dots in it — which stops
+  /// <c>../../etc/shadow</c> — but stopping that is not enough on its own:
+  /// <see cref="Path.Combine(string,string)"/> <em>discards</em> the root when the second argument is
+  /// rooted, so a line reading <c>/etc/shadow</c> would have been stat-ed at the filesystem root.
+  /// That is the same trap <see cref="CgroupReader"/> documents about cgroup paths, one file over.
+  /// </para>
+  /// </remarks>
+  private long TerminalWrittenAt(string? terminal) {
+    if (terminal is not { Length: > 0 } name
+        || this._options.DeviceRoot is not { Length: > 0 } root
+        || Path.IsPathRooted(name))
+      return 0;
+
+    foreach (var character in name)
+      if (!char.IsAsciiLetterOrDigit(character) && character is not ('/' or '-' or '_'))
+        return 0;
+
+    try {
+      var directory = Path.GetFullPath(root);
+      var device = Path.GetFullPath(Path.Combine(directory, name));
+
+      // Belt as well as braces: whatever the name turned out to be, the thing being stat-ed is under
+      // the device directory or it is not looked at.
+      if (!device.StartsWith(directory.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+        return 0;
+
+      return File.Exists(device) ? File.GetLastWriteTimeUtc(device).Ticks : 0;
+    } catch (IOException) {
+      return 0;
+    } catch (UnauthorizedAccessException) {
+      return 0;
+    } catch (ArgumentException) {
+      return 0;
+    }
   }
 
   /// <summary>

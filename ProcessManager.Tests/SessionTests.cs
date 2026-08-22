@@ -19,6 +19,10 @@ public sealed class SessionTests(bool portable) {
       UsePortableFileAccess = portable,
       ProcRoot = Path.Combine(Fixtures, "proc-desktop"),
       UtmpPath = path ?? Path.Combine(Fixtures, "utmp-desktop"),
+      // Deliberately not there. The recorded file's terminals are another machine's, and stat-ing
+      // this one's /dev for them would make the idle column depend on whichever terminal the test
+      // runner happens to be sitting in.
+      DeviceRoot = "/nonexistent/dev",
       EffectiveUserId = 0,
     });
 

@@ -170,9 +170,20 @@ internal static class Program {
           RunMode.Performance => PerformanceCommand.Run(sampler, probe, options),
           RunMode.Run => LaunchCommand.Run(actions, options),
           RunMode.Startup => StartupReport.Run(probe, options),
-          RunMode.Users => UsersReport.Run(sampler, probe),
+          // --tree opens the rows, the way a row opens in the window. Not the default: an account
+          // with four hundred processes is four hundred lines, and a reader who wanted the totals
+          // would have to scroll past all of them to find the next login (PRD §43, §5.2).
+          RunMode.Users => UsersReport.Run(sampler, probe, options.TreeMode),
           RunMode.Services => ServicesReport.Run(probe, options),
           RunMode.ServiceControl => ServiceControlCommand.Run(options.ServiceVerb, options.ServiceUnit),
+          RunMode.SessionControl => SessionControlCommand.Run(
+            sampler,
+            probe,
+            options.SessionVerb,
+            options.SessionId,
+            options.AssumeYes,
+            settings.ConfirmDestructiveActions
+          ),
           RunMode.Connections => ConnectionsReport.Run(sampler, probe, options),
           RunMode.SelfTest => SelfTest.Run(sampler, probe.Description, probe),
           RunMode.HelperCheck => HelperCheck.Run(),
@@ -338,6 +349,7 @@ internal static class Program {
       actions,
       ProbeFactory.CreateServiceControl(),
       ProbeFactory.CreateStartupControl(),
+      ProbeFactory.CreateSessionControl(),
       options.ShootPath,
       options.ShootHoldSeconds,
       options.FlatRequested,

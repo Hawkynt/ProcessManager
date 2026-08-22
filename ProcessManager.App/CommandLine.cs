@@ -7,7 +7,7 @@ using Hawkynt.ProcessManager.Ui.Terminal;
 namespace Hawkynt.ProcessManager.App;
 
 /// <summary>Which face of the program the arguments asked for.</summary>
-internal enum RunMode : byte { Desktop, Terminal, List, Find, Kill, EndTask, Restart, Scheduling, Signal, ResourceLimit, OutOfMemory, Freezer, SelfTest, HelperCheck, Help, HelpFields, Host, Startup, Users, Services, ServiceControl, Connections, Limits, Environment, ProcessDetail, Performance, Run, Version, Settings, Inspect }
+internal enum RunMode : byte { Desktop, Terminal, List, Find, Kill, EndTask, Restart, Scheduling, Signal, ResourceLimit, OutOfMemory, Freezer, SelfTest, HelperCheck, Help, HelpFields, Host, Startup, Users, Services, ServiceControl, SessionControl, Connections, Limits, Environment, ProcessDetail, Performance, Run, Version, Settings, Inspect }
 
 /// <summary>
 /// What <see cref="RunMode.Settings"/> was asked to do to the settings file (PRD §67).
@@ -211,6 +211,22 @@ internal sealed record CommandLineOptions {
 
   /// <summary>The unit <c>--service</c> names.</summary>
   public string? ServiceUnit { get; init; }
+
+  /// <summary>What <c>--session</c> was asked to do (PRD §43).</summary>
+  public string? SessionVerb { get; init; }
+
+  /// <summary>Which session it was asked to do it to — the id <c>loginctl</c> knows it by.</summary>
+  public string? SessionId { get; init; }
+
+  /// <summary>
+  /// Whether a destructive action that would otherwise be confirmed may go ahead unasked (PRD §5.5).
+  /// </summary>
+  /// <remarks>
+  /// A decision written into the command rather than one taken on somebody's behalf. Without it a
+  /// run whose input is not a terminal is refused rather than assumed to consent: a script that
+  /// meant it says so, and one that did not gets an error instead of a logged-out user.
+  /// </remarks>
+  public bool AssumeYes { get; init; }
 
   /// <summary>Which sockets --connections lists (PRD §40).</summary>
   public ConnectionScope ConnectionScope { get; init; } = ConnectionScope.Internet;
@@ -1269,6 +1285,26 @@ internal sealed record CommandLineOptions {
           options = options with { Mode = RunMode.Services };
           explicitMode = true;
           break;
+        case "--yes":
+          options = options with { AssumeYes = true };
+          break;
+
+        case "--session":
+          // Two words: what to do, and to which session. Both required, for the same reason
+          // --service needs both — a verb with no target is a way of asking for something nobody
+          // meant, and this one logs somebody out.
+          if (i + 2 >= args.Length)
+            return options with { Error = "--session needs a command and a session id: --session terminate 3" };
+
+          options = options with {
+            Mode = RunMode.SessionControl,
+            SessionVerb = args[++i],
+            SessionId = args[++i],
+          };
+
+          explicitMode = true;
+          break;
+
         case "--service":
           // Two words: what to do, and to which unit. Both required, because a verb with no unit and
           // a unit with no verb are each a way of asking for something nobody meant.
@@ -1541,7 +1577,11 @@ internal sealed record CommandLineOptions {
                                      out-of-memory standing that decides who dies first
       procman --run PROGRAM [ARG...] start a program; everything after --run belongs to it
       procman --startup              what is configured to start when you log in
-      procman --users                who is logged in, and what their processes cost
+      procman --users [--tree]       who is logged in, and what their processes cost; --tree opens
+                                     each account's row to the processes behind its totals
+      procman --session <cmd> <id>   terminate, lock or unlock a login session by its id. Ending one
+                                     asks first unless --yes is given; there is no 'disconnect',
+                                     because Linux has no session that survives without a client
       procman --services             which services exist and which are running
       procman --service <cmd> <unit> start, stop, restart, reload, enable or disable a unit
       procman --connections[=what]   every socket and who owns it: inet (default), unix or all
