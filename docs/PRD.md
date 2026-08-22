@@ -5364,7 +5364,13 @@ v1 does not ship unless every one of these is true:
       could reach at all; `--environment PID` closes it, and its output is byte-for-byte what
       `/proc/[pid]/environ` holds
 - [x] No external metadata is transmitted without opt-in
-- [x] Unavailable platform fields are distinguishable from zero-valued fields
+- [x] Unavailable platform fields are distinguishable from zero-valued fields — including in the
+      terminal's plots, which were the one place they were not. Level nought of both ramps is a space
+      and so was a gap, under a comment that said "a gap is a gap: a space, not a zero-height block
+      that reads as idle" — describing an intention rather than the code beneath it. An idle process
+      and one whose counter was refused drew the same plot. A gap is a middle dot now, or a question
+      mark where the terminal has no block characters, and five of them appear in the golden frames
+      where the fixture's plots had been quietly claiming idle
 - [x] Destructive actions identify their exact target — the action, the name, the pid and the count
       of what runs underneath it
 - [x] Minimal recovery mode operates independently of expensive collectors and plugins —

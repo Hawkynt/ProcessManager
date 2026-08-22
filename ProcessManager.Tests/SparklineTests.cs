@@ -33,10 +33,38 @@ public sealed class BlockSparklineTests {
     Assert.That(text, Is.EqualTo("▁"));
   }
 
+  /// <summary>
+  /// A sample nobody could read does not draw as one that was read and was nought.
+  /// </summary>
+  /// <remarks>
+  /// This test used to assert the opposite, under the name "a gap is a space rather than a zero" —
+  /// and the code it was checking drew a measured nought as a space too, so the two were the same
+  /// character and the distinction the name claimed did not exist. An idle process and one whose
+  /// counter was refused were the same plot, which is the thing §102 will not ship without
+  /// (PRD §72.3).
+  /// </remarks>
   [Test]
-  public void AGapIsASpaceRatherThanAZero() {
-    var text = BlockSparkline.Render(3, Ring(100, null, 100), 100, unicode: true);
-    Assert.That(text, Is.EqualTo("█ █"));
+  public void AGapDoesNotDrawAsAMeasuredNought() {
+    var withGap = BlockSparkline.Render(3, Ring(100, null, 100), 100, unicode: true);
+    var withNought = BlockSparkline.Render(3, Ring(100, 0, 100), 100, unicode: true);
+
+    Assert.That(withGap, Is.Not.EqualTo(withNought), "unread and idle are different states");
+    Assert.That(withGap[1], Is.Not.EqualTo(' '), "and neither of them is blank space");
+    Assert.That(withNought, Is.EqualTo("█ █"), "a measured nought keeps the flat baseline");
+  }
+
+  /// <summary>
+  /// And on a terminal with no block characters, where the gap mark has to be one somebody could
+  /// have typed in 1970.
+  /// </summary>
+  [Test]
+  public void AGapIsMarkedOnAPlainTerminalToo() {
+    var withGap = BlockSparkline.Render(3, Ring(100, null, 100), 100, unicode: false);
+    var withNought = BlockSparkline.Render(3, Ring(100, 0, 100), 100, unicode: false);
+
+    Assert.That(withGap, Is.Not.EqualTo(withNought));
+    Assert.That(withGap[1], Is.Not.EqualTo(' '));
+    Assert.That(withGap[1], Is.LessThan((char)128), "a plain terminal can draw it");
   }
 
   [Test]
