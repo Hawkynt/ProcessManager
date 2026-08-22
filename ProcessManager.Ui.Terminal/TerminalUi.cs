@@ -20,6 +20,16 @@ public sealed class TerminalUi {
   private readonly Sampler _sampler;
   private readonly IProcessActions? _actions;
   private readonly IServiceControl? _services;
+
+  /// <summary>
+  /// Whether a single-process action asks first (PRD §67, §69).
+  /// </summary>
+  /// <remarks>
+  /// True unless a settings file says otherwise, which is what a file that says nothing means. The
+  /// classes decide the rest: nothing turns off the prompt for an unsafe action, and nothing turns
+  /// it off for anything aimed at a process the machine depends on.
+  /// </remarks>
+  public bool ConfirmSingleActions { get; init; } = true;
   private readonly ISystemProbe _probe;
   private readonly ProcessView _view = new();
   private readonly TerminalScreen _screen;
@@ -660,9 +670,22 @@ public sealed class TerminalUi {
       return true;
     }
 
+    this.CarryOut(pending);
+    return true;
+  }
+
+  /// <summary>
+  /// Does the thing, whether or not anybody was asked first (PRD §69).
+  /// </summary>
+  /// <remarks>
+  /// Its own method because the answer to "was this confirmed" now has two answers — somebody
+  /// pressed y, or the class and the setting between them said no prompt was needed — and both of
+  /// them end here. Keeping the work inside the key handler would have meant a second copy of it.
+  /// </remarks>
+  private void CarryOut(PendingAction pending) {
     if (this._actions is null) {
       this.Say("no actions are available in this build", Attributes.Bad);
-      return true;
+      return;
     }
 
     switch (pending) {
@@ -672,10 +695,10 @@ public sealed class TerminalUi {
           $"{this._confirmTarget.Pid} now runs under {Humanize.SchedulingPolicy(this._realTimeClass)}"
         );
 
-        return true;
+        return;
       case PendingAction.TerminateTree:
         this.KillTree(this._confirmTarget);
-        return true;
+        return;
       case PendingAction.Restart: {
         var restarted = this._actions.Restart(this._confirmTarget);
         this.Report(
@@ -683,18 +706,18 @@ public sealed class TerminalUi {
           $"{this._confirmTarget.Pid} started again as {restarted.Pid}"
         );
 
-        return true;
+        return;
       }
       default: {
         // A tick on more than one row makes this a bulk request, and the prompt already said so.
         if (this._marked.Count > 0) {
           this.TerminateMarked();
-          return true;
+          return;
         }
 
         var result = this._actions.Terminate(this._confirmTarget);
         this.Report(result, $"sent SIGTERM to {this._confirmTarget.Pid}");
-        return true;
+        return;
       }
     }
   }
@@ -1268,9 +1291,52 @@ public sealed class TerminalUi {
     return widest;
   }
 
+  /// <summary>What class of action each of the confirmable ones is (PRD §69).</summary>
+  /// <remarks>
+  /// Ending a process and ending its tree lose whatever it had not written, which is class 2.
+  /// Restarting it is the same loss and then some — it also breaks whatever was holding a connection
+  /// to it — so it is classed with them rather than treated as reversible because the program comes
+  /// back.
+  /// </remarks>
+  private static ActionClass ClassOf(PendingAction action) => action switch {
+    PendingAction.Terminate => ActionClass.DataLoss,
+    PendingAction.TerminateTree => ActionClass.DataLoss,
+    PendingAction.Restart => ActionClass.DataLoss,
+    // Including None. An action nobody sorted is asked about (PRD §69).
+    _ => ActionClass.Unclassified,
+  };
+
+  /// <summary>
+  /// Whether the selected process is one the machine depends on, which is asked about whatever the
+  /// setting says.
+  /// </summary>
+  /// <remarks>
+  /// Root's, or a unit's. Both are things whose loss is somebody else's problem as well as the
+  /// operator's, and §69's rule is that the setting turns off the prompt for a person's own
+  /// programs rather than for the machine's.
+  /// </remarks>
+  private bool TargetIsSystem() {
+    if (!this._sampler.Current.TryGetProcess(this._selectedKey, out var process))
+      return true;
+
+    return process.UserId == 0
+      || (process.IsElevated.HasValue && process.IsElevated.Value != 0)
+      || CgroupUnit.Of(process.ContainerPath)?.EndsWith(".service", StringComparison.Ordinal) == true;
+  }
+
   private void Confirm(PendingAction action) {
     if (this._selectedKey.IsNone) {
       this.Say("nothing selected", Attributes.Dim);
+      return;
+    }
+
+    // The same rule the window applies, from the same table, so one preference does not produce two
+    // different programs (PRD §58, §69). A target the machine depends on is asked about whatever the
+    // setting says, and so is anything in the unsafe class.
+    if (!ActionSafety.MustAsk(ClassOf(action), this.ConfirmSingleActions, this.TargetIsSystem())) {
+      this._confirmTarget = this._selectedKey;
+      this._pending = action;
+      this.CarryOut(action);
       return;
     }
 
