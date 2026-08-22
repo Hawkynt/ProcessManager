@@ -91,6 +91,21 @@ public sealed class ProcessTreeBinder {
   public int CurrentUserId { get; set; } = -1;
 
   /// <summary>
+  /// Which fields each row formats, or null for every one in the catalogue.
+  /// </summary>
+  /// <remarks>
+  /// A row used to format all hundred and sixty-odd fields for every process on every sample, of
+  /// which a table shows perhaps ten. Invisible at four hundred processes and the whole of a 193 ms
+  /// frame at ten thousand.
+  ///
+  /// It is the caller's job to set this to everything that will be *read*, which is more than the
+  /// visible columns: the properties pages ask a row for fields no column shows. Getting it wrong
+  /// shows as a blank cell rather than as an error, so a test holds the set against what every page
+  /// declares it needs.
+  /// </remarks>
+  public IReadOnlyList<ProcessField>? WantedFields { get; set; }
+
+  /// <summary>
   /// Whether a subtree the user collapsed may be reopened by the program.
   /// </summary>
   /// <remarks>
@@ -150,7 +165,7 @@ public sealed class ProcessTreeBinder {
       // holds no descriptors at all. Every process that had not been counted yet said "handles 0"
       // (PRD §5.3, §72.3).
       var handles = this.HandleCountOf(key);
-      row.Update(in process, delta, index, handles, this.CurrentUserId);
+      row.Update(in process, delta, index, handles, this.CurrentUserId, this.WantedFields);
       row.Generation = this._generation;
 
       if (!this._nodes.TryGetValue(key, out var node)) {

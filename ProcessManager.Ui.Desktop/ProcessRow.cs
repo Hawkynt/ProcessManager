@@ -64,14 +64,43 @@ public sealed class ProcessRow(ProcessKey key) {
   /// <summary>The sample this row was last seen in; older rows are removed from the tree.</summary>
   public int Generation { get; set; }
 
-  public void Update(in ProcessRecord process, SnapshotDelta delta, int index, Counter handles, int currentUserId) {
-    foreach (var descriptor in FieldRegistry.All) {
-      if (descriptor.IsGraph)
-        continue;
+  /// <param name="wanted">
+  /// Which fields to format, or null for all of them.
+  /// </param>
+  /// <remarks>
+  /// This used to format every field in the catalogue for every process on every sample — a hundred
+  /// and sixty-odd, of which a table shows perhaps ten. At four hundred processes that is invisible;
+  /// at ten thousand it was the whole of a 193 ms frame, and it is the largest single cost in the
+  /// window. What a row is for is the cells the table draws, so it formats those.
+  ///
+  /// Null keeps the old behaviour, for the callers that ask a row about a field no column shows —
+  /// the properties page has its own list, and an export names its own columns. Both go through
+  /// <see cref="TextOf"/>, so they must not find an empty string where a value should be.
+  /// </remarks>
+  public void Update(
+    in ProcessRecord process,
+    SnapshotDelta delta,
+    int index,
+    Counter handles,
+    int currentUserId,
+    IReadOnlyList<ProcessField>? wanted = null
+  ) {
+    if (wanted is null)
+      foreach (var descriptor in FieldRegistry.All) {
+        if (descriptor.IsGraph)
+          continue;
 
-      this._text[(int)descriptor.Id] = FieldAccessor.Text(descriptor.Id, in process, delta, index);
-      this._heat[(int)descriptor.Id] = Thresholds.Of(descriptor.Id, in process, delta, index);
-    }
+        this._text[(int)descriptor.Id] = FieldAccessor.Text(descriptor.Id, in process, delta, index);
+        this._heat[(int)descriptor.Id] = Thresholds.Of(descriptor.Id, in process, delta, index);
+      }
+    else
+      foreach (var field in wanted) {
+        if (FieldRegistry.Get(field).IsGraph)
+          continue;
+
+        this._text[(int)field] = FieldAccessor.Text(field, in process, delta, index);
+        this._heat[(int)field] = Thresholds.Of(field, in process, delta, index);
+      }
 
     // Two exceptions to the shared formatter, both because the window knows something the engine
     // does not. The handle count is sampled on its own schedule because it is expensive (PRD §5.4),

@@ -44,6 +44,16 @@ internal sealed class ProcessFactsPage {
     this._list.Columns.Add(new("Value", 620, node => ((string[])node.Tag!)[1]));
   }
 
+  /// <summary>
+  /// The fields this page reads off a row, so whoever fills the row knows to format them.
+  /// </summary>
+  /// <remarks>
+  /// A page asks a row for fields no column shows, and a row only formats what it was asked to. The
+  /// two have to agree or the page shows blanks — so the list is published rather than remembered,
+  /// and a test walks every page and requires the binder's set to contain it.
+  /// </remarks>
+  public IReadOnlyList<ProcessField> Fields => this._fields;
+
   public Control Control => this._list;
 
   /// <summary>
