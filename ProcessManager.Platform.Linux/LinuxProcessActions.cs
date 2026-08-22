@@ -919,6 +919,9 @@ public sealed class LinuxProcessActions(LinuxProbeOptions? options = null) : IPr
     if (!check.Succeeded)
       return check;
 
+    if (this.Discarded(key, signal) is { } discarded)
+      return ActionResult.Fail(ActionOutcome.Refused, discarded);
+
     if (Native.SendSignal(key.Pid, signal) == 0)
       return ActionResult.Ok;
 
@@ -938,6 +941,56 @@ public sealed class LinuxProcessActions(LinuxProbeOptions? options = null) : IPr
     return opcode == ElevatedOpcode.None
       ? Translate(errno, $"could not send signal {signal}")
       : this.ThroughHelper(opcode, key, 0, $"could not send signal {signal}");
+  }
+
+  /// <summary>
+  /// Why the kernel would throw this signal away rather than deliver it, or null when it would not
+  /// (PRD §69).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The same failure <c>kill</c> with a nought would produce, and the reason that one is refused
+  /// above: the call returns success, nothing whatever happens, and the person who asked is told the
+  /// action worked. Here it is worse than a mistyped signal number, because the two targets it
+  /// happens on are the two a person is most likely to be wrong about.
+  /// </para>
+  /// <para>
+  /// <b>Pid 1 is delivered only what it has a handler for.</b> The kernel drops every signal sent to
+  /// init that init did not install a handler for, and <c>SIGKILL</c> and <c>SIGSTOP</c> are the two
+  /// no process may ever have one for — so those two are discarded by construction and no privilege
+  /// changes it. Signals init <em>does</em> handle are left alone and are not this function's
+  /// business: <c>systemd</c> handles <c>SIGTERM</c>, and what it does with it is between the
+  /// sender and the manual page.
+  /// </para>
+  /// <para>
+  /// <b>A kernel thread never acts on a signal at all.</b> It has no user-space to return to, so
+  /// there is no point at which a pending signal is looked at, and even <c>SIGKILL</c> to one is a
+  /// successful call that does nothing. They are recognised by their parent — everything descended
+  /// from <c>kthreadd</c>, plus <c>kthreadd</c> itself — which is the same test <c>ps</c> uses and
+  /// costs a read of a file this program has already opened for the identity check.
+  /// </para>
+  /// <para>
+  /// Only the two undeliverable signals are checked, deliberately. A refusal here is this program
+  /// declining to do what was asked, and it may only decline where the kernel's own behaviour is
+  /// certain rather than likely.
+  /// </para>
+  /// </remarks>
+  private string? Discarded(ProcessKey key, int signal) {
+    if (signal is not (Native.SIGKILL or Native.SIGSTOP))
+      return null;
+
+    var name = signal == Native.SIGKILL ? "SIGKILL" : "SIGSTOP";
+    if (key.Pid == 1)
+      return $"the kernel discards {name} sent to pid 1: init is delivered only the signals it "
+        + "installed a handler for, and neither of those two can ever have one";
+
+    if (!this.TryReadStat(key, matchIdentity: true, out var record))
+      return null;
+
+    return key.Pid == 2 || record.ParentPid == 2
+      ? $"pid {key.Pid} is a kernel thread. It never returns to user space, so it never acts on a "
+        + $"signal — {name} would be reported as sent and nothing would happen"
+      : null;
   }
 
   /// <summary>Asks the helper, when there is one. Its refusals are reported as the helper's own.</summary>

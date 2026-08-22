@@ -294,6 +294,16 @@ public sealed record UserSettings {
   /// </remarks>
   public UsageThresholds Thresholds { get; init; } = UsageThresholds.Default;
 
+  /// <summary>
+  /// What this machine's owner asked to be told about (PRD §64).
+  /// </summary>
+  /// <remarks>
+  /// Empty by default and empty on every machine that has not written a <c>notify.</c> line, which is
+  /// what §64's "rules are explicit" means in practice: nothing is inferred, nothing is on because it
+  /// seemed useful, and a program nobody has configured interrupts nobody.
+  /// </remarks>
+  public NotificationRules Notifications { get; init; } = new();
+
   /// <summary>Named column sets, as PRD §11 requires and §94 names.</summary>
   public IReadOnlyDictionary<string, ProcessField[]> ColumnSets { get; init; }
     = new Dictionary<string, ProcessField[]>(StringComparer.OrdinalIgnoreCase);
@@ -309,10 +319,22 @@ public sealed record UserSettings {
   /// </summary>
   public static IReadOnlyDictionary<string, ProcessField[]> Presets { get; } =
     new Dictionary<string, ProcessField[]>(StringComparer.OrdinalIgnoreCase) {
+      // §94's everyday set: what a person opens a process table to see. The graphics share is in it
+      // and the network one is not, and the difference is not effort — §18 refuses per-process
+      // traffic because no honest source for it exists on either platform, while §19 has one and it
+      // costs a descriptor read per process. Naming this set is what pays for that (PRD §5.4).
       ["basic"] = [
         ProcessField.Name, ProcessField.Pid, ProcessField.State, ProcessField.CpuPercent,
-        ProcessField.PrivateBytes, ProcessField.IoTotalRate,
+        ProcessField.PrivateBytes, ProcessField.IoTotalRate, ProcessField.GpuPercent,
       ],
+      // §94 names a signature column here as well and it is deliberately absent, which is a decision
+      // rather than a gap. "Signature" is two columns and not one — a PE carries one the publisher
+      // put inside the file and an ELF does not, so what signs a Linux program is the package
+      // database that recorded its digest (PRD §5.3, §21, §70). The pair is fifty characters wide,
+      // one half of it reads n/a on whichever platform this is, and filling either means reading and
+      // digesting every image on the machine. This is the set somebody names to get a broad everyday
+      // table, and eleven columns of it fit a terminal eighty wide; the two verdict columns are in
+      // the security and forensic sets, which exist to pay for them (PRD §5.4).
       ["expert"] = [
         ProcessField.Name, ProcessField.Pid, ProcessField.ParentPid, ProcessField.CpuPercent,
         ProcessField.PrivateBytes, ProcessField.WorkingSetBytes, ProcessField.IoTotalRate,
@@ -322,15 +344,41 @@ public sealed record UserSettings {
       // with an authority nobody at the keyboard has. The bounding set is here rather than the
       // permitted one because it answers the question a reader is usually asking — what could this
       // ever do — while the effective set answers what it may do this instant.
+      //
+      // §70's five questions are five columns and are never read off one another: what the bytes are
+      // (the digest), whether the file's own signature still covers them, whether anybody this
+      // machine trusts signed for it, whether the package database's record still matches, and what
+      // an online service says — which is nothing, and which has a column of its own so that a
+      // digest computed here can never be mistaken for a file submitted from here. Each is Windows'
+      // or Linux's and not both, and the platform that has no answer says so.
       ["security"] = [
         ProcessField.Name, ProcessField.Pid, ProcessField.UserName, ProcessField.EffectiveUserName,
-        ProcessField.PrivilegeChanged, ProcessField.Elevated, ProcessField.Seccomp,
-        ProcessField.NoNewPrivileges, ProcessField.Capabilities, ProcessField.BoundingCapabilities,
-        ProcessField.SecurityContext, ProcessField.ImagePath,
+        ProcessField.PrivilegeChanged, ProcessField.Elevated, ProcessField.Integrity,
+        ProcessField.Seccomp, ProcessField.NoNewPrivileges, ProcessField.Capabilities,
+        ProcessField.BoundingCapabilities, ProcessField.SecurityContext,
+        ProcessField.ConfinementMode, ProcessField.Protected, ProcessField.ProtectionLevel,
+        ProcessField.ImageSignature, ProcessField.ImageSigner, ProcessField.PackageStatus,
+        ProcessField.TrustChain, ProcessField.ImageSha256, ProcessField.Reputation,
+        ProcessField.ImagePath,
       ],
+      // The scheduling class is in it because §94 asks for it and because it is the one column here
+      // that says why a row's rates look the way they do: a process at idle I/O reads slowly because
+      // it is yielding the disk, not because it has little to read. It costs an ioprio_get per
+      // process per sample, which naming this set is what pays for (PRD §5.4, §17).
       ["io"] = [
         ProcessField.Name, ProcessField.Pid, ProcessField.ReadBytesPerSecond,
-        ProcessField.WriteBytesPerSecond, ProcessField.IoTotalRate, ProcessField.IoHistory,
+        ProcessField.WriteBytesPerSecond, ProcessField.IoTotalRate, ProcessField.IoPriority,
+        ProcessField.IoHistory,
+      ],
+      // §94's network set, less the two columns §18 refuses. Endpoints rather than traffic, and
+      // deliberately: Linux attributes no bytes to a process without packet accounting or eBPF, so a
+      // send and a receive column here would be filled by summing the sockets a process happens to
+      // hold open at the moment somebody looked — which is not the quantity the header would claim
+      // and which nothing in the cell would betray (PRD §18, §72.3).
+      ["network"] = [
+        ProcessField.Name, ProcessField.Pid, ProcessField.TcpConnectionCount,
+        ProcessField.UdpSocketCount, ProcessField.ListeningSocketCount,
+        ProcessField.RemoteEndpointCount,
       ],
       ["memory"] = [
         ProcessField.Name, ProcessField.Pid, ProcessField.PrivateBytes,
@@ -671,6 +719,48 @@ public sealed record UserSettings {
 
           break;
 
+        // PRD §64. Seven lines, each of them somebody saying out loud what they want to be told
+        // about. A threshold that cannot be parsed leaves the rule unset rather than at nought,
+        // because nought is a threshold somebody could mean and "every process that used any CPU at
+        // all" is not what a mistyped number should turn into.
+        case "notify.started":
+          if (TryParseBool(value, out var started))
+            settings = settings with { Notifications = settings.Notifications with { ProcessStarted = started } };
+
+          break;
+
+        case "notify.ended":
+          if (TryParseBool(value, out var ended))
+            settings = settings with { Notifications = settings.Notifications with { ProcessEnded = ended } };
+
+          break;
+
+        case "notify.name":
+          settings = settings with { Notifications = settings.Notifications with { Names = SplitList(value) } };
+          break;
+
+        case "notify.cpu":
+          if (TryParseThreshold(value, out var notifyCpu))
+            settings = settings with { Notifications = settings.Notifications with { CpuPercent = notifyCpu } };
+
+          break;
+
+        case "notify.memory":
+          if (TryParseThreshold(value, out var notifyMemory))
+            settings = settings with { Notifications = settings.Notifications with { MemoryPercent = notifyMemory } };
+
+          break;
+
+        case "notify.disk":
+          if (TryParseThreshold(value, out var notifyDisk))
+            settings = settings with { Notifications = settings.Notifications with { DiskBytesPerSecond = notifyDisk } };
+
+          break;
+
+        case "notify.service":
+          settings = settings with { Notifications = settings.Notifications with { Services = SplitList(value) } };
+          break;
+
         default:
           unknown.Add(line);
           break;
@@ -769,6 +859,35 @@ public sealed record UserSettings {
       text.AppendLine();
       text.AppendLine("# The performance page opens tightened up, with its diagnostics block open.");
       text.AppendLine("performance.density=compact");
+    }
+
+    // Written out only where a rule was actually set, for the reason every other block here is:
+    // seven lines of "notify.cpu=" in everybody's file would be seven lines nobody reads, and the
+    // absence of a line is what "no rule" already means (PRD §64, §67).
+    if (this.Notifications.Any) {
+      text.AppendLine();
+      text.AppendLine("# What to be told about, on the status line. Every one of these is off unless");
+      text.AppendLine("# it is here: nothing is inferred and nothing fires that was not asked for.");
+      if (this.Notifications.ProcessStarted)
+        text.AppendLine("notify.started=true");
+
+      if (this.Notifications.ProcessEnded)
+        text.AppendLine("notify.ended=true");
+
+      if (this.Notifications.Names.Count > 0)
+        text.Append("notify.name=").AppendLine(string.Join(",", this.Notifications.Names));
+
+      if (this.Notifications.CpuPercent is { } notifyCpu)
+        text.Append("notify.cpu=").AppendLine(notifyCpu.ToString(CultureInfo.InvariantCulture));
+
+      if (this.Notifications.MemoryPercent is { } notifyMemory)
+        text.Append("notify.memory=").AppendLine(notifyMemory.ToString(CultureInfo.InvariantCulture));
+
+      if (this.Notifications.DiskBytesPerSecond is { } notifyDisk)
+        text.Append("notify.disk=").AppendLine(notifyDisk.ToString(CultureInfo.InvariantCulture));
+
+      if (this.Notifications.Services.Count > 0)
+        text.Append("notify.service=").AppendLine(string.Join(",", this.Notifications.Services));
     }
 
     if (this.TerminalGraphs is { } graphs) {
@@ -1034,6 +1153,46 @@ public sealed record UserSettings {
       case "false" or "no" or "off" or "0": value = false; return true;
       default: value = false; return false;
     }
+  }
+
+  /// <summary>
+  /// A notification threshold, which is a number or nothing at all (PRD §64).
+  /// </summary>
+  /// <remarks>
+  /// Empty clears the rule, which is how somebody switches one off without deleting the line. A
+  /// negative number is a typo rather than a preference — there is no reading here that can be below
+  /// nought — and leaves the rule as it was rather than arming it at a value that would fire on
+  /// every process on the machine.
+  /// </remarks>
+  private static bool TryParseThreshold(string text, out double? value) {
+    value = null;
+    if (text.Length == 0)
+      return true;
+
+    if (!double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var number) || number < 0)
+      return false;
+
+    value = number;
+    return true;
+  }
+
+  /// <summary>
+  /// A comma-separated list of names, with the empty entries dropped (PRD §64).
+  /// </summary>
+  /// <remarks>
+  /// Dropping the empties matters more than it looks: an empty string matches nothing under
+  /// <c>Equals</c>, so a trailing comma would silently do nothing at all rather than doing something
+  /// wrong — but a list that keeps them cannot be told from one somebody meant to leave empty, and
+  /// the rendered file would grow a comma every time it was written out.
+  /// </remarks>
+  private static string[] SplitList(string text) {
+    var parts = text.Split(',');
+    var kept = new List<string>(parts.Length);
+    foreach (var part in parts)
+      if (part.Trim() is { Length: > 0 } name)
+        kept.Add(name);
+
+    return [.. kept];
   }
 
   #endregion

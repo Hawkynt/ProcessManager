@@ -41,6 +41,7 @@ public sealed class TerminalUi {
   private string _input = string.Empty;
   private ProcessKey _confirmTarget;
   private PendingAction _pending;
+  private SchedulingPolicy _realTimeClass;
   private string? _highlight;
   private int _lowerPaneHeight;
   private ListOverlay? _overlay;
@@ -65,7 +66,7 @@ public sealed class TerminalUi {
   /// prompt and the deed cannot disagree about which one was asked for — which a pair of booleans
   /// was one added action away from allowing.
   /// </remarks>
-  private enum PendingAction : byte { None, Terminate, TerminateTree, Restart }
+  private enum PendingAction : byte { None, Terminate, TerminateTree, Restart, RealTimeClass }
 
   public TerminalUi(
     Sampler sampler,
@@ -99,6 +100,35 @@ public sealed class TerminalUi {
 
   /// <summary>Which key does what. Replaceable, because §57.3 says the bindings are the user's.</summary>
   public KeyBindings Keys { get; set; } = KeyBindings.Default;
+
+  /// <summary>
+  /// What to be told about, and where the telling appears (PRD §64).
+  /// </summary>
+  /// <remarks>
+  /// The status line, which is where this front-end already says everything else it has to say. A
+  /// terminal has no tray and no desktop notification to send, and a full-width banner would cost a
+  /// row of the process list for something that is over in a second — so a notification is one
+  /// sentence in the place a reader already looks for one.
+  /// </remarks>
+  public NotificationRules Notifications {
+    get => this._watch.Rules;
+    set => this._watch = new(value ?? new NotificationRules());
+  }
+
+  private NotificationWatch _watch = new(new NotificationRules());
+
+  /// <summary>
+  /// How many samples pass between service checks, when a rule names a unit at all (PRD §5.4, §64).
+  /// </summary>
+  /// <remarks>
+  /// Reading the service list is a walk of two unit directories and the cgroup tree, which is far
+  /// too dear to do at the sample rate and would be paid for by every run rather than by the runs
+  /// that asked. Eight samples is eight seconds at the default rate, which is soon enough to be told
+  /// that something stopped and rare enough that nobody notices the cost.
+  /// </remarks>
+  private const int _ServiceCheckEvery = 8;
+
+  private int _sinceServiceCheck;
 
   /// <summary>True once the user has asked to leave.</summary>
   public bool ShouldQuit { get; private set; }
@@ -218,7 +248,33 @@ public sealed class TerminalUi {
       this.ListHeight + 8
     );
 
+    this.Announce();
     this.Compose();
+  }
+
+  /// <summary>
+  /// Says whatever the rules asked to be told about, if anything (PRD §64).
+  /// </summary>
+  /// <remarks>
+  /// After the view is rebuilt and before the frame is composed, so the sentence and the rows it is
+  /// about are the same sample. A notification does not overwrite something the reader asked for by
+  /// pressing a key, because the next keystroke replaces it anyway and a message that was answering
+  /// a question is the more useful of the two.
+  /// </remarks>
+  private void Announce() {
+    if (!this._watch.Rules.Any)
+      return;
+
+    var found = this._watch.Examine(this._sampler.Current, this._sampler.Delta);
+    if (this._watch.Rules.NeedsServices && ++this._sinceServiceCheck >= _ServiceCheckEvery) {
+      this._sinceServiceCheck = 0;
+      var stopped = this._watch.ExamineServices(this._probe.GetServices());
+      if (stopped.Count > 0)
+        found = [.. found, .. stopped];
+    }
+
+    if (found.Count > 0)
+      this.Say(NotificationWatch.Summarise(found), Attributes.Warn);
   }
 
   /// <summary>Recomposes without sampling — for a keypress that only changes what is shown.</summary>
@@ -610,6 +666,13 @@ public sealed class TerminalUi {
     }
 
     switch (pending) {
+      case PendingAction.RealTimeClass:
+        this.Report(
+          this._actions.SetSchedulingClass(this._confirmTarget, this._realTimeClass, 1),
+          $"{this._confirmTarget.Pid} now runs under {Humanize.SchedulingPolicy(this._realTimeClass)}"
+        );
+
+        return true;
       case PendingAction.TerminateTree:
         this.KillTree(this._confirmTarget);
         return true;
@@ -666,9 +729,21 @@ public sealed class TerminalUi {
 
     // The real-time classes take their lowest static priority; anything above it is a decision for a
     // prompt rather than for one keystroke in a list (PRD §68).
-    var priority = chosen is SchedulingPolicy.Fifo or SchedulingPolicy.RoundRobin ? 1 : 0;
+    var realTime = chosen is SchedulingPolicy.Fifo or SchedulingPolicy.RoundRobin;
+
+    // §69 class 3, and the only one of these that is. Moving a process to batch or idle is undone by
+    // pressing the key again; moving it to SCHED_FIFO can end the session, and a class that always
+    // warns cannot be reached by one keystroke with no second one. The other three are class 1 and go
+    // straight through, which is what makes the pause worth reading when it does appear.
+    if (realTime && ActionSafety.MustAsk(ActionClass.Unsafe, confirmsSingleActions: true)) {
+      this._realTimeClass = chosen;
+      this._pending = PendingAction.RealTimeClass;
+      this._mode = InputMode.Confirm;
+      return true;
+    }
+
     this.Report(
-      this._actions.SetSchedulingClass(this._confirmTarget, chosen, priority),
+      this._actions.SetSchedulingClass(this._confirmTarget, chosen, realTime ? 1 : 0),
       $"{this._confirmTarget.Pid} now runs under {Humanize.SchedulingPolicy(chosen)}"
     );
 
@@ -2223,6 +2298,12 @@ public sealed class TerminalUi {
     var name = this._sampler.Current.TryGetProcess(this._confirmTarget, out var record) ? record.Name : "?";
     var target = $"{name} (PID {this._confirmTarget.Pid})";
     return this._pending switch {
+      // The consequence rather than the name of the class, because the name is the part somebody
+      // already read off the chooser and the consequence is the part they have not (PRD §90).
+      PendingAction.RealTimeClass
+        => $"Move {target} to {Humanize.SchedulingPolicy(this._realTimeClass)}? "
+          + "An ordinary process cannot preempt a real-time one, so one that spins never gives the "
+          + "processor back. y/N",
       PendingAction.TerminateTree
         => $"Terminate {target} and the {Math.Max(0, ProcessTree.DescendantsFirst(this._sampler.Current, this._confirmTarget.Pid).Count - 1)} "
           + "processes under it? Unsaved work in them is lost. y/N",

@@ -4521,11 +4521,61 @@ which would turn "we could not read this" into the literal string "—" in a col
 
 # 64. Notifications
 
-- [ ] Process started · process terminated · named process started
-- [ ] CPU / memory / disk / network above threshold
-- [ ] Service stopped · process became unresponsive
-- [ ] Unsigned process started · reputation warning
-- [ ] Rules are explicit and stored locally
+- [x] Process started · process terminated · named process started
+- [ ] 🟡 CPU / memory / disk above threshold. **Network is §18's refusal and not a gap**: nothing here
+      attributes bytes to a process, so there is no per-process traffic figure to compare against a
+      number, and one summed from the sockets a process happens to hold open would be a rule that
+      fired on the wrong processes and stayed quiet about the right ones
+- [ ] 🟡 Service stopped. **"Process became unresponsive" has no source on Linux** — there is no
+      kernel notion of a process failing to answer, the Windows one is a message pump that stopped
+      pumping, and the nearest thing here is `_NET_WM_PING` to each window of each process, which is
+      a round trip per window per sample and answers only for processes that have windows (§39)
+- ∅ Unsigned process started · reputation warning. **Both are refused rather than deferred**, and on
+      the same ground §23 refuses the colours for them: nothing here establishes either. An ELF
+      carries no signature, so "unsigned" on Linux would have to mean the package check — which needs
+      the image read and digested for every process that starts, and answers "not packaged" for most
+      of what a developer runs (§70). There is no reputation provider and none ships, so a warning
+      from one could never fire; a rule that can never fire is a claim that something is being
+      watched
+- [x] Rules are explicit and stored locally
+
+**Nothing fires that nobody asked for.** Every rule is off until a `notify.` line is written, an
+unconfigured program interrupts nobody, and the file grows no `notify.` lines until one is set — a
+monitor that decided for itself what was worth interrupting somebody about would be interrupting them
+during the one hour they were using it to diagnose something. The rules are seven lines in the
+settings file beside everything else §67 keeps: `notify.started`, `notify.ended`, `notify.name`,
+`notify.cpu`, `notify.memory`, `notify.disk` and `notify.service`. The thresholds are absent-or-set
+rather than defaulting to nought, because nought is a threshold somebody could mean, and a mistyped
+number therefore leaves the rule unset instead of arming it to fire on every process on the machine.
+
+**Edge-triggered, never level-triggered.** A process sitting above a threshold for a minute is one
+thing that happened and not sixty, so the crossing fires and the process is remembered until it drops
+back. Getting this wrong does not produce a slightly noisy program; it produces one that scrolls its
+own status line faster than anything else on it can be read.
+
+**A reading with no value is not a reading below the threshold.** An unpermitted or not-yet-sampled
+rate neither fires a rule nor clears it, and the process keeps whatever state it had. Treating
+`default(Rate)` as nought here would announce "back below" for every process on the first sample and
+again for every process the sampler could not read, which is the confident-zero defect of §72.3
+arriving as an interruption instead of as a cell. The same rule governs a unit whose state could not
+be determined: passing through unknown is not a service stopping.
+
+**It is the status line, in both front-ends, and deliberately not a tray or a desktop toast.** §65's
+tray is unbuilt, and a program that put a system-wide notification on screen because of a rule
+somebody wrote in a text file would be interrupting the whole session rather than the window they
+were looking at. The window holds a notice for five samples and then drops it — one sample is a
+second and nobody reads a sentence in a second, while leaving it up until something replaced it
+would mean a status line still announcing a process that started twenty minutes ago, which stops
+being a notification and becomes furniture.
+
+**The service rule is the one that costs anything, and it is the one that is polled.** Reading the
+service list is a walk of two unit directories and the cgroup tree, far too dear to do at the sample
+rate — so it happens every eighth sample and only when a rule names a unit at all. Naming one is the
+opt-in that pays for the walk (§5.4). Everything else here is free: it reads the snapshot and the
+delta that were taken anyway.
+
+The timeline of §63 is a different feature and is still unbuilt. These are transient and are not
+recorded; a notification nobody was looking at is gone, which is what the timeline is for.
 
 # 65. Tray / menu bar
 
@@ -4685,19 +4735,64 @@ socket, and it exits when the client does.
 
 # 69. Action safety classification
 
-Every mutation has a class.
+Every mutation has a class, and the class decides what it takes to do it. `ActionClass` and
+`ActionSafety.MustAsk` are in Core beside `IProcessActions`, so the window and the terminal cannot
+come to different answers about the same request (§5.1, §58). The class is a property of the
+*request* rather than of the method carrying it out — `SIGCONT` and `SIGKILL` are one method and two
+very different things to have done — and `ActionClass.Unclassified` is nought and is confirmed like
+class 3, because the request nobody sorted is the one nobody thought about (§72.3).
 
-- [ ] 🟡 **Class 0 — read-only.** Copy, search, properties, reveal path. No confirmation.
-- [ ] 🟡 **Class 1 — reversible or low impact.** Change priority, change affinity, suspend.
-      Optional confirmation.
-- [ ] 🟡 **Class 2 — potential data loss.** Terminate process, stop service, log out user, disable
-      startup item. Confirmation configurable, default enabled for high-value and system targets.
-- [ ] **Class 3 — expert / unsafe.** Close a foreign process's resource, terminate a thread, unload a
-      module, modify process memory. Always an explicit warning.
-- [ ] System-critical process actions display additional warnings and may be blocked where the OS
-      itself prohibits them
+- [x] **Class 0 — read-only.** Copy, search, properties, reveal path, export. No confirmation, and
+      none for a system target either: copying a row out of `init` is still copying a row
+- [x] **Class 1 — reversible or low impact.** Change priority, change affinity, change I/O priority,
+      move between the ordinary scheduler classes, suspend, resume, start a service, reload one's
+      configuration. `confirm.destructive` decides for all of these, and switching it off switches
+      them off — which is the whole point of a class undone by the item beside it. §69 makes the
+      confirmation optional, and three class 1 actions decline even that: **end task**, because the
+      thing being asked is the program itself and an editor with unsaved work does its own asking
+      (§25.1); **thaw a cgroup**, because it is the reversal of the freeze and costs nothing; and
+      **putting a login entry back**, because the entry beside it takes it out again. All three are
+      the reversal half of a pair, and a prompt on the way back teaches people to dismiss prompts
+- [x] **Class 2 — potential data loss.** Terminate, restart, stop or restart a service, take a login
+      entry out of the next boot. The setting decides — **except against a system target, where it
+      asks whatever the setting says.** That switch is turned off by people who end their own editors
+      all day, and not by people who meant to stop `systemd`. A system
+      target is root's, or one of the four lowest pids, read off the snapshot rather than guessed; it
+      under-reports rather than over-reports; and the confirmation says *which kind* of process it
+      is, because a reader can check "this belongs to root" against the user column and cannot check
+      "this is critical" against anything. **A bulk action is class 2 and never skips**, whatever the
+      setting says and whoever owns the rows: ending a tree and ending the ticked rows both ask,
+      because there the count is the whole of what the confirmation is for (§67, §90)
+- [x] **Class 3 — expert / unsafe.** Any signal from the chooser, either real-time scheduling class,
+      freezing a whole cgroup. **Always warned, and no preference switches it off.** Two of these
+      were wrong until this section was checked against the code rather than against itself: the
+      window sent an arbitrary signal under the class 2 rule, so `confirm.destructive=false` sent
+      `SIGKILL` to a daemon with nothing said, and the terminal moved a process to `SCHED_FIFO` on
+      one keystroke while ending it took a confirmation
+- [x] **System-critical process actions display additional warnings, and are blocked where the
+      operating system itself prohibits them.** The warning is the sentence named under class 2. The
+      blocking is `SIGKILL` and `SIGSTOP` to pid 1 and to kernel threads, which are refused rather
+      than sent
 
-The classes exist in the action broker; the confirmation policy that reads them does not.
+**The four things §69 names for class 3 are all refused elsewhere, and the class is not empty because
+of it.** Closing a foreign process's descriptor (§32), terminating one thread (§29), unloading a
+module from another process (§25.6) and writing to another process's memory (§25.5) are each ∅ with
+their own argument, and none of them exists here to be classified. What is left in the class is what
+this program *can* do that belongs in it — an arbitrary signal, a real-time class, a cgroup freeze —
+and until now two of those three were going unwarned.
+
+**Refusing what the kernel would discard is not caution; it is the rule `kill -0` already follows
+here.** `kill(1, SIGKILL)` returns nought and does nothing: the kernel delivers pid 1 only the
+signals init installed a handler for, and `SIGKILL` and `SIGSTOP` are the two no process may ever
+have one for. A kernel thread never returns to user space, so it never looks at a pending signal at
+all, and even `SIGKILL` to one is a successful call with no effect. In both cases the person who
+asked would be told the action worked — which is exactly why signal nought is already refused rather
+than sent as an existence test (§25.1). Only those two signals and only those two kinds of target are
+refused, because a refusal is this program declining what was asked and it may only decline where the
+kernel's behaviour is certain rather than likely: `SIGTERM` to pid 1 *is* delivered, `systemd` handles
+it, and what it does with it is between the sender and the manual page.
+
+The wording of a confirmation is §90's business. The class decides only whether one appears.
 
 # 70. Reputation and signature verification
 
@@ -5257,29 +5352,59 @@ deliberately not in chrome, icons or artwork.
 
 # 94. Default views
 
+Every one of these is a named set reachable from all three front-ends — `--columns @basic` on the
+command line, Columns ▸ Column sets in the window, `c` in the terminal — and none of them is written
+into anybody's settings file, so a preset that gets improved improves everywhere. Naming a set is
+also what pays for the expensive readings in it: a column nobody named collects nothing (§5.4).
+
 **Processes — Basic:** name · PID · status · CPU · memory · disk · network · GPU
 
-- [ ] 🟡 Available except disk, network and GPU
+- [ ] 🟡 Available except network, which is §18's refusal rather than a gap. Nothing here attributes
+      bytes to a process, and the four endpoint counts that *are* readable are not throughput and are
+      not offered under a header that would say they were (§5.3). The graphics share is in the set:
+      §19 reads it, it costs a descriptor read per process, and naming this set is the asking
 
 **Processes — Expert:** process · PID · PPID · CPU · private memory · working set · I/O rate · user ·
 start time · command line · signature
 
-- [ ] 🟡 Available except signature
+- [ ] 🟡 Available except signature, and that is a decision rather than a gap. "Signature" is two
+      columns and not one — a PE carries one the publisher put inside the file and an ELF does not,
+      so what signs a Linux program is the package database that recorded its digest (§5.3, §21,
+      §70). The pair is fifty characters wide, one half of it reads `n/a` on whichever platform this
+      is, and filling either means reading and digesting every image on the machine. This is the set
+      somebody names to get a broad everyday table, and eleven columns of it fit a terminal eighty
+      wide; the verdict columns are in the two sets below, which exist to pay for them
 
 **Security:** name · PID · user · path · signer · signature · integrity/security context · elevated ·
 protection · hash · reputation
 
-- [ ] 🟡 Available except signer, signature, protection, hash and reputation — the identity and
-      confinement half of the set is there (§21), and everything still missing belongs to §70's code
-      signing, which has no Linux counterpart to build against
+- [x] Available. The claim that the missing half "belongs to §70's code signing, which has no Linux
+      counterpart" was wrong about four of the five: `hash.sha256` is read on Linux, `reputation` is
+      a column on every platform precisely so that a digest computed here can never be mistaken for a
+      file submitted from here, `package.status` is what signs a Linux program, and `trust.chain` is
+      what the packaging system recorded about who validated it. So §70's five questions are five
+      columns here and none is read off another — a package built on this machine matches its own
+      record exactly and carries nobody's signature, which is Verified in one column and Unsigned in
+      the next. `signer`, `signature`, `protected` and `protection.level` are Windows' and say `n/a`
+      here; `confinement` is the Linux side of the same question and says `n/a` there
 
 **I/O:** name · PID · read rate · write rate · read bytes · write bytes · other rate · I/O priority
 
-- [ ] 🟡 Available except I/O priority
+- [ ] 🟡 Available except the two cumulative byte totals and the other-operations rate. I/O priority
+      *is* in the set — it was missing rather than unavailable, and costs one `ioprio_get` per
+      process per sample, which naming this set pays for. The three that are absent are absent from
+      the field catalogue rather than from this set: `ProcessRecord` carries `ReadBytes`,
+      `WriteBytes` and `OtherBytes` and the sampler fills them, but the only columns built on them
+      are the rates. **§17 ticks `io.read.bytes` and `io.write.bytes` and there are no such
+      columns** — that is §17's box to correct, not this one's
 
 **Network:** name · PID · send · receive · connections · listening ports
 
-- [ ] Blocked on §18
+- [ ] 🟡 Available except send and receive, which §18 refuses. There is a `network` set now — it was
+      not that the columns did not exist, it was that nobody had named a set to put them in: TCP
+      connections, UDP sockets, listening sockets and distinct peers, all four `High` because the
+      join from a socket to a process is a `readlink` per open descriptor on the machine. The set
+      counts endpoints and never invents traffic, which is asserted rather than left to review
 
 **Full forensic:** the expert set, plus effective user · privilege change · capabilities ·
 security context · seccomp · no-new-privileges · tracer · read rate · write rate · descriptors ·

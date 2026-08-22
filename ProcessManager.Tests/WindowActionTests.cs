@@ -227,6 +227,75 @@ public sealed class WindowActionTests {
 
   #endregion
 
+  #region the safety classes (PRD §69)
+
+  /// <summary>
+  /// Class 1: the setting governs it, and turning the setting off turns the prompt off. Suspending
+  /// is undone by the item beside it, which is the whole of why it is not class 2.
+  /// </summary>
+  [Test]
+  public void SuspendingFollowsTheSettingAndIsNotAskedAboutWhenItIsOff() {
+    var (window, probe, actions, asked, _) = Machine(settings: Settings(confirm: false));
+    using (probe) {
+      MenuItem(window, "Suspend").PerformClick();
+
+      Assert.That(asked, Is.Empty);
+      Assert.That(actions.Done, Is.EqualTo(new[] { "suspend 1" }));
+    }
+  }
+
+  [Test]
+  public void SuspendingIsAskedAboutWhenTheSettingIsOn() {
+    var (window, probe, _, asked, _) = Machine(settings: Settings(confirm: true));
+    using (probe) {
+      MenuItem(window, "Suspend").PerformClick();
+
+      Assert.That(asked, Has.Count.EqualTo(1));
+      Assert.That(asked[0], Does.StartWith("Suspend "));
+    }
+  }
+
+  /// <summary>
+  /// Class 2 against something the machine depends on. The recorded machine's first row is its init,
+  /// and a person who switched confirmations off to stop being asked about their own editor has not
+  /// thereby asked to end that without being asked (PRD §69).
+  /// </summary>
+  [Test]
+  public void EndingRootsProcessStillAsksWhenTheSettingIsOff() {
+    var (window, probe, actions, asked, _) = Machine(settings: Settings(confirm: false));
+    using (probe) {
+      MenuItem(window, "End process").PerformClick();
+
+      Assert.That(asked, Has.Count.EqualTo(1));
+      Assert.That(asked[0], Does.Contain("PID 1"));
+      Assert.That(asked[0], Does.Contain("init"), "and says which kind of process it is");
+      Assert.That(actions.Done, Is.EqualTo(new[] { "terminate 1" }));
+    }
+  }
+
+  /// <summary>
+  /// The extra sentence is beside the ordinary consequence rather than instead of it. Losing "this
+  /// forcibly stops the process" to make room for "this is the machine's init" would trade one half
+  /// of §90's requirement for the other.
+  /// </summary>
+  [Test]
+  public void TheSystemWarningIsAddedToTheConsequenceRatherThanReplacingIt() {
+    var (window, probe, _, asked, _) = Machine();
+    using (probe) {
+      MenuItem(window, "End process").PerformClick();
+
+      Assert.That(asked[0], Does.Contain("unsaved work"));
+      Assert.That(asked[0], Does.Contain("descended from this process"));
+    }
+  }
+
+  private static UserSettings Settings(bool confirm) => new() {
+    ConfirmDestructiveActions = confirm,
+    DesktopColumns = [ProcessField.Name, ProcessField.Pid],
+  };
+
+  #endregion
+
   #region the lower pane (PRD §10)
 
   /// <summary>

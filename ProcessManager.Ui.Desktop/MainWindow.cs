@@ -239,6 +239,11 @@ public sealed class MainWindow : Form {
     this._details.Unavailable = settings.HideUnavailableTabs ? UnavailableTabs.Hidden : UnavailableTabs.Disabled;
     RowPalette.Apply(settings.Colours);
     ProcessRow.Thresholds = settings.Thresholds;
+    // A new watch rather than a new rule set on the old one: the state a watch holds is "which
+    // processes are already over the threshold", and that state belongs to the thresholds it was
+    // built with. Keeping it across a change would leave a process that was over the old limit
+    // marked as already announced under the new one (PRD §64).
+    this._watch = new(settings.Notifications);
 
     this._view.SortColumn = settings.SortField;
     this._view.SortDescending = settings.SortDescending;
@@ -1183,12 +1188,12 @@ public sealed class MainWindow : Form {
     menu.Items.Add(Item("Properties", () => this.UpdateDetails()));
     menu.Items.Add(new ToolStripSeparator());
     menu.Items.Add(Item("End task", this.EndTask));
-    menu.Items.Add(Item("End process", () => this.Act("end", key => this._actions!.Terminate(key), _EndsWithoutAsking)));
+    menu.Items.Add(Item("End process", () => this.Act("end", key => this._actions!.Terminate(key), ActionClass.DataLoss, _EndsWithoutAsking)));
     menu.Items.Add(Item("End process tree", this.EndTree));
     menu.Items.Add(Item("End the ticked processes", this.EndTicked));
     menu.Items.Add(Item("Restart", this.RestartProcess));
-    menu.Items.Add(Item("Suspend", () => this.Act("suspend", key => this._actions!.Suspend(key))));
-    menu.Items.Add(Item("Resume", () => this.Act("resume", key => this._actions!.Resume(key))));
+    menu.Items.Add(Item("Suspend", () => this.Act("suspend", key => this._actions!.Suspend(key), ActionClass.Reversible)));
+    menu.Items.Add(Item("Resume", () => this.Act("resume", key => this._actions!.Resume(key), ActionClass.Reversible)));
     menu.Items.Add(Item("Send signal…", this.SendSignal));
     menu.Items.Add(this.FreezerMenu());
     menu.Items.Add(new ToolStripSeparator());
@@ -1233,7 +1238,7 @@ public sealed class MainWindow : Form {
     var menu = new ToolStripMenuItem("Priority");
     foreach (var (label, nice) in _Priorities) {
       var value = nice;
-      menu.DropDownItems.Add(Item(label, () => this.Act($"set priority to {value}", key => this._actions!.SetPriority(key, value))));
+      menu.DropDownItems.Add(Item(label, () => this.Act($"set priority to {value}", key => this._actions!.SetPriority(key, value), ActionClass.Reversible)));
     }
 
     return menu;
@@ -1258,7 +1263,7 @@ public sealed class MainWindow : Form {
       ("Idle", new(IoPriorityClass.Idle)),
     }) {
       var value = priority;
-      menu.DropDownItems.Add(Item(label, () => this.Act($"set I/O priority to {value}", key => this._actions!.SetIoPriority(key, value))));
+      menu.DropDownItems.Add(Item(label, () => this.Act($"set I/O priority to {value}", key => this._actions!.SetIoPriority(key, value), ActionClass.Reversible)));
     }
 
     return menu;
@@ -1279,9 +1284,13 @@ public sealed class MainWindow : Form {
       var chosen = choice;
       menu.DropDownItems.Add(Item(
         chosen.Name,
+        // The one item on this menu whose class depends on which entry was picked. Batch and idle are
+        // reversible by the entry above them; the two real-time classes can take the machine with
+        // them, which is §69's class 3 and is not something a preference may switch off.
         () => this.Act(
           $"move to {chosen.Name}",
           key => this._actions!.SetSchedulingClass(key, chosen.Policy, chosen.Priority),
+          chosen.IsRealTime ? ActionClass.Unsafe : ActionClass.Reversible,
           chosen.IsRealTime
             ? "A real-time task cannot be preempted by an ordinary one. A real-time process that spins never gives the processor back."
             : null
@@ -1331,9 +1340,14 @@ public sealed class MainWindow : Form {
     if (!chooser.Accepted || chooser.Chosen is not { } signal)
       return;
 
+    // Class 3 whichever signal was chosen, so this one asks whatever the setting says. The chooser
+    // offers the whole of `kill -l`, the default action of most of that list is to end the process,
+    // and somebody who turned confirmations off to stop being asked about their own editor has not
+    // thereby asked to send SIGBUS to a daemon without being asked (PRD §25.1, §69).
     this.Act(
       $"send {Signals.Describe(signal)} to",
       key => this._actions!.SendSignal(key, signal),
+      ActionClass.Unsafe,
       Signals.Consequence(signal)
     );
   }
@@ -1386,16 +1400,15 @@ public sealed class MainWindow : Form {
       ? $"every process in that cgroup — {Humanize.Count(cgroup.PidsCurrent)} tasks between them"
       : "every process in that cgroup";
 
-    var answer = MessageBox.Show(
-      $"Freeze {cgroup.Path}?\n\n"
-      + $"This stops {members}, not only {row.Name} (PID {row.Pid}). "
-      + "They keep every file, socket and lock they hold, and each still reports itself as sleeping — "
-      + "the kernel has no process state for frozen.",
-      "Process Manager",
-      MessageBoxButtons.YesNo
-    );
-
-    if (answer != DialogResult.Yes)
+    // Class 3, so the setting has no say in it: the target is not the row that was selected but every
+    // process beside it in the cgroup, and that is not something a preference switches off (PRD §69).
+    if (ActionSafety.MustAsk(ActionClass.Unsafe, this._settings.ConfirmDestructiveActions)
+      && !this.Confirm(
+        $"Freeze {cgroup.Path}?\n\n"
+        + $"This stops {members}, not only {row.Name} (PID {row.Pid}). "
+        + "They keep every file, socket and lock they hold, and each still reports itself as sleeping — "
+        + "the kernel has no process state for frozen."
+      ))
       return;
 
     this.Report(this._actions.FreezeCgroup(row.Key, true));
@@ -1887,7 +1900,7 @@ public sealed class MainWindow : Form {
     if (!chooser.Accepted)
       return;
 
-    this.Act("set affinity", key => this._actions!.SetAffinity(key, chooser.Mask));
+    this.Act("set affinity", key => this._actions!.SetAffinity(key, chooser.Mask), ActionClass.Reversible);
   }
 
   private static ToolStripMenuItem Item(string text, Action action) {
@@ -2326,12 +2339,12 @@ public sealed class MainWindow : Form {
 
     var process = new ToolStripMenuItem("Process");
     process.DropDownItems.Add(Item("End task", this.EndTask));
-    process.DropDownItems.Add(Item("End process", () => this.Act("end", key => this._actions!.Terminate(key), _EndsWithoutAsking)));
+    process.DropDownItems.Add(Item("End process", () => this.Act("end", key => this._actions!.Terminate(key), ActionClass.DataLoss, _EndsWithoutAsking)));
     process.DropDownItems.Add(Item("End process tree", this.EndTree));
     process.DropDownItems.Add(Item("End the ticked processes", this.EndTicked));
     process.DropDownItems.Add(Item("Restart", this.RestartProcess));
-    process.DropDownItems.Add(Item("Suspend", () => this.Act("suspend", key => this._actions!.Suspend(key))));
-    process.DropDownItems.Add(Item("Resume", () => this.Act("resume", key => this._actions!.Resume(key))));
+    process.DropDownItems.Add(Item("Suspend", () => this.Act("suspend", key => this._actions!.Suspend(key), ActionClass.Reversible)));
+    process.DropDownItems.Add(Item("Resume", () => this.Act("resume", key => this._actions!.Resume(key), ActionClass.Reversible)));
     process.DropDownItems.Add(Item("Send signal…", this.SendSignal));
     process.DropDownItems.Add(this.FreezerMenu());
     process.DropDownItems.Add(new ToolStripSeparator());
@@ -2407,11 +2420,56 @@ public sealed class MainWindow : Form {
     this._cpuPlot.Invalidate();
     this._memoryPlot.Invalidate();
 
+    this.Announce();
     this.UpdateStatus(snapshot, delta);
     this.UpdateDetails();
     // Once the readings are current, so what a screen reader is told about the plots is the same
     // sample the plots are drawing (PRD §74).
     this.DescribeForScreenReaders();
+  }
+
+  /// <summary>
+  /// Works out what the rules asked to be told about, and how long to leave it up (PRD §64).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Before <see cref="UpdateStatus"/> rather than after, because that method rewrites the whole
+  /// status line every tick and reads <see cref="_notice"/> while it does — so the notice is composed
+  /// here and rendered there, in one place, rather than being written and then overwritten a
+  /// millisecond later.
+  /// </para>
+  /// <para>
+  /// It stays up for a few samples and then goes. One sample is a second at the default rate and
+  /// nobody reads a sentence in a second; leaving it up until something replaced it would mean a
+  /// status line still announcing a process that started twenty minutes ago, which stops being a
+  /// notification and becomes furniture.
+  /// </para>
+  /// <para>
+  /// There is no tray icon and no desktop notification here, and §65 is why: the tray is unbuilt, and
+  /// a program that put a system-wide toast on screen for a rule somebody wrote in a text file would
+  /// be interrupting the whole session rather than the window they were looking at.
+  /// </para>
+  /// </remarks>
+  private void Announce() {
+    if (this._noticeTicks > 0 && --this._noticeTicks == 0)
+      this._notice = null;
+
+    if (!this._watch.Rules.Any)
+      return;
+
+    var found = this._watch.Examine(this._sampler.Current, this._sampler.Delta);
+    if (this._watch.Rules.NeedsServices && ++this._sinceServiceCheck >= _ServiceCheckEvery) {
+      this._sinceServiceCheck = 0;
+      var stopped = this._watch.ExamineServices(this._probe.GetServices());
+      if (stopped.Count > 0)
+        found = [.. found, .. stopped];
+    }
+
+    if (found.Count == 0)
+      return;
+
+    this._notice = NotificationWatch.Summarise(found);
+    this._noticeTicks = _NoticeSamples;
   }
 
   /// <summary>
@@ -2459,8 +2517,35 @@ public sealed class MainWindow : Form {
       // Said on every line rather than once when it was switched on: a table that is not following
       // the machine looks exactly like one that is, and the moment somebody most needs to be told is
       // the moment they have forgotten they asked for it (PRD §12, §72.3).
-      + (this.WhyItIsNotUpdating is { } why ? "  ·  " + why : string.Empty);
+      + (this.WhyItIsNotUpdating is { } why ? "  ·  " + why : string.Empty)
+      // Last, so that it reads as an addition to the line rather than displacing the counts somebody
+      // is watching. Nothing at all when no rule was written, which is every unconfigured machine.
+      + (this._notice is { Length: > 0 } notice ? "  ·  " + notice : string.Empty);
   }
+
+  /// <summary>What the notification rules last had to say, or null (PRD §64).</summary>
+  public string? Notice => this._notice;
+
+  private string? _notice;
+
+  private int _noticeTicks;
+
+  private NotificationWatch _watch = new(new NotificationRules());
+
+  private int _sinceServiceCheck;
+
+  /// <summary>How many samples a notification stays on the status line.</summary>
+  private const int _NoticeSamples = 5;
+
+  /// <summary>
+  /// How many samples pass between service checks, when a rule names a unit at all (PRD §5.4, §64).
+  /// </summary>
+  /// <remarks>
+  /// Reading the service list is a walk of two unit directories and the cgroup tree. Far too dear to
+  /// do at the sample rate, and paid for only by the runs that asked for it — which is the same rule
+  /// every other expensive reading in this program follows.
+  /// </remarks>
+  private const int _ServiceCheckEvery = 8;
 
   private void UpdateDetails() {
     var row = this._binder.SelectedRow;
@@ -2580,7 +2665,29 @@ public sealed class MainWindow : Form {
 
   #endregion
 
-  private void Act(string what, Func<ProcessKey, ActionResult> action, string? consequence = null) {
+  /// <summary>
+  /// Does one thing to the selected process, having asked about it if its class says to (PRD §69).
+  /// </summary>
+  /// <param name="class">
+  /// Which of §69's four classes this is. It has no default on purpose: an action added here without
+  /// somebody deciding what it can cost should not compile, and the enum's own nought would have made
+  /// the forgotten case the silent one.
+  /// </param>
+  /// <remarks>
+  /// <para>
+  /// The decision itself is <see cref="ActionSafety.MustAsk"/> in Core rather than a condition here,
+  /// so the terminal cannot come to a different answer about the same request — the reason the field
+  /// catalogue and the filter language live there too (PRD §5.1, §58).
+  /// </para>
+  /// <para>
+  /// The target is named unambiguously because a pid on its own is not a name and the row under the
+  /// pointer may have moved (PRD §6.4). Where the target is one the machine depends on, the
+  /// confirmation says which kind of process it is as well as what is about to happen to it — that
+  /// sentence is the whole difference between agreeing to end a browser tab and agreeing to end a
+  /// daemon that was holding the network up (PRD §5.5, §90).
+  /// </para>
+  /// </remarks>
+  private void Act(string what, Func<ProcessKey, ActionResult> action, ActionClass @class, string? consequence = null) {
     if (this._binder.SelectedRow is not { } row)
       return;
 
@@ -2589,14 +2696,19 @@ public sealed class MainWindow : Form {
       return;
     }
 
-    // Confirmed before it happens, and the target named unambiguously — a pid on its own is not a
-    // name, and the row under the pointer may have moved (PRD §6.4). Skipped only when somebody has
-    // said in the settings that they do not want to be asked about one process at a time; the bulk
-    // terminate below never skips, because there the count is the whole of what the prompt is for
-    // (PRD §67, §90).
-    if (this._settings.ConfirmDestructiveActions) {
+    var systemTarget = this._sampler.Current.TryGetProcess(row.Key, out var record)
+      && ActionSafety.IsSystemTarget(in record);
+
+    if (ActionSafety.MustAsk(@class, this._settings.ConfirmDestructiveActions, systemTarget)) {
       var question = $"{char.ToUpper(what[0], CultureInfo.CurrentCulture)}{what[1..]} {row.Name} (PID {row.Pid})?";
-      if (!this.Confirm(consequence is null ? question : $"{question}\n\n{consequence}"))
+      var said = new System.Text.StringBuilder(question);
+      if (consequence is not null)
+        said.Append("\n\n").Append(consequence);
+
+      if (systemTarget)
+        said.Append("\n\n").Append(ActionSafety.SystemTargetWarning(row.Pid));
+
+      if (!this.Confirm(said.ToString()))
         return;
     }
 
@@ -2825,12 +2937,31 @@ public sealed class MainWindow : Form {
   /// Writes the switch, and says what happened.
   /// </summary>
   /// <remarks>
-  /// Not confirmed. Nothing stops or starts here and the change is reversible by the item beside it,
-  /// which is the test §67 uses for what needs asking about — a prompt on something this cheap to
-  /// undo teaches people to dismiss prompts.
+  /// <para>
+  /// The two directions are not the same class and are not asked about the same way. Switching an
+  /// entry <em>on</em> is class 1, whose confirmation §69 makes optional, and this window declines
+  /// it: nothing stops, nothing starts, and the item beside it undoes it — a prompt on something that
+  /// cheap to undo teaches people to dismiss prompts.
+  /// </para>
+  /// <para>
+  /// Switching one <em>off</em> is §69's class 2, which names disabling a startup item outright. What
+  /// it costs is not this session but the next one: a person who takes their session manager, their
+  /// input method or their disk-encryption agent out of the login sequence finds out at the next
+  /// login and not before, and by then the list that would have told them is on the other side of it.
+  /// So it asks under the same setting that guards ending a process.
+  /// </para>
   /// </remarks>
   private void SwitchStartup(bool enabled) {
     if (this._startup is null || this._shell.SelectedStartup is not { } entry)
+      return;
+
+    if (!enabled
+      && ActionSafety.MustAsk(ActionClass.DataLoss, this._settings.ConfirmDestructiveActions)
+      && !this.Confirm(
+      $"Stop running {entry.Name} at login?\n\n"
+      + "It keeps running now. What changes is the next time you log in, which is also when you would "
+      + "find out if this was the wrong entry."
+    ))
       return;
 
     this.Report(this._startup.SetEnabled(in entry, enabled));
@@ -3083,7 +3214,16 @@ public sealed class MainWindow : Form {
 
     var verb = IServiceControl.Verb(command);
     var stops = command is ServiceCommand.Stop or ServiceCommand.Restart;
-    if (stops || this._settings.ConfirmDestructiveActions) {
+
+    // Class 2 for the two that stop something and for the two that change the next boot; class 1 for
+    // starting one and for asking it to re-read its configuration, neither of which can lose
+    // anything. A unit is a system target by definition, which is what makes the two that stop it ask
+    // whatever the setting says (PRD §69).
+    var safety = command is ServiceCommand.Start or ServiceCommand.Reload
+      ? ActionClass.Reversible
+      : ActionClass.DataLoss;
+
+    if (ActionSafety.MustAsk(safety, this._settings.ConfirmDestructiveActions, systemTarget: stops)) {
       var consequence = command switch {
         ServiceCommand.Stop => "Whatever it is doing for the machine stops with it.",
         ServiceCommand.Restart => "Everything it is holding open is dropped.",
@@ -3093,11 +3233,7 @@ public sealed class MainWindow : Form {
       };
 
       var question = $"{char.ToUpper(verb[0], CultureInfo.CurrentCulture)}{verb[1..]} {unit}?";
-      if (MessageBox.Show(
-        consequence is null ? question : $"{question}\n\n{consequence}",
-        "Process Manager",
-        MessageBoxButtons.YesNo
-      ) != DialogResult.Yes)
+      if (!this.Confirm(consequence is null ? question : $"{question}\n\n{consequence}"))
         return;
     }
 
@@ -3172,6 +3308,7 @@ public sealed class MainWindow : Form {
         ? new(ActionOutcome.Succeeded, $"started again as pid {result.Pid}")
         : result.Outcome;
     },
+    ActionClass.DataLoss,
     _RestartEndsWithoutAsking
   );
 
@@ -4047,13 +4184,7 @@ public sealed class MainWindow : Form {
       return;
     }
 
-    var answer = MessageBox.Show(
-      $"End the {ticked.Count} ticked process{(ticked.Count == 1 ? string.Empty : "es")}?\n\n{_EndsWithoutAsking}",
-      "Process Manager",
-      MessageBoxButtons.YesNo
-    );
-
-    if (answer != DialogResult.Yes)
+    if (!this.Confirm($"End the {ticked.Count} ticked process{(ticked.Count == 1 ? string.Empty : "es")}?\n\n{_EndsWithoutAsking}"))
       return;
 
     var sent = 0;
