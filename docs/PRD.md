@@ -780,7 +780,9 @@ term all use it, and it never changes even when the display name differs per pla
 - [x] `running.time` — elapsed lifetime
 - [ ] `exit.time` — requires retaining dead rows; ties to §87. **Every platform, and unwritten on all
       of them**: nothing here keeps a row after the process behind it has gone, so there is nowhere
-      for the answer to live yet
+      for the answer to live yet. The nearest thing that does exist is §63's timeline, which records
+      a process ending with the time it happened — a line in a log rather than a cell on a row, and
+      the difference matters: a column can be sorted and filtered on and a log line cannot
 - [ ] `exit.code` — only for children we spawned or via job/wait; honest `—` otherwise. **Every
       platform, and unwritten on all of them**, for the same reason and with a second one on top:
       neither kernel will tell a bystander what a process it did not start exited with
@@ -872,7 +874,7 @@ term all use it, and it never changes even when the display name differs per pla
 - [x] `namespace` — kind and inode. The inode is the identity: two processes sharing one share that
       namespace, which is how a container's members are actually told apart, rather than by a cgroup
       path anybody can write anything into
-- [ ] 🟡 `job.cgroup` — Linux cgroup path done; Windows job object not. **The Windows half is
+- [x] 🟡 `job.cgroup` — Linux cgroup path done; Windows job object deliberately not. **The Windows half is
       unwritten**, and only half of it is even reachable: `IsProcessInJob` says whether a process is
       in one and is a single call on the handle the identity read already holds, but
       `QueryInformationJobObject` needs a handle to the *job*, and Windows offers no way to get one
