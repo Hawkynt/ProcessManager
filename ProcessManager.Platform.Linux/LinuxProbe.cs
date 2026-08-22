@@ -1665,10 +1665,19 @@ public sealed partial class LinuxProbe : ISystemProbe {
       return;
     }
 
-    var packed = Native.GetIoPriority(record.Pid);
+    var packed = Native.GetIoPriority(record.Pid, out var errno);
+    // Which failure it was, rather than one answer for all of them. A refused read is a fact about
+    // a permission and a failed one about a process that has gone, and reporting the first as the
+    // second tells somebody a process is dead when it is running perfectly well under another
+    // account (PRD §72.3).
     record.IoPriorityValue = packed >= 0
       ? Counter.Of((ulong)packed)
-      : Counter.Unknown(UnknownReason.ProcessExited);
+      : Counter.Unknown(errno switch {
+        Native.EACCES or Native.EPERM => UnknownReason.NotPermitted,
+        Native.ESRCH => UnknownReason.ProcessExited,
+        Native.ENOSYS => UnknownReason.NotSupportedOnPlatform,
+        _ => UnknownReason.CounterInvalid,
+      });
   }
 
   /// <summary>

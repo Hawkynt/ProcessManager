@@ -2911,7 +2911,12 @@ public sealed class MainWindow : Form {
       new("Last launched", "not recorded — neither mechanism keeps a history of when an entry last ran"),
       new("Publisher", "not read — asking the package database which package owns the program is a "
         + "separate, dearer question this view does not spend"),
-      new("Signature", "not read — this build verifies no signatures"),
+      // Not "this build verifies no signatures", which stopped being true on both platforms and was
+      // still being said here after the properties window had already been corrected. An Authenticode
+      // signature is verified on Windows and the packaging system's record read on Linux; what is
+      // true is that this dialog does not ask, because it describes an entry rather than an image.
+      new("Signature", "not checked here — a startup entry names a command, and checking what it "
+        + "runs is a question about that program rather than about the entry"),
     };
 
     new FactsDialog($"Startup entry — {entry.Name}", facts).Show();

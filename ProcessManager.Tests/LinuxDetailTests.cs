@@ -554,4 +554,42 @@ public sealed partial class LinuxDetailTests {
     return byFd[(ulong)fd];
   }
 
+
+  /// <summary>
+  /// A read that failed says which failure it was, rather than reporting every one as the process
+  /// having exited (PRD §72.3).
+  /// </summary>
+  /// <remarks>
+  /// It used to map any negative return to "the process exited", so a refusal would have told
+  /// somebody a process was dead while it was running perfectly well under another account. Reading
+  /// another user's I/O priority happens to be permitted on this kernel, which is why nothing ever
+  /// noticed — the defect was one configuration away rather than absent.
+  /// </remarks>
+  [Test]
+  public void AnIoPriorityReadThatFailedSaysWhichFailureItWas() {
+    if (!Hawkynt.ProcessManager.Platform.Linux.Native.SupportsIoPriority)
+      Assert.Ignore("this architecture has no syscall number for it, which is its own answer");
+
+    // A pid that cannot exist: the kernel's maximum is well under this on every configuration.
+    var packed = Hawkynt.ProcessManager.Platform.Linux.Native.GetIoPriority(int.MaxValue, out var errno);
+
+    Assert.That(packed, Is.LessThan(0), "there is no such process");
+    Assert.That(errno, Is.EqualTo(Hawkynt.ProcessManager.Platform.Linux.Native.ESRCH), "and the kernel says so");
+  }
+
+  /// <summary>And a read that worked reports no failure at all.</summary>
+  [Test]
+  public void AnIoPriorityReadThatWorkedReportsNoFailure() {
+    if (!Hawkynt.ProcessManager.Platform.Linux.Native.SupportsIoPriority)
+      Assert.Ignore("this architecture has no syscall number for it");
+
+    var packed = Hawkynt.ProcessManager.Platform.Linux.Native.GetIoPriority(
+      Environment.ProcessId,
+      out var errno
+    );
+
+    Assert.That(packed, Is.GreaterThanOrEqualTo(0), "our own process");
+    Assert.That(errno, Is.Zero);
+  }
+
 }
