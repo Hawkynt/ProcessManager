@@ -1,4 +1,3 @@
-using System.Globalization;
 using Hawkynt.ProcessManager.Abstractions;
 using Hawkynt.ProcessManager.Model;
 using Hawkynt.ProcessManager.Query;
@@ -67,6 +66,11 @@ public sealed class DetailView(ISystemProbe probe) {
   }
 
   /// <summary>Re-collects the current page if it has been invalidated.</summary>
+  /// <remarks>
+  /// The rows come from <see cref="ProcessDetailTables"/>, which is also what <c>--process</c> prints
+  /// — so the page a reader sees here and the page a script asks for cannot carry different columns,
+  /// which is the disagreement §58 exists to stop.
+  /// </remarks>
   public void Collect(in ProcessRecord process) {
     if (!this._stale)
       return;
@@ -74,146 +78,20 @@ public sealed class DetailView(ISystemProbe probe) {
     this._stale = false;
     this._rows.Clear();
 
-    switch (this.Tab) {
-      case DetailTab.Overview:
-        this._headers = ["Field", "Value"];
-        this._widths = [18, 100];
-        this.AddOverview(in process);
-        break;
-
-      case DetailTab.Threads: {
-        // The same fields as the window's thread tab and in the same order, because a field that
-        // exists in one front-end and not the other is the thing §58 forbids.
-        this._headers = [
-          "TID", "Name", "S", "Started", "CPU time", "User", "Kernel", "Ctx", "Vol / invol",
-          "CPU#", "Pri", "Base", "Policy", "Affinity", "Waiting on",
-        ];
-        this._widths = [8, 16, 6, 20, 10, 9, 9, 9, 14, 5, 4, 5, 14, 12, 28];
-        foreach (var thread in probe.GetThreads(this._key))
-          this._rows.Add([
-            thread.Tid.ToString(CultureInfo.InvariantCulture),
-            thread.Name ?? "—",
-            Humanize.State(thread.State),
-            Humanize.Timestamp(thread.StartTimeUtcTicks),
-            Humanize.Duration(thread.CpuTimeNs),
-            Humanize.Duration(thread.UserTimeNs),
-            Humanize.Duration(thread.KernelTimeNs),
-            Humanize.Count(thread.ContextSwitches),
-            Humanize.Pair(thread.VoluntaryContextSwitches, thread.InvoluntaryContextSwitches),
-            thread.LastCpu >= 0 ? thread.LastCpu.ToString(CultureInfo.InvariantCulture) : "—",
-            thread.Priority.ToString(CultureInfo.InvariantCulture),
-            thread.BasePriority?.ToString(CultureInfo.InvariantCulture) ?? "—",
-            Humanize.SchedulingPolicy(thread.Policy),
-            thread.Affinity ?? "—",
-            // The wait reason last and widest: it is what somebody opened this page to find out.
-            thread.WaitReason ?? Humanize.Address(thread.StartAddress),
-          ]);
-
-        break;
-      }
-
-      case DetailTab.Modules: {
-        this._headers = ["Base", "End", "Size", "Resident", "Perm", "Type", "Arch", "SONAME", "Path"];
-        this._widths = [16, 16, 9, 9, 6, 14, 9, 22, 70];
-        foreach (var module in probe.GetModules(this._key))
-          this._rows.Add([
-            Humanize.Address(module.BaseAddress),
-            Humanize.Address(module.EndAddress),
-            Humanize.Bytes(module.Size),
-            Humanize.Bytes(module.ResidentBytes),
-            module.Permissions.Length > 0 ? module.Permissions : "—",
-            Humanize.ImageType(module.Type),
-            module.Architecture ?? "—",
-            module.Soname ?? "—",
-            // The deleted marker rides on the path here, as it does in maps itself: the terminal has
-            // no room for a column that is empty on all but one row in a thousand.
-            module.IsDeleted ? module.Path + " (deleted)" : module.Path,
-          ]);
-
-        break;
-      }
-
-      case DetailTab.Handles: {
-        this._headers = ["Type", "FD", "Acc", "Position", "Inode", "Flags", "Name"];
-        this._widths = [14, 6, 4, 12, 12, 26, 70];
-        foreach (var handle in probe.GetHandles(this._key))
-          this._rows.Add([
-            Humanize.ResourceKind(handle.Kind),
-            handle.Handle.ToString(CultureInfo.InvariantCulture),
-            handle.Access ?? "—",
-            Humanize.Count(handle.Position),
-            Humanize.Count(handle.Inode),
-            DescriptorParser.DescribeFlags(handle.OpenFlags) ?? Humanize.Placeholder(handle.OpenFlags.Reason),
-            handle.TargetPid.TryGetValue(out var target)
-              ? $"{handle.Name} → pid {target}"
-              : handle.Name ?? "<not named>",
-          ]);
-
-        break;
-      }
-
-      case DetailTab.Environment: {
-        this._headers = ["Variable", "Value"];
-        this._widths = [28, 90];
-        foreach (var (name, value) in probe.GetEnvironment(this._key))
-          this._rows.Add([name, value]);
-
-        break;
-      }
-
-      case DetailTab.Network: {
-        this._headers = ["Proto", "Type", "Local", "Remote", "State", "User", "If", "Send-Q", "Recv-Q", "Retx"];
-        this._widths = [6, 9, 24, 24, 12, 9, 8, 7, 7, 5];
-
-        // Named ports, as the command line names them and as ss does by default. Asked of the probe
-        // once per fill, which is a dictionary lookup and not a read (PRD §40, §58).
-        var services = probe.DescribePortNames();
-        foreach (var connection in probe.GetConnections(this._key))
-          this._rows.Add([
-            connection.Protocol.ToString(),
-            Humanize.SocketKindName(connection.Kind),
-            Humanize.LocalEndpoint(connection, services, null),
-            Humanize.RemoteEndpoint(connection, services, null),
-            connection.State,
-            Humanize.SocketUser(connection),
-            connection.Interface ?? "—",
-            Humanize.Bytes(connection.SendQueueBytes),
-            Humanize.Bytes(connection.ReceiveQueueBytes),
-            Humanize.Count(connection.Retransmits),
-          ]);
-
-        break;
-      }
-    }
+    var table = ProcessDetailTables.Build(PageOf(this.Tab), probe, this._key, in process);
+    this._headers = [.. table.Headers];
+    this._widths = [.. table.Widths];
+    this._rows.AddRange(table.Rows);
   }
 
-  private void AddOverview(in ProcessRecord process) {
-    this._rows.Add(["name", process.Name]);
-    this._rows.Add(["pid", process.Pid.ToString(CultureInfo.InvariantCulture)]);
-    this._rows.Add(["parent", process.ParentPid.ToString(CultureInfo.InvariantCulture)]);
-    this._rows.Add(["user", process.UserName ?? (process.UserId >= 0 ? process.UserId.ToString(CultureInfo.InvariantCulture) : "?")]);
-    this._rows.Add(["state", Humanize.State(process.State)]);
-    this._rows.Add(["session", process.SessionId.ToString(CultureInfo.InvariantCulture)]);
-    this._rows.Add(["threads", process.ThreadCount.ToString(CultureInfo.InvariantCulture)]);
-    this._rows.Add(["priority", $"{process.Priority} (nice {process.Nice})"]);
-    this._rows.Add(["cpu time", Humanize.Duration(process.CpuTimeNs)]);
-    this._rows.Add(["  user", Humanize.Duration(process.UserTimeNs)]);
-    this._rows.Add(["  kernel", Humanize.Duration(process.KernelTimeNs)]);
-    this._rows.Add(["private", Humanize.Bytes(process.PrivateBytes)]);
-    this._rows.Add(["working set", Humanize.Bytes(process.WorkingSetBytes)]);
-    this._rows.Add(["virtual", Humanize.Bytes(process.VirtualBytes)]);
-    this._rows.Add(["swap", Humanize.Bytes(process.SwapBytes)]);
-    this._rows.Add(["read", Humanize.Bytes(process.ReadBytes)]);
-    this._rows.Add(["written", Humanize.Bytes(process.WriteBytes)]);
-    this._rows.Add(["handles", Humanize.Count(process.HandleCount)]);
-    this._rows.Add(["ctx switches", Humanize.Count(process.ContextSwitches)]);
-    this._rows.Add(["started", process.StartTimeUtcTicks > 0
-      ? new DateTime(process.StartTimeUtcTicks, DateTimeKind.Utc).ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.CurrentCulture)
-      : "—"]);
-    this._rows.Add(["image", process.ImagePath ?? "—"]);
-    this._rows.Add(["cgroup", process.ContainerPath ?? "—"]);
-    this._rows.Add(["command", process.CommandLine ?? "—"]);
-  }
+  private static ProcessDetailPage PageOf(DetailTab tab) => tab switch {
+    DetailTab.Threads => ProcessDetailPage.Threads,
+    DetailTab.Modules => ProcessDetailPage.Modules,
+    DetailTab.Handles => ProcessDetailPage.Handles,
+    DetailTab.Environment => ProcessDetailPage.Environment,
+    DetailTab.Network => ProcessDetailPage.Network,
+    _ => ProcessDetailPage.Overview,
+  };
 
   /// <summary>Draws the whole detail screen, tab strip included.</summary>
   public void Draw(TerminalScreen screen, in ProcessRecord process) {

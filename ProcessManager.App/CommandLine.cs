@@ -7,7 +7,7 @@ using Hawkynt.ProcessManager.Ui.Terminal;
 namespace Hawkynt.ProcessManager.App;
 
 /// <summary>Which face of the program the arguments asked for.</summary>
-internal enum RunMode : byte { Desktop, Terminal, List, Find, Kill, EndTask, Restart, Scheduling, Signal, ResourceLimit, OutOfMemory, Freezer, SelfTest, HelperCheck, Help, HelpFields, Host, Startup, Users, Services, ServiceControl, Connections, Limits, Environment, Run, Version, Settings }
+internal enum RunMode : byte { Desktop, Terminal, List, Find, Kill, EndTask, Restart, Scheduling, Signal, ResourceLimit, OutOfMemory, Freezer, SelfTest, HelperCheck, Help, HelpFields, Host, Startup, Users, Services, ServiceControl, Connections, Limits, Environment, ProcessDetail, Performance, Run, Version, Settings }
 
 /// <summary>
 /// What <see cref="RunMode.Settings"/> was asked to do to the settings file (PRD §67).
@@ -85,6 +85,90 @@ internal sealed record CommandLineOptions {
 
   /// <summary>Whether --freeze or --thaw was given; the two are one action with two directions.</summary>
   public bool Freeze { get; init; }
+
+  /// <summary>Which page of a process <c>--process</c> asked for (PRD §59).</summary>
+  public ProcessDetailPage DetailPage { get; init; }
+
+  /// <summary>
+  /// Collect nothing that costs a syscall, whatever the columns ask for (PRD §81).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// <b>A preset is not a mode.</b> <c>--columns @minimal</c> chooses fewer columns and measures the
+  /// same: on a machine with sixteen cores at load 12.5 and eleven hundred processes it listed in
+  /// 1.52–1.65 s against 1.54–1.74 s for the default set, which is no saving at all. What costs the
+  /// time is the collectors, and those are chosen by the <c>Wants…</c> switches below rather than by
+  /// what is printed — so a preset that names columns and nothing else cannot make anything faster.
+  /// </para>
+  /// <para>
+  /// This is the switch that can. It forces every one of those to false, whatever a column, a filter,
+  /// a grouping or a saved layout asked for; and where a run then names a column nothing will fill,
+  /// <see cref="MinimalNotice"/> says which, because a column of placeholders that nobody was warned
+  /// about is worse than the wait it saved.
+  /// </para>
+  /// </remarks>
+  public bool Minimal { get; init; }
+
+  /// <summary>
+  /// The columns a minimal run opens with: identity, what it is doing, and whose it is (PRD §81).
+  /// </summary>
+  /// <remarks>
+  /// Every one of them is <see cref="FieldCost.Free"/> or <see cref="FieldCost.Derived"/> — already
+  /// in the snapshot, or the difference between two of them. Nothing here can cost a read, which is
+  /// what makes this the set a minimal run can show without contradicting itself.
+  /// </remarks>
+  public static readonly ProcessField[] MinimalColumns = [
+    ProcessField.Pid,
+    ProcessField.Name,
+    ProcessField.CpuPercent,
+    ProcessField.PrivateBytes,
+    ProcessField.UserName,
+    ProcessField.State,
+  ];
+
+  /// <summary>
+  /// Which named columns this run will not be able to fill, or null when there are none.
+  /// </summary>
+  /// <remarks>
+  /// Read from the registry's own cost, rather than from a second list of expensive fields kept
+  /// beside it — the drift that §5.1 exists to stop. A field the registry calls
+  /// <see cref="FieldCost.High"/> is by definition one that costs a syscall per process, and a
+  /// minimal run is exactly the run that will not pay it.
+  /// </remarks>
+  public string? MinimalNotice {
+    get {
+      if (!this.Minimal || this.Fields is not { } fields)
+        return null;
+
+      var refused = new List<string>();
+      foreach (var candidate in fields) {
+        var descriptor = FieldRegistry.Get(candidate);
+        if (descriptor.Cost == FieldCost.High)
+          refused.Add(descriptor.Key);
+      }
+
+      return refused.Count == 0
+        ? null
+        : $"--minimal collects nothing that costs a read, so {string.Join(", ", refused)} will be empty.";
+    }
+  }
+
+  /// <summary>
+  /// Which resource <c>--perf</c> is to watch (PRD §45, §59). Null when the verb was not asked for.
+  /// </summary>
+  public string? PerformanceResource { get; init; }
+
+  /// <summary>
+  /// Whether the interval is this command line's or merely the one that was lying about.
+  /// </summary>
+  /// <remarks>
+  /// The distinction exists for <c>--perf</c>, which plots forty samples: at the settings file's
+  /// interval that is forty seconds of waiting for a graph nobody asked to take that long, and a
+  /// preference for how often a <em>window</em> redraws is not an answer to how finely a one-shot
+  /// should sample. Stated on the command line it is an answer, so it is taken — the same distinction
+  /// <see cref="GraphStyleWasStated"/> draws, for the same reason.
+  /// </remarks>
+  public bool IntervalWasStated { get; init; }
 
 
   /// <summary>The program to start and its arguments, for <c>--run</c> (PRD §54).</summary>
@@ -280,7 +364,10 @@ internal sealed record CommandLineOptions {
   /// front-end that reads its columns from a file.
   /// </remarks>
   public bool WantsGpuUsage
-    => this.Gpu
+    // Not through Wants, so the flag needs its own gate: --minimal --gpu is a contradiction and the
+    // one that asks for less wins, because that is the whole point of asking for less (PRD §81).
+    => !this.Minimal
+    && (this.Gpu
     || this.Wants(ProcessField.GpuPercent)
     || this.Wants(ProcessField.GpuEngineName)
     || this.Wants(ProcessField.GpuEnginePercent)
@@ -293,7 +380,7 @@ internal sealed record CommandLineOptions {
     || this.Wants(ProcessField.GpuComputePercent)
     || this.Wants(ProcessField.GpuCopyPercent)
     || this.Wants(ProcessField.GpuEncodePercent)
-    || this.Wants(ProcessField.GpuDecodePercent);
+    || this.Wants(ProcessField.GpuDecodePercent));
 
   /// <summary>Collect per-process graphics figures, whether or not a column names one.</summary>
   public bool Gpu { get; init; }
@@ -350,8 +437,8 @@ internal sealed record CommandLineOptions {
     || this.Wants(ProcessField.TrustChain)
     // Grouping by package is somebody naming the column as much as a --columns argument is: the
     // headings are the field, and a run that did not collect it would head every row "package not
-    // looked up" (PRD §83).
-    || this.Grouping == ProcessGrouping.Package
+    // looked up" (PRD §83). Its own gate for the reason --gpu has one: it does not go through Wants.
+    || (!this.Minimal && this.Grouping == ProcessGrouping.Package)
     || this.WantsPackageVerification;
 
   /// <summary>
@@ -553,6 +640,12 @@ internal sealed record CommandLineOptions {
     || this.Wants(ProcessField.Subsystem);
 
   private bool Wants(ProcessField wanted) {
+    // The one gate that catches nearly all of them: every switch above is written in terms of this,
+    // so a minimal run answers "nobody asked for that" to every question about a column, however the
+    // column was asked for (PRD §81).
+    if (this.Minimal)
+      return false;
+
     // Both lists, because both are somebody naming the column. The terminal's differs from the
     // file's — it keeps the drawn histories, and it can come from the settings file rather than from
     // this command line — and a saved terminal column that the sampler was never told to collect is
@@ -1001,7 +1094,7 @@ internal sealed record CommandLineOptions {
           if (!TryValue(args, ref i, inlineValue, out var text) || !double.TryParse(text, out var seconds) || seconds <= 0)
             return options with { Error = "--interval needs a positive number of seconds" };
 
-          options = options with { Interval = TimeSpan.FromSeconds(seconds) };
+          options = options with { Interval = TimeSpan.FromSeconds(seconds), IntervalWasStated = true };
           break;
         }
         case "--decimals": {
@@ -1033,6 +1126,9 @@ internal sealed record CommandLineOptions {
           break;
         case "--gpu":
           options = options with { Gpu = true };
+          break;
+        case "--minimal":
+          options = options with { Minimal = true };
           break;
         case "--probe-root": {
           if (!TryValue(args, ref i, inlineValue, out var root))
@@ -1199,6 +1295,45 @@ internal sealed record CommandLineOptions {
           ++i;
           break;
 
+        case "--process": {
+          // A pid, and then the name of a page or nothing. The page is optional because the summary
+          // is what somebody typing a pid and stopping meant, and it is a word rather than five more
+          // switches because the five are one question asked of one process (PRD §59).
+          if (i + 1 >= args.Length || !int.TryParse(args[i + 1], out var inspected))
+            return options with {
+              Error = $"--process needs a pid, and optionally a page ({ProcessDetailTables.PageVocabulary})",
+            };
+
+          ++i;
+          var page = ProcessDetailPage.Overview;
+          if (i + 1 < args.Length && !args[i + 1].StartsWith('-')) {
+            if (!ProcessDetailTables.TryParsePage(args[i + 1], out page))
+              return options with {
+                Error = $"there is no page called '{args[i + 1]}'; it is one of {ProcessDetailTables.PageVocabulary}",
+              };
+
+            ++i;
+          }
+
+          options = options with { Mode = RunMode.ProcessDetail, TargetPid = inspected, DetailPage = page };
+          explicitMode = true;
+          break;
+        }
+
+        case "--perf":
+        case "--performance": {
+          // The resource is optional and defaults to the processor, which is what "perf" means to
+          // everybody who types it. Taken from the next argument only when it is not a switch, so a
+          // bare --perf at the end of the line works and --perf --ascii does not eat the flag.
+          var resource = inlineValue;
+          if (resource is null && i + 1 < args.Length && !args[i + 1].StartsWith('-'))
+            resource = args[++i];
+
+          options = options with { Mode = RunMode.Performance, PerformanceResource = resource ?? "cpu" };
+          explicitMode = true;
+          break;
+        }
+
         case "--help-fields":
           return options with { Mode = RunMode.HelpFields };
 
@@ -1210,6 +1345,20 @@ internal sealed record CommandLineOptions {
           return options with { Error = $"unknown option '{argument}'" };
       }
     }
+
+    // After the loop rather than in the case, so that --minimal --columns and --columns --minimal
+    // are the same request whichever way round they were typed. Only when nothing was named: a
+    // minimal run that was told which columns to show is still told, and MinimalNotice says which of
+    // them will be empty rather than this quietly replacing them (PRD §81).
+    if (options.Minimal && options.Fields is null)
+      options = options with {
+        Fields = MinimalColumns,
+        TerminalColumns = MinimalColumns,
+        // The saved layout too. It is read by the sampler as a request for those columns, and under
+        // --minimal none of them would be collected — so a window opened this way would show the
+        // layout somebody saved with "not sampled" down half of it.
+        DesktopColumns = MinimalColumns,
+      };
 
     // With no display there is nothing for the desktop front-end to open. Falling back to the
     // terminal is what makes `procman` over SSH do the useful thing instead of the failing one.
@@ -1282,6 +1431,10 @@ internal sealed record CommandLineOptions {
       procman --list [--json]        one snapshot to stdout, then exit
       procman --find <pattern>       which processes match, by name, command line or open file
       procman --host                 what this machine is: processor, memory, cache, uptime
+      procman --perf [what]          one resource watched for four seconds and plotted: cpu
+                                     (the default), memory, disk, net, gpu, or a device by name
+      procman --process PID [page]   one process in detail: overview (the default), threads,
+                                     modules, handles, environment, network
       procman --environment PID      the variables it was started with, as the kernel laid them down
       procman --limits PID           every ceiling on a process: its own, its cgroup's, and the
                                      out-of-memory standing that decides who dies first
@@ -1330,6 +1483,9 @@ internal sealed record CommandLineOptions {
       --resolve          with --connections: turn addresses into hostnames (asks a resolver)
       -n, --numeric      with --connections: leave ports as numbers rather than naming them
       --gpu              account for what each process is doing to the graphics adapters (costly)
+      --minimal          collect nothing that costs a read: pid, name, cpu, memory, user, state.
+                         Overrides --columns, --filter, --group and --gpu, and says which named
+                         columns it will leave empty
       --no-helper        never start the privileged helper, even for an action that needs it
       --self-test        check the probe against the runtime's own view of this process
       --helper-check     talk to the privileged helper over its pipe, unelevated, and check it
