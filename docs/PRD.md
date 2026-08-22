@@ -5092,10 +5092,10 @@ deliberately not in chrome, icons or artwork.
 
 # 94. Default views
 
-Every one of these is a named set in the settings file — `--columns @basic` from the command line,
-View ▸ Column sets in the window, `C` in the terminal — and none of them is written into anybody's
-file, so a preset that gets improved improves everywhere. Naming a set is also what pays for the
-expensive readings in it: a column nobody named collects nothing (§5.4).
+Every one of these is a named set reachable from all three front-ends — `--columns @basic` on the
+command line, Columns ▸ Column sets in the window, `c` in the terminal — and none of them is written
+into anybody's settings file, so a preset that gets improved improves everywhere. Naming a set is
+also what pays for the expensive readings in it: a column nobody named collects nothing (§5.4).
 
 **Processes — Basic:** name · PID · status · CPU · memory · disk · network · GPU
 
