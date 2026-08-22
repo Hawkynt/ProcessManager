@@ -98,6 +98,27 @@ public sealed record UserSettings {
   /// </remarks>
   public int PercentDecimals { get; init; } = Humanize.DefaultPercentDecimals;
 
+  /// <summary>
+  /// Keep a record of what each program has cost this machine, across sessions (PRD §44).
+  /// </summary>
+  /// <remarks>
+  /// <b>Off, and off is the design rather than a preference about it.</b> A file recording which
+  /// applications a person ran and for how long is surveillance if it appears without being asked
+  /// for, however useful it is when it is asked for. Nothing is accumulated and no file is written
+  /// until this says otherwise.
+  /// </remarks>
+  public bool UsageHistory { get; init; }
+
+  /// <summary>
+  /// How many days of that record to keep, or nought for all of it (PRD §44).
+  /// </summary>
+  /// <remarks>
+  /// Counted from when a program was last seen rather than from when its record began: a program run
+  /// every day since January is not old, and dropping it because its record is old would delete
+  /// exactly the rows worth keeping.
+  /// </remarks>
+  public int UsageHistoryDays { get; init; }
+
   /// <summary>Draw the terminal's history columns with block characters rather than ASCII.</summary>
   public bool BlockCharacters { get; init; } = true;
 
@@ -490,6 +511,18 @@ public sealed record UserSettings {
 
           break;
 
+        case "history.usage":
+          if (TryParseBool(value, out var usage))
+            settings = settings with { UsageHistory = usage };
+
+          break;
+
+        case "history.usage.days":
+          if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var days) && days >= 0)
+            settings = settings with { UsageHistoryDays = days };
+
+          break;
+
         case "blocks":
           if (TryParseBool(value, out var blocks))
             settings = settings with { BlockCharacters = blocks };
@@ -748,6 +781,15 @@ public sealed record UserSettings {
         GraphStyle.Numbers => "numbers",
         _ => "blocks",
       });
+    }
+
+    if (this.UsageHistory) {
+      text.AppendLine();
+      text.AppendLine("# Keep a record of what each program has cost this machine, across sessions.");
+      text.AppendLine("# Off unless this says otherwise, and the file is not written until it does.");
+      text.AppendLine("history.usage=true");
+      if (this.UsageHistoryDays > 0)
+        text.Append("history.usage.days=").AppendLine(this.UsageHistoryDays.ToString(CultureInfo.InvariantCulture));
     }
 
     if (!this.TerminalMouse) {
