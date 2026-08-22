@@ -73,6 +73,20 @@ public static class RowPalette {
   /// </remarks>
   private static bool PaintsWashes(ITheme theme, string name) => !theme.IsHighContrast || Chosen(name);
 
+  /// <summary>
+  /// Whether a wash a caller chose itself should be painted (PRD §45.9, §66, §74).
+  /// </summary>
+  /// <remarks>
+  /// The same question for a colour that came off a rule rather than out of this palette. A rule is a
+  /// person saying what they want and a high-contrast desktop is a person saying what they need, and
+  /// the second wins: somebody who set their desktop to high contrast did not exempt one program
+  /// from it by giving it a colour last year.
+  /// </remarks>
+  public static bool PaintsWashes(ITheme theme) {
+    ArgumentNullException.ThrowIfNull(theme);
+    return !theme.IsHighContrast;
+  }
+
   /// <summary>The name a category's colour goes by in the settings file.</summary>
   public static string NameOf(ProcessCategory category) => category switch {
     ProcessCategory.New => "new",

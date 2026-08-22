@@ -1272,29 +1272,8 @@ public sealed record UserSettings {
     return false;
   }
 
-  /// <summary>
-  /// <c>#rrggbb</c>, with or without the hash, and <c>#rgb</c> for the people who write CSS. The
-  /// alpha is never taken from the file: a half-transparent row colour is a bug report, not a preference.
-  /// </summary>
-  private static bool TryParseColour(string text, out uint argb) {
-    argb = 0;
-    var digits = text.StartsWith('#') ? text[1..] : text;
-    if (digits.Length == 3) {
-      Span<char> expanded = stackalloc char[6];
-      for (var i = 0; i < 3; ++i) {
-        expanded[i * 2] = digits[i];
-        expanded[(i * 2) + 1] = digits[i];
-      }
-
-      digits = new(expanded);
-    }
-
-    if (digits.Length != 6 || !uint.TryParse(digits, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var rgb))
-      return false;
-
-    argb = 0xFF000000u | rgb;
-    return true;
-  }
+  /// <summary>The shared reader, so the settings and the rules mean one thing by a hash (§66).</summary>
+  private static bool TryParseColour(string text, out uint argb) => Query.Colour.TryParse(text, out argb);
 
   /// <summary>
   /// A threshold, or the one already there.

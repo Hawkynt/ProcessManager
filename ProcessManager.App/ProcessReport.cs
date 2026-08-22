@@ -3,6 +3,7 @@ using Hawkynt.ProcessManager.Abstractions;
 using Hawkynt.ProcessManager.Model;
 using Hawkynt.ProcessManager.Query;
 using Hawkynt.ProcessManager.Sampling;
+using Hawkynt.ProcessManager.Settings;
 
 namespace Hawkynt.ProcessManager.App;
 
@@ -51,7 +52,9 @@ internal static class ProcessReport {
       return 1;
     }
 
-    var table = ProcessDetailTables.Build(page, probe, subject.Key, in subject);
+    // The rules file, so a note somebody wrote about this program shows here as well as in the window
+    // — a rule reachable from only one front-end is the drift §58 forbids (PRD §66).
+    var table = ProcessDetailTables.Build(page, probe, subject.Key, in subject, SettingsStore.LoadRules());
     if (table.Rows.Count == 0) {
       // Nothing on stdout, so a redirected run leaves an empty file rather than a heading over
       // nothing. An empty page and a page this user may not read look identical from here, and only

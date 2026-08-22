@@ -26,6 +26,15 @@ public sealed class DetailView(ISystemProbe probe) {
   private ProcessKey _key;
   private bool _stale = true;
 
+  /// <summary>
+  /// What somebody has written about programs, or nothing (PRD §66).
+  /// </summary>
+  /// <remarks>
+  /// Held rather than read here: the file is read once when the program starts, and a page rebuilt
+  /// every time somebody presses a key must not open a file to do it.
+  /// </remarks>
+  public ProcessRules? Rules { get; set; }
+
   public DetailTab Tab { get; private set; }
 
   public int Scroll { get; private set; }
@@ -78,7 +87,7 @@ public sealed class DetailView(ISystemProbe probe) {
     this._stale = false;
     this._rows.Clear();
 
-    var table = ProcessDetailTables.Build(PageOf(this.Tab), probe, this._key, in process);
+    var table = ProcessDetailTables.Build(PageOf(this.Tab), probe, this._key, in process, this.Rules);
     this._headers = [.. table.Headers];
     this._widths = [.. table.Widths];
     this._rows.AddRange(table.Rows);

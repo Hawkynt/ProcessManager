@@ -176,6 +176,57 @@ public static class SettingsStore {
   /// <summary>Beside the settings file this run resolved to.</summary>
   public static string UsagePath => UsagePathFor();
 
+  /// <summary>The name the rule file goes by, beside the settings (PRD §66).</summary>
+  /// <remarks>
+  /// Its own file for the same two reasons the usage record has one: it is a list that grows rather
+  /// than a set of preferences, and somebody who wants to throw away every note they have written
+  /// should be able to delete one file without losing the rest of their settings.
+  /// </remarks>
+  public const string RulesFileName = "rules.tsv";
+
+  /// <summary>Where the rules live: beside the settings, wherever those turned out to be.</summary>
+  public static string RulesPathFor(string? settingsPath = null) {
+    var directory = System.IO.Path.GetDirectoryName(settingsPath ?? Path);
+    return string.IsNullOrEmpty(directory) ? RulesFileName : System.IO.Path.Combine(directory, RulesFileName);
+  }
+
+  /// <summary>Beside the settings file this run resolved to.</summary>
+  public static string RulesPath => RulesPathFor();
+
+  /// <summary>Reads the rules, or none where there is no file — which is the ordinary state.</summary>
+  public static Query.ProcessRules LoadRules(string? path = null) {
+    path ??= RulesPath;
+    try {
+      if (File.Exists(path))
+        return Query.ProcessRules.Parse(File.ReadAllText(path));
+    } catch (IOException) {
+    } catch (UnauthorizedAccessException) {
+    }
+
+    return new();
+  }
+
+  /// <summary>Writes them, the same way everything else here is written: whole, then moved in.</summary>
+  public static bool SaveRules(Query.ProcessRules rules, string? path = null) {
+    ArgumentNullException.ThrowIfNull(rules);
+    path ??= RulesPath;
+
+    try {
+      var directory = System.IO.Path.GetDirectoryName(path);
+      if (!string.IsNullOrEmpty(directory))
+        Directory.CreateDirectory(directory);
+
+      var temporary = path + ".new";
+      File.WriteAllText(temporary, rules.Save());
+      File.Move(temporary, path, overwrite: true);
+      return true;
+    } catch (IOException) {
+      return false;
+    } catch (UnauthorizedAccessException) {
+      return false;
+    }
+  }
+
   /// <summary>
   /// Reads the usage record, or an empty one where there is none to read.
   /// </summary>
