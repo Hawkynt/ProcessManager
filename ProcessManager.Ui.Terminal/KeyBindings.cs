@@ -23,7 +23,7 @@ public enum TerminalAction : byte {
   MarkToggle, MarkAll, MarkInvert, MarkNone, CopyCell, CopyRow, CopyColumn, Export,
 
   ActionMenu, EndTask, Terminate, TerminateTree, Restart, SuspendResume, SchedulingClass,
-  Threads, Modules, Handles, Network, CountHandles, ServiceMenu, Timeline,
+  Threads, Modules, Handles, Network, CountHandles, ServiceMenu, Timeline, ServicesView, StartupView,
 
 }
 
@@ -124,6 +124,12 @@ public sealed class KeyBindings {
     new(TerminalAction.CountHandles, "count-handles", "Process", "count the handles of every row on screen", ["ctrl+h"]),
     new(TerminalAction.ServiceMenu, "service", "Process", "start, stop or restart the unit it belongs to", ["w"]),
     new(TerminalAction.Timeline, "timeline", "View", "what has happened since this started", ["z"]),
+    // The window has had both of these as views since §41 and §42; the terminal had only the unit a
+    // process belongs to, which is a different question from "what is on this machine". A capability
+    // reachable from one front-end and not the other is the drift §58 forbids and §3 counts against
+    // "replace everyday Task Manager workflows".
+    new(TerminalAction.ServicesView, "services", "View", "every unit on this machine and its state", ["W"]),
+    new(TerminalAction.StartupView, "startup", "View", "what runs when you log in, and what will not", ["b"]),
   ];
 
   private readonly Dictionary<string, TerminalAction> _byKey = new(StringComparer.Ordinal);

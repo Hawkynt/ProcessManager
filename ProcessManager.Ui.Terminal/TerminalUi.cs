@@ -79,7 +79,7 @@ public sealed class TerminalUi {
   private enum InputMode : byte { Normal, Search, Filter, Confirm, SchedulingClass, Detail, Overlay, ExportPath }
 
   /// <summary>Which list is on screen, so one set of keys can drive all three.</summary>
-  private enum OverlayKind : byte { None, Actions, Columns, Help, Grouping, Interval, Service, Timeline }
+  private enum OverlayKind : byte { None, Actions, Columns, Help, Grouping, Interval, Service, Timeline, Services, Startup }
 
   /// <summary>
   /// What the pending confirmation will do if it is answered yes.
@@ -626,6 +626,8 @@ public sealed class TerminalUi {
       case TerminalAction.CountHandles: this.FillHandleCounts(); return true;
       case TerminalAction.ServiceMenu: this.OpenServiceMenu(); return true;
       case TerminalAction.Timeline: this.OpenTimeline(); return true;
+      case TerminalAction.ServicesView: this.OpenServicesView(); return true;
+      case TerminalAction.StartupView: this.OpenStartupView(); return true;
       case TerminalAction.Threads: this.OpenDetail(DetailTab.Threads); return true;
       case TerminalAction.Modules: this.OpenDetail(DetailTab.Modules); return true;
       case TerminalAction.Handles: this.OpenDetail(DetailTab.Handles); return true;
@@ -1797,6 +1799,162 @@ public sealed class TerminalUi {
       : $"the last {entries.Count} of {total} things — Esc closes";
 
     this.ShowOverlay(new(heading, items) { HintColumn = widest + 3 }, OverlayKind.Timeline);
+  }
+
+  /// <summary>
+  /// Every unit on the machine and what state it is in (PRD §41, §3).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The window has had this as a view since §41 and the terminal had only the unit a process
+  /// belongs to, which is a different question: "what is running under this pid" against "what is on
+  /// this machine". A capability reachable from one front-end and not the other is the drift §58
+  /// forbids.
+  /// </para>
+  /// <para>
+  /// Read when it is asked for and not on the tick. Enumerating every unit on the machine once a
+  /// second would be the monitor becoming the thing worth monitoring (§5.4), and unit state does not
+  /// move at the rate a process table does.
+  /// </para>
+  /// <para>
+  /// Grouped by state so a person opening it after something broke reads the failed and the stopped
+  /// first, which is the order the question comes in.
+  /// </para>
+  /// </remarks>
+  private void OpenServicesView() {
+    var services = this._probe.GetServices();
+    if (services.Count == 0) {
+      // Two different nothings, and the sentence says which. A machine with no service manager and a
+      // machine whose units this user may not read look identical from here (§5.3, §72.3).
+      this.Say(
+        this._services is { IsAvailable: true }
+          ? "no units came back — there are none, or they may not be read from here"
+          : "there is no service manager on this machine to ask",
+        Attributes.Dim
+      );
+
+      return;
+    }
+
+    var ordered = new List<ServiceRecord>(services);
+    ordered.Sort((a, b) => {
+      var byState = Rank(a.State).CompareTo(Rank(b.State));
+      return byState != 0 ? byState : string.CompareOrdinal(a.Name, b.Name);
+    });
+
+    var items = new List<OverlayItem>();
+    var running = 0;
+    var state = (ServiceState)255;
+    foreach (var service in ordered) {
+      if (service.State != state) {
+        state = service.State;
+        items.Add(OverlayItem.Heading(DescribeState(state)));
+      }
+
+      if (service.State == ServiceState.Running)
+        ++running;
+
+      // The pid where there is one, because "running" and "running as 1234" answer different
+      // follow-up questions, and the second is the one that leads back to the table.
+      var hint = service.MainPid > 0
+        ? service.MainPid.ToString(CultureInfo.InvariantCulture)
+        : service.Masked ? "masked" : service.Enabled is false ? "disabled" : string.Empty;
+
+      items.Add(OverlayItem.Entry(service.Name, hint, service.MainPid));
+    }
+
+    this.ShowOverlay(
+      new(
+        $"{services.Count} units, {running} running — Esc closes",
+        items,
+        fullScreen: true
+      ) { HintColumn = 52 },
+      OverlayKind.Services
+    );
+  }
+
+  /// <summary>
+  /// Running first, then the ones that ran and exited, then the inactive, then whatever the manager
+  /// would not say about.
+  /// </summary>
+  /// <remarks>
+  /// <b>There is no "failed" here and that is not an omission.</b> §41 records why: the manager keeps
+  /// a failed unit's state in its own memory and writes it to no file, so a unit that failed looks
+  /// inactive from out here. A heading called "failed" that could never have anything under it would
+  /// be worse than not having one.
+  /// </remarks>
+  private static int Rank(ServiceState state) => state switch {
+    ServiceState.Running => 0,
+    ServiceState.Active => 1,
+    ServiceState.Inactive => 2,
+    _ => 3,
+  };
+
+  /// <summary>The same words the window uses, so the two cannot describe one unit differently.</summary>
+  private static string DescribeState(ServiceState state) => state switch {
+    ServiceState.Running => "running",
+    ServiceState.Active => "active · exited",
+    ServiceState.Inactive => "inactive",
+    _ => "the manager did not say",
+  };
+
+  /// <summary>
+  /// What runs when somebody logs in, and what will not (PRD §42, §3).
+  /// </summary>
+  /// <remarks>
+  /// The second half is the point. A list of autostart entries that does not say which of them are
+  /// switched off is a list of things somebody will assume are running, and the reason one will not
+  /// run — hidden, or shown only in another desktop — is what turns "why did this not start" into an
+  /// answer. Read when asked for, like the units above.
+  /// </remarks>
+  private void OpenStartupView() {
+    var entries = this._probe.GetStartupEntries();
+    if (entries.Count == 0) {
+      this.Say("nothing came back — there is no autostart here, or it may not be read", Attributes.Dim);
+      return;
+    }
+
+    var items = new List<OverlayItem>();
+    var willRun = 0;
+    foreach (var entry in entries)
+      if (entry.Enabled)
+        ++willRun;
+
+    items.Add(OverlayItem.Heading($"will run ({willRun})"));
+    foreach (var entry in entries)
+      if (entry.Enabled)
+        items.Add(OverlayItem.Entry(entry.Name, Shorten(entry.Command), 0));
+
+    if (willRun < entries.Count) {
+      items.Add(OverlayItem.Heading($"will not ({entries.Count - willRun})"));
+      foreach (var entry in entries)
+        if (!entry.Enabled)
+          // The reason and not just the fact: "hidden" and "only shown in GNOME" are different
+          // problems and only one of them is a mistake.
+          items.Add(OverlayItem.Entry(entry.Name, entry.DisabledReason ?? "switched off", 0));
+    }
+
+    this.ShowOverlay(
+      new(
+        $"{entries.Count} autostart entries, {willRun} will run — Esc closes",
+        items,
+        fullScreen: true
+      ) { HintColumn = 40 },
+      OverlayKind.Startup
+    );
+  }
+
+  /// <summary>A command line cut to the width a hint column has, from the front.</summary>
+  /// <remarks>
+  /// From the front rather than the back: the program is at the start and the arguments after it, and
+  /// a line trimmed the other way would leave a person reading the tail of an argument list with no
+  /// idea what it belonged to.
+  /// </remarks>
+  private static string Shorten(string? command) {
+    if (command is not { Length: > 0 })
+      return "—";
+
+    return command.Length <= 72 ? command : command[..71] + "…";
   }
 
   private void OpenServiceMenu() {
