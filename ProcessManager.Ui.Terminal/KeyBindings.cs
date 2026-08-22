@@ -23,7 +23,7 @@ public enum TerminalAction : byte {
   MarkToggle, MarkAll, MarkInvert, MarkNone, CopyCell, CopyRow, CopyColumn, Export,
 
   ActionMenu, EndTask, Terminate, TerminateTree, Restart, SuspendResume, SchedulingClass,
-  Threads, Modules, Handles, Network, CountHandles, ServiceMenu,
+  Threads, Modules, Handles, Network, CountHandles, ServiceMenu, Timeline,
 
 }
 
@@ -123,6 +123,7 @@ public sealed class KeyBindings {
     new(TerminalAction.Network, "network", "Process", "its connections", ["n"]),
     new(TerminalAction.CountHandles, "count-handles", "Process", "count the handles of every row on screen", ["ctrl+h"]),
     new(TerminalAction.ServiceMenu, "service", "Process", "start, stop or restart the unit it belongs to", ["w"]),
+    new(TerminalAction.Timeline, "timeline", "View", "what has happened since this started", ["z"]),
   ];
 
   private readonly Dictionary<string, TerminalAction> _byKey = new(StringComparer.Ordinal);

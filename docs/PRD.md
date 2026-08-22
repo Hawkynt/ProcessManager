@@ -474,7 +474,7 @@ Primary navigation:
       one; opening a row goes to that process (§40)
 - [ ] System activity (§51)
 - [x] Search / find resources — from the rail, which opens §33's dialog
-- [ ] Logs / history (§63)
+- [ ] 🟡 Logs / history (§63) — the terminal has a timeline; the window does not yet
 - [ ] 🟡 Settings (§67) — reachable and complete, as a dialog rather than a page in the content
       region. The same argument as Performance above: the box hands back a record and closes, where
       a page would be a fifth place the same record is edited and would have to agree with the other
@@ -4559,11 +4559,36 @@ which would turn "we could not read this" into the literal string "—" in a col
 
 # 63. Event timeline
 
-- [ ] Records: process start · process exit · service state change · connection appeared/disappeared ·
-      high CPU alert · high memory alert · executable/signature change · user action ·
-      privilege escalation of ProcessManager itself
-- [ ] Columns: time · event · process · PID · details · severity/category
-- [ ] Configurable retention
+- [ ] 🟡 Records: process start ✔ · process exit ✔ · high CPU alert ✔ · high memory alert ✔ ·
+      user action ✔ (its own category, because somebody reading a timeline after an incident has to
+      be able to tell what the machine did from what they did to it, and a line that does not
+      distinguish them will be misread under exactly the pressure it exists for) · service state
+      change ✔ where a rule watches one.
+
+      Connection appeared and disappeared, executable and signature change, and this program's own
+      privilege escalation are **not recorded yet**. The first would need the socket table walked
+      every tick, which §5.4 keeps out of the sampling loop; the other two are readings that exist
+      and are simply not wired to the log.
+
+      **In memory and bounded, and nothing is written to disk.** That is the difference between this
+      and §44's record, which is off unless asked for because it outlives the session: a ring that
+      dies with the program records nothing about anybody after they close it. Fed from what the
+      sampler already computed, so a timeline costs no reading of its own — a monitor watching itself
+      is the one thing it must not become. The first sample records nothing, or the first line would
+      be four hundred processes starting and would hide everything after it
+- [ ] 🟡 Columns: time ✔ · event ✔ · PID ✔ · category ✔, in the terminal's timeline overlay,
+      newest first because somebody opening it has just noticed something and wants the most recent
+      thing rather than to scroll past an hour to reach it. A heading each time the category changes.
+      An entry about a process still running goes to it; one about a process that has ended says so
+      rather than moving the cursor somewhere arbitrary — which is most of what a timeline holds, and
+      the reason it exists. **There is no window view yet**, and process name and details are the one
+      sentence rather than separate columns
+- [ ] 🟡 Configurable retention — the ring's size is a constructor argument and nothing in the
+      settings file names it yet. A count rather than a duration, deliberately: a machine that starts
+      a thousand processes a minute and one that starts none both have to stay inside the same
+      memory. The heading says how many are shown against how many there have been, because a ring
+      that dropped the older ones and says only "five hundred" reads as though five hundred was all
+      there was
 
 # 64. Notifications
 
