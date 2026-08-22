@@ -234,6 +234,23 @@ public static class FieldRegistry {
     // under the byte columns and very different machines to be sitting in front of. Free on both
     // platforms — syscr and syscw are lines of a file the sampler already reads, and Windows has
     // ReadOperationCount and WriteOperationCount in the structure it already queries.
+    new(ProcessField.ReadBytesTotal, "io.read.bytes", "I/O read total", "Rd total",
+      "Bytes this process has caused to be read since it started. The rate beside it says what it is "
+      + "doing now; this says what it has done, which is the question a process that spent an hour "
+      + "reading and is idle when you look at it answers differently.",
+      FieldKind.Cumulative, FieldUnit.Bytes, _ALL, FieldCost.Free, 140, 10, true, true,
+      Aliases: "read.total"),
+    new(ProcessField.WriteBytesTotal, "io.write.bytes", "I/O write total", "Wr total",
+      "Bytes this process has caused to be written since it started, counted the same way as the "
+      + "read total beside it.",
+      FieldKind.Cumulative, FieldUnit.Bytes, _ALL, FieldCost.Free, 140, 10, true, true,
+      Aliases: "write.total"),
+    new(ProcessField.OtherBytesTotal, "io.other.bytes", "I/O other total", "Oth total",
+      "Bytes moved by calls that were neither a read nor a write — a device control, a mapping "
+      + "faulted in. Windows accounts these separately and Linux does not, so on Linux the cell says "
+      + "the platform has no such figure rather than nought, which would claim the process made none.",
+      FieldKind.Cumulative, FieldUnit.Bytes, _ALL, FieldCost.Free, 140, 10, true, true,
+      Aliases: "other.total"),
     new(ProcessField.ReadOperations, "io.read.ops", "I/O read operations", "Rd ops",
       "How many read calls this process has made. Not the same question as how many bytes: a million one-byte reads and one large one move the same data and cost the machine completely differently.",
       FieldKind.Cumulative, FieldUnit.Count, _ALL, FieldCost.Free, 150, 8, true, true,
