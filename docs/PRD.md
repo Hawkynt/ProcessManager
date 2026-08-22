@@ -2290,7 +2290,15 @@ The engine enumerates threads on both platforms; the table shows a subset.
 - [x] 🟡 Resolved start symbol
 - [x] 🟡 Current instruction / address
 - [x] Priority
-- [x] Base priority
+- [x] Base priority — on both platforms, though Windows only since the reader stopped throwing it
+      away. `SYSTEM_THREAD_INFORMATION` carries a `BasePriority` field, the whole structure was being
+      read into a buffer, and the record it built passed null for it under a comment saying "the bulk
+      query carries neither an affinity nor a base priority". Half of that was true: there is no
+      affinity in it. The base priority was arriving and being discarded one line before it was used,
+      so the column read as unavailable on every Windows thread. Base is what the scheduler was told
+      the thread is worth and `Priority` is where it sits now, after the boosts a waiting thread
+      collects and loses — a view showing one and not the other cannot show that a thread has been
+      boosted, which is the reason both are columns
 - [x] Scheduling policy
 - [ ] Ideal processor
 - [x] Current / last CPU

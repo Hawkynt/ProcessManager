@@ -409,13 +409,19 @@ internal static class SystemProcessInformationReader {
             ContextSwitches: Counter.Of(thread.ContextSwitches),
             LastCpu: -1,
             WaitReason: MapWaitReason(thread.WaitReason),
-            // Windows counts switches but does not split them, and the bulk query carries neither an
-            // affinity nor a base priority. Each has to be stated: default(Counter) is a confident
-            // zero, and a thread that has never yielded voluntarily would be a remarkable claim to
-            // make about every thread on the machine (PRD §72.3).
+            // Windows counts switches but does not split them, and the bulk query carries no
+            // affinity. Each has to be stated: default(Counter) is a confident zero, and a thread
+            // that has never yielded voluntarily would be a remarkable claim to make about every
+            // thread on the machine (PRD §72.3).
             VoluntaryContextSwitches: Counter.NotSupported,
             InvoluntaryContextSwitches: Counter.NotSupported,
-            BasePriority: null,
+            // It does carry a base priority, in the field of that name, and this discarded it for a
+            // long time under a comment saying otherwise — the value was being read into the buffer
+            // and thrown away one line before it was used. Base is what the scheduler was told the
+            // thread is worth; Priority above it is where the thread sits now, after the boosts a
+            // waiting thread collects and loses. A view showing one and not the other cannot show
+            // that a thread has been boosted, which is the reason both are columns (PRD §29).
+            BasePriority: thread.BasePriority,
             Policy: SchedulingPolicy.Unknown,
             Affinity: null,
             // The rest of §29 needs a handle on the thread rather than the bulk query: the module a
