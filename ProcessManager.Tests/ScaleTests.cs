@@ -55,14 +55,33 @@ public sealed class ScaleTests {
   }
 
   /// <summary>How long one rebuild takes, after a warm one that is not counted.</summary>
+  /// <summary>
+  /// How long one rebuild takes, at the machine's best rather than at whatever it was doing.
+  /// </summary>
+  /// <remarks>
+  /// The best of several, for the reason <see cref="TimeUpdate"/> gives: a single measurement on a
+  /// shared build runner measures the runner's mood, and a ratio between two unrelated moments is
+  /// not a measurement of anything. This one has been reported flaky twice. The best case is the
+  /// right one to take, because what these tests look for is a quadratic — and a quadratic is slow
+  /// at the machine's most favourable moment too.
+  /// </remarks>
   private static TimeSpan TimeRebuild(ProcessView view, SystemSnapshot snapshot, SnapshotDelta delta) {
     view.Rebuild(snapshot, delta);
 
-    var clock = Stopwatch.StartNew();
-    view.Rebuild(snapshot, delta);
-    clock.Stop();
-    TestContext.Out.WriteLine($"{snapshot.ProcessCount} processes, tree={view.TreeMode}: {clock.Elapsed.TotalMilliseconds:0.0} ms");
-    return clock.Elapsed;
+    var best = TimeSpan.MaxValue;
+    for (var run = 0; run < 5; ++run) {
+      var clock = Stopwatch.StartNew();
+      view.Rebuild(snapshot, delta);
+      clock.Stop();
+      if (clock.Elapsed < best)
+        best = clock.Elapsed;
+    }
+
+    TestContext.Out.WriteLine(
+      $"{snapshot.ProcessCount} processes, tree={view.TreeMode}: {best.TotalMilliseconds:0.0} ms, best of five"
+    );
+
+    return best;
   }
 
   #region ten thousand processes
@@ -500,14 +519,40 @@ public sealed class ScaleTests {
   private static readonly ProcessKey _Swarm = new(4242, 99);
 
   /// <summary>How long one update takes, after a warm one that is not counted.</summary>
+  /// <summary>
+  /// How long one update takes, at the machine's best rather than at whatever it happened to be
+  /// doing.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The best of several runs, because a single measurement on a shared build runner measures the
+  /// runner's mood. This test failed on the macOS leg and passed on every other, with nothing in the
+  /// change touching threads: the small figure landed in a quiet window and the large one did not,
+  /// and the ratio between two unrelated moments is not a measurement of anything.
+  /// </para>
+  /// <para>
+  /// The best case is the right one to take here, and not a compromise for the sake of a green
+  /// suite. What this is looking for is a lookup that has become a scan, and a scan is slow in the
+  /// best case too — quadratic growth is a hundredfold and survives being measured at the machine's
+  /// most favourable moment. What does not survive it is the scheduler taking the thread away once.
+  /// </para>
+  /// </remarks>
   private static TimeSpan TimeUpdate(ThreadDelta delta, IReadOnlyList<ThreadRecord> threads) {
+    // Once to grow every buffer, so what follows is the steady state rather than the growth §71.3
+    // permits once.
     delta.Update(_Swarm, threads, 16);
 
-    var clock = Stopwatch.StartNew();
-    delta.Update(_Swarm, threads, 16);
-    clock.Stop();
-    TestContext.Out.WriteLine($"{threads.Count} threads: {clock.Elapsed.TotalMilliseconds:0.0} ms");
-    return clock.Elapsed;
+    var best = TimeSpan.MaxValue;
+    for (var run = 0; run < 5; ++run) {
+      var clock = Stopwatch.StartNew();
+      delta.Update(_Swarm, threads, 16);
+      clock.Stop();
+      if (clock.Elapsed < best)
+        best = clock.Elapsed;
+    }
+
+    TestContext.Out.WriteLine($"{threads.Count} threads: {best.TotalMilliseconds:0.0} ms, best of five");
+    return best;
   }
 
   [Test]
