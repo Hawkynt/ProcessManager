@@ -50,6 +50,13 @@ public sealed record TerminalStartup {
   /// </remarks>
   public IReadOnlyDictionary<string, uint>? Colours { get; init; }
 
+  /// <summary>What the settings file asked to be told about (PRD §64).</summary>
+  /// <remarks>
+  /// Empty unless the file says otherwise, and empty is the whole feature switched off — nothing is
+  /// compared and nothing is polled when nobody has written a rule.
+  /// </remarks>
+  public NotificationRules Notifications { get; init; } = new();
+
 }
 
 /// <summary>
@@ -100,6 +107,7 @@ public sealed class TerminalHost : IDisposable {
     ui.IntervalMilliseconds = (int)Math.Round(interval.TotalMilliseconds);
 
     if (startup is not null) {
+      ui.Notifications = startup.Notifications;
       ui.View.SortColumn = startup.SortColumn;
       ui.View.SortDescending = startup.SortDescending;
       ui.View.Grouping = startup.Grouping;

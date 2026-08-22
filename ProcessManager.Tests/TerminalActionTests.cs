@@ -173,17 +173,56 @@ public sealed class TerminalActionTests {
   }
 
   /// <summary>
-  /// A real-time class picked with one keystroke gets the lowest static priority it has. Anything
-  /// above that is a decision for a prompt rather than for a key in a list (PRD §68).
+  /// A real-time class is §69's class 3 and takes a second keystroke, unlike the three beside it.
   /// </summary>
+  /// <remarks>
+  /// It used to take one, which meant <c>SCHED_FIFO</c> — the class an ordinary process cannot
+  /// preempt — was two keys away with nothing said in between, while ending a process took a
+  /// confirmation. The static priority is still the lowest the class has: anything above that is a
+  /// decision for a prompt rather than for a key in a list (PRD §68, §69).
+  /// </remarks>
   [Test]
-  public void ARealTimeClassPickedFromTheListTakesItsLowestPriority() {
+  public void ARealTimeClassIsConfirmedWhereTheOrdinaryOnesAreNot() {
     var (ui, actions, probe) = Machine();
     using (probe) {
       ui.HandleKey(Key('s'));
       ui.HandleKey(Key('f'));
 
+      Assert.That(actions.Calls, Is.Empty, "nothing happens until it has been agreed to");
+      var asked = Frame(ui);
+      Assert.That(asked, Does.Contain("SCHED_FIFO"));
+      Assert.That(asked, Does.Contain("cannot preempt a real-time one"), "the consequence, not only the class name");
+
+      ui.HandleKey(Key('y'));
       Assert.That(actions.Calls[0], Does.Contain("Fifo 1"));
+    }
+  }
+
+  [Test]
+  public void RefusingTheRealTimeConfirmationChangesNothing() {
+    var (ui, actions, probe) = Machine();
+    using (probe) {
+      ui.HandleKey(Key('s'));
+      ui.HandleKey(Key('r'));
+      ui.HandleKey(Key('n'));
+
+      Assert.That(actions.Calls, Is.Empty);
+    }
+  }
+
+  /// <summary>
+  /// The three classes that are not real-time stay one keystroke, which is what makes the pause on
+  /// the other two worth reading (PRD §69).
+  /// </summary>
+  [Test]
+  public void AnOrdinaryClassIsStillOneKeystroke() {
+    var (ui, actions, probe) = Machine();
+    using (probe) {
+      ui.HandleKey(Key('s'));
+      ui.HandleKey(Key('b'));
+
+      Assert.That(actions.Calls, Has.Count.EqualTo(1));
+      Assert.That(actions.Calls[0], Does.Contain("Batch 0"));
     }
   }
 

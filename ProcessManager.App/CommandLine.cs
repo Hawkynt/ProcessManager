@@ -761,6 +761,16 @@ internal sealed record CommandLineOptions {
   public IReadOnlyDictionary<string, uint> TerminalColours { get; init; }
     = new Dictionary<string, uint>(StringComparer.OrdinalIgnoreCase);
 
+  /// <summary>
+  /// What the settings file asked to be told about (PRD §64).
+  /// </summary>
+  /// <remarks>
+  /// From the file only, and for the reason the palette above is: a rule about what is worth
+  /// interrupting somebody for is decided once and kept, not retyped every run. Empty is the
+  /// default and empty means the whole thing is off.
+  /// </remarks>
+  public NotificationRules Notifications { get; init; } = new();
+
   /// <summary>Bring the window up, photograph it and exit — the CI desktop smoke leg.</summary>
   public string? ShootPath { get; init; }
 
@@ -823,6 +833,7 @@ internal sealed record CommandLineOptions {
       DesktopColumns = settings.DesktopColumns.Length > 0 ? settings.DesktopColumns : null,
       UseMouse = settings.TerminalMouse,
       TerminalColours = settings.TerminalColours,
+      Notifications = settings.Notifications,
     };
 
     return Parse(args, seeded, settings);

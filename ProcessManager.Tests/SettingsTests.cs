@@ -195,10 +195,77 @@ public sealed class SettingsTests {
   public void ThePresetsOfSection94AreAvailableWithoutAFile() {
     var settings = new UserSettings();
 
-    foreach (var name in new[] { "basic", "expert", "security", "io", "memory", "cpu", "forensic", "minimal" }) {
+    foreach (var name in new[] { "basic", "expert", "security", "io", "network", "memory", "cpu", "forensic", "minimal" }) {
       Assert.That(settings.TryGetColumnSet(name, out var fields), Is.True, name);
       Assert.That(fields, Is.Not.Empty, name);
     }
+  }
+
+  /// <summary>
+  /// Every column §94 names for a set is in that set, or is one of the two the program refuses to
+  /// invent. The list drifted once already — the security set was missing the whole of §70 while the
+  /// section claimed the missing half had no Linux counterpart, and four of the five did.
+  /// </summary>
+  [TestCaseSource(nameof(SetsAndTheirColumns))]
+  public void EachDefaultViewHasTheColumnsSection94NamesForIt(string name, ProcessField[] wanted) {
+    Assert.That(new UserSettings().TryGetColumnSet(name, out var fields), Is.True, name);
+
+    foreach (var field in wanted)
+      Assert.That(fields, Does.Contain(field), $"the {name} set drops {FieldRegistry.Get(field).Key}");
+  }
+
+  private static IEnumerable<TestCaseData> SetsAndTheirColumns() {
+    yield return new("basic", new[] {
+      ProcessField.Name, ProcessField.Pid, ProcessField.State, ProcessField.CpuPercent,
+      ProcessField.PrivateBytes, ProcessField.IoTotalRate, ProcessField.GpuPercent,
+    });
+
+    // Without the signature pair §94 also names for it: fifty characters of verdict, half of it n/a
+    // on whichever platform this is, and a read and a digest of every image to fill either. This is
+    // the set that has to fit an ordinary terminal, and the pair is in the two sets below.
+    yield return new("expert", new[] {
+      ProcessField.Name, ProcessField.Pid, ProcessField.ParentPid, ProcessField.CpuPercent,
+      ProcessField.PrivateBytes, ProcessField.WorkingSetBytes, ProcessField.IoTotalRate,
+      ProcessField.UserName, ProcessField.StartTime, ProcessField.CommandLine,
+    });
+
+    // §70's five questions, and the two the platforms answer differently. None of these may be read
+    // off another: a package built on this machine matches its own record exactly and carries
+    // nobody's signature, which is verified in one column and unsigned in the next.
+    yield return new("security", new[] {
+      ProcessField.Name, ProcessField.Pid, ProcessField.UserName, ProcessField.ImagePath,
+      ProcessField.Elevated, ProcessField.Integrity, ProcessField.SecurityContext,
+      ProcessField.Protected, ProcessField.ProtectionLevel, ProcessField.ConfinementMode,
+      ProcessField.ImageSigner, ProcessField.ImageSignature, ProcessField.PackageStatus,
+      ProcessField.TrustChain, ProcessField.ImageSha256, ProcessField.Reputation,
+    });
+
+    yield return new("io", new[] {
+      ProcessField.Name, ProcessField.Pid, ProcessField.ReadBytesPerSecond,
+      ProcessField.WriteBytesPerSecond, ProcessField.IoPriority,
+    });
+
+    yield return new("network", new[] {
+      ProcessField.Name, ProcessField.Pid, ProcessField.TcpConnectionCount,
+      ProcessField.ListeningSocketCount,
+    });
+  }
+
+  /// <summary>
+  /// And the one thing the network set must <em>not</em> have. §18 refuses per-process traffic
+  /// because summing the sockets a process currently holds is not the quantity a send or receive
+  /// column would claim, and nothing in the cell would say so (PRD §18, §72.3).
+  /// </summary>
+  [Test]
+  public void TheNetworkSetCountsEndpointsAndNeverInventsTraffic() {
+    Assert.That(new UserSettings().TryGetColumnSet("network", out var fields), Is.True);
+
+    foreach (var field in fields)
+      Assert.That(
+        FieldRegistry.Get(field).Unit,
+        Is.Not.EqualTo(FieldUnit.BytesPerSecond),
+        "there is no honest per-process traffic column to put here"
+      );
   }
 
   [Test]

@@ -205,8 +205,11 @@ internal static class Program {
           : options.GraphStyleWasStated || options.GraphStyle != GraphStyle.Blocks ? options.GraphStyle
           : null,
         // The interactive path only. A capture is compared byte for byte, so its colours may no more
-        // come from the settings file than its block characters may come from the locale.
+        // come from the settings file than its block characters may come from the locale — and the
+        // same goes for a notification, which would put a sentence about this machine's own
+        // processes into a golden frame (PRD §9.6, §64).
         Colours = options.TerminalColours,
+        Notifications = options.Notifications,
       }, ProbeFactory.CreateServiceControl());
 
       return _ExitOk;
