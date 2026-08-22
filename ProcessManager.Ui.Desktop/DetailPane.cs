@@ -423,6 +423,21 @@ public sealed class DetailPane : IDisposable {
   /// For the capture, which has to photograph a tab nobody clicked on: the pane opens on the overview
   /// and every list behind it is a layout no picture has ever shown (PRD §9.6).
   /// </remarks>
+  /// <summary>
+  /// Which tab is showing, by its caption — the lower pane's "mode" (PRD §12).
+  /// </summary>
+  /// <remarks>
+  /// Exposed so a test can assert it survives a refresh. It does by construction: the pane is built
+  /// once and filled again, never rebuilt, and the tab control keeps its own selection — which is a
+  /// reason to hold the behaviour rather than to leave it as something nobody checks. The pane's
+  /// mode is the one thing in §12's list of what a refresh preserves that used to have no answer,
+  /// because there was no pane when that list was written.
+  /// </remarks>
+  public string CurrentTab
+    => this._tabs.SelectedIndex >= 0 && this._tabs.SelectedIndex < this._tabs.TabPages.Count
+      ? this._tabs.TabPages[this._tabs.SelectedIndex].Text
+      : string.Empty;
+
   public bool ShowTab(string tab) {
     for (var i = 0; i < this._tabs.TabPages.Count; ++i)
       if (this._tabs.TabPages[i].Text == tab) {
