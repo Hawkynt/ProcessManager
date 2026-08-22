@@ -5279,8 +5279,9 @@ inside a PE, and the digest a Linux package database wrote down about a file it 
 - [x] Invalid signature — the image no longer matches what was recorded: the package's digest, or
       the one inside its signature, or a signature that is not the one the certificate's key makes
 - ∅ Revoked — **refused, because it is question four wearing question two's clothes.** A revocation
-      answer comes from a CRL distribution point or an OCSP responder, and both are network fetches
-      that §97 forbids by default. The offline alternative is worse than none: a cached revocation
+      answer comes from a CRL distribution point or an OCSP responder, and both are network fetches,
+      which §97 rules out outright rather than by default. The offline alternative is worse than
+      none: a cached revocation
       list on a machine that never fetched one reports every revoked certificate as fine, which is
       the confident zero this project keeps finding inside ticked boxes. A verdict that reads "clean"
       because nothing was downloaded is not a verdict
