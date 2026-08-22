@@ -496,16 +496,25 @@ Primary navigation:
 - [ ] 🟡 Performance — reachable from the rail, but as a window of its own rather than a page in the
       content region: it is modeless, has its own timer and its own lifetime, and a second copy of it
       in here would mean two of everything it samples (§45)
-- [ ] 🟡 Applications / usage history (§44) — the record is kept and is a documented file anybody
-      can read, and there is no view of it behind the rail yet
+- [x] Applications / usage history (§44) — a History page behind the rail, dearest first, which is
+      the order somebody opening it is asking about. When nothing is being recorded it says so and
+      how to turn it on, rather than showing an empty table: "nothing yet" and "nobody is keeping
+      this" are different answers and only one of them is a reason to wait
 - [x] Startup (§42)
 - [x] Users / sessions (§43)
 - [x] Services — a view, and all six verbs on a right-click (§41)
 - [x] Network — every socket on the machine, with the process holding it where this account may see
       one; opening a row goes to that process (§40)
-- [ ] System activity (§51)
+- [x] 🟡 System activity (§51) — a page of the performance window rather than one behind the main
+      rail, and reachable in two keystrokes from it. The same argument as Performance and Settings
+      above: it is one arrangement of figures that already have a page, and a second copy behind the
+      rail would be two places showing the same thing — which is the trap §26 names, where a view
+      duplicated across two hosts becomes two tabs of the same name that drift apart
 - [x] Search / find resources — from the rail, which opens §33's dialog
-- [ ] 🟡 Logs / history (§63) — the terminal has a timeline; the window does not yet
+- [x] Logs / history (§63) — a Timeline page behind the rail, newest first, the same way the
+      terminal's overlay shows it. The heading counts what is shown against what there has been,
+      because a ring that dropped the older ones and reports only its own size reads as though that
+      was all there was
 - [ ] 🟡 Settings (§67) — reachable and complete, as a dialog rather than a page in the content
       region. The same argument as Performance above: the box hands back a record and closes, where
       a page would be a fifth place the same record is edited and would have to agree with the other
@@ -3525,7 +3534,7 @@ knowing where it came from — so it reads "local" rather than leaving the colum
       day since January is not old, and dropping it because its record is old would delete exactly
       the rows worth keeping) · export ✔, in the sense that the record *is* a documented
       tab-separated file with a header, which anybody can read, filter or delete a line out of
-      without a tool. **Reset has no control of its own yet** — deleting the file is reset, and that
+      without a tool — and a History page behind the window's rail that shows it, dearest first. **Reset has no control of its own yet** — deleting the file is reset, and that
       is a thing somebody has to know rather than something the program offers
 - [x] **Off by default.** A file recording which applications a person ran and for how long is
       surveillance if it appears without being asked for, however useful it is when it is asked for.
@@ -4659,8 +4668,9 @@ which would turn "we could not read this" into the literal string "—" in a col
       thing rather than to scroll past an hour to reach it. A heading each time the category changes.
       An entry about a process still running goes to it; one about a process that has ended says so
       rather than moving the cursor somewhere arbitrary — which is most of what a timeline holds, and
-      the reason it exists. **There is no window view yet**, and process name and details are the one
-      sentence rather than separate columns
+      the reason it exists. There is a page behind the window's rail as well as the terminal's overlay, with when, what kind,
+      which process and what happened as four columns. Process name and details are still the one
+      sentence rather than two columns
 - [ ] 🟡 Configurable retention — the ring's size is a constructor argument and nothing in the
       settings file names it yet. A count rather than a duration, deliberately: a machine that starts
       a thousand processes a minute and one that starts none both have to stay inside the same

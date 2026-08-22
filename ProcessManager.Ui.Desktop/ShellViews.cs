@@ -3,6 +3,7 @@ using Hawkynt.NativeForms;
 using Hawkynt.ProcessManager.Abstractions;
 using Hawkynt.ProcessManager.Model;
 using Hawkynt.ProcessManager.Query;
+using Hawkynt.ProcessManager.Sampling;
 
 namespace Hawkynt.ProcessManager.Ui.Desktop;
 
@@ -208,7 +209,120 @@ internal sealed class ShellViews(ISystemProbe probe) {
 
   #endregion
 
-  #region who is logged in (PRD §43)
+  #region what each program has cost, and what has happened (PRD §44, §63)
+
+  private readonly RecordTable _usage = new(
+    "What each program has cost",
+    ("Program", 300),
+    ("Processor time", 120),
+    ("Read", 100),
+    ("Written", 100),
+    ("Peak memory", 110),
+    ("Average memory", 120),
+    ("Times run", 90),
+    ("Running for", 110),
+    ("Last seen", 160)
+  );
+
+  public Control UsageControl => this._usage.Control;
+
+  public string UsageText => this._usage.Description;
+
+  public int UsageRows => this._usage.RowCount;
+
+  /// <summary>
+  /// What each program has cost this machine, across every time it has been run (PRD §44).
+  /// </summary>
+  /// <remarks>
+  /// The record is kept only when somebody asked for it, so this page says which of the two states
+  /// it is in rather than showing an empty table. "Nothing yet" and "nobody is keeping this" are
+  /// different answers and only one of them is a reason to wait.
+  /// </remarks>
+  public void RefreshUsage(UsageHistory? history) {
+    if (history is null) {
+      this._usage.Fill(
+        "Nothing is being recorded. Put history.usage=true in the settings file to keep a record of "
+        + "what each program costs this machine, across sessions.",
+        0,
+        _ => []
+      );
+
+      return;
+    }
+
+    var records = new List<UsageRecord>(history.Records);
+    // Dearest first, which is the order somebody opening this is asking about.
+    records.Sort(static (left, right) => right.CpuTimeNs.CompareTo(left.CpuTimeNs));
+
+    this._usage.Fill(
+      records.Count == 0
+        ? $"Recording, and nothing has been seen twice yet.  {AsOf()}"
+        : $"{records.Count} programs.  {AsOf()}",
+      records.Count,
+      i => [
+        records[i].Application,
+        Humanize.Duration(Counter.Of(records[i].CpuTimeNs)),
+        Humanize.Bytes(Counter.Of(records[i].ReadBytes)),
+        Humanize.Bytes(Counter.Of(records[i].WrittenBytes)),
+        Humanize.Bytes(Counter.Of(records[i].PeakWorkingSetBytes)),
+        Humanize.Bytes(Counter.Of((ulong)Math.Max(0, records[i].AverageWorkingSetBytes))),
+        records[i].Launches.ToString(CultureInfo.InvariantCulture),
+        Humanize.Duration(Counter.Of((ulong)Math.Max(0, records[i].RuntimeSeconds) * 1_000_000_000ul)),
+        Humanize.Timestamp(records[i].LastSeenUtcTicks),
+      ]
+    );
+  }
+
+  private readonly RecordTable _timeline = new(
+    "What has happened",
+    ("When", 170),
+    ("Kind", 150),
+    ("PID", 80),
+    ("What happened", 520)
+  );
+
+  public Control TimelineControl => this._timeline.Control;
+
+  public string TimelineText => this._timeline.Description;
+
+  public int TimelineRows => this._timeline.RowCount;
+
+  /// <summary>
+  /// What has happened while this has been running (PRD §63).
+  /// </summary>
+  /// <remarks>
+  /// Newest first, the same way the terminal's overlay shows it: somebody opening this has just
+  /// noticed something and wants the most recent thing rather than to scroll past an hour to reach
+  /// it. The heading counts what is shown against what there has been, because a ring that dropped
+  /// the older ones and says only its own size reads as though that was all there was.
+  /// </remarks>
+  public void RefreshTimeline(EventLog log) {
+    ArgumentNullException.ThrowIfNull(log);
+    var entries = log.Entries;
+    var now = DateTime.UtcNow.Ticks;
+
+    this._timeline.Fill(
+      entries.Count == 0
+        ? "Nothing has happened yet that this was watching for."
+        : entries.Count == log.Total
+          ? $"{entries.Count} things have happened.  {AsOf()}"
+          : $"The last {entries.Count} of {log.Total}.  {AsOf()}",
+      entries.Count,
+      i => {
+        var entry = entries[entries.Count - 1 - i];
+        return [
+          Humanize.When(entry.UtcTicks, now),
+          EventLog.Describe(entry.Category),
+          entry.Pid > 0 ? entry.Pid.ToString(CultureInfo.InvariantCulture) : "—",
+          entry.Text,
+        ];
+      }
+    );
+  }
+
+  #endregion
+
+  #region who is logged in (PRD §43)  #region who is logged in (PRD §43)
 
   private readonly RecordTable _sessions = new(
     "Sessions",

@@ -67,12 +67,22 @@ public sealed class ShellWindowTests {
 
   #region the rail (PRD §9, §10)
 
+  /// <summary>
+  /// Every view the rail is supposed to carry, in the order it carries them.
+  /// </summary>
+  /// <remarks>
+  /// Exact rather than a containment check, and that is the point: a view added here has to be added
+  /// here too, and a view that quietly stops being built fails rather than passing a "contains the
+  /// ones I remembered" test. The order is part of it, because the rail is read top to bottom and
+  /// "Find resources" belongs at the end — it is a question rather than a place.
+  /// </remarks>
   [Test]
   public void TheRailCarriesEveryPrimaryView() {
     var window = Window();
 
     Assert.That(window.ViewTitles, Is.EqualTo(new[] {
-      "Processes", "Performance", "Startup", "Users", "Services", "Network", "Find resources",
+      "Processes", "Performance", "Startup", "Users", "Services", "Network",
+      "History", "Timeline", "Find resources",
     }));
   }
 

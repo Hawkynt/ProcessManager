@@ -41,6 +41,18 @@ public sealed class MainWindow : Form {
   /// </remarks>
   private TrayIndicators? _tray;
 
+  /// <summary>
+  /// What has happened while this window has been open (PRD §63).
+  /// </summary>
+  /// <remarks>
+  /// Its own, rather than shared with the terminal: the two are separate programs in the same
+  /// binary and a ring that outlived one of them would be a surprise. Bounded and in memory, so it
+  /// costs nothing to keep and nothing survives the session.
+  /// </remarks>
+  private readonly EventLog _timeline = new();
+
+  private bool _timelineStarted;
+
   /// <summary>Which row the tooltip is currently describing, so it is not rebuilt on every pixel.</summary>
   private int _quickRow = -1;
   private readonly HistoryPlot _cpuPlot = new();
@@ -1997,6 +2009,23 @@ public sealed class MainWindow : Form {
     this._shell.ServicesMenu = this.ServiceMenu(commandable);
     this._shell.ServicesAreCommandable(commandable);
     this.AddView("Network", this._shell.NetworkControl, this.RefreshNetwork, () => this._shell.NetworkText, () => this._shell.NetworkRows);
+    // Two things the window could not show and the record already held: what each program has cost
+    // across sessions, and what has happened since this was opened (PRD §9, §44, §63).
+    this.AddView(
+      "History",
+      this._shell.UsageControl,
+      () => this._shell.RefreshUsage(this._sampler.Usage),
+      () => this._shell.UsageText,
+      () => this._shell.UsageRows
+    );
+
+    this.AddView(
+      "Timeline",
+      this._shell.TimelineControl,
+      () => this._shell.RefreshTimeline(this._timeline),
+      () => this._shell.TimelineText,
+      () => this._shell.TimelineRows
+    );
     this.AddView("Find resources", null, this.FindResource, () => "opens the find dialog", () => 0);
 
     // Opening a socket row goes to the process holding it, which is the question a connection list
@@ -2424,6 +2453,9 @@ public sealed class MainWindow : Form {
     // The panel's icons off the same tick as everything else, so what is in the corner of the screen
     // and what is in the table are the same moment (PRD §65).
     this._tray?.Update(delta, snapshot);
+    // From what the delta already computed, so a timeline costs no reading of its own (PRD §63).
+    this._timeline.Add(snapshot, delta, !this._timelineStarted, DateTime.UtcNow.Ticks);
+    this._timelineStarted = true;
 
     this._view.Rebuild(snapshot, delta);
 
