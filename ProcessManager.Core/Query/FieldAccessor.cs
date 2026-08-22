@@ -378,6 +378,12 @@ public static class FieldAccessor {
           ? new DateTime(process.StartTimeUtcTicks, DateTimeKind.Utc).ToLocalTime()
             .ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture)
           : "—";
+      case ProcessField.ExitTime:
+        return process.ExitedUtcTicks > 0
+          ? new DateTime(process.ExitedUtcTicks, DateTimeKind.Utc).ToLocalTime()
+            .ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture)
+          : "—";
+      case ProcessField.ExitCode: return Humanize.Count(process.ExitCode);
       case ProcessField.Container: return process.ContainerPath ?? "—";
       case ProcessField.ImagePath: return process.ImagePath ?? "—";
       case ProcessField.CommandLine: return process.CommandLine ?? string.Empty;
@@ -424,6 +430,10 @@ public static class FieldAccessor {
       case ProcessField.UniqueSet: return Number(process.UniqueBytes);
       case ProcessField.SessionId: return process.SessionId;
       case ProcessField.StartTime: return process.StartTimeUtcTicks;
+      // Null and not nought for a running process: nought would sort with the oldest deaths and
+      // match a filter looking for one, and a process that has not ended did not end at year one.
+      case ProcessField.ExitTime: return process.ExitedUtcTicks > 0 ? process.ExitedUtcTicks : null;
+      case ProcessField.ExitCode: return Number(process.ExitCode);
       case ProcessField.ImageCreated: return Number(process.ImageCreatedUtcTicks);
       // The verdict as its own identity, so that sorting groups the rows that failed a check
       // together. "Not checked" has no number at all, which keeps a filter from matching it as if

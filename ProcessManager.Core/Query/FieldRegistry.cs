@@ -860,6 +860,23 @@ public static class FieldRegistry {
       // 22:03:2, which reads as a time rather than as a truncation and so went unnoticed.
       FieldKind.Instant, FieldUnit.Timestamp, _ALL, FieldCost.Free, 152, 19, false, true,
       Aliases: "started starttime"),
+    // PRD §14. Both are about rows that outlive their processes, which is why they were unwritten
+    // for so long: there was nowhere for the answer to live. A table that keeps its dead is off by
+    // default (§87), so on an ordinary machine every cell in both of these is a dash — and that is
+    // the honest rendering rather than an empty column.
+    new(ProcessField.ExitTime, "exit.time", "Exit time", "Ended",
+      "When a process that has ended did so. Only rows being kept after their process went have one, "
+      + "which is off unless asked for. A dash everywhere else, because a running process has not "
+      + "ended rather than having ended at no particular time.",
+      FieldKind.Instant, FieldUnit.Timestamp, _ALL, FieldCost.Free, 152, 19, false, true,
+      Aliases: "ended exittime"),
+    new(ProcessField.ExitCode, "exit.code", "Exit code", "Code",
+      "What the process exited with. Neither kernel tells a bystander this about a process it did "
+      + "not start — the status goes to the parent through wait on Unix, and needs a handle held "
+      + "across the exit on Windows — so it is a dash for everything this program did not launch, "
+      + "which is nearly everything.",
+      FieldKind.Identifier, FieldUnit.None, _ALL, FieldCost.Free, 70, 6, true, true,
+      Aliases: "exitcode"),
     new(ProcessField.Container, "cgroup", "Container / cgroup", "Cgroup",
       "The cgroup or container the process belongs to.",
       FieldKind.Text, FieldUnit.None, _LINUX, FieldCost.Free, 240, 40, false, false,
