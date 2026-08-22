@@ -70,6 +70,9 @@ public enum ProcessField : byte {
   Swap,
 
   IoTotalRate,
+  ReadBytesTotal,
+  WriteBytesTotal,
+  OtherBytesTotal,
   ReadBytesPerSecond,
   WriteBytesPerSecond,
   ReadOperations,

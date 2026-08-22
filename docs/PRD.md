@@ -123,19 +123,39 @@ thread continuously consuming logical CPU 7."
       thousand processes flat and nested, a chain twenty thousand deep, and a million descriptors
       searched in 186 ms; the quadratic that used to be in the tree builder is gone (§99)
       — measured to 1000 processes (§71); 10 000 is untested
-- [ ] 🟡 Permit customisation of columns, layouts, refresh intervals, highlighting, shortcuts and
-      defaults — columns and interval yes; nothing persists between runs
-- [ ] 🟡 Support keyboard-driven operation throughout GUI and TUI — TUI complete, GUI partial
+- [x] Permit customisation of columns, layouts, refresh intervals, highlighting, shortcuts and
+      defaults — every one of the six, and all of it persists. The file understands forty-six keys
+      plus two prefixes: columns for each front-end with their widths and pinned run (`columns.*`,
+      `columnset.*`), the window's size, splitter and lower pane (`window.*`), the refresh interval,
+      eight highlighting thresholds and the whole row palette (`heat.*`, `color.*`), the terminal's
+      keys in a `keys.conf` beside it, and the defaults — grouping, sort, CPU convention, whether a
+      single action asks first, how the performance page opens. Checked by round-tripping each kind
+      through the file rather than by reading the list: a key this build does not understand comes
+      back untouched too, so an older build cannot eat a newer one's settings
+- [ ] 🟡 Support keyboard-driven operation throughout GUI and TUI — the terminal completely; the
+      window nearly, and what is missing is named in §74 rather than left as "partial". Every menu
+      item, the sort, the columns, the filter and the settings box have keys; the row tick and the
+      splitter are reachable through the toolkit's own bindings, which three assertions now hold
+      against the two ways they silently stop arriving (a control out of the tab order, and a menu
+      accelerator claiming the key before the focused control sees it)
 - [x] Permit information to be copied or exported without screenshots
 
 ## 3.2 Secondary — SHOULD
 
 - [ ] Serve as a lightweight incident-response triage utility
 - [ ] Serve as a developer debugging companion
-- [ ] Provide long-running metric history when requested
+- [x] Provide long-running metric history when requested — §44's usage record: what each program has
+      cost this machine across every time it has been run, kept between sessions and **only when
+      requested**, which is the whole of its design rather than a preference about it. Not a series
+      per metric per process, which would be a database; totals per program, in a file somebody can
+      read and delete a line out of
 - [ ] Support plugins and extensions
-- [ ] 🟡 Support scripting and automation through CLI/API — six formats over ninety fields, a filter
-      language, and exit codes a script can branch on; there is no library API
+- [ ] 🟡 Support scripting and automation through CLI/API — six formats over every field the registry
+      holds, a filter language shared by all three front-ends, per-process detail and per-resource
+      plots from the command line, a mode that turns the expensive collectors off, and exit codes a
+      script can branch on: nought for a match, two for none, one for a query it could not parse.
+      **There is still no library API**, and that is what keeps this partial — everything above is a
+      program somebody shells out to, which is not the same as something they can reference
 - [x] Provide a portable, no-install distribution — single-file NativeAOT binary, 3.2 MB, no runtime
 - [x] Support dark, light and system themes
 - [ ] Provide an optional tray / menu-bar mode
@@ -1082,11 +1102,17 @@ a zero — and a process nobody asked about reports *not sampled*. Neither is no
 - [x] `io.total.rate` — read + write + other
 - [x] `io.read.ops` / `io.read.ops.delta` — `syscr`, which counts calls where the byte columns count
       bytes: a gigabyte in one call and a gigabyte a byte at a time cost very different amounts
-- [x] `io.read.bytes` / `io.read.bytes.delta`
+- [x] `io.read.bytes` — what the process has caused to be read from storage since it started, from
+      `read_bytes`, which is actual device traffic and not `rchar`: a gigabyte served out of the page
+      cache cost the disk nothing and reading it as I/O would make every warm process look busy. The
+      per-interval figure is `io.read` beside it, which is the same measurement as a rate — this box
+      named a `.delta` spelling that never existed, and **was ticked while neither column did**
 - [x] `io.write.ops` / `io.write.ops.delta` — `syscw`, as above
-- [x] `io.write.bytes` / `io.write.bytes.delta`
+- [x] `io.write.bytes` — the same for writes, from `write_bytes`. Checked against
+      `/proc/[pid]/io` byte for byte on three live processes
 - [ ] 🟡 `io.other.ops` — Windows only
-- [x] `io.other.bytes` — Windows only
+- [x] `io.other.bytes` — Windows only, and on Linux the cell says the platform has no such figure
+      rather than nought, which would claim the process made no such calls
 - [x] `io.rate` — aggregate bytes/sec
 - [x] `io.priority` — the class the scheduler holds the process at, read as well as set
 - [x] `cpu.time.user` / `cpu.time.kernel` — the per-process split, free from `stat`'s `utime` and

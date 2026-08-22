@@ -112,6 +112,13 @@ public static class FieldAccessor {
       case ProcessField.WriteOperationsDelta:
         return Humanize.Rate(Rated(delta, index, field));
 
+      // What a process has moved since it started, against the rates beside them which say what it
+      // is moving now. A process that spent an hour reading and is idle when somebody looks at it
+      // answers the two questions completely differently, and only one of them was on offer.
+      case ProcessField.ReadBytesTotal: return Humanize.Bytes(process.ReadBytes);
+      case ProcessField.WriteBytesTotal: return Humanize.Bytes(process.WriteBytes);
+      case ProcessField.OtherBytesTotal: return Humanize.Bytes(process.OtherBytes);
+
       case ProcessField.BlockIoWait: return Humanize.Duration(process.BlockIoWaitNs);
       case ProcessField.IoPriority: return IoPriorityText(in process) ?? Humanize.Placeholder(process.IoPriorityValue.Reason);
 
@@ -507,6 +514,9 @@ public static class FieldAccessor {
       case ProcessField.ReadOperations: return Number(process.ReadOperations);
       case ProcessField.WriteOperations: return Number(process.WriteOperations);
       case ProcessField.OtherOperations: return Number(process.OtherOperations);
+      case ProcessField.ReadBytesTotal: return Number(process.ReadBytes);
+      case ProcessField.WriteBytesTotal: return Number(process.WriteBytes);
+      case ProcessField.OtherBytesTotal: return Number(process.OtherBytes);
       case ProcessField.BlockIoWait: return Number(process.BlockIoWaitNs);
       // The packed value the kernel returns, which orders by class and then by level inside it —
       // so sorting groups the real-time requesters together and puts the idle ones at the far end.
