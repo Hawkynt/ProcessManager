@@ -653,8 +653,8 @@ public static class FieldRegistry {
     // one vocabulary — Verified, Unsigned, Expired and the rest — and which question it answers is
     // the column it is in, never the word.
     new(ProcessField.TrustChain, "trust.chain", "Trust chain", "Chain",
-      "Whether anybody this machine trusts signed for the image. Its own question and routinely its own answer: a package built here ships files that match their record exactly and carries nobody's signature, which is Verified in the package check and Unsigned in this one. On Linux it is what the packaging system recorded about the package — pacman's %VALIDATION%, the line pacman -Qi prints as \"Validated By\" — and never anything read out of the ELF, which carries no signature to read.",
-      FieldKind.State, FieldUnit.None, _LINUX, FieldCost.High, 190, 25, false, false,
+      "Whether anybody this machine trusts signed for the image. Its own question and routinely its own answer: a package built here ships files that match their record exactly and carries nobody's signature, which is Verified in the package check and Unsigned in this one. On Linux it is what the packaging system recorded about the package — pacman's %VALIDATION%, the line pacman -Qi prints as \"Validated By\" — and never anything read out of the ELF, which carries no signature to read. On Windows the question is a real one and the answer is not written: there are certificates and a root store, the verifier beside this deliberately stops at the signer\u0027s own signature, and the column says so rather than not existing \u2014 declaring the field Linux-only would have said Windows has no such thing, which is the one platform where it plainly does.",
+      FieldKind.State, FieldUnit.None, _ALL, FieldCost.High, 190, 25, false, false,
       Aliases: "chain validated.by",
       Privilege: FieldPrivilege.Owner),
     new(ProcessField.Reputation, "reputation", "Reputation", "Rep",

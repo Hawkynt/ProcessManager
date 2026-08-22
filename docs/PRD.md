@@ -118,7 +118,12 @@ thread continuously consuming logical CPU 7."
 - [x] Start fast enough to remain useful when the machine is under significant load
 - [x] Avoid requiring Internet access for ordinary operation
 - [x] Provide opt-in reputation services rather than silently transmitting executable information
-      — trivially satisfied today: there is no network code at all
+      — satisfied by the stronger half of the sentence, and the weaker half is now refused rather
+      than pending. Nothing is transmitted, because there is no network client; and §70.1 settles
+      that there will not be one, so "opt-in" is not a switch somebody has yet to add. What this
+      program offers instead is the digest, locally, in a column somebody can copy — which puts any
+      transmission in their own browser, under their own eyes, with the consent built out of the
+      mechanism rather than bolted onto it (§70.1, §97)
 - [x] Remain usable with thousands of processes, threads, mappings, connections or handles — ten
       thousand processes flat and nested, a chain twenty thousand deep, and a million descriptors
       searched in 186 ms; the quadratic that used to be in the tree builder is gone (§99)
@@ -1603,9 +1608,11 @@ per sample and cannot be cached — have a switch of their own (§5.4).
       macOS probe is a stub (§6.3) — so this is not four unwritten readings but a whole unwritten
       platform, and nothing here will move until §6.3 does
 
-- [ ] **Online reputation checking is opt-in, and the program states exactly what is transmitted
-      before the first time it happens** — at the point of use, not buried in a settings page.
-      **Blocked on there being anything to disclose.** Nothing is transmitted about an executable by
+- ∅ **Online reputation checking is opt-in, and the program states exactly what is transmitted
+      before the first time it happens** — **and there is nothing to disclose, permanently.** This
+      waited on §70's provider box, which §70.1 has now closed as refused rather than deferred: there
+      is no transmission to describe and there will not be one, so a disclosure is not owed. The
+      earlier wording said it was blocked, which read as a thing somebody would come back to. Nothing is transmitted about an executable by
       any code path in this program, and a sentence describing a transmission that cannot happen
       would be a worse thing to ship than no sentence: it would teach a reader that the program does
       send something. This box opens when §70's provider box does, and not before
@@ -1784,8 +1791,10 @@ Categories:
       no heading.** That is the argument, and it does not depend on which of the five is read
 - ∅ Invalid signature — as above. On Windows a signature can now genuinely be invalid, and it is
       still not a row colour, for the same reason: the word is meaningless without its heading
-- [ ] Suspicious reputation — needs opt-in reputation, and §97 promises nothing about an executable
-      leaves this machine unasked. There is no provider to ask
+- ∅ Suspicious reputation — **refused rather than waiting.** It needs a verdict from somewhere, §97
+      promises nothing about an executable leaves this machine unasked, and §70.1 settles that no
+      provider will exist to ask. A colour with no possible source behind it is not a colour that is
+      coming later
 - [x] High CPU
 - [x] High memory
 - [x] High disk
@@ -5227,7 +5236,9 @@ inside a PE, and the digest a Linux package database wrote down about a file it 
       A package database records that *something* signed, not who — `pacman` writes `pgp` and stops
       there — so there is no chain in it to distrust. Windows is the half that changed: the images
       carry real certificates and this program reads them, but it deliberately does not walk them to
-      a root store, and `trust.chain` is not even a column there. Reaching this word needs a chain
+      a root store. The column **is** one there now: it was declared Linux-only, which said Windows
+      has no trust chain when Windows is the one platform that plainly does, and it says "not
+      implemented here" instead — a different sentence from "not applicable", and the true one. Reaching this word needs a chain
       built against the machine's own store with revocation off, which is local, buildable and
       simply not built
 - [x] Unsigned — nothing signed for the package, which is most of a machine that builds its own; on
@@ -5507,7 +5518,7 @@ Today: binary units with single-letter suffixes, no setting. Counts scale in tho
 
 # 79. Plugin system
 
-- [ ] Plugins may contribute fields · collectors · detail tabs · reputation providers ·
+- [ ] Plugins may contribute fields · collectors · detail tabs ·
       hardware sensors · exporters · actions · process classifiers · runtime inspectors
 - [ ] Plugins declare supported OSes · privileges · network usage · collection cost · permissions
 - [ ] **Untrusted plugins never inherit privileged-helper access**
@@ -5535,7 +5546,7 @@ JVM, later:
 A major reason to replace an ordinary task manager is to remain usable when the system is unhealthy.
 
 - [x] `procman --minimal` disables icons · signatures · symbols · module enumeration ·
-      handle enumeration · history · GPU · hostname resolution · reputation · plugins — every
+      handle enumeration · history · GPU · hostname resolution · plugins — every
       opt-in switch is forced off, and which readings are expensive is read from the registry's own
       `FieldCost.High` rather than from a second list that would drift from it. A named column it
       cannot then fill is reported on standard error by name — "collects nothing that costs a read,
@@ -5978,7 +5989,7 @@ a naive parser hands the attacker the parse.
 
 # 99. Testing strategy
 
-**2489 tests pass on every leg, under both a UTF-8 and a `C` locale.**
+**2496 tests pass on every leg, under both a UTF-8 and a `C` locale.**
 
 ## Unit tests
 
