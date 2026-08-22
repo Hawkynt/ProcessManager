@@ -404,8 +404,13 @@ interesting bug in a tool of this kind is a division that should not have been p
 - [x] Floors (CPU 5 %, memory 32 MB, I/O 64 KB) so an idle process is a flat line, not noise
       amplified to full scale
 - [x] Decay ×0.92 so a spike does not permanently flatten everything after it
-- [ ] Longer windows (5 min, 15 min, 1 h) need a decimating ring — 3600 points per series per
-      process is not affordable (§85)
+- [x] Longer windows (5 min, 15 min, 1 h) — **and no decimating ring was needed, because the
+      affordability problem this box names is avoided rather than solved.** It is real: 3600 points
+      per series per process, over four hundred processes, is not something to keep. Nothing keeps
+      it. The in-row sparklines are sixty-four samples per process and are sixty seconds by design;
+      the per-process page keeps 3600 for the one process somebody is looking at; and the machine's
+      own pages keep one series per resource rather than one per process. A long window is offered
+      exactly where there is one series to keep it for (§85)
 
 **Cadence.** See §12.
 
@@ -4920,7 +4925,12 @@ sorted the table to find.
 
 - [x] Every eligible metric has an in-memory ring buffer
 - [x] 60 seconds at high resolution by default
-- [ ] Configurable 5 min · 15 min · 1 h
+- [x] 🟡 Configurable 5 min · 15 min · 1 h — five and fifteen minutes on both the machine's pages
+      and a process's own; an hour on a process's own page only. The machine's pages stop at fifteen
+      because their rings are sized to the longest span the drop-down offers, and a span that can be
+      selected with no history behind it is a menu entry that draws an empty graph. Going to an hour
+      there means four times the machine-wide history for every resource on the rail, which is a
+      trade worth making deliberately rather than because a box wanted ticking
 - [x] Persistent history, separate and optional — §44's usage record: a separate file, off unless
       asked for, holding totals per program rather than a series per metric. Deliberately not the
       ring buffers above written to disk: sixty seconds at high resolution is a thing to look at
