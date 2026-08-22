@@ -3717,6 +3717,7 @@ public sealed class MainWindow : Form {
       (ProcessGrouping.Container, "Container"),
       (ProcessGrouping.Cgroup, "Cgroup"),
       (ProcessGrouping.Package, "Package"),
+      (ProcessGrouping.Category, "Kind — yours, the system's, a service"),
     ]) {
       var chosen = grouping;
       menu.DropDownItems.Add(Item(label, () => this.GroupBy(chosen)));

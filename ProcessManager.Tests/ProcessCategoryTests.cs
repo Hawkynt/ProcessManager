@@ -206,4 +206,70 @@ public sealed class ProcessCategoryTests {
       Assert.That(ProcessCategories.Describe(category), Is.Not.Empty, $"{category} has no description");
   }
 
+
+  #region what counts as a service (PRD §13, §23)
+
+  /// <summary>
+  /// A process the desktop launched is yours, not a service — even though the path to it runs
+  /// through the user's own systemd manager, which is called <c>user@1000.service</c>.
+  /// </summary>
+  /// <remarks>
+  /// This was wrong, and wrong in the case it mattered most. The test was whether the cgroup path
+  /// <em>contained</em> ".service" anywhere, and every process in a desktop session has
+  /// <c>user@1000.service</c> as an ancestor — so on the machine this was written on, 207 of the
+  /// user's own programs classified as services and exactly one as theirs. The row colours and §13's
+  /// friendly grouping were both useless for the person they exist for.
+  /// </remarks>
+  [TestCase("/user.slice/user-1000.slice/user@1000.service/app.slice/app-firefox.scope")]
+  [TestCase("/user.slice/user-1000.slice/user@1000.service/app.slice/vte-spawn-63a2e373.scope")]
+  [TestCase("/user.slice/user-1000.slice/session-3.scope")]
+  public void SomethingTheDesktopLaunchedIsYoursAndNotAService(string cgroup) {
+    var record = Make(uid: 1000, cgroup: cgroup);
+
+    Assert.That(ProcessCategories.Classify(in record, 1000, isNew: false), Is.EqualTo(ProcessCategory.Own));
+  }
+
+  /// <summary>
+  /// And something that really is a unit still is one, whether it is the system's or the user's own.
+  /// </summary>
+  [TestCase("/system.slice/sshd.service")]
+  [TestCase("/system.slice/system-cups.slice/cups.service")]
+  [TestCase("/user.slice/user-1000.slice/user@1000.service/background.slice/kde-baloo.service")]
+  [TestCase("/system.slice/docker.socket")]
+  public void SomethingThatReallyIsAUnitStillIsOne(string cgroup) {
+    var record = Make(uid: 1000, cgroup: cgroup);
+
+    Assert.That(ProcessCategories.Classify(in record, 1000, isNew: false), Is.EqualTo(ProcessCategory.Service));
+  }
+
+  /// <summary>
+  /// The innermost unit decides, which is the same rule the owning-service column follows — so a row
+  /// coloured as a service and the unit named beside it can never disagree.
+  /// </summary>
+  [Test]
+  public void TheColourAgreesWithTheOwningServiceColumn() {
+    const string Nested = "/user.slice/user-1000.slice/user@1000.service/app.slice/thing.scope";
+    var record = Make(uid: 1000, cgroup: Nested);
+
+    Assert.That(CgroupUnit.Of(Nested), Is.EqualTo("thing.scope"), "the column names the scope");
+    Assert.That(
+      ProcessCategories.Classify(in record, 1000, isNew: false),
+      Is.Not.EqualTo(ProcessCategory.Service),
+      "so the colour must not call it a service"
+    );
+  }
+
+  /// <summary>
+  /// A process in no cgroup at all is not a service either. That is a kernel thread or a machine
+  /// with no systemd, and neither is a reason to guess.
+  /// </summary>
+  [Test]
+  public void NoCgroupIsNotAService() {
+    var record = Make(uid: 1000, cgroup: null);
+
+    Assert.That(ProcessCategories.Classify(in record, 1000, isNew: false), Is.EqualTo(ProcessCategory.Own));
+  }
+
+  #endregion
+
 }

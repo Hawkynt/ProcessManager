@@ -72,6 +72,17 @@ public enum ProcessGrouping : byte {
   /// <summary>By the package the executable came out of.</summary>
   Package,
 
+  /// <summary>
+  /// By what kind of process it is: yours, the system's, a service, and the rest (PRD §13).
+  /// </summary>
+  /// <remarks>
+  /// §13 calls this the friendly view, and it is the arrangement somebody who is not a systems
+  /// programmer actually wants: not four hundred rows sorted by a number, but "these are your
+  /// programs, these are the machine's". It is the row palette's own classification rather than a
+  /// second opinion beside it, so the headings and the colours cannot come to disagree.
+  /// </remarks>
+  Category,
+
 }
 
 /// <summary>A column the order is decided by, and which way round (PRD §11).</summary>
@@ -395,6 +406,13 @@ public sealed class ProcessView {
   /// </remarks>
   private string LabelOf(in ProcessRecord process, SnapshotDelta delta, int index) {
     switch (this.Grouping) {
+      // The same words the legend gives and the same call the palette makes, so a heading and a row
+      // colour under it can never say different things about the same process.
+      case ProcessGrouping.Category:
+        return ProcessCategories.Describe(
+          ProcessCategories.Classify(in process, ProcessCategories.CurrentUserId, delta.IsNew(index))
+        );
+
       case ProcessGrouping.User:
         return FieldAccessor.RawText(ProcessField.UserName, in process, delta, index)
           ?? (process.UserId >= 0
