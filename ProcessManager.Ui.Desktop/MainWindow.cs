@@ -958,7 +958,43 @@ public sealed class MainWindow : Form {
   #endregion
 
   /// <summary>Recreates the header from the chosen column set, in its chosen order and widths.</summary>
+  /// <summary>
+  /// Which fields a row has to format: the columns on screen, and everything anything else asks a
+  /// row for.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A row formats what it is told to and nothing else, because formatting the whole catalogue for
+  /// every process on every sample was the largest single cost in this window — invisible at four
+  /// hundred processes and the whole of a 193 ms frame at ten thousand.
+  /// </para>
+  /// <para>
+  /// The danger in that is a blank cell rather than an error, so the set is the union of everything
+  /// that reads a row and not just of what is on screen. The properties pages publish their own
+  /// lists for exactly this, and a test walks them and requires each to be covered — the coupling is
+  /// enforced rather than remembered, because remembering it is what would fail.
+  /// </para>
+  /// </remarks>
+  internal IReadOnlyList<ProcessField> FieldsRead() {
+    var wanted = new HashSet<ProcessField>(this._columns.Fields);
+
+    // Sorting and filtering read a field whether or not it has a column.
+    wanted.Add(this._view.SortColumn);
+
+    // Everything the properties window and the lower pane put on a page.
+    foreach (var field in ProcessPropertiesWindow.FieldsShown)
+      wanted.Add(field);
+
+    // And the two the window itself always shows or copies.
+    wanted.Add(ProcessField.Name);
+    wanted.Add(ProcessField.UserName);
+    return [.. wanted];
+  }
+
+  private void TellTheBinderWhatIsRead() => this._binder.WantedFields = this.FieldsRead();
+
   private void RebuildColumns() {
+    this.TellTheBinderWhatIsRead();
     this._tree.Columns.Clear();
     for (var i = 0; i < this._columns.Count; ++i) {
       var column = this._columns.FieldAt(i);

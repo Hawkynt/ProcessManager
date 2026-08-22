@@ -5357,9 +5357,16 @@ names. Every figure below is a number a test printed, not an argument.
 - [x] 🟡 Virtualised tables — **the drawing is, and the window's model is not.** Neither front-end
       makes a widget per row: the terminal formats the cells for `min(list height, rows remaining)`
       rows a frame, and the window's table paints from its top index for one viewport's worth. What
-      the window does still do is keep a row object per process and re-format every field in the
-      catalogue on it once a sample, whether or not that column is open — which is the whole of the
-      193 ms below and the one thing here still worth fixing.
+      the window does still do is keep a row object per process, but it no longer re-formats the
+      whole catalogue on it: a row formats the columns on screen, the field being sorted by, and
+      what the properties pages read — forty-five of a hundred and sixty-four, measured. The 193 ms
+      below was taken before that.
+
+      The risk in narrowing it is a blank cell rather than an error, because a page that reads a
+      field nobody told the row about shows nothing and reports nothing. So the pages publish the
+      fields they need and a test requires the set to cover every one of them: the coupling is
+      enforced rather than remembered, which is the only version of it that survives somebody adding
+      a row to a page a year from now.
 
       Two per-sample bounds in the window were wrong and are now right, and both were the same
       mistake: the table's `VisibleNodeCount` is every row in the flattened list, not the viewport,

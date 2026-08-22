@@ -65,7 +65,27 @@ public sealed class ProcessPropertiesWindow : Form {
   private readonly Button _reveal = new() { Text = "Open folder" };
   private readonly Button _file = new() { Text = "File properties…" };
 
-  private readonly ProcessFactsPage _general = new(
+  /// <summary>
+  /// Every field any page of this window reads off a row.
+  /// </summary>
+  /// <remarks>
+  /// A row formats what the table asks for and nothing else, so whatever this window reads has to be
+  /// in that set or the page shows blanks. Built from the same arrays the pages are, rather than
+  /// written out a second time: a second list would be a second thing to keep in step, and the
+  /// failure it produces is an empty cell that nothing reports.
+  /// </remarks>
+  internal static IReadOnlyList<ProcessField> FieldsShown {
+    get {
+      var shown = new HashSet<ProcessField>();
+      foreach (var page in (ReadOnlySpan<ProcessField[]>)[_GeneralFields, _CpuFields, _MemoryFields, _IoFields])
+        foreach (var one in page)
+          shown.Add(one);
+
+      return [.. shown];
+    }
+  }
+
+  private static readonly ProcessField[] _GeneralFields = [
     ProcessField.Name,
     ProcessField.Pid,
     ProcessField.ParentPid,
@@ -86,11 +106,13 @@ public sealed class ProcessPropertiesWindow : Form {
     ProcessField.Container,
     ProcessField.ImagePath,
     ProcessField.CommandLine
-  );
+  ];
+
+  private readonly ProcessFactsPage _general = new(_GeneralFields);
 
   private readonly ProcessPerformancePage _performance = new();
 
-  private readonly ProcessFactsPage _cpu = new(
+  private static readonly ProcessField[] _CpuFields = [
     ProcessField.CpuPercent,
     ProcessField.CpuPercentPerCore,
     ProcessField.CpuTime,
@@ -102,9 +124,11 @@ public sealed class ProcessPropertiesWindow : Form {
     ProcessField.ThreadCount,
     ProcessField.Priority,
     ProcessField.Nice
-  );
+  ];
 
-  private readonly ProcessFactsPage _memory = new(
+  private readonly ProcessFactsPage _cpu = new(_CpuFields);
+
+  private static readonly ProcessField[] _MemoryFields = [
     ProcessField.PrivateBytes,
     ProcessField.PrivateBytesDelta,
     ProcessField.PrivateWorkingSet,
@@ -122,13 +146,17 @@ public sealed class ProcessPropertiesWindow : Form {
     ProcessField.PageFaultsDelta,
     ProcessField.PagedPool,
     ProcessField.NonPagedPool
-  );
+  ];
 
-  private readonly ProcessFactsPage _io = new(
+  private readonly ProcessFactsPage _memory = new(_MemoryFields);
+
+  private static readonly ProcessField[] _IoFields = [
     ProcessField.IoTotalRate,
     ProcessField.ReadBytesPerSecond,
     ProcessField.WriteBytesPerSecond
-  );
+  ];
+
+  private readonly ProcessFactsPage _io = new(_IoFields);
 
   private readonly ProcessFactsPage _gpu = new(
     ProcessField.GpuPercent,
