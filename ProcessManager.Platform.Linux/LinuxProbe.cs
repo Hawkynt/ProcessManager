@@ -2673,6 +2673,16 @@ public sealed partial class LinuxProbe : ISystemProbe {
         Mode: ModeOf(syscall, waitChannel),
         SyscallNumber: syscall.Number,
         QueuedNs: sched.QueuedNs,
+        // Countable here and not counted: perf_event_open will charge cycles to a task, subject to
+        // kernel.perf_event_paranoid, so this is a fact about this program rather than about Linux
+        // (PRD §29, §72.3).
+        Cycles: Counter.Unknown(UnknownReason.NotImplementedHere),
+        // And these two are about Linux. There is no per-thread processor the scheduler will name as
+        // preferred — the wake-affinity heuristics are not a reading a caller can take — and there is
+        // no thread environment block at all; the nearest thing is a register §4's no-attach rule
+        // puts out of reach.
+        IdealProcessor: Counter.NotSupported,
+        TebBase: Counter.NotSupported,
         Owner: key
       ));
     }

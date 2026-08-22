@@ -38,13 +38,14 @@ public sealed class ThreadDelta {
   /// key used to be assembled here out of two of the record's fields; it is on the record now, so
   /// that a thread handed anywhere else carries the same identity this matches on.
   /// </remarks>
-  private readonly record struct Reading(long Timestamp, Counter CpuTimeNs, Counter ContextSwitches);
+  private readonly record struct Reading(long Timestamp, Counter CpuTimeNs, Counter ContextSwitches, Counter Cycles);
 
   private readonly Dictionary<ThreadKey, Reading> _previous = [];
   private readonly HashSet<ThreadKey> _seen = [];
   private Rate[] _cpuPercent = [];
   private Rate[] _cpuPercentPerCore = [];
   private Rate[] _contextSwitchesPerSecond = [];
+  private Rate[] _cyclesPerSecond = [];
   private ProcessKey _key = ProcessKey.None;
   private int _count;
 
@@ -80,6 +81,19 @@ public sealed class ThreadDelta {
     => (uint)index < (uint)this._count ? this._contextSwitchesPerSecond[index] : Rate.NotSampledYet;
 
   /// <summary>
+  /// Processor cycles this thread was charged with during the interval.
+  /// </summary>
+  /// <remarks>
+  /// The companion to <see cref="CpuPercent"/> rather than another spelling of it. A thread that held
+  /// a processor for a tenth of a second reads the same in both cases whether the core was at 800 MHz
+  /// or at 4.8 GHz; the cycle count is the one that says which. Unknown wherever the cycle counter is
+  /// — on Linux the reason travels up from the counter, so this reads "not implemented here" rather
+  /// than nought (PRD §29, §72.3).
+  /// </remarks>
+  public Rate CyclesPerSecond(int index)
+    => (uint)index < (uint)this._count ? this._cyclesPerSecond[index] : Rate.NotSampledYet;
+
+  /// <summary>
   /// Takes a reading and computes what the previous one makes knowable.
   /// </summary>
   /// <param name="key">
@@ -104,6 +118,7 @@ public sealed class ThreadDelta {
     Grow(ref this._cpuPercent, threads.Count);
     Grow(ref this._cpuPercentPerCore, threads.Count);
     Grow(ref this._contextSwitchesPerSecond, threads.Count);
+    Grow(ref this._cyclesPerSecond, threads.Count);
 
     this._seen.Clear();
     for (var i = 0; i < threads.Count; ++i) {
@@ -118,6 +133,7 @@ public sealed class ThreadDelta {
         this._cpuPercent[i] = Rate.NotSampledYet;
         this._cpuPercentPerCore[i] = Rate.NotSampledYet;
         this._contextSwitchesPerSecond[i] = Rate.NotSampledYet;
+        this._cyclesPerSecond[i] = Rate.NotSampledYet;
       } else {
         var elapsed = RateCalculator.ElapsedNanoseconds(before.Timestamp, now);
         this._cpuPercent[i] = RateCalculator.CpuPercent(
@@ -129,9 +145,10 @@ public sealed class ThreadDelta {
         this._contextSwitchesPerSecond[i] = RateCalculator.PerSecond(
           before.ContextSwitches, thread.ContextSwitches, elapsed
         );
+        this._cyclesPerSecond[i] = RateCalculator.PerSecond(before.Cycles, thread.Cycles, elapsed);
       }
 
-      this._previous[id] = new(now, thread.CpuTimeNs, thread.ContextSwitches);
+      this._previous[id] = new(now, thread.CpuTimeNs, thread.ContextSwitches, thread.Cycles);
     }
 
     // Threads that ended are dropped rather than left to accumulate: a long-lived pool churns

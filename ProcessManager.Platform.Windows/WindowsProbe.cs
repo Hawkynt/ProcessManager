@@ -810,10 +810,34 @@ public sealed class WindowsProbe : ISystemProbe {
     IsLoopback: false
   );
 
-  public IReadOnlyList<ThreadRecord> GetThreads(ProcessKey key)
-    => this._bufferLength == 0
-      ? []
-      : SystemProcessInformationReader.ReadThreads(this._buffer.AsSpan(0, this._bufferLength), key);
+  /// <summary>
+  /// One process's threads, with the three readings the bulk query does not carry filled in.
+  /// </summary>
+  /// <remarks>
+  /// The enrichment is here rather than in the reader because it costs a handle per thread, and the
+  /// reader is also what the fixtures replay. This is the page-for-one-process path — the table never
+  /// calls it — so the cost is bounded by how many threads that one process has (PRD §5.4, §29).
+  /// </remarks>
+  public IReadOnlyList<ThreadRecord> GetThreads(ProcessKey key) {
+    if (this._bufferLength == 0)
+      return [];
+
+    var threads = SystemProcessInformationReader.ReadThreads(this._buffer.AsSpan(0, this._bufferLength), key);
+    if (threads.Count == 0)
+      return threads;
+
+    var enriched = new List<ThreadRecord>(threads.Count);
+    foreach (var thread in threads) {
+      var facts = WindowsThreadFacts.Read(thread.Tid);
+      enriched.Add(thread with {
+        Cycles = facts.Cycles,
+        IdealProcessor = facts.IdealProcessor,
+        TebBase = facts.TebBase,
+      });
+    }
+
+    return enriched;
+  }
 
   /// <summary>Loaded modules, through a Toolhelp snapshot.</summary>
   /// <remarks>
