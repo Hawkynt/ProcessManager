@@ -306,9 +306,15 @@ public sealed class TerminalUi {
     if (found.Count == 0)
       return;
 
-    // In the words it was announced in, so the record and the interruption cannot disagree.
-    this._timeline.Add(found, now);
-    this.Say(NotificationWatch.Summarise(found), Attributes.Warn);
+    // In the words it was announced in, so the record and the interruption cannot disagree. Which of
+    // the two happens is the rule's own business (PRD §84): a rule that asked only to be logged is a
+    // rule somebody wants to find afterwards rather than to be interrupted by.
+    var actions = this._watch.Actions;
+    if (actions.HasFlag(AlertAction.Log))
+      this._timeline.Add(found, now);
+
+    if (actions.HasFlag(AlertAction.Notify))
+      this.Say(NotificationWatch.Summarise(found), Attributes.Warn);
   }
 
   /// <summary>Recomposes without sampling — for a keypress that only changes what is shown.</summary>
@@ -1868,6 +1874,7 @@ public sealed class TerminalUi {
     (ProcessGrouping.Container, "Container", "its container id"),
     (ProcessGrouping.Cgroup, "Cgroup", "the whole cgroup path"),
     (ProcessGrouping.Package, "Package", "where the image came from"),
+    (ProcessGrouping.Publisher, "Publisher", "who signed the image"),
     (ProcessGrouping.Category, "Kind", "yours, the system's, a service"),
   ];
 
@@ -2354,11 +2361,13 @@ public sealed class TerminalUi {
     if ((uint)group >= (uint)this._view.Groups.Count)
       return;
 
-    var (label, count) = this._view.Groups[group];
-    var folded = this._view.IsGroupCollapsed(label);
+    var heading = this._view.Groups[group];
+    var folded = this._view.IsGroupCollapsed(heading.Label);
     this._screen.Fill(0, y, this._screen.Width, ' ', Attributes.Header);
     var marker = folded ? "+" : "-";
-    var text = $"{marker} {label}  ({count} process{(count == 1 ? string.Empty : "es")})";
+    // Described in Core, so the window and this cannot word a heading differently and neither can
+    // present a sum as anything but a sum (PRD §58, §82).
+    var text = $"{marker} {heading.Describe()}";
     this._screen.Write(0, y, Clip(text, this._screen.Width), Attributes.Header);
   }
 

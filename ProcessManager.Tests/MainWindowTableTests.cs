@@ -261,7 +261,7 @@ public sealed class MainWindowTableTests {
   /// </remarks>
   [Test]
   public void AGroupingThisBuildDoesNotKnowIsLeftAlone() {
-    var parsed = UserSettings.Parse("grouping=publisher\ninterval=4");
+    var parsed = UserSettings.Parse("grouping=application\ninterval=4");
 
     Assert.That(parsed.Grouping, Is.EqualTo(ProcessGrouping.ParentTree), "the default, not a flat list");
     Assert.That(parsed.IntervalSeconds, Is.EqualTo(4), "and the rest of the file still parsed");

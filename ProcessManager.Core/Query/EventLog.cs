@@ -26,6 +26,17 @@ public enum EventCategory : byte {
   /// <summary>This program itself gained or used privilege.</summary>
   Privilege,
 
+  /// <summary>
+  /// A rule somebody wrote themselves fired (PRD §84).
+  /// </summary>
+  /// <remarks>
+  /// Its own category rather than folded into <see cref="Threshold"/>, because a user's rule may be
+  /// about appearing, going or changing as easily as about crossing a number, and a timeline that
+  /// filed "sshd has gone" under "over a threshold" would be describing something that did not
+  /// happen.
+  /// </remarks>
+  Rule,
+
 }
 
 /// <summary>
@@ -188,6 +199,7 @@ public sealed class EventLog {
     NotificationKind.MemoryAboveThreshold => EventCategory.Threshold,
     NotificationKind.DiskAboveThreshold => EventCategory.Threshold,
     NotificationKind.ServiceStopped => EventCategory.Service,
+    NotificationKind.RuleFired => EventCategory.Rule,
     // Including Unclassified. A kind nobody sorted shows as unsorted rather than as the mildest
     // category there is, for the reason §72.3 gives about defaults.
     _ => EventCategory.Unclassified,
@@ -200,6 +212,7 @@ public sealed class EventLog {
     EventCategory.Service => "a unit changed",
     EventCategory.UserAction => "you did it",
     EventCategory.Privilege => "privilege",
+    EventCategory.Rule => "a rule you wrote",
     _ => "uncategorised",
   };
 

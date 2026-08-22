@@ -23,11 +23,118 @@ public readonly record struct ViewRow(int Index, int Depth, bool HasChildren, in
 }
 
 /// <summary>
+/// One aggregated figure under a heading (PRD §82, §83).
+/// </summary>
+/// <param name="Value">The sum over the members that had a reading.</param>
+/// <param name="Counted">How many members had one.</param>
+/// <param name="Missing">How many did not, and are therefore not in the sum.</param>
+/// <remarks>
+/// <para>
+/// A sum is not a reading, and this type exists so that nothing can mistake one for the other. A
+/// group of twelve processes of which four would not answer has a total over eight of them, and that
+/// is a different claim from a total over twelve — so both counts travel with the number and
+/// <see cref="IsPartial"/> says which kind it is. Rendering a partial sum as though it were whole is
+/// the confident zero of §72.3 wearing a group heading.
+/// </para>
+/// <para>
+/// A group where nobody answered has no value at all rather than a sum of nought, for the same
+/// reason: nought processes' worth of memory is not "this group uses no memory".
+/// </para>
+/// </remarks>
+public readonly record struct Aggregate(double Value, int Counted, int Missing) {
+
+  /// <summary>Whether anything under the heading could be read at all.</summary>
+  public bool HasValue => this.Counted > 0;
+
+  /// <summary>Whether some member is missing from the sum.</summary>
+  public bool IsPartial => this.Missing > 0;
+
+  /// <summary>One more reading, or one more refusal.</summary>
+  public Aggregate With(double? reading) => reading is { } value
+    ? this with { Value = this.Value + value, Counted = this.Counted + 1 }
+    : this with { Missing = this.Missing + 1 };
+
+}
+
+/// <summary>
+/// What a heading adds up about its members (PRD §82, §83).
+/// </summary>
+/// <remarks>
+/// <para>
+/// Four figures and not seven. §82 names GPU and network beside these: the network total is §18's
+/// refusal rather than a gap — nothing here attributes bytes to a process, so a per-group sum would
+/// be a sum of numbers that do not exist — and the GPU reading is opt-in and off on most runs, so a
+/// column of "nothing readable" headings would be the cost of the other three for no answer.
+/// </para>
+/// <para>
+/// Every one of them is read through <see cref="FieldAccessor"/>, at the same key the column and the
+/// filter use. That is what "aggregations follow canonical query rules" means in practice: the sum
+/// under a heading and the numbers in the rows beneath it come out of one accessor, so they cannot
+/// come to disagree about what the field is.
+/// </para>
+/// </remarks>
+public readonly record struct GroupTotals(
+  Aggregate CpuPercent,
+  Aggregate WorkingSetBytes,
+  Aggregate PrivateBytes,
+  Aggregate IoBytesPerSecond
+);
+
+/// <summary>
 /// One heading in a grouped list (PRD §83).
 /// </summary>
 /// <param name="Label">What the heading says — the user, the session, the unit, the image.</param>
 /// <param name="Count">How many processes are under it, whether or not they are on screen.</param>
-public readonly record struct ProcessGroup(string Label, int Count);
+public readonly record struct ProcessGroup(string Label, int Count) {
+
+  /// <summary>What its members add up to (PRD §82).</summary>
+  public GroupTotals Totals { get; init; }
+
+  /// <summary>
+  /// The heading as both front-ends draw it (PRD §82, §83).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// One function, in Core, because the window and the terminal must not be able to word this
+  /// differently — and because the rule §82 attaches to these numbers has to be kept in one place:
+  /// <b>an aggregate is visibly an aggregate.</b> Every figure here is introduced by the word
+  /// "total", and a total taken over fewer members than the group has says so — "8 of 12" — because
+  /// a sum missing a third of its processes and a sum over all of them are different claims and the
+  /// number alone cannot tell them apart.
+  /// </para>
+  /// <para>
+  /// A figure nobody could read is left out rather than drawn as nought. A heading that said
+  /// "total 0 B/s" over twelve processes whose I/O this user may not read would be the confident zero
+  /// of §72.3 with a group's worth of authority behind it.
+  /// </para>
+  /// </remarks>
+  public string Describe() {
+    var text = new System.Text.StringBuilder(this.Label)
+      .Append("  (")
+      .Append(this.Count.ToString(CultureInfo.InvariantCulture))
+      .Append(this.Count == 1 ? " process" : " processes");
+
+    this.Append(text, this.Totals.CpuPercent, value => value.ToString("0.#", CultureInfo.CurrentCulture) + " % CPU");
+    this.Append(text, this.Totals.WorkingSetBytes, value => Humanize.Bytes((ulong)Math.Max(0, value)) + " resident");
+    if (this.Totals.IoBytesPerSecond is { HasValue: true, Value: > 0 })
+      this.Append(text, this.Totals.IoBytesPerSecond, value => Humanize.Bytes((ulong)Math.Max(0, value)) + "/s disk");
+
+    return text.Append(')').ToString();
+  }
+
+  private void Append(System.Text.StringBuilder text, Aggregate total, Func<double, string> say) {
+    if (!total.HasValue)
+      return;
+
+    text.Append(" · total ").Append(say(total.Value));
+    if (total.IsPartial)
+      text.Append(" over ")
+        .Append(total.Counted.ToString(CultureInfo.InvariantCulture))
+        .Append(" of ")
+        .Append(this.Count.ToString(CultureInfo.InvariantCulture));
+  }
+
+}
 
 /// <summary>
 /// What the rows are grouped by (PRD §83).
@@ -38,9 +145,12 @@ public readonly record struct ProcessGroup(string Label, int Count);
 /// once. <see cref="ProcessView.TreeMode"/> remains as the name the rest of the program already uses
 /// for <see cref="ParentTree"/>.
 /// <para>
-/// §83's remaining two — application and publisher — are not here. Naming a group needs something to
-/// read it off, and this program has no notion of an application and no signature verification; a
-/// grouping that guessed would put processes under headings that are not true.
+/// §83's application is not here and is not deferred either. Naming a group needs something to read
+/// it off, and there is no notion of an application to read off a process: Task Manager gets one from
+/// shell activation and nothing here does, so a heading would be a guess dressed as a fact. The
+/// nearest honest readings — the desktop entry that starts a program, the package it came out of, the
+/// signature on its image — are <see cref="Package"/> and <see cref="Publisher"/>, and each says what
+/// it actually is.
 /// </para>
 /// </remarks>
 public enum ProcessGrouping : byte {
@@ -71,6 +181,17 @@ public enum ProcessGrouping : byte {
 
   /// <summary>By the package the executable came out of.</summary>
   Package,
+
+  /// <summary>
+  /// By who signed the running image (PRD §83, §70).
+  /// </summary>
+  /// <remarks>
+  /// The signer out of the image's own signature, which is §70's local verification and is bound to
+  /// the key the signature was made with — not the company name in a version resource, which anybody
+  /// may type. That makes it a Windows heading in practice: an ELF carries no signature, so on Linux
+  /// every process falls under one honest heading saying so rather than under a guess.
+  /// </remarks>
+  Publisher,
 
   /// <summary>
   /// By what kind of process it is: yours, the system's, a service, and the rest (PRD §13).
@@ -358,7 +479,20 @@ public sealed class ProcessView {
         this._groups.Add(new(label, 0));
       }
 
-      this._groups[group] = this._groups[group] with { Count = this._groups[group].Count + 1 };
+      // The count and the sums in one pass, and every sum read through the accessor the column of
+      // the same name reads through (PRD §5.1, §82). A member with no reading is counted as missing
+      // rather than as nought, so a partial total is visibly partial instead of quietly low.
+      var totals = this._groups[group].Totals;
+      this._groups[group] = this._groups[group] with {
+        Count = this._groups[group].Count + 1,
+        Totals = new(
+          totals.CpuPercent.With(FieldAccessor.Number(ProcessField.CpuPercent, in processes[index], delta, index)),
+          totals.WorkingSetBytes.With(FieldAccessor.Number(ProcessField.WorkingSetBytes, in processes[index], delta, index)),
+          totals.PrivateBytes.With(FieldAccessor.Number(ProcessField.PrivateBytes, in processes[index], delta, index)),
+          totals.IoBytesPerSecond.With(FieldAccessor.Number(ProcessField.IoTotalRate, in processes[index], delta, index))
+        ),
+      };
+
       this._groupOf[index] = group;
     }
 
@@ -447,6 +581,21 @@ public sealed class ProcessView {
           ?? (process.Package.Reason is UnknownReason.None or UnknownReason.NotSampledYet
             ? "package not looked up"
             : "package unknown — " + Humanize.Placeholder(process.Package.Reason));
+
+      // PRD §70's local signature verification, read at the same key the Signer column uses. The
+      // fallbacks are the same four sentences that column would give and never an em dash: "nobody
+      // looked", "there is nothing here to look at", "there is a file and nothing signed it" and
+      // "the check itself failed" are four different findings, and a heading that folded them into
+      // one would be claiming something about every process under it (PRD §72.3).
+      case ProcessGrouping.Publisher:
+        return FieldAccessor.RawText(ProcessField.ImageSigner, in process, delta, index)
+          ?? process.ImageSignature switch {
+            SignatureStatus.NotChecked => process.ImageSignatureReason == UnknownReason.NotSupportedOnPlatform
+              ? "nothing here carries a signature"
+              : "signature not checked",
+            SignatureStatus.Unsigned => "not signed",
+            var status => "no signer — " + status.Text().ToLowerInvariant(),
+          };
 
       default:
         return FieldAccessor.RawText(ProcessField.Container, in process, delta, index) ?? "no cgroup";
