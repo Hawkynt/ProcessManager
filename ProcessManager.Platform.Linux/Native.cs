@@ -101,6 +101,9 @@ internal static partial class Native {
   public const int EACCES = 13;
   public const int EINVAL = 22;
 
+  /// <summary>No such system call — an architecture this build has no number for.</summary>
+  public const int ENOSYS = 38;
+
   public const int SIGKILL = 9;
   public const int SIGTERM = 15;
   public const int SIGCONT = 18;
@@ -445,12 +448,27 @@ internal static partial class Native {
   [LibraryImport("libc", EntryPoint = "syscall", SetLastError = true)]
   private static partial long Syscall(long number, long a, long b, long c);
 
-  /// <summary>The packed I/O priority of a process or thread, or -1 with errno set.</summary>
-  public static int GetIoPriority(int pid) {
-    if (IoPrioSyscalls is not { } numbers)
+  /// <summary>
+  /// The packed I/O priority of a process or thread, and why not when there is none.
+  /// </summary>
+  /// <remarks>
+  /// The errno is handed back rather than thrown away. The caller used to see a bare negative and
+  /// report every one of them as the process having exited — so a process belonging to somebody else
+  /// read as gone, which is a fact about a machine rather than about a permission and is the
+  /// conflation §72.3 exists to stop.
+  /// </remarks>
+  public static int GetIoPriority(int pid, out int errno) {
+    errno = 0;
+    if (IoPrioSyscalls is not { } numbers) {
+      errno = ENOSYS;
       return -1;
+    }
 
-    return (int)Syscall(numbers.Get, _IoPrioWhoProcess, pid, 0);
+    var packed = (int)Syscall(numbers.Get, _IoPrioWhoProcess, pid, 0);
+    if (packed < 0)
+      errno = Marshal.GetLastPInvokeError();
+
+    return packed;
   }
 
   public static int SetIoPriority(int pid, int packed) {
