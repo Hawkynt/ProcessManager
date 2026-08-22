@@ -2325,69 +2325,18 @@ Tabs:
       process, read from its module list and shown as a column. A version, an assembly list, a
       managed stack and a heap summary are all unwritten, and a tab holding one row would be a tab
       promising the other four
-- [ ] Strings (§35) — blocked on §35, of which nothing exists. The two scanners in Core are `/proc`
-      tokenisers and not extractors of strings from a binary; nothing scans an image on disk, and
-      scanning the process's memory is refused on §25.5's ground
-- [ ] Timeline (§63) — blocked on §63: nothing records an event. The delta knows which processes
-      have exited since the previous tick and forgets at the next one, and the usage history keeps a
-      running total per application rather than a start with a time on it
-
-The window hosts the same pane the main window docks at its foot — pinned to one process rather than
-following the selection, which is what makes two of them comparable — and adds the pages the pane
-has no room for: what the process *is*, an hour of what it has been *doing*, and the three resource
-sheets that would each be twenty columns in the table.
-
-Those pages go onto the pane's own tab strip, so the window has one row of tabs and not two. They
-land after the pane's because the toolkit's page collection has `Add` and `Remove` and no `Insert`;
-the window opens on General instead, and a test asserts every page is present so that an upstream
-change fails a build rather than shipping a properties window with no properties on it.
-
-When the process ends the window stays open, says so in its title and stops asking about the pid:
-a window that followed the number would quietly start describing whoever the kernel gave it to next
-(§72.2, §86).
-
-**Most pages are refilled from a sample already taken; the three that cost a read of their own are
-filled only while they are the page showing.** That is the discipline the pane's own tabs follow, and
-the three are not the same kind of expensive. The memory map is a walk of the process's page tables,
-so it is read once when the page is opened and re-read on a button. The security context is two small
-files and the cgroup a dozen, so both are re-read on every tick while their page is up — a cgroup's
-memory, throttle count and pressure figures all move while somebody is watching them, and a sheet
-that froze at the moment it was opened would be answering a question about the past.
-
-The `hidden` preference needs an answer earlier than that, so the cgroup is asked about once on the
-first sample whether or not its page is showing: a dozen small files once per window is a fair price
-for not moving every tab on the strip the moment somebody clicks the last one. The memory map cannot
-buy its answer that cheaply — walking a browser's page table to decide whether to draw a tab nobody
-asked for is exactly what §5.4 forbids — so its tab settles the first time it is opened instead. That
-is the trade showing through the preference, and it is the honest way round.
-
-**The Services page is the fourth that costs a read, and the only one read exactly once.** Its
-reading is a walk of every unit file on the machine — 372 of them here — which is far too much for a
-tick and does not need spending twice: a process cannot move between units while it runs, and a unit
-that stops takes its processes with it, so this window would say *ended* rather than show a stale
-service. What can change underneath it is somebody running `systemctl disable` in another window,
-and that is a fair price for not walking a thousand files a second (§5.4).
-
-Its tab may be hidden only when nothing on the machine publishes services at all. A process in no
-unit is a finding about the *process* — most of a desktop is like that — so it keeps its tab and says
-so, naming the cgroup it looked in. Collapsing the two would make "you are in no service" and "this
-build cannot tell you" the same answer, which is the distinction §5.3 exists for.
-
-The four still unticked, one line each. **Windows** had "the list and none of the actions" written
-against it, and that was wrong when it was written: the actions are there and go through X11
-directly. What it has instead is six attributes per window it prints *not read* beside, no
-inspect-properties action, and no implementation at all on Windows or macOS — a tab named for
-windows that lists none of them on the platform the word comes from (§39). **Runtime** needs the
-managed and interpreted introspection of §80, of which one sentence exists — which runtime is
-mapped in — and a tab showing that one row would be promising the other four. **Strings** is two
-features under one heading: scanning the image on disk needs no permission and is honest work nobody
-has done, while scanning the process's memory is one of §25.5's readers wearing a different hat and
-is refused on the same ground, and shipping the first under a tab named for both would be promising
-the second. **Timeline** needs the event history of §63, which nothing records: the delta knows what
-exited since the last tick and forgets at the next.
-
----
-
+- [ ] 🟡 Strings (§35) — **no longer blocked, and no longer a tab that does not exist.** Core has a
+      strings scanner now: ASCII, UTF-8 and UTF-16 over an image on disk, with a configurable minimum
+      length, reachable through the binary inspector. What is still missing here is the tab — a page
+      of this window showing the strings of *this process's* image, which is one call away rather
+      than a feature away. Scanning the process's own memory stays refused on §25.5's grounds and is
+      a different thing entirely
+- [ ] 🟡 Timeline (§63) — **no longer blocked either.** Events are recorded now: a bounded ring, fed
+      from what the sampler already computed, and every entry carries the pid it was about. A page of
+      this window would be that ring filtered to one process, which is a filter rather than a
+      feature. The rest of §63's own list — connections appearing, a signature changing — is still
+      unrecorded, so a per-process page would show starts, ends, thresholds crossed and what the
+      person did to it, and not more than that
 # 27. General process properties
 
 - [ ] 🟡 name ✔ · PID ✔ · PPID ✔ · parent process ✔ · start time ✔ · running duration ✔ · state ✔ ·
