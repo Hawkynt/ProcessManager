@@ -392,4 +392,37 @@ public sealed class DetailPaneResourceTests {
     return names;
   }
 
+
+  /// <summary>
+  /// The lower pane's mode survives a refresh — the one item in §12's list of what a refresh
+  /// preserves that had no answer, because there was no lower pane when the list was written.
+  /// </summary>
+  /// <remarks>
+  /// It holds by construction: the pane is built once and filled again rather than rebuilt, and the
+  /// tab control keeps its own selection. That is a reason to assert it rather than to leave it as
+  /// something nobody checks — the scroll position in the same list was preserved by accident once
+  /// too, and stopped being.
+  /// </remarks>
+  [Test]
+  public void TheLowerPanesModeSurvivesARefresh() {
+    var probe = new StubProbe();
+    var pane = new DetailPane(probe);
+    this._panes.Add(pane);
+    var tabs = (TabControl)pane.Control;
+    pane.Select(_Key);
+
+    // Any tab that is not the one it opens on, so the assertion cannot pass by the mode never
+    // having been changed.
+    tabs.SelectedIndex = tabs.TabPages.Count - 1;
+    var chosen = pane.CurrentTab;
+    Assert.That(chosen, Is.Not.Empty);
+
+    pane.Invalidate();
+    pane.Refresh();
+    pane.Select(_Key);
+    pane.Refresh();
+
+    Assert.That(pane.CurrentTab, Is.EqualTo(chosen));
+  }
+
 }

@@ -622,7 +622,10 @@ Refresh preserves:
 - [x] Selected entities
 - [x] Sort order
 - [x] Open property page
-- [ ] Lower-pane mode (none exists yet)
+- [x] Lower-pane mode — there is a lower pane now, and which of its tabs is showing survives a
+      refresh. It holds by construction, because the pane is built once and filled again rather than
+      rebuilt; it is asserted anyway, since the scroll position in this same list was preserved by
+      accident once and then stopped being
 
 A row index is not a place. The window held its scroll position by keeping `TopIndex` across a
 rebuild, which is exactly wrong: the number survives and the rows underneath it do not, so twenty
