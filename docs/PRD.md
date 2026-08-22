@@ -31,8 +31,8 @@ shorthand:
 it is not known*. An unticked box must never become a zero on screen. This is restated here because
 it is the single requirement most likely to be broken while filling the tables in.
 
-**Counting, as of the last update:** **1084 of 1323 boxes are ticked** — 169 of 189 in the field
-registry (§14–22), 915 of 1134 across the capabilities. A further 167 are marked 🟡, meaning some of
+**Counting, as of the last update:** **1092 of 1317 boxes are ticked** — 169 of 188 in the field
+registry (§14–22), 923 of 1129 across the capabilities. A further 173 are marked 🟡, meaning some of
 the work behind them is already done. §100 tracks the phases; §101 defines when this may be called
 finished.
 
@@ -6116,7 +6116,7 @@ a naive parser hands the attacker the parse.
 
 # 99. Testing strategy
 
-**2496 tests pass on every leg, under both a UTF-8 and a `C` locale.**
+**2566 tests pass on every leg, under both a UTF-8 and a `C` locale.**
 
 ## Unit tests
 
