@@ -119,6 +119,17 @@ public sealed record UserSettings {
   /// </remarks>
   public int UsageHistoryDays { get; init; }
 
+  /// <summary>
+  /// Which resources have an indicator in the tray, or none at all (PRD §65).
+  /// </summary>
+  /// <remarks>
+  /// Empty means no tray, which is the default: a program that puts icons in somebody's panel
+  /// without being asked has taken a decision about their screen that is theirs to take. Each one is
+  /// named rather than a count, because §65's fourth box is that they can be turned on and off one
+  /// at a time and a number cannot say which.
+  /// </remarks>
+  public IReadOnlyList<IndicatorKind> TrayIndicators { get; init; } = [];
+
   /// <summary>Draw the terminal's history columns with block characters rather than ASCII.</summary>
   public bool BlockCharacters { get; init; } = true;
 
@@ -559,6 +570,12 @@ public sealed record UserSettings {
 
           break;
 
+        case "tray":
+          // A list of names rather than a boolean, so that turning one off does not mean turning
+          // the tray off. "none" and an empty value both mean no tray at all.
+          settings = settings with { TrayIndicators = ParseIndicators(value) };
+          break;
+
         case "history.usage":
           if (TryParseBool(value, out var usage))
             settings = settings with { UsageHistory = usage };
@@ -902,6 +919,17 @@ public sealed record UserSettings {
       });
     }
 
+    if (this.TrayIndicators.Count > 0) {
+      var names = new List<string>(this.TrayIndicators.Count);
+      foreach (var kind in this.TrayIndicators)
+        names.Add(IndicatorIcon.Name(kind));
+
+      text.AppendLine();
+      text.AppendLine("# Which resources get an indicator in the tray: cpu, memory, disk, network, gpu.");
+      text.AppendLine("# Leave it out, or say none, for no tray at all.");
+      text.Append("tray=").AppendLine(string.Join(",", names));
+    }
+
     if (this.UsageHistory) {
       text.AppendLine();
       text.AppendLine("# Keep a record of what each program has cost this machine, across sessions.");
@@ -991,6 +1019,37 @@ public sealed record UserSettings {
   /// A pair this build cannot make sense of is skipped rather than failing the line, the same way an
   /// unknown field key is: a settings file written by a newer version must still open an older one.
   /// </remarks>
+  /// <summary>
+  /// The indicators named in a line, in the order they were named.
+  /// </summary>
+  /// <remarks>
+  /// Order matters: it is the order they appear in the panel, and somebody who wrote "memory,cpu"
+  /// meant memory first. A name this build does not know is skipped rather than failing the line,
+  /// the same rule every other setting follows, and a duplicate is dropped — two icons of the same
+  /// resource is a panel with a mistake in it rather than a preference.
+  /// </remarks>
+  private static IReadOnlyList<IndicatorKind> ParseIndicators(string value) {
+    var chosen = new List<IndicatorKind>();
+    foreach (var part in value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)) {
+      if (part.Equals("none", StringComparison.OrdinalIgnoreCase))
+        return [];
+
+      var kind = part.ToLowerInvariant() switch {
+        "cpu" or "processor" => IndicatorKind.Cpu,
+        "memory" or "mem" => IndicatorKind.Memory,
+        "disk" or "io" => IndicatorKind.Disk,
+        "network" or "net" => IndicatorKind.Network,
+        "gpu" or "graphics" => IndicatorKind.Gpu,
+        _ => (IndicatorKind?)null,
+      };
+
+      if (kind is { } known && !chosen.Contains(known))
+        chosen.Add(known);
+    }
+
+    return chosen;
+  }
+
   private static bool TryParseWidths(string text, out IReadOnlyList<KeyValuePair<ProcessField, int>> widths) {
     var parsed = new List<KeyValuePair<ProcessField, int>>();
     foreach (var part in text.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)) {
