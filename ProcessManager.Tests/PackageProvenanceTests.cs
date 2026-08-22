@@ -594,13 +594,46 @@ public sealed class PackageProvenanceTests {
       Assert.That(FieldAccessor.Text(ProcessField.PackageStatus, in record, null, 0), Is.EqualTo("Verified"));
       // Three: who stands behind it, which here is nobody — and says so without touching two.
       Assert.That(FieldAccessor.Text(ProcessField.TrustChain, in record, null, 0), Is.EqualTo("Unsigned"));
-      // Four: nothing was asked of anybody, because there is nobody to ask.
+      // Four: nothing was asked of anybody, because this program does not ask.
       Assert.That(
         FieldAccessor.Text(ProcessField.Reputation, in record, null, 0),
-        Is.EqualTo(Humanize.Placeholder(UnknownReason.NotImplementedHere))
+        Is.EqualTo(Humanize.Placeholder(UnknownReason.NotAskedByDesign))
       );
       // Five: nothing was ever sent. The reader's every answer says so, on every path it has.
       Assert.That(ImageTrust.NotChecked.Submitted, Is.False);
+    });
+  }
+
+  /// <summary>
+  /// The reputation cell must not read as a feature that is on its way (PRD §70.1, §97).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// It used to say <c>n/i</c>, which is this program's word for "this machine could answer and we
+  /// have not written it yet" — a promise, over a decision that has been taken and will not be
+  /// revisited. §70.1 refuses the provider rather than deferring it, so the cell says the program did
+  /// not ask.
+  /// </para>
+  /// <para>
+  /// Asserted against the two wrong answers by name rather than only against the right one, because
+  /// the failure this guards is a later change quietly moving the cell back onto one of them: "n/i"
+  /// would restore the promise, and an empty cell would let a reader take the silence for a clean
+  /// verdict, which is the whole reason the column exists at all.
+  /// </para>
+  /// </remarks>
+  [Test]
+  public void AnUnaskedReputationSaysSoRatherThanReadingAsUnbuiltOrAsClean() {
+    var record = default(ProcessRecord);
+    var shown = FieldAccessor.Text(ProcessField.Reputation, in record, null, 0);
+
+    Assert.Multiple(() => {
+      Assert.That(shown, Is.EqualTo("not asked"));
+      Assert.That(shown, Is.Not.EqualTo(Humanize.Placeholder(UnknownReason.NotImplementedHere)));
+      Assert.That(shown, Is.Not.Empty);
+      // An unasked question must sort and filter as nothing at all, so no ordering and no query can
+      // group these rows as though a provider had answered for them.
+      Assert.That(FieldAccessor.Number(ProcessField.Reputation, in record, null, 0), Is.Null);
+      Assert.That(FieldAccessor.RawText(ProcessField.Reputation, in record, null, 0), Is.Null);
     });
   }
 

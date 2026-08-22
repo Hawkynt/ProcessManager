@@ -22,6 +22,11 @@ public static class Humanize {
     UnknownReason.NotSampledYet => "…",
     UnknownReason.CounterInvalid => "?",
     UnknownReason.NoLimit => "∞",
+    // Words rather than a mark, and the only one here that is. Every other placeholder abbreviates
+    // a fact about the machine, which a legend can expand; this one is a fact about the program's
+    // conduct, and "we did not ask" is the whole of what a reader needs to know before they read
+    // the cell beside it as a verdict (PRD §70, §97).
+    UnknownReason.NotAskedByDesign => "not asked",
     _ => string.Empty,
   };
 
