@@ -105,6 +105,13 @@ public sealed class ProcessTreeBinder {
   /// </remarks>
   public IReadOnlyList<ProcessField>? WantedFields { get; set; }
 
+  /// <summary>What somebody has written about programs, or nothing (PRD §66).</summary>
+  /// <remarks>
+  /// Held rather than read per sample: the file is read when the program starts and when somebody
+  /// changes it, and a table rebuilt every second must not open a file to do it.
+  /// </remarks>
+  public ProcessRules? Rules { get; set; }
+
   /// <summary>
   /// Whether a subtree the user collapsed may be reopened by the program.
   /// </summary>
@@ -177,7 +184,7 @@ public sealed class ProcessTreeBinder {
       // holds no descriptors at all. Every process that had not been counted yet said "handles 0"
       // (PRD §5.3, §72.3).
       var handles = this.HandleCountOf(key);
-      row.Update(in process, delta, index, handles, this.CurrentUserId, this.WantedFields);
+      row.Update(in process, delta, index, handles, this.CurrentUserId, this.WantedFields, this.Rules);
       row.Generation = this._generation;
 
       if (!this._nodes.TryGetValue(key, out var node)) {

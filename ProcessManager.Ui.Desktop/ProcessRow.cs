@@ -83,7 +83,8 @@ public sealed class ProcessRow(ProcessKey key) {
     int index,
     Counter handles,
     int currentUserId,
-    IReadOnlyList<ProcessField>? wanted = null
+    IReadOnlyList<ProcessField>? wanted = null,
+    ProcessRules? rules = null
   ) {
     if (wanted is null)
       foreach (var descriptor in FieldRegistry.All) {
@@ -116,7 +117,33 @@ public sealed class ProcessRow(ProcessKey key) {
     this.Name = process.Name;
     this.IsNew = delta.IsNew(index);
     this.Category = ProcessCategories.Classify(in process, currentUserId, this.IsNew);
+
+    // What somebody said about this program, if they said anything. Kept beside the derived category
+    // rather than folded into it: one is what the machine says and the other is what a person
+    // decided, and letting a guess overwrite a statement would be the wrong way round (PRD §66).
+    var rule = rules?.For(process);
+    this.RuleNote = rule?.Note;
+    this.RuleCategory = rule?.Category;
+    this.RuleColour = rule?.Colour is { Length: > 0 } written && Colour.TryParse(written, out var argb)
+      ? argb
+      : null;
   }
+
+  /// <summary>What somebody wrote about this program, or null (PRD §66).</summary>
+  public string? RuleNote { get; private set; }
+
+  /// <summary>What they call it, which is not the same question as <see cref="Category"/>.</summary>
+  public string? RuleCategory { get; private set; }
+
+  /// <summary>
+  /// The colour they gave it, as ARGB, or null where they gave none or wrote one nobody can read.
+  /// </summary>
+  /// <remarks>
+  /// A colour that will not parse is null rather than black. Black is a colour somebody could have
+  /// meant, so using it for "this line is malformed" would make a typo indistinguishable from a
+  /// choice — and the row would go unreadable in a dark theme without anything saying why.
+  /// </remarks>
+  public uint? RuleColour { get; private set; }
 
   /// <summary>The text for one column, or empty for the ones that are drawn rather than written.</summary>
   public string TextOf(ProcessField field) {

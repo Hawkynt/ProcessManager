@@ -76,6 +76,12 @@ public enum ProcessField : byte {
   ReadBytesPerSecond,
   WriteBytesPerSecond,
   OtherBytesPerSecond,
+
+  /// <summary>When a process that has ended did so (PRD §14, §87).</summary>
+  ExitTime,
+
+  /// <summary>What it exited with, where anybody could have known (PRD §14).</summary>
+  ExitCode,
   ReadOperations,
   ReadOperationsDelta,
   WriteOperations,

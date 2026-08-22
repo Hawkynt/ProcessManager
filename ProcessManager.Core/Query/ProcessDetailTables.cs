@@ -43,15 +43,20 @@ public readonly record struct DetailTable(
 public static class ProcessDetailTables {
 
   /// <summary>Builds one page by name, so a caller can dispatch on the argument it was given.</summary>
-  public static DetailTable Build(ProcessDetailPage page, ISystemProbe probe, ProcessKey key, in ProcessRecord process)
-    => page switch {
-      ProcessDetailPage.Threads => Threads(probe, key),
-      ProcessDetailPage.Modules => Modules(probe, key),
-      ProcessDetailPage.Handles => Handles(probe, key),
-      ProcessDetailPage.Environment => Environment(probe, key),
-      ProcessDetailPage.Network => Network(probe, key),
-      _ => Overview(in process),
-    };
+  public static DetailTable Build(
+    ProcessDetailPage page,
+    ISystemProbe probe,
+    ProcessKey key,
+    in ProcessRecord process,
+    ProcessRules? rules = null
+  ) => page switch {
+    ProcessDetailPage.Threads => Threads(probe, key),
+    ProcessDetailPage.Modules => Modules(probe, key),
+    ProcessDetailPage.Handles => Handles(probe, key),
+    ProcessDetailPage.Environment => Environment(probe, key),
+    ProcessDetailPage.Network => Network(probe, key),
+    _ => Overview(in process, rules),
+  };
 
   /// <summary>
   /// Reads a page name the way somebody would type it.
@@ -77,7 +82,17 @@ public static class ProcessDetailTables {
   /// <summary>Every page name, for a help line and for the message a mistyped one gets.</summary>
   public const string PageVocabulary = "overview, threads, modules, handles, environment, network";
 
-  public static DetailTable Overview(in ProcessRecord process) {
+  /// <summary>
+  /// What one process is, at a glance.
+  /// </summary>
+  /// <param name="process">The process.</param>
+  /// <param name="rules">
+  /// What somebody has written about programs, if anything. A rule that recognises this one adds its
+  /// note, category and expected publisher to the bottom of the page (PRD §66) — at the bottom
+  /// because they are a person's words about the machine and everything above them is the machine's
+  /// own, and the two should not be read as one another.
+  /// </param>
+  public static DetailTable Overview(in ProcessRecord process, ProcessRules? rules = null) {
     var rows = new List<string[]>();
     rows.Add(["name", process.Name]);
     rows.Add(["pid", process.Pid.ToString(CultureInfo.InvariantCulture)]);
@@ -105,7 +120,41 @@ public static class ProcessDetailTables {
     rows.Add(["cgroup", process.ContainerPath ?? "—"]);
     rows.Add(["command", process.CommandLine ?? "—"]);
 
+    AddWhatSomebodySaid(rows, process, rules);
     return new("Overview", ["Field", "Value"], [18, 100], rows);
+  }
+
+  /// <summary>
+  /// The rows a rule contributes, or none (PRD §66).
+  /// </summary>
+  /// <remarks>
+  /// The expected publisher is the interesting one and is deliberately shown as a comparison rather
+  /// than as a value. "Expected: Mozilla Corporation" beside a signer field somebody has to scroll
+  /// back to is two facts a reader has to join; saying whether they agree is the question they were
+  /// asking. Where the signature has not been read it says so, because a publisher nobody checked and
+  /// a publisher that did not match are opposite conclusions (§21, §70, §72.3).
+  /// </remarks>
+  private static void AddWhatSomebodySaid(List<string[]> rows, in ProcessRecord process, ProcessRules? rules) {
+    if (rules is null || rules.For(process) is not { } rule)
+      return;
+
+    if (rule.Note is { Length: > 0 } note)
+      rows.Add(["note", note]);
+
+    if (rule.Category is { Length: > 0 } category)
+      rows.Add(["category", category]);
+
+    if (rule.ExpectedPublisher is { Length: > 0 } expected)
+      rows.Add(["publisher", process.ImageSigner is { Length: > 0 } signer
+        ? string.Equals(signer, expected, StringComparison.OrdinalIgnoreCase)
+          ? $"{expected} — as expected"
+          : $"{signer} — expected {expected}"
+        : $"expected {expected}; the signature has not been read"]);
+
+    if (rule.HasPreferences)
+      rows.Add(["rule", rule.AppliesScheduling
+        ? $"matched {ProcessRules.NameOf(rule.Match)} \"{rule.Pattern}\"; its scheduling preferences are applied"
+        : $"matched {ProcessRules.NameOf(rule.Match)} \"{rule.Pattern}\"; its scheduling preferences are recorded only"]);
   }
 
   public static DetailTable Threads(ISystemProbe probe, ProcessKey key) {
@@ -128,6 +177,12 @@ public static class ProcessDetailTables {
         thread.BasePriority?.ToString(CultureInfo.InvariantCulture) ?? "—",
         Humanize.SchedulingPolicy(thread.Policy),
         thread.Affinity ?? "—",
+        Humanize.Count(thread.Cycles),
+        // Ideal is beside CPU# on purpose: the pair is the question. A thread the scheduler prefers
+        // on processor 2 that keeps running on 7 is a thread being bounced off its own cache, and
+        // neither column says that alone.
+        Humanize.Count(thread.IdealProcessor),
+        Humanize.Address(thread.TebBase),
         // The wait reason last and widest: it is what somebody opened this page to find out.
         thread.WaitReason ?? Humanize.Address(thread.StartAddress),
       ]);
@@ -135,8 +190,8 @@ public static class ProcessDetailTables {
     return new(
       "Threads",
       ["TID", "Name", "S", "Started", "CPU time", "User", "Kernel", "Ctx", "Vol / invol",
-       "CPU#", "Pri", "Base", "Policy", "Affinity", "Waiting on"],
-      [8, 16, 6, 20, 10, 9, 9, 9, 14, 5, 4, 5, 14, 12, 28],
+       "CPU#", "Pri", "Base", "Policy", "Affinity", "Cycles", "Ideal", "TEB", "Waiting on"],
+      [8, 16, 6, 20, 10, 9, 9, 9, 14, 5, 4, 5, 14, 12, 12, 6, 18, 28],
       rows
     );
   }

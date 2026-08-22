@@ -123,6 +123,13 @@ public static class ProcessCategories {
   public static int CurrentUserId { get; set; } = -1;
 
   public static ProcessCategory Classify(in ProcessRecord process, int currentUserId, bool isNew) {
+    // First, and above New, because a row can be both in the frame a short-lived process is born and
+    // buried in — and "it has gone" is the more urgent of the two things to say about it. The colour
+    // has existed since the palette was written and nothing ever produced it until rows outlived
+    // their processes (PRD §7.1, §14, §87).
+    if (process.HasExited)
+      return ProcessCategory.Exited;
+
     if (isNew)
       return ProcessCategory.New;
 

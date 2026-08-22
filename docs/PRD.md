@@ -31,8 +31,8 @@ shorthand:
 it is not known*. An unticked box must never become a zero on screen. This is restated here because
 it is the single requirement most likely to be broken while filling the tables in.
 
-**Counting, as of the last update:** **1104 of 1320 boxes are ticked** — 171 of 190 in the field
-registry (§14–22), 933 of 1130 across the capabilities. A further 161 are marked 🟡, meaning some of
+**Counting, as of the last update:** **1118 of 1320 boxes are ticked** — 173 of 190 in the field
+registry (§14–22), 945 of 1130 across the capabilities. A further 163 are marked 🟡, meaning some of
 the work behind them is already done. §100 tracks the phases; §101 defines when this may be called
 finished.
 
@@ -108,10 +108,24 @@ thread continuously consuming logical CPU 7."
 
 ## 3.1 Primary — MUST
 
-- [ ] 🟡 Replace everyday Task Manager workflows — process management, and views of services, startup
-      and users; services can now be commanded from every front-end, and a startup entry can be
-      turned on and off from the window. Neither is reachable from the terminal's own view, because
-      the terminal has no services or startup view — only the process's own unit
+- [x] 🟡 Replace everyday Task Manager workflows — process management, and views of services, startup
+      and users. **The terminal has the two views it was missing**: `W` lists every unit on the
+      machine grouped by state, and `b` lists what runs at login and what will not, with the reason
+      each one will not. Both are read when asked for rather than on the tick — enumerating every
+      unit once a second would be the monitor becoming the thing worth monitoring (§5.4) — and both
+      use the same words the window uses, so the two cannot describe one unit differently.
+
+      Still partial for the users view, which the terminal does not have, and because turning a
+      startup entry on or off is still a window action: the terminal lists them and does not command
+      them.
+
+      Checked against the machine rather than the suite: 377 units with 22 running, which is what
+      `systemctl list-units --state=running` counts, and the four main PIDs sampled match
+      `systemctl show -p MainPID` exactly — all of it off disk and the cgroup tree, with no D-Bus and
+      nothing spawned. 24 autostart entries and 14 that will run: 23 `.desktop` files in
+      `/etc/xdg/autostart` plus one systemd user unit sitting in `default.target.wants`, which
+      `systemctl --user is-enabled` calls *disabled* because it is answering a different question —
+      whether the user enabled it, not whether it runs
 - [x] Replace Process Explorer tree and lower-pane workflows — the pane is docked under the tree with
       overview, threads, modules, handles, environment and network, and pins to one process in a window
 - [ ] Replace the majority of System Informer process-inspection workflows
@@ -788,14 +802,18 @@ term all use it, and it never changes even when the display name differs per pla
       work and is not done on Windows either
 - [x] `start.time` — process creation timestamp
 - [x] `running.time` — elapsed lifetime
-- [ ] `exit.time` — requires retaining dead rows; ties to §87. **Every platform, and unwritten on all
-      of them**: nothing here keeps a row after the process behind it has gone, so there is nowhere
-      for the answer to live yet. The nearest thing that does exist is §63's timeline, which records
-      a process ending with the time it happened — a line in a log rather than a cell on a row, and
-      the difference matters: a column can be sorted and filtered on and a log line cannot
-- [ ] `exit.code` — only for children we spawned or via job/wait; honest `—` otherwise. **Every
-      platform, and unwritten on all of them**, for the same reason and with a second one on top:
-      neither kernel will tell a bystander what a process it did not start exited with
+- [x] `exit.time` — rows outlive their processes now, so the answer has somewhere to live. `keep.exited`
+      in the settings file, in seconds, **off by default**: a table that keeps its dead is showing
+      something that is not there, which is a considered thing to ask for and a bad thing to assume.
+      With it off the column is a dash everywhere, which is the honest rendering of a question nobody
+      has arranged to be able to answer. Checked live: a process started and left to end came back as
+      a row with a true exit time three seconds after it had gone
+- [x] `exit.code` — the column exists and is honest, which is what this box asked for. It is
+      `NotPermitted` and renders `—` for everything this program did not launch, and the reason is
+      the same on both platforms: the status goes to the parent through `wait` on Unix and needs a
+      handle held open across the exit on Windows, so a bystander is not told. **Nought is the code
+      that means success**, which makes it the one value that must never be invented — a defaulted
+      counter here would report every process on the machine as having exited cleanly
 - [x] `user` — account owning the process
 - [x] `user.id` — SID / UID
 - [x] `session` — login/terminal session
@@ -2350,18 +2368,41 @@ Tabs:
       process, read from its module list and shown as a column. A version, an assembly list, a
       managed stack and a heap summary are all unwritten, and a tab holding one row would be a tab
       promising the other four
-- [ ] 🟡 Strings (§35) — **no longer blocked, and no longer a tab that does not exist.** Core has a
-      strings scanner now: ASCII, UTF-8 and UTF-16 over an image on disk, with a configurable minimum
-      length, reachable through the binary inspector. What is still missing here is the tab — a page
-      of this window showing the strings of *this process's* image, which is one call away rather
-      than a feature away. Scanning the process's own memory stays refused on §25.5's grounds and is
-      a different thing entirely
-- [ ] 🟡 Timeline (§63) — **no longer blocked either.** Events are recorded now: a bounded ring, fed
-      from what the sampler already computed, and every entry carries the pid it was about. A page of
-      this window would be that ring filtered to one process, which is a filter rather than a
-      feature. The rest of §63's own list — connections appearing, a signature changing — is still
-      unrecorded, so a per-process page would show starts, ends, thresholds crossed and what the
-      person did to it, and not more than that
+- [x] 🟡 Strings (§35) — the tab exists: ASCII, UTF-8 and UTF-16 runs of this process's own image,
+      offset and encoding beside each. Scanned when the tab is opened rather than when the window is,
+      and once rather than per tick — the one reading in this window whose cost is the size of the
+      file, where every other page reads a few kilobytes of structure (§5.4). Bounded to the first
+      16 MB, said out loud in the heading when it bites: this runs on the thread that draws the
+      window, and the binary inspector is where somebody goes to read a whole file on purpose. A
+      process whose image cannot be named gets a sentence rather than an empty table, because an
+      empty list and a list this user may not read are the same picture and opposite conclusions.
+
+      Partial because **scanning the process's own memory stays refused** on §25.5's grounds:
+      `process_vm_readv` and `/proc/[pid]/mem` are both governed by `PTRACE_MODE_ATTACH`, which Yama
+      declines by default for anything this program did not start, and a memory reverse-engineering
+      suite is §4's first non-goal. That half is a decision rather than a gap.
+
+      Photographed: 8,936 runs out of 1,973,888 bytes of a real image, symbol names legible in the
+      capture
+**Nineteen tabs is more than 1280 pixels of strip holds**, and the capture shows the last of them
+behind the toolkit's scroll arrows. Not a fault — the arrows work and the window can be widened — but
+it is the point at which one row of tabs stops being a good way to hold this window's pages, and it
+is recorded here rather than discovered by somebody looking for a tab that is off the edge.
+
+- [x] 🟡 Timeline (§63) — the tab exists: the window's own ring, filtered to this pid, newest first,
+      refilled on the tick because the whole point is that something happened while somebody was
+      looking. The ring is handed in rather than made here — one log per program and not one per
+      properties window, or there would be two bounds, two start times and two chances to disagree
+      about what happened.
+
+      **Three states and three sentences**, because the first two are the same empty table and mean
+      opposite things: nothing is recording, nothing has been recorded yet, and nothing has happened
+      *to this process* while *n* things happened to others. A blank list with no heading would read
+      as the third when it was the first.
+
+      Partial because the rest of §63's own list — a connection appearing, a signature changing — is
+      still unrecorded, so what a page can show is starts, ends, thresholds crossed and what the
+      person did, and not more than that
 # 27. General process properties
 
 - [ ] 🟡 name ✔ · PID ✔ · PPID ✔ · parent process ✔ · start time ✔ · running duration ✔ · state ✔ ·
@@ -2467,14 +2508,27 @@ running long enough to fill is not a quiet minute (§72.3).
 
 The engine enumerates threads on both platforms; the table shows a subset.
 
+Three of these needed a handle on the thread rather than the one query that describes every thread on
+the machine, which is why they sat unread for so long. That pass runs for the threads of the one
+process somebody has open and never over the table: a machine with four hundred processes has several
+thousand threads, and three syscalls each for a page nobody opened is exactly the reading §5.4 says
+to charge for rather than take.
+
 - [x] Thread ID
 - [x] State
 - [x] CPU %
 - [x] CPU time
 - [x] User CPU time
 - [x] Kernel CPU time
-- [ ] Cycles
-- [ ] Cycles delta
+- [x] Cycles — `QueryThreadCycleTime` on Windows. Not another spelling of CPU time: time is what the
+      clock says the thread held a processor for and cycles are what the processor actually retired,
+      so on a machine whose frequency moves — every laptop — a thread on a core parked at 800 MHz
+      reads exactly as busy by time as one at 4.8 GHz. Linux says `n/i` and not `n/a`: the kernel
+      will charge cycles to a task through `perf_event_open`, subject to `kernel.perf_event_paranoid`,
+      and nothing here opens one yet
+- [x] Cycles delta — differenced in `ThreadDelta` over the interval the monotonic clock measured,
+      like every other per-thread rate, because the thread page is filled when somebody looks at it
+      rather than on the sampling tick
 - [x] Context switches
 - [x] Context-switch rate
 - [x] Start time
@@ -2493,14 +2547,25 @@ The engine enumerates threads on both platforms; the table shows a subset.
       collects and loses — a view showing one and not the other cannot show that a thread has been
       boosted, which is the reason both are columns
 - [x] Scheduling policy
-- [ ] Ideal processor
+- [x] Ideal processor — `GetThreadIdealProcessorEx`, flattened across processor groups the way every
+      other processor number here is, so it can be read against the last-CPU column beside it. The
+      pair is the question: a thread the scheduler prefers on processor 2 that keeps running on 7 is
+      a thread being bounced off its own cache, and neither column says that alone. Affinity is where
+      a thread is *allowed*, last CPU is where it *ran*, and this is where the scheduler would put it
+      given a free choice — three different questions that look like one. Linux has no per-thread
+      equivalent a caller can read, so `n/a` there
 - [x] Current / last CPU
 - [x] Affinity
 - [x] Wait reason
 - [ ] Wait duration
 - [x] 🟡 Kernel/user indicator
 - [x] 🟡 Stack usage
-- [ ] TEB / TLS information
+- [x] 🟡 TEB / TLS information — the address, from `NtQueryInformationThread`. What is *inside* a TEB
+      is another process's memory, and reading it means attaching, which §4 rules out along with the
+      driver — so this is the pointer a debugger would start from and not the contents it would go on
+      to read, and the box is partial for that reason rather than for a missing pass. Linux has no
+      TEB; the nearest thing is a thread pointer living in a register only `ptrace` will hand over,
+      which is the same refusal
 - [x] Name
 - ∅ Description
 - ∅ Service association
@@ -3467,11 +3532,41 @@ Shared columns:
 
 Windows-specific:
 
-- [ ] Service type · service group · accepted controls · error control · start account ·
-      delayed start · trigger information · required privileges · preshutdown timeout ·
-      key modification time · driver service indicator — **blocked on the reading half**: nothing
-      opens the service control manager, so `WindowsProbe.GetServices` answers with an empty list and
-      there are no rows for any of these to be columns of
+- [ ] 🟡 Service type ✔ · start account ✔ · driver service indicator ✔ · service group ·
+      accepted controls · error control · delayed start · trigger information · required privileges ·
+      preshutdown timeout · key modification time. **No longer blocked on the reading half.** The
+      service control manager is opened now — `EnumServicesStatusEx` for the list, then
+      `QueryServiceConfig` and `QueryServiceConfig2` per service — so a Windows machine has rows in
+      the services view where it used to have a view that looked like a machine with no services.
+
+      Read-only by construction: the handles are asked for `SERVICE_QUERY_CONFIG` and
+      `SERVICE_QUERY_STATUS` and nothing else, so this path cannot start or stop anything even by
+      accident. Commanding a service is `IServiceControl`'s job and asks for its own rights when it
+      is used. Nothing needs elevation — `SC_MANAGER_ENUMERATE_SERVICE` is granted to Authenticated
+      Users — and it is read on demand rather than on the tick, for the reason the systemd side is:
+      two queries per service, several hundred times, once a second, is the monitor becoming the
+      thing worth monitoring (§5.4).
+
+      **Drivers are rows.** The driver-service indicator is a column that can only exist if they are,
+      and a view that silently omitted half the service control manager would answer a narrower
+      question than the one it appears to.
+
+      What the state map does *not* do is invent a systemd word for a Windows state. A pending start
+      is reported as running because that is what the manager said and where it is going; **paused**
+      is `Unknown`, because Windows has a state systemd does not and folding it into either of the
+      other two would say something untrue about a service that is neither (§5.3).
+
+      The remaining seven are further queries against the same open handle rather than another
+      blocker — the failure actions, the trigger table, the required-privileges list — and the
+      restart policy is among them, which is why that column is still null here.
+
+      The text half — splitting `ImagePath` into a program and its arguments — is in Core with no
+      platform attribute, so it is tested on every CI leg (§9.2). It is not a split on the first
+      space: most Windows program paths have one, so that would name `C:\Program` for the majority of
+      services on the machine, and the wrong program is worse than none because it looks like an
+      answer. It also does not pretend to resolve the unquoted-path ambiguity Windows itself resolves
+      by trying each prefix — reporting what the registry says is a reading, and deciding what the
+      loader would pick is a claim about a filesystem nobody looked at
 
 systemd-specific:
 
@@ -5059,10 +5154,63 @@ recorded; a notification nobody was looking at is gone, which is what the timeli
 
 # 66. Persistent process notes and rules
 
-- [ ] Attach: note/comment · colour · category · expected publisher · preferred priority ·
+- [x] Attach: note/comment · colour · category · expected publisher · preferred priority ·
       preferred affinity · preferred I/O priority
-- [ ] Matching by: executable path · executable hash · process name · command-line pattern · signer
-- [ ] **Automatic application of scheduling settings is opt-in**
+- [x] Matching by: executable path · executable hash · process name · command-line pattern · signer
+- [x] **Automatic application of scheduling settings is opt-in**
+
+`rules.tsv`, beside the settings and following them wherever `--settings`, `PROCMAN_SETTINGS` or a
+portable marker put them — the same shape §44's usage record has, and for the same two reasons: it is
+a list that grows rather than a set of preferences, and somebody throwing away every note they have
+written should not lose the rest of their settings with it. Tab-separated, one rule to a line, so it
+diffs and can be read without this program.
+
+**Order decides, and the first match wins.** Not "the most specific", which sounds better and cannot
+be defined — is a path more specific than a digest, or a command line than a signer? A file read top
+to bottom is a rule somebody can predict by looking at it.
+
+**The pattern language is `*` and `?` and nothing else.** A rule file is edited by hand by somebody
+who wants to say "anything under /usr/bin", and every character of a path — the dots, the plus in a
+package name, the brackets a build system leaves behind — is a metacharacter in a regular expression
+and an ordinary character here. A digest is compared and never globbed: an asterisk in a hash is a
+typo, and treating it as a wildcard would quietly turn one rule into a rule about most of the machine.
+
+**A rule keyed on a reading nobody took is a third answer.** The digest and the signer are read on
+request rather than every sample (§5.4), so a hash rule against a table that has not been asked to
+hash anything has not failed to match — `RuleVerdict.Unknown`, and the collection says so, because
+calling it "no" would silently drop every hash rule and leave a person watching their rule do nothing
+with nothing to tell them why (§72.3).
+
+**The third box is the dangerous one and is the reason the opt-in is per rule.** Recording that a
+backup job ought to run at idle priority is a note; reniceing it is this program reaching out and
+changing the machine because of a line in a file. So `apply` is a column rather than a global
+preference — somebody can keep twenty notes and have exactly one of them act — anything that is not
+an explicit `yes` leaves the machine alone, and a file written by a version without that column
+cannot start acting because a field was missing.
+
+**Once per process, and never again for that process.** A person who lowers a priority by hand after
+the rule ran has overruled it, and a program putting it back every second would be fighting them with
+no way to win. A rule says what a program should start at, not what it must stay at. Keyed on the
+identity pair, so a recycled pid is a new process and gets the rule applied again rather than being
+mistaken for one already handled (§8.2).
+
+Reachable from all three: the note, the category and the publisher comparison are rows on the
+overview page, so `--process`, the terminal's detail view and the window show the same sentences; the
+colour is a row's background in the window, where it beats the derived category — one is what this
+program worked out and the other is what a person decided — and still yields to a high-contrast
+desktop, because somebody who set that did not exempt one program from it by giving it a colour last
+year (§45.9, §74). Both front-ends run the applier, or a rule would act depending on which program
+you happened to open (§58).
+
+The publisher is shown as a comparison and not as a value. "Expected: Mozilla Corporation" beside a
+signer field somebody has to scroll back to is two facts a reader has to join, and whether they agree
+is the question they were asking. Where the signature has not been read it says that instead: a
+publisher nobody checked and a publisher that did not match are opposite conclusions.
+
+Verified against the kernel rather than against the suite. A rule matching `*sleep 200*` with
+`apply=yes` and `15 / 0-1 / idle` took a real process from nice 0 to 15, affinity `0-15` to `0,1` and
+I/O class none to idle, read back out of `/proc/[pid]/stat`, `taskset` and `ionice`; the same rule
+with `apply=no` left all three exactly as they were.
 
 # 67. Settings
 
@@ -5849,8 +5997,27 @@ drift §58's parity contract exists to catch.
       thing at a one-second refresh and at a ten-second one; the delta remembers when each process
       first appeared and forgets it the moment the window closes, so the memory is bounded by how
       many processes started inside the highlight rather than by how long the program has run
-- [ ] Configurable exited-process highlight duration — a row that has gone is not in the table to
-      colour, so this needs the row kept past its process, which nothing does yet
+- [x] Configurable exited-process highlight duration — `keep.exited`, in seconds, off by default.
+      The row is kept past its process, which is what makes there be something to colour: the
+      `Exited` colour has been in the palette and the legend since they were written and **nothing
+      ever produced it** until now.
+
+      Every counter on a kept row is the last one that was read and every *rate* over it is
+      unsampled, because a row that has stopped moving must not go on reporting the rate it had when
+      it stopped — that would draw a dead process using a processor (§3.4, §72.3). `Exited` is
+      classified ahead of `New`, because a short-lived process can be born and buried inside one
+      frame and "it has gone" is the more urgent of the two things to say about it.
+
+      Two bounds and not one, because they fail differently: the duration is what somebody asked
+      for, and a cap of two thousand rows is what stops a build machine ending a thousand processes a
+      second from making the table unreadable. Switching it off forgets what was being kept rather
+      than freezing it on screen.
+
+      **A defect the tests caught and a reader would not have.** The delta sizes its per-row arrays
+      to the snapshot the probe left, which is before the kept rows are appended to it — so the row
+      was in the table, looked correct, and threw the moment any front-end asked it for a
+      percentage. The delta is extended after the append now, and the blanking of those rows happens
+      there
 - [x] Scroll to new process — `scroll.new`, off by default and deliberately: it is the one thing
       allowed to move the view during a refresh, which is otherwise promised not to happen. Both
       front-ends read the delta's *arrived this sample* rather than *is new*, or the view would stay
@@ -6058,14 +6225,12 @@ that has a tab for it. That drift is what made an earlier version of this matrix
       neighbours. The introspection half — a runtime's own threads, its loader contexts, its heap —
       is §80's and unbuilt on both, and it is the half that cannot be had from the outside: it needs
       the runtime to answer about itself
-- [ ] Process notes / rules — §66 in full, and nothing behind it: no note, colour, category, expected
-      publisher or preferred priority is attached to anything, and no rule matches an image to one.
-      Left open rather than refused because nothing is in the way. The store exists — §67's settings
-      file is already a documented `key=value` file at the platform's own config location, and §44
-      already keeps a per-image record across sessions, so persistence-by-image-path is a solved
-      problem here. The matching evidence exists too: §21 reads a digest, §70 reads what the package
-      database recorded, and §14 reads the command line. This is unwritten work with its dependencies
-      already met, which is a different thing from a blocked box and should not be filed as one
+- [x] Process notes / rules — §66 in full. `rules.tsv` beside the settings; a note, colour, category
+      and expected publisher attach to a program, and five matchers recognise one: path, digest,
+      name, command line and signer. The note, the category and the publisher comparison are rows on
+      the overview page all three front-ends build from, and the colour is a row's background in the
+      window. Scheduling is applied only where a rule says so, once per process — see §66 for why
+      that opt-in is per rule rather than global
 - [x] Configurable columns
 
 ## DBC Task Manager
