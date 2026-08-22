@@ -17,14 +17,6 @@ public sealed class CgroupLimitTests {
   private static string Root => Path.Combine(TestContext.CurrentContext.TestDirectory, "Fixtures", "cgroup-limited");
 
   /// <summary>
-  /// A cgroup that is capped in every way the kernel allows.
-  /// </summary>
-  /// <remarks>
-  /// Read through the same entry point the probe uses, path and all, because the path handling is
-  /// half the bug surface here: a cgroup path begins with a slash, and joining it to a root naively
-  /// discards the root and reads from the filesystem root instead.
-  /// </remarks>
-  /// <summary>
   /// Deliberately a directory that is not there.
   /// </summary>
   /// <remarks>
@@ -35,6 +27,14 @@ public sealed class CgroupLimitTests {
   /// </remarks>
   private const string _NoDevices = "/nonexistent/sys/dev/block";
 
+  /// <summary>
+  /// A cgroup that is capped in every way the kernel allows.
+  /// </summary>
+  /// <remarks>
+  /// Read through the same entry point the probe uses, path and all, because the path handling is
+  /// half the bug surface here: a cgroup path begins with a slash, and joining it to a root naively
+  /// discards the root and reads from the filesystem root instead.
+  /// </remarks>
   private static CgroupInfo Capped() {
     var info = Platform.Linux.CgroupReader.Read(Root, "/system.slice/capped.service", _NoDevices);
     Assert.That(info, Is.Not.Null, "the fixture did not resolve");
@@ -224,7 +224,7 @@ public sealed class CgroupLimitTests {
     Assert.That(tasks.Value.Value, Is.EqualTo(64ul));
     Assert.That(tasks.Unit, Is.EqualTo("capped.service"));
 
-    var (cores, _, unit) = capped.TightestCpuQuota();
+    var (cores, _, _, unit) = capped.TightestCpuQuota();
     Assert.That(cores, Is.EqualTo(0.5).Within(0.0001), "half a core against the slice's two");
     Assert.That(unit, Is.EqualTo("capped.service"));
   }
@@ -259,9 +259,48 @@ public sealed class CgroupLimitTests {
     Assert.That(tasks.Value.Value, Is.EqualTo(4096ul));
     Assert.That(tasks.Path, Is.EqualTo("/user.slice"));
 
-    var (cores, path, _) = free.TightestCpuQuota();
+    var (cores, quotaReason, path, _) = free.TightestCpuQuota();
     Assert.That(cores, Is.Null);
     Assert.That(path, Is.Null);
+
+    // And which kind of "no quota" it is survives the walk: the scope wrote "max 100000", which is a
+    // decision somebody made, where the slice above it has no cpu.max at all.
+    Assert.That(quotaReason, Is.EqualTo(UnknownReason.NoLimit));
+  }
+
+  /// <summary>
+  /// A limit file that was there and would not read is a hole, and outranks both kinds of "no
+  /// ceiling" when the chain is reduced.
+  /// </summary>
+  /// <remarks>
+  /// The reassuring half of §72.3's mistake. A chain that dropped it would report "no cgroup in the
+  /// chain has that controller on" about a cgroup that plainly does, and a reader would go looking
+  /// anywhere but at the file nobody could read.
+  /// </remarks>
+  [Test]
+  public void AFileThatWouldNotReadOutranksBothKindsOfNoCeiling() {
+    var directory = Path.Combine(Path.GetTempPath(), "procman-cgroup-" + Guid.NewGuid().ToString("N"));
+    try {
+      var inner = Path.Combine(directory, "system.slice", "broken.service");
+      Directory.CreateDirectory(inner);
+      File.WriteAllText(Path.Combine(directory, "system.slice", "memory.max"), "not a number\n");
+      File.WriteAllText(Path.Combine(inner, "memory.max"), "max\n");
+      File.WriteAllText(Path.Combine(inner, "cpu.max"), "not a quota\n");
+
+      var info = Platform.Linux.CgroupReader.Read(directory, "/system.slice/broken.service", _NoDevices);
+      Assert.That(info, Is.Not.Null);
+
+      var memory = info!.TightestMemoryLimit();
+      Assert.That(memory.Path, Is.Null);
+      Assert.That(memory.Value.Reason, Is.EqualTo(UnknownReason.CounterInvalid), "and not NoLimit from the inner max");
+
+      var (cores, reason, _, _) = info.TightestCpuQuota();
+      Assert.That(cores, Is.Null);
+      Assert.That(reason, Is.EqualTo(UnknownReason.CounterInvalid), "a quota is a double? and still carries why");
+    } finally {
+      if (Directory.Exists(directory))
+        Directory.Delete(directory, recursive: true);
+    }
   }
 
   #endregion

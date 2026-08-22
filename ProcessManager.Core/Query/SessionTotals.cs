@@ -17,8 +17,14 @@ namespace Hawkynt.ProcessManager.Query;
 /// keeps no such counter, every workaround is wrong in a way nothing on screen would betray, and
 /// summing wrong numbers per user would make the error bigger rather than smaller.
 /// </param>
+/// <param name="Processes">
+/// How many processes the account owns. A <see cref="Counter"/> and not a plain number, because an
+/// account nobody has counted and an account with nothing running are different facts and a nought
+/// would say the second about the first — which is what a users view drawn before the first sample
+/// would have shown.
+/// </param>
 public readonly record struct UserTotals(
-  int Processes,
+  Counter Processes,
   Rate CpuPercent,
   Counter PrivateBytes,
   Rate DiskBytesPerSecond,
@@ -28,7 +34,7 @@ public readonly record struct UserTotals(
 
   /// <summary>An account nothing was found for.</summary>
   public static UserTotals None { get; } = new(
-    0,
+    Counter.Unknown(UnknownReason.NotSampledYet),
     Rate.NotSampledYet,
     Counter.Unknown(UnknownReason.NotSampledYet),
     Rate.NotSampledYet,
@@ -122,7 +128,7 @@ public static class SessionTotals {
     }
 
     public readonly UserTotals Finish() => new(
-      this._processes,
+      Counter.Of((ulong)this._processes),
       this._anyCpu ? Rate.Of(this._cpu) : Rate.NotSampledYet,
       this._anyMemory ? Counter.Of(this._memory) : Counter.Unknown(UnknownReason.NotPermitted),
       this._anyDisk ? Rate.Of(this._disk) : Rate.NotSampledYet,

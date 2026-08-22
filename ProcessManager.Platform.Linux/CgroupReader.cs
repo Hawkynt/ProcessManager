@@ -100,17 +100,43 @@ internal static class CgroupReader {
       return;
 
     var (limits, reason) = IoLimits(directory, blockDeviceRoot);
+    var quota = ReadText(directory, "cpu.max");
     levels.Add(new(
       path,
       CgroupUnit.Of(path),
       Words(ReadText(directory, "cgroup.controllers")),
-      Cores(ReadText(directory, "cpu.max")),
+      Cores(quota),
       Bytes(ReadText(directory, "memory.max")),
       Bytes(ReadText(directory, "memory.high")),
       Number(ReadText(directory, "pids.max")),
       limits,
-      reason
+      reason,
+      QuotaReason(quota)
     ));
+  }
+
+  /// <summary>
+  /// Why a level has no processor quota, when it has none (PRD §38).
+  /// </summary>
+  /// <remarks>
+  /// <see cref="Cores"/> answers null four different ways and only two of them are answers. No file
+  /// means the controller is not enabled here; the literal word <c>max</c> means somebody left it
+  /// unbounded; a line that will not parse and a period of nought are holes. A chain that reported
+  /// all four as "no quota anywhere" would tell a reader nothing is holding their process back on
+  /// the strength of a file nobody could read.
+  /// </remarks>
+  private static UnknownReason QuotaReason(string? text) {
+    if (text is not { Length: > 0 })
+      return UnknownReason.NotSupportedOnPlatform;
+
+    var space = text.IndexOf(' ');
+    if (space <= 0)
+      return UnknownReason.CounterInvalid;
+
+    if (text[..space] is "max")
+      return UnknownReason.NoLimit;
+
+    return Cores(text) is null ? UnknownReason.CounterInvalid : UnknownReason.None;
   }
 
   /// <summary>

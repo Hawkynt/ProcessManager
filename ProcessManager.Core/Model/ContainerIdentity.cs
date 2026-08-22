@@ -51,6 +51,18 @@ public enum ContainerRuntime : byte {
   /// </remarks>
   VirtualMachine,
 
+  /// <summary>
+  /// A container whose cgroup path carries an id and no runtime's name.
+  /// </summary>
+  /// <remarks>
+  /// Kubernetes with the cgroupfs driver writes <c>/kubepods/…/&lt;64 hex&gt;</c>, and there is
+  /// nothing in that path to say whether containerd, CRI-O or Docker is underneath it. Saying "not
+  /// in a container" would be a positive false statement about a row that plainly is in one, and
+  /// naming a runtime would be a guess; this is the honest middle, and it is a container for every
+  /// purpose except the one column that would have named the runtime (PRD §5.3, §72.3).
+  /// </remarks>
+  Container,
+
 }
 
 /// <summary>
@@ -106,6 +118,7 @@ public readonly record struct ContainerIdentity(
     ContainerRuntime.Lxc => "LXC",
     ContainerRuntime.SystemdNspawn => "systemd-nspawn",
     ContainerRuntime.VirtualMachine => "a virtual machine, not a container",
+    ContainerRuntime.Container => "a container whose cgroup path does not name its runtime",
     ContainerRuntime.None => "the machine itself",
     _ => "not known",
   };

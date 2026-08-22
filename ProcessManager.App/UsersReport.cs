@@ -71,7 +71,7 @@ internal static class UsersReport {
         + $"{session.SessionId ?? "—",-4} {SessionFacts.Describe(session.Type),-10} "
         + $"{SessionFacts.Describe(session.State),-6} "
         + $"{SessionFacts.DescribeIdle(SessionFacts.IdleFor(session.LastInputUtcTicks, now)),-6} "
-        + $"{total.Processes,5} {Percent(total.CpuPercent),6} {Humanize.Bytes(total.PrivateBytes),9} "
+        + $"{Humanize.Count(total.Processes),5} {Percent(total.CpuPercent),6} {Humanize.Bytes(total.PrivateBytes),9} "
         + $"{Throughput(total.DiskBytesPerSecond),10} {Percent(total.GpuPercent),6}"
       );
 
@@ -171,7 +171,7 @@ internal static class UsersReport {
     foreach (var user in accounts) {
       var total = totals[user];
       Console.WriteLine(
-        $"  {user.PadRight(width)}  {total.Processes,5} {Percent(total.CpuPercent),6} "
+        $"  {user.PadRight(width)}  {Humanize.Count(total.Processes),5} {Percent(total.CpuPercent),6} "
         + $"{Humanize.Bytes(total.PrivateBytes),9} {Throughput(total.DiskBytesPerSecond),10}"
       );
     }

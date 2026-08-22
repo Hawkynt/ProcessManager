@@ -80,6 +80,14 @@ public sealed record CgroupIoLimit(
 /// </remarks>
 /// <param name="Path">The cgroup path of this level. The root is <c>/</c>.</param>
 /// <param name="Unit">The systemd unit this level is, where it is one; null for a slice or the root.</param>
+/// <param name="CpuQuotaReason">
+/// Why there is no quota here, when <paramref name="CpuQuotaCores"/> is null. A quota is a number of
+/// cores and cannot carry its own reason the way a <see cref="Counter"/> does, and this level has
+/// four ways of having none: no <c>cpu.max</c> at all, the literal word <c>max</c>, a file that
+/// could not be parsed, and a period of nought. The first two are answers and the last two are
+/// holes, and a chain that reported all four as "no quota" would tell somebody nothing is holding
+/// their process back on the strength of a file nobody could read (PRD §72.3).
+/// </param>
 public sealed record CgroupLevel(
   string Path,
   string? Unit,
@@ -89,7 +97,8 @@ public sealed record CgroupLevel(
   Counter MemoryHighBytes,
   Counter PidsMax,
   IReadOnlyList<CgroupIoLimit> IoLimits,
-  UnknownReason IoLimitsReason
+  UnknownReason IoLimitsReason,
+  UnknownReason CpuQuotaReason = UnknownReason.NotSupportedOnPlatform
 );
 
 /// <summary>
@@ -181,20 +190,29 @@ public sealed record CgroupInfo(
   /// the chain set one — including the case where the chain was never read, which is why a caller
   /// showing this must say which of the two it is looking at.
   /// </remarks>
-  public (double? Cores, string? Path, string? Unit) TightestCpuQuota() {
+  public (double? Cores, UnknownReason Reason, string? Path, string? Unit) TightestCpuQuota() {
     double? tightest = null;
+    var reason = UnknownReason.NotSupportedOnPlatform;
     string? path = null;
     string? unit = null;
     foreach (var level in this.Chain) {
-      if (level.CpuQuotaCores is not { } cores || (tightest is { } best && cores >= best))
+      if (level.CpuQuotaCores is not { } cores) {
+        if (path is null && Beats(level.CpuQuotaReason, reason))
+          reason = level.CpuQuotaReason;
+
+        continue;
+      }
+
+      if (tightest is { } best && cores >= best)
         continue;
 
       tightest = cores;
+      reason = UnknownReason.None;
       path = level.Path;
       unit = level.Unit;
     }
 
-    return (tightest, path, unit);
+    return (tightest, reason, path, unit);
   }
 
   /// <summary>The smallest memory ceiling anywhere in the chain, and which cgroup set it.</summary>
@@ -210,8 +228,14 @@ public sealed record CgroupInfo(
   /// A level that has no such controller and a level that says <c>max</c> are both skipped, because
   /// neither is a ceiling — but the two are not interchangeable when <em>nothing</em> in the chain
   /// answered: a chain where somebody wrote <c>max</c> is deliberately unbounded, and one where the
-  /// controller is off everywhere has simply never been asked to bound anything. The reason of the
-  /// innermost level that had an opinion is carried out so the difference survives (PRD §5.3).
+  /// controller is off everywhere has simply never been asked to bound anything. The strongest
+  /// opinion any level had is carried out so the difference survives (PRD §5.3).
+  /// <para>
+  /// And a level whose file was there and unreadable outranks both of them, which is
+  /// <see cref="Beats"/>. It is the only one of the three that is a hole rather than an answer, and
+  /// a chain that dropped it would report "no cgroup in the chain has that controller on" about a
+  /// cgroup that plainly does — a confident negative built on a file nobody could read.
+  /// </para>
   /// </remarks>
   private static CgroupCeiling Tightest(IReadOnlyList<CgroupLevel> chain, Func<CgroupLevel, Counter> pick) {
     var tightest = Counter.NotSupported;
@@ -220,8 +244,7 @@ public sealed record CgroupInfo(
     foreach (var level in chain) {
       var value = pick(level);
       if (!value.HasValue) {
-        // No number, but possibly still an opinion: "max" here beats "no controller" further out.
-        if (path is null && value.Reason == UnknownReason.NoLimit)
+        if (path is null && Beats(value.Reason, tightest.Reason))
           tightest = value;
 
         continue;
@@ -237,5 +260,26 @@ public sealed record CgroupInfo(
 
     return new(tightest, path, unit);
   }
+
+  /// <summary>
+  /// Which of two "there is no ceiling here" answers a chain should report.
+  /// </summary>
+  /// <remarks>
+  /// A file that could not be read wins, because it might have held a ceiling and nobody knows;
+  /// then a deliberate <c>max</c>, which is a statement somebody made; and last a controller that is
+  /// simply not on, which is the weakest thing a level can say. Ordered so that the most cautious
+  /// answer in the chain is the one that reaches the reader.
+  /// </remarks>
+  private static bool Beats(UnknownReason candidate, UnknownReason current) => Rank(candidate) > Rank(current);
+
+  private static int Rank(UnknownReason reason) => reason switch {
+    UnknownReason.None => 3,
+    UnknownReason.NoLimit => 1,
+    UnknownReason.NotSupportedOnPlatform => 0,
+
+    // Everything else is a hole: a file that would not parse, one this account may not read, one
+    // whose cgroup went while it was being read.
+    _ => 2,
+  };
 
 }

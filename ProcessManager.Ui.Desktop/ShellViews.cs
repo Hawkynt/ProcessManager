@@ -457,7 +457,7 @@ internal sealed class ShellViews(ISystemProbe probe, Sampling.Sampler? sampler =
           // Null and empty are different: null is a login at the machine's own keyboard, and an empty
           // string is a remote host the file did not name.
           session.RemoteHost ?? "this machine",
-          person ? total.Processes.ToString(CultureInfo.InvariantCulture) : "—",
+          person ? Humanize.Count(total.Processes) : "—",
           person ? Humanize.Percent(total.CpuPercent) : "—",
           person ? Humanize.Bytes(total.PrivateBytes) : "—",
           person ? Humanize.BytesPerSecond(total.DiskBytesPerSecond) : "—",

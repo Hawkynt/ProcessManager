@@ -90,8 +90,14 @@ internal static class SessionControlCommand {
     if (command != SessionCommand.Terminate)
       return $"{(command == SessionCommand.Lock ? "Lock" : "Unlock")} the screen of session {sessionId} ({who}).";
 
+    // A session logind opened that the login records do not carry — a graphical login on many
+    // desktops is exactly that. §90 wants a consequence named, so what cannot be named is said
+    // outright: an unexplained short sentence would read as a small action, and this is not one.
     if (user.Length == 0)
-      return $"Log off session {sessionId}. Everything in it stops, unsaved work included.";
+      return $"Log off session {sessionId}. Everything in it stops, unsaved work included.\n"
+        + "This session is not in the login records, so the account, the terminal and the number of "
+        + "processes it will take cannot be named here. `loginctl session-status "
+        + $"{sessionId}` will say whose it is.";
 
     sampler.Sample();
     var processes = 0;

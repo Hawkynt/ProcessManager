@@ -3720,7 +3720,9 @@ called `--all` would be a switch.
       share, so ending a session is passed as a system target and asked about either way. The sentence
       names the account, the session, the terminal and how many processes go with it, because §90
       forbids a dialog that says only "are you sure" and because "this will close 318 programs" is
-      something a person can act on. At the prompt the same sentence is printed and a typed *yes*
+      something a person can act on. At the prompt, a session id that the login records do not carry —
+      which a graphical login often is — cannot be named that way, and the sentence says *that* rather
+      than going quiet: a short unexplained warning reads as a small action, and this is not one. At the prompt the same sentence is printed and a typed *yes*
       wanted; a run whose input is not a terminal is refused rather than assumed to consent, and
       `--yes` is how a script says it meant it (§5.5)
 

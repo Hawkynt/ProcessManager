@@ -102,6 +102,19 @@ internal static class LimitsReport {
         return;
     }
 
+    // On IsLimited and not on the number of lines: the kernel writes a line for a device with all
+    // four directions set to max, which is a device it is not throttling. A bare "disk" heading with
+    // nothing under it is what counting lines produced.
+    var capped = 0;
+    foreach (var limit in cgroup.Io)
+      if (limit.IsLimited)
+        ++capped;
+
+    if (capped == 0) {
+      Console.WriteLine("  disk                 the io controller is on here and nothing is capped");
+      return;
+    }
+
     Console.WriteLine("  disk");
     foreach (var limit in cgroup.Io) {
       if (!limit.IsLimited)
@@ -130,10 +143,8 @@ internal static class LimitsReport {
     Console.WriteLine();
     Console.WriteLine("what is in force, and which cgroup sets it");
 
-    var (cores, path, unit) = cgroup.TightestCpuQuota();
-    Console.WriteLine(
-      $"  processor            {(cores is { } value ? string.Format(CultureInfo.InvariantCulture, "{0:0.##} core{1} — set by {2}", value, value == 1 ? string.Empty : "s", unit ?? path) : "no quota anywhere in the chain")}"
-    );
+    var (cores, quotaReason, path, unit) = cgroup.TightestCpuQuota();
+    Console.WriteLine($"  processor            {InForceCores(cores, quotaReason, path, unit)}");
 
     Console.WriteLine($"  memory               {InForce(cgroup.TightestMemoryLimit(), static counter => Humanize.Bytes(counter))}");
     Console.WriteLine($"  tasks                {InForce(cgroup.TightestTaskLimit(), static counter => Humanize.Count(counter))}");
@@ -143,13 +154,42 @@ internal static class LimitsReport {
       Console.WriteLine($"  {level.Path,-52} {Level(level)}");
   }
 
+  /// <summary>
+  /// The quota in force, and which of the four kinds of "none" it is when there is none.
+  /// </summary>
+  /// <remarks>
+  /// A file that would not parse is not a chain with no quota in it. Saying "no quota anywhere"
+  /// about a <c>cpu.max</c> nobody could read is the reassuring half of §72.3's mistake, and it is
+  /// the half somebody acts on by going to look somewhere else.
+  /// </remarks>
+  private static string InForceCores(double? cores, UnknownReason reason, string? path, string? unit) {
+    if (cores is { } value)
+      return string.Format(
+        CultureInfo.InvariantCulture,
+        "{0:0.##} core{1} — set by {2}",
+        value,
+        value == 1 ? string.Empty : "s",
+        unit ?? path
+      );
+
+    return reason switch {
+      UnknownReason.NoLimit => "unlimited all the way up",
+      UnknownReason.NotSupportedOnPlatform => "no cgroup in the chain has the cpu controller on",
+      _ => $"{Humanize.Placeholder(reason)} — a cpu.max in the chain could not be read",
+    };
+  }
+
   private static string InForce(CgroupCeiling ceiling, Func<Counter, string> format) {
     if (ceiling.Path is not null)
       return $"{format(ceiling.Value)} — set by {ceiling.Unit ?? ceiling.Path}";
 
-    return ceiling.Value.Reason == UnknownReason.NoLimit
-      ? "unlimited all the way up"
-      : "no cgroup in the chain has that controller on";
+    return ceiling.Value.Reason switch {
+      UnknownReason.NoLimit => "unlimited all the way up",
+      UnknownReason.NotSupportedOnPlatform => "no cgroup in the chain has that controller on",
+      // A limit file that was there and would not read. Not the same as there being none, and the
+      // difference is what somebody would act on (PRD §72.3).
+      var reason => $"{Humanize.Placeholder(reason)} — a limit in the chain could not be read",
+    };
   }
 
   /// <summary>What one level sets, and nothing about what it does not.</summary>
@@ -171,11 +211,26 @@ internal static class LimitsReport {
     return parts.Count == 0 ? "sets no limit" : string.Join(", ", parts);
   }
 
-  private static string Throughput(Counter counter)
-    => counter.HasValue ? Humanize.Bytes(counter) + "/s" : "unlimited";
+  /// <summary>
+  /// A throughput ceiling, or which kind of "no ceiling" this is.
+  /// </summary>
+  /// <remarks>
+  /// Only the literal word <c>max</c> is "unlimited". A value the parser could not read is a hole
+  /// and says so: printing "unlimited" over it would turn a file nobody could read into a promise
+  /// that nothing is holding the group back, which is the confident answer §72.3 exists to stop —
+  /// and the inverted form of it, since the wrong answer here is reassuring rather than alarming.
+  /// </remarks>
+  private static string Throughput(Counter counter) => counter.Reason switch {
+    UnknownReason.None => Humanize.Bytes(counter) + "/s",
+    UnknownReason.NoLimit => "unlimited",
+    _ => Humanize.Placeholder(counter.Reason),
+  };
 
-  private static string Operations(Counter counter)
-    => counter.HasValue ? Humanize.Count(counter) + " ops/s" : "unlimited ops/s";
+  private static string Operations(Counter counter) => counter.Reason switch {
+    UnknownReason.None => Humanize.Count(counter) + " ops/s",
+    UnknownReason.NoLimit => "unlimited",
+    _ => Humanize.Placeholder(counter.Reason),
+  };
 
   /// <summary>
   /// What is running the process, where something other than the machine is (PRD §38).

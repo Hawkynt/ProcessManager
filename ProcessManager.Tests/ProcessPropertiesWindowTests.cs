@@ -535,7 +535,11 @@ public sealed class ProcessPropertiesWindowTests {
           ["cpu", "memory", "pids"],
           MemoryCurrentBytes: Counter.Of(64ul * 1024 * 1024),
           MemoryMaxBytes: Counter.Of(256ul * 1024 * 1024),
-          MemoryHighBytes: Counter.NotSupported,
+          // What memory.high reads when the controller is on and nobody set a soft cap: the literal
+          // word "max", which the reader turns into NoLimit. NotSupported is what an absent file
+          // means, and a cgroup with the memory controller enabled always has the file — so a stub
+          // saying NotSupported here was describing a state the kernel does not produce.
+          MemoryHighBytes: Counter.Unknown(UnknownReason.NoLimit),
           PidsCurrent: Counter.Of(12),
           PidsMax: Counter.Of(100),
           CpuQuotaCores: 0.5,
@@ -587,8 +591,9 @@ public sealed class ProcessPropertiesWindowTests {
           "/user.slice/user-1000.slice/session.scope",
           ["memory"],
           MemoryCurrentBytes: Counter.Of(1024ul),
-          MemoryMaxBytes: Counter.NotSupported,
-          MemoryHighBytes: Counter.NotSupported,
+          // The memory controller is the one that is on here, so its files exist and read "max".
+          MemoryMaxBytes: Counter.Unknown(UnknownReason.NoLimit),
+          MemoryHighBytes: Counter.Unknown(UnknownReason.NoLimit),
           PidsCurrent: Counter.Of(3),
           PidsMax: Counter.NotSupported,
           CpuQuotaCores: null,

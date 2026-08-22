@@ -42,10 +42,16 @@ public static class ContainerDetector {
     if (cgroupPath is not { Length: > 0 })
       return ContainerIdentity.Unknown;
 
+    // machined's layout is the one that cannot be told from an ordinary unit by its own name:
+    // machine-web.scope is a container and machine-learning.service is a program somebody wrote.
+    // What separates them is where they live, so the slice is looked for once rather than guessed
+    // at per segment.
+    var machined = cgroupPath.Contains("/machine.slice", StringComparison.Ordinal);
+
     var path = cgroupPath.AsSpan();
     while (!path.IsEmpty) {
       var slash = path.LastIndexOf('/');
-      if (Segment(path[(slash + 1)..]) is { } found)
+      if (Segment(path[(slash + 1)..], machined) is { } found)
         return found;
 
       if (slash < 0)
@@ -57,11 +63,21 @@ public static class ContainerDetector {
     // Two layouts put the id in a segment of its own under a runtime's name rather than in a
     // decorated scope: docker's own default is /docker/<id>, and an unqualified /lxc/<name> is how
     // an LXC container looks where nothing registered it with systemd.
-    return Bare(cgroupPath) ?? ContainerIdentity.None;
+    if (Bare(cgroupPath) is { } bare)
+      return bare;
+
+    // A path with a container id in it and no runtime naming it is still a container, and saying
+    // "this is not in one" about it would be a positive false statement rather than an unknown.
+    // Kubernetes with the cgroupfs driver writes exactly that — /kubepods/…/<64 hex> — and this is
+    // also what keeps the answer in step with the process table's own container column, which finds
+    // the id the same way and would otherwise have shown one where this said there was none (§5.1).
+    return Humanize.ContainerId(cgroupPath) is { Length: > 0 } id
+      ? new(ContainerRuntime.Container, id, null, UnknownReason.NotImplementedHere)
+      : ContainerIdentity.None;
   }
 
   /// <summary>One path segment, where it names a container by itself.</summary>
-  private static ContainerIdentity? Segment(ReadOnlySpan<char> segment) {
+  private static ContainerIdentity? Segment(ReadOnlySpan<char> segment, bool machined) {
     // Ordered longest prefix first: "cri-containerd-" would otherwise never be reached, because
     // nothing distinguishes it from a plain containerd id until the whole prefix has been compared.
     if (Prefixed(segment, "cri-containerd-", out var id))
@@ -83,11 +99,15 @@ public static class ContainerDetector {
     if (Prefixed(segment, "lxc.payload.", out var payload))
       return new(ContainerRuntime.Lxc, null, Trimmed(payload).ToString(), UnknownReason.None);
 
-    // machined's, which nspawn and libvirt share. The name is escaped the way systemd escapes every
-    // unit name, so it has to be unescaped before it is shown: a container called "web-1" is
-    // "machine-web\x2d1.scope" on disk, and printing that verbatim shows somebody a name nothing on
-    // their machine is called.
-    if (Prefixed(segment, "machine-", out var machine)) {
+    // machined's, which nspawn and libvirt share. Only under machine.slice and only as a scope,
+    // because this is the one arm with no id to check against: "machine-learning.service" is a
+    // program somebody wrote and would otherwise be reported as a container called "learning". The
+    // name is escaped the way systemd escapes every unit name, so it has to be unescaped before it
+    // is shown — a container called "web-1" is "machine-web\x2d1.scope" on disk, and printing that
+    // verbatim shows somebody a name nothing on their machine is called.
+    if (machined
+        && segment.EndsWith(".scope", StringComparison.Ordinal)
+        && Prefixed(segment, "machine-", out var machine)) {
       var name = Unescape(Trimmed(machine));
 
       // libvirt names its QEMU guests "qemu-<id>-<name>". A guest is not a container: none of its
@@ -125,7 +145,9 @@ public static class ContainerDetector {
     if (head.SequenceEqual("docker"))
       return Identified(ContainerRuntime.Docker, body);
 
-    return head.SequenceEqual("lxc")
+    // "lxc" is LXC's own; "lxc.payload" is LXD's, which puts the name in the next segment rather
+    // than in the same one the way the systemd-managed layout does.
+    return head.SequenceEqual("lxc") || head.SequenceEqual("lxc.payload")
       ? new(ContainerRuntime.Lxc, null, body.ToString(), UnknownReason.None)
       : null;
   }
@@ -189,10 +211,17 @@ public static class ContainerDetector {
 
     var builder = new StringBuilder(escaped.Length);
     for (var i = 0; i < escaped.Length; ++i) {
+      // AllowHexSpecifier and not HexNumber: the latter permits leading and trailing whitespace, so
+      // "\x 5" would have parsed as five. And an escape that decodes to a control character is left
+      // as written — this name reaches a report, a table cell and the clipboard, and a name with a
+      // newline in the middle of it is a name that breaks whatever is showing it.
       if (escaped[i] == '\\'
           && i + 3 < escaped.Length
           && escaped[i + 1] is 'x' or 'X'
-          && byte.TryParse(escaped.Slice(i + 2, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var value)) {
+          && Uri.IsHexDigit(escaped[i + 2])
+          && Uri.IsHexDigit(escaped[i + 3])
+          && byte.TryParse(escaped.Slice(i + 2, 2), NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out var value)
+          && value is >= 0x20 and not 0x7F) {
         builder.Append((char)value);
         i += 3;
         continue;

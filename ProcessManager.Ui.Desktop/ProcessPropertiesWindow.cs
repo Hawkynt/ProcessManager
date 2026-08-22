@@ -602,27 +602,54 @@ public sealed class ProcessPropertiesWindow : Form {
     if (cgroup.Chain.Count == 0)
       return "the hierarchy above this cgroup was not read";
 
-    var (cores, path, unit) = cgroup.TightestCpuQuota();
-    return cores is null
-      ? "no quota anywhere above it either"
-      : $"{Cores(cores)} — set by {unit ?? path}";
+    var (cores, reason, path, unit) = cgroup.TightestCpuQuota();
+    if (cores is not null)
+      return $"{Cores(cores)} — set by {unit ?? path}";
+
+    return reason switch {
+      UnknownReason.NoLimit => "no quota anywhere above it either",
+      UnknownReason.NotSupportedOnPlatform => "no cgroup in the chain has the cpu controller on",
+      // A cpu.max that was there and would not read. "No quota" would be the reassuring half of
+      // §72.3's mistake, and the half a reader acts on by going to look somewhere else.
+      _ => $"{Humanize.Placeholder(reason)} — a cpu.max in the chain could not be read",
+    };
   }
 
   /// <summary>A ceiling from the chain, with the level that set it.</summary>
   private static string Effective(CgroupCeiling ceiling, Func<Counter, string> format) {
-    if (ceiling.Path is null)
-      return ceiling.Value.Reason == UnknownReason.NoLimit
-        ? "no limit anywhere above it either"
-        : "no cgroup above it has that controller on";
+    if (ceiling.Path is not null)
+      return $"{format(ceiling.Value)} — set by {ceiling.Unit ?? ceiling.Path}";
 
-    return $"{format(ceiling.Value)} — set by {ceiling.Unit ?? ceiling.Path}";
+    return ceiling.Value.Reason switch {
+      UnknownReason.NoLimit => "no limit anywhere above it either",
+      UnknownReason.NotSupportedOnPlatform => "no cgroup above it has that controller on",
+      var reason => $"{Humanize.Placeholder(reason)} — a limit in the chain could not be read",
+    };
   }
 
-  private static string DiskLimits(CgroupInfo cgroup) => cgroup.IoLimitsReason switch {
-    UnknownReason.None => $"{cgroup.Io.Count.ToString(CultureInfo.InvariantCulture)} device(s) capped",
-    UnknownReason.NoLimit => "the io controller is on here and nothing is capped",
-    _ => "the io controller is not enabled here — an ancestor's throttling applies instead",
-  };
+  /// <summary>
+  /// How many devices are actually capped here.
+  /// </summary>
+  /// <remarks>
+  /// Counted on <see cref="CgroupIoLimit.IsLimited"/> and not on the number of lines. The kernel
+  /// writes a line for a device with all four directions set to <c>max</c>, which is a device it is
+  /// not throttling: counting lines said "2 device(s) capped" above a list with one device in it.
+  /// </remarks>
+  private static string DiskLimits(CgroupInfo cgroup) {
+    if (cgroup.IoLimitsReason != UnknownReason.None)
+      return cgroup.IoLimitsReason == UnknownReason.NoLimit
+        ? "the io controller is on here and nothing is capped"
+        : "the io controller is not enabled here — an ancestor's throttling applies instead";
+
+    var capped = 0;
+    foreach (var limit in cgroup.Io)
+      if (limit.IsLimited)
+        ++capped;
+
+    return capped == 0
+      ? "the io controller is on here and nothing is capped"
+      : $"{capped.ToString(CultureInfo.InvariantCulture)} device(s) capped";
+  }
 
   private static string Device(CgroupIoLimit limit) => string.Join(" · ", (string[])[
     $"read {Rate(limit.ReadBytesPerSecond, "/s")}",
@@ -631,11 +658,18 @@ public sealed class ProcessPropertiesWindow : Form {
     $"write {Operations(limit.WriteOperationsPerSecond)}",
   ]);
 
-  private static string Rate(Counter counter, string suffix)
-    => counter.HasValue ? Humanize.Bytes(counter) + suffix : "unlimited";
+  /// <summary>As <see cref="Limit"/>: only the literal <c>max</c> is unlimited, and a hole is a hole.</summary>
+  private static string Rate(Counter counter, string suffix) => counter.Reason switch {
+    UnknownReason.None => Humanize.Bytes(counter) + suffix,
+    UnknownReason.NoLimit => "unlimited",
+    _ => Humanize.Placeholder(counter.Reason),
+  };
 
-  private static string Operations(Counter counter)
-    => counter.HasValue ? Humanize.Count(counter) + " ops/s" : "unlimited ops/s";
+  private static string Operations(Counter counter) => counter.Reason switch {
+    UnknownReason.None => Humanize.Count(counter) + " ops/s",
+    UnknownReason.NoLimit => "unlimited",
+    _ => Humanize.Placeholder(counter.Reason),
+  };
 
   /// <summary>One level of the chain, in one line: what it sets, and nothing about what it does not.</summary>
   private static string Level(CgroupLevel level) {
@@ -692,7 +726,20 @@ public sealed class ProcessPropertiesWindow : Form {
       ? string.Format(CultureInfo.InvariantCulture, "{0:0.##} core{1}", cores, cores == 1 ? string.Empty : "s")
       : "unlimited";
 
-  private static string Limit(Counter counter) => counter.HasValue ? Humanize.Bytes(counter) : "no limit";
+  /// <summary>
+  /// A ceiling, or which kind of "no ceiling" this is.
+  /// </summary>
+  /// <remarks>
+  /// Only the literal word <c>max</c> is "no limit". A file that was there and could not be read is
+  /// a hole and renders as one: saying "no limit" over it would turn something nobody measured into
+  /// a promise that nothing is holding the group back — the confident answer §72.3 forbids, in the
+  /// form where being wrong is reassuring rather than alarming.
+  /// </remarks>
+  private static string Limit(Counter counter) => counter.Reason switch {
+    UnknownReason.None => Humanize.Bytes(counter),
+    UnknownReason.NoLimit => "no limit",
+    _ => Humanize.Placeholder(counter.Reason),
+  };
 
   /// <summary>
   /// A ceiling that counts things rather than measuring them.
@@ -702,7 +749,11 @@ public sealed class ProcessPropertiesWindow : Form {
   /// suffix: a limit of 153 425 tasks appeared as <c>150K</c>, which is the wrong number in a unit
   /// tasks do not have. They are counted one at a time (PRD §5.3).
   /// </remarks>
-  private static string TaskLimit(Counter counter) => counter.HasValue ? Humanize.Count(counter) : "no limit";
+  private static string TaskLimit(Counter counter) => counter.Reason switch {
+    UnknownReason.None => Humanize.Count(counter),
+    UnknownReason.NoLimit => "no limit",
+    _ => Humanize.Placeholder(counter.Reason),
+  };
 
   /// <summary>
   /// A ceiling, but only where the controller that enforces it is switched on here.

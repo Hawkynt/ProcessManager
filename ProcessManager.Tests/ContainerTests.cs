@@ -79,6 +79,56 @@ public sealed class ContainerTests {
   }
 
   /// <summary>
+  /// The <c>machine-</c> arm has no id to check against, so it is gated on where the unit lives:
+  /// <c>machine-learning.service</c> is a program somebody wrote and would otherwise have been
+  /// reported as a container called "learning".
+  /// </summary>
+  [Test]
+  public void AUnitCalledMachineSomethingOutsideMachineSliceIsNotAContainer() {
+    Assert.That(ContainerDetector.Of("/system.slice/machine-learning.service").IsContained, Is.False);
+    Assert.That(ContainerDetector.Of("/system.slice/machine-learning.service").Runtime, Is.EqualTo(ContainerRuntime.None));
+
+    // And the same name in the place machined actually puts its scopes still is one.
+    Assert.That(
+      ContainerDetector.Of("/machine.slice/machine-learning.scope").Runtime,
+      Is.EqualTo(ContainerRuntime.SystemdNspawn)
+    );
+  }
+
+  /// <summary>
+  /// Kubernetes with the cgroupfs driver names no runtime anywhere in the path. Saying "this is not
+  /// in a container" about it would be a positive false statement rather than an unknown, and the
+  /// process table's own container column would meanwhile be showing an id (PRD §5.1, §72.3).
+  /// </summary>
+  [Test]
+  public void AContainerWithNoRuntimeInItsPathIsStillAContainer() {
+    var path = $"/kubepods/besteffort/podfb7f2c14-2c3e-4f52-9d3a-6b1c8e0f7a21/{_Id}";
+    var container = ContainerDetector.Of(path);
+
+    Assert.That(container.Runtime, Is.EqualTo(ContainerRuntime.Container));
+    Assert.That(container.IsContained, Is.True);
+    Assert.That(container.Id, Is.EqualTo(Humanize.ContainerId(path)), "and it agrees with the process table");
+  }
+
+  /// <summary>
+  /// The two readings of a path must not disagree: one window saying a process is in
+  /// <c>3f2a91c4e07b</c> while the next says it is in nothing is the §5.1 failure this guards.
+  /// </summary>
+  [Test]
+  public void WhereverTheProcessTableSeesAnIdSoDoesThis() {
+    foreach (var path in (string[])[
+      $"/docker/{_Id}",
+      $"/system.slice/docker-{_Id}.scope",
+      $"/machine.slice/libpod-{_Id}.scope",
+      $"/kubepods.slice/kubepods-burstable.slice/crio-{_Id}.scope",
+      $"/kubepods/besteffort/podfb7f2c14/{_Id}",
+    ]) {
+      Assert.That(Humanize.ContainerId(path), Is.Not.Null, path);
+      Assert.That(ContainerDetector.Of(path).IsContained, Is.True, path);
+    }
+  }
+
+  /// <summary>
   /// LXC and <c>machined</c> put the name in the path, so the name is what is reported and there is
   /// no id to report at all.
   /// </summary>
@@ -128,6 +178,22 @@ public sealed class ContainerTests {
     Assert.That(ContainerDetector.Unescape(@"a\x2"), Is.EqualTo(@"a\x2"));
     Assert.That(ContainerDetector.Unescape(@"a\zz"), Is.EqualTo(@"a\zz"));
     Assert.That(ContainerDetector.Unescape("plain"), Is.EqualTo("plain"));
+  }
+
+  /// <summary>
+  /// Two things a lenient hexadecimal parse would have let through. Whitespace inside an escape is
+  /// not an escape, and a name with a newline in the middle of it is a name that breaks the report,
+  /// the table cell and the clipboard it is about to reach.
+  /// </summary>
+  [Test]
+  public void AnEscapeIsNeitherWhitespaceTolerantNorAllowedToProduceControlCharacters() {
+    Assert.That(ContainerDetector.Unescape(@"a\x 5"), Is.EqualTo(@"a\x 5"));
+    Assert.That(ContainerDetector.Unescape(@"a\x0ab"), Is.EqualTo(@"a\x0ab"));
+    Assert.That(ContainerDetector.Unescape(@"a\x00b"), Is.EqualTo(@"a\x00b"));
+    Assert.That(ContainerDetector.Unescape(@"a\x7fb"), Is.EqualTo(@"a\x7fb"));
+
+    // And a printable one still decodes, which is the whole point of the function.
+    Assert.That(ContainerDetector.Unescape(@"web\x2d1"), Is.EqualTo("web-1"));
   }
 
   /// <summary>

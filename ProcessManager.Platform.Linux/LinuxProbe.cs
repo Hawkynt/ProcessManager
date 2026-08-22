@@ -2481,7 +2481,10 @@ public sealed partial class LinuxProbe : ISystemProbe {
       FullName = this._users.FullName(session.UserName),
       Type = SessionFacts.Type(session.Terminal, session.RemoteHost),
       State = alive ? SessionState.Alive : SessionState.Stale,
-      LastInputUtcTicks = this.TerminalWrittenAt(session.Terminal),
+      // Only while the login is live. Pseudo-terminal numbers are reused the moment they are freed,
+      // so the modification time of pts/9 belongs to whoever holds pts/9 now — and presenting that
+      // as a dead login's idle time is a reading taken from the wrong session (PRD §72.3).
+      LastInputUtcTicks = alive ? this.TerminalWrittenAt(session.Terminal) : 0,
     };
   }
 
@@ -2513,13 +2516,18 @@ public sealed partial class LinuxProbe : ISystemProbe {
   /// (PRD §72.3).
   /// </para>
   /// <para>
-  /// The name is checked before it is joined to a path. It comes out of a file any root process may
-  /// write, and <c>../../etc/shadow</c> is a plausible thing to find in a corrupted one; a terminal
-  /// name has no slashes in it except the one in <c>pts/0</c>, and nothing else needs permitting.
+  /// The name is checked before it is joined to a path, and then the join is checked too. It comes
+  /// out of a file any root process may write, and a terminal name has no dots in it — which stops
+  /// <c>../../etc/shadow</c> — but stopping that is not enough on its own:
+  /// <see cref="Path.Combine(string,string)"/> <em>discards</em> the root when the second argument is
+  /// rooted, so a line reading <c>/etc/shadow</c> would have been stat-ed at the filesystem root.
+  /// That is the same trap <see cref="CgroupReader"/> documents about cgroup paths, one file over.
   /// </para>
   /// </remarks>
   private long TerminalWrittenAt(string? terminal) {
-    if (terminal is not { Length: > 0 } name || this._options.DeviceRoot is not { Length: > 0 } root)
+    if (terminal is not { Length: > 0 } name
+        || this._options.DeviceRoot is not { Length: > 0 } root
+        || Path.IsPathRooted(name))
       return 0;
 
     foreach (var character in name)
@@ -2527,11 +2535,20 @@ public sealed partial class LinuxProbe : ISystemProbe {
         return 0;
 
     try {
-      var device = Path.Combine(root, name);
+      var directory = Path.GetFullPath(root);
+      var device = Path.GetFullPath(Path.Combine(directory, name));
+
+      // Belt as well as braces: whatever the name turned out to be, the thing being stat-ed is under
+      // the device directory or it is not looked at.
+      if (!device.StartsWith(directory.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+        return 0;
+
       return File.Exists(device) ? File.GetLastWriteTimeUtc(device).Ticks : 0;
     } catch (IOException) {
       return 0;
     } catch (UnauthorizedAccessException) {
+      return 0;
+    } catch (ArgumentException) {
       return 0;
     }
   }

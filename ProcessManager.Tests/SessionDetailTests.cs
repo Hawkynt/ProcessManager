@@ -180,12 +180,30 @@ public sealed class SessionDetailTests {
   /// </summary>
   [Test]
   public void ATerminalNameThatIsAPathIsNotFollowed() {
-    File.WriteAllBytes(
-      Path.Combine(this._root, "utmp"),
-      Utmp([new("dana", "../../etc/passwd", null, 4100)])
-    );
+    foreach (var line in (string[])["../../etc/passwd", "/etc/passwd", "/", "//etc/passwd"]) {
+      File.WriteAllBytes(Path.Combine(this._root, "utmp"), Utmp([new("dana", line, null, 4100)]));
 
-    Assert.That(this.Sessions()[0].LastInputUtcTicks, Is.Zero);
+      // A rooted name is the one that nearly got through: Path.Combine discards the root when its
+      // second argument is rooted, so "/etc/passwd" would have been stat-ed at the filesystem root
+      // rather than under /dev.
+      Assert.That(this.Sessions()[0].LastInputUtcTicks, Is.Zero, line);
+    }
+  }
+
+  /// <summary>
+  /// Pseudo-terminal numbers are reused the moment they are freed, so the modification time of
+  /// pts/9 belongs to whoever holds pts/9 now. Presenting that as a dead login's idle time is a
+  /// reading taken from the wrong session (PRD §72.3).
+  /// </summary>
+  [Test]
+  public void AStaleLoginDoesNotBorrowTheIdleTimeOfWhoeverHasItsTerminalNow() {
+    var reused = Path.Combine(this._root, "dev", "pts", "9");
+    File.WriteAllText(reused, string.Empty);
+    File.SetLastWriteTimeUtc(reused, DateTime.UtcNow);
+
+    var stale = this.On("pts/9");
+    Assert.That(stale.State, Is.EqualTo(SessionState.Stale));
+    Assert.That(stale.LastInputUtcTicks, Is.Zero);
   }
 
   #region what the classifier does on its own (PRD §43)
