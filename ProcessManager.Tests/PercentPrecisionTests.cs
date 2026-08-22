@@ -87,6 +87,82 @@ public sealed class PercentPrecisionTests {
     Assert.That(Humanize.SignedPercent(Rate.Unknown(UnknownReason.NotSampledYet)), Is.EqualTo("…"));
   }
 
+  #region what the catalogue declares (PRD §5.1)
+
+  /// <summary>
+  /// The precision an entry declares is the precision its value is written at, and it follows the
+  /// setting rather than repeating a number the setting can change.
+  /// </summary>
+  /// <remarks>
+  /// Declared by the unit and not by the entry, deliberately: every percentage on the machine is
+  /// written the same way, and a hundred and fifty copies of that rule in the catalogue would be a
+  /// hundred and fifty chances for one of them to say something else. This is the check that the
+  /// declaration and the formatter are the same statement.
+  /// </remarks>
+  [TestCase(0)]
+  [TestCase(2)]
+  public void APercentageFieldDeclaresThePrecisionItIsWrittenAt(int decimals) {
+    Humanize.PercentDecimals = decimals;
+
+    var cpu = FieldRegistry.Get(ProcessField.CpuPercent);
+    var written = Humanize.Percent(Rate.Of(12.3456));
+
+    Assert.Multiple(() => {
+      Assert.That(cpu.Precision, Is.EqualTo(decimals), "the declaration follows the setting");
+      Assert.That(
+        written.Contains('.', StringComparison.Ordinal) ? written.Split('.')[1].Length : 0,
+        Is.EqualTo(cpu.Precision),
+        $"'{written}' is not written at the declared precision"
+      );
+    });
+  }
+
+  /// <summary>
+  /// A count is a whole number, a byte count chooses by magnitude, and a name has no precision at
+  /// all — the three answers there are, each said once.
+  /// </summary>
+  [Test]
+  public void EveryOtherUnitDeclaresTheOnlyPrecisionItCouldHave() {
+    Assert.Multiple(() => {
+      Assert.That(FieldRegistry.Get(ProcessField.ThreadCount).Precision, Is.Zero, "a count is whole");
+      Assert.That(FieldRegistry.Get(ProcessField.Pid).Precision, Is.Zero, "and so is an identifier");
+      Assert.That(FieldRegistry.Get(ProcessField.CpuTime).Precision, Is.Zero, "h:mm:ss carries no fraction");
+      Assert.That(
+        FieldRegistry.Get(ProcessField.PrivateBytes).Precision,
+        Is.EqualTo(FieldDescriptor.ByMagnitude),
+        "1.5K and 512 B are not the same number of decimals"
+      );
+
+      Assert.That(
+        FieldRegistry.Get(ProcessField.CommandLine).Precision,
+        Is.EqualTo(FieldDescriptor.NotNumeric),
+        "a command line is not a quantity"
+      );
+
+      Assert.That(
+        FieldRegistry.Get(ProcessField.CpuHistory).Precision,
+        Is.EqualTo(FieldDescriptor.NotNumeric),
+        "and a plot is not one either"
+      );
+    });
+  }
+
+  /// <summary>
+  /// A count field never writes a decimal point, whatever the percentage setting says. The setting
+  /// governs percentages and only percentages, which is what makes it safe to have one at all.
+  /// </summary>
+  [Test]
+  public void ThePercentageSettingDoesNotReachTheOtherUnits() {
+    Humanize.PercentDecimals = 3;
+
+    Assert.Multiple(() => {
+      Assert.That(Humanize.Count(Counter.Of(42ul)), Is.EqualTo("42"));
+      Assert.That(FieldRegistry.Get(ProcessField.ThreadCount).Precision, Is.Zero);
+    });
+  }
+
+  #endregion
+
   #region the settings file (PRD §67)
 
   [Test]

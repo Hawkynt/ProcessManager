@@ -214,18 +214,47 @@ Each registry entry declares:
 - [x] Description
 - [x] Data type
 - [x] Units
-- [ ] Precision
+- [x] Precision — read off the unit rather than written on every entry: every percentage on the
+      machine is written to the same number of decimals, a byte count scales the same way wherever it
+      appears, and a count is whole. A hundred and fifty copies of that rule would be a hundred and
+      fifty chances for one of them to say something else, which is the drift one catalogue exists to
+      stop. It follows the percentage setting rather than the default it ships with, so it answers
+      with what somebody will actually see (§67)
 - [x] Whether it is instantaneous, cumulative, delta, rate, state, enumeration or derived
 - [x] Supported platforms
-- [ ] Required privilege
+- [x] Required privilege — ordinary, or the owner's. Two levels because two is what a reader can act
+      on: there is nothing to do, or there is the elevated helper. `--fields` prints it, so the
+      column of em dashes over somebody else's processes is answered before it is met. A field
+      declares the most it can need on a platform that supports it: the I/O counters are free on
+      Windows, where one system-wide query fills them, and behind the owner's authority on Linux,
+      where the file has been mode 0400 since 5.12. There is no third level, and that is a finding —
+      no field of this table needs elevation to be read about a process of your own; the things that
+      do are a thread's kernel stack and its current system call, which are not fields (§29, §30)
 - [x] Collection cost
-- [x] Default visibility
+- [ ] 🟡 Default visibility — what the catalogue declares is the *constraint*, and tests enforce it:
+      an opening set costs no syscall per process, the descriptor count excepted because it is
+      counted on a schedule of its own (§5.4). Which of the cheap ones each front-end opens with is
+      still three lists — the window's, the terminal's three widths and the CLI's — and deliberately
+      so, since eighty columns of terminal cannot open with what a 1920-pixel window does. What is
+      not true is the sentence above this list: no *entry* says whether it is default-visible
 - [x] Sort semantics
 - [x] Filter semantics — `Number` for comparisons, `RawText` for substring and regex
 - [x] Formatting function
 - [x] Null/unavailable semantics
-- [ ] Export serialisation
-- [ ] 🟡 Historical-storage eligibility — the graph fields declare their series
+- [x] Export serialisation — text, number, ISO 8601 or nothing at all, derived from the kind and the
+      unit so that a field is serialised correctly on the day it is added. The exporter had that rule
+      copied into it with one field named by hand, so every timestamp but the start time wrote `null`
+      into every row while the column beside it showed a date — an image's creation time and a
+      signature's countersigning date, both added to the catalogue after the exporter was written.
+      That is exactly the second definition of a field this section exists to prevent
+- [x] Historical-storage eligibility — every field whose readings are kept says which rings keep
+      them: the shared sixty-sample rings behind the table's sparklines, an hour of them per process
+      for a properties window, or both. The drawn column and the column it plots name the same
+      series, so a plot cannot be drawn from a reading no column shows — and the two front-ends draw
+      a plot where the *kind* says graph rather than wherever a series is declared, which is what
+      makes it safe for the CPU percentage to say that its history is kept. Both halves are held to
+      the code by tests: one reads the declaration and checks what the sampler actually puts in each
+      ring, and one checks the properties window's plots against the fields declared kept per process
 
 Worked example — `process.cpu.usage`: display "CPU", TUI "CPU%", percentage, normalised
 instantaneous utilisation, 0–100 in default mode and 0–N×100 in raw logical-CPU mode, all platforms,
@@ -2194,9 +2223,11 @@ Tabs:
 
 - [ ] 🟡 General (§27) — a page of its own now: identity, ownership, timing, how long it has been
       running, what the ELF header and the directory entry say about the image, and the command
-      line, with Copy, Open folder and File properties under it. Version, publisher, signer and
-      hashes need §21, and the page says outright that no signature was checked rather than leaving
-      a blank that reads like a clean bill of health
+      line, with Copy, Open folder and File properties under it. The three questions it does not
+      answer — the signature, the package, the digest — are rows saying so and naming the button that
+      answers them, rather than blanks that read like a clean bill of health. What is still missing
+      is what a PE says about itself on Windows — version, company, description and signer, all four
+      read there and none of them on this page
 - [x] Performance (§28) — six graphs over the four time windows, hover readings and a keyboard
       cursor. There is no per-process network graph because there are no per-process byte counters
       to draw one from (§18)
@@ -2215,7 +2246,14 @@ Tabs:
 - [x] Environment (§37)
 - [x] **cgroup (§38)** — named for the thing rather than for the three things it is called on three
       platforms. A Windows job object and a container are not this and would not be described by it
-- [ ] Windows (§39)
+- [ ] 🟡 Windows (§39) — the list is there and so are the actions: the page's own menu brings a
+      window to the front, minimises, maximises, restores it and asks it to close, through X11
+      itself rather than by shelling out to `wmctrl`. Three things keep it from a tick, and none of
+      them is the one this line used to claim. Six attributes per window are printed as *not read*
+      rather than read — the thread, minimised and maximised, whether it is responding, the
+      workspace, the monitor and the owner. There is no *inspect properties* action. And no window
+      on Windows or macOS is listed at all, which on a tab named for windows is the gap that matters
+      most
 - [x] **Services (§41)** — which unit this process belongs to and what that unit's file says: its
       description, whether it starts at boot, whether it is masked, its restart policy, its command
       and the file itself. The unit comes from the cgroup, because a systemd unit *is* a cgroup — the
@@ -2223,9 +2261,16 @@ Tabs:
       The row worth opening it for is whether this process is the unit's **main** process: that is the
       one systemd watches and restarts, and everything else in the cgroup is a child it will take down
       with it
-- [ ] Runtime (§80)
-- [ ] Strings (§35)
-- [ ] Timeline (§63)
+- [ ] Runtime (§80) — blocked on §80, of which one sentence exists: which runtime is mapped into the
+      process, read from its module list and shown as a column. A version, an assembly list, a
+      managed stack and a heap summary are all unwritten, and a tab holding one row would be a tab
+      promising the other four
+- [ ] Strings (§35) — blocked on §35, of which nothing exists. The two scanners in Core are `/proc`
+      tokenisers and not extractors of strings from a binary; nothing scans an image on disk, and
+      scanning the process's memory is refused on §25.5's ground
+- [ ] Timeline (§63) — blocked on §63: nothing records an event. The delta knows which processes
+      have exited since the previous tick and forgets at the next one, and the usage history keeps a
+      running total per application rather than a start with a time on it
 
 The window hosts the same pane the main window docks at its foot — pinned to one process rather than
 following the selection, which is what makes two of them comparable — and adds the pages the pane
@@ -2268,14 +2313,18 @@ unit is a finding about the *process* — most of a desktop is like that — so 
 so, naming the cgroup it looked in. Collapsing the two would make "you are in no service" and "this
 build cannot tell you" the same answer, which is the distinction §5.3 exists for.
 
-The four still unticked, one line each: **Windows** has the list and none of the actions, and a page
-that shows a window and cannot close it is half a feature (§39); **Runtime** needs the managed and
-interpreted introspection of §80, none of which is written; **Strings** is two features under one
-heading — scanning the image on disk needs no
-permission and is honest work nobody has done, while scanning the process's memory is one of §25.5's
-readers wearing a different hat and is refused on the same ground, and shipping the first under a tab
-named for both would be promising the second; **Timeline** needs the event history of §63, which
-nothing records yet.
+The four still unticked, one line each. **Windows** had "the list and none of the actions" written
+against it, and that was wrong when it was written: the actions are there and go through X11
+directly. What it has instead is six attributes per window it prints *not read* beside, no
+inspect-properties action, and no implementation at all on Windows or macOS — a tab named for
+windows that lists none of them on the platform the word comes from (§39). **Runtime** needs the
+managed and interpreted introspection of §80, of which one sentence exists — which runtime is
+mapped in — and a tab showing that one row would be promising the other four. **Strings** is two
+features under one heading: scanning the image on disk needs no permission and is honest work nobody
+has done, while scanning the process's memory is one of §25.5's readers wearing a different hat and
+is refused on the same ground, and shipping the first under a tab named for both would be promising
+the second. **Timeline** needs the event history of §63, which nothing records: the delta knows what
+exited since the last tick and forgets at the next.
 
 ---
 
@@ -2285,20 +2334,40 @@ nothing records yet.
       session ✔ · user ✔ · effective user ✔ · architecture ✔ · executable path ✔ · command line ✔ ·
       current directory ✔ · file size ✔ · modification timestamp ✔ · creation timestamp ✔ · file
       permissions ✔ · runtime ✔ · container/cgroup association ✔ (and a page of its own — §38) ·
-      service associations ✔ (and a page of its own — §41) — against **icon**, **application
-      identity**, **package/bundle**, **version**, **company**, **description**, **signer**,
-      **signature status** and **file hashes**
-- [ ] 🟡 Buttons: Copy ✔ · Reveal executable ✔ · File properties ✔ — against **Verify** and
-      **Inspect binary**
+      service associations ✔ (and a page of its own — §41) · **package/bundle**, **signature
+      status** and **file hashes** ✔ *as far as this page goes* — each is a row saying the question
+      has not been asked and naming the button that asks it, which is what §5.4 leaves a page room
+      to do — against **icon** (refused, below), **application identity**, **version**, **company**,
+      **description** and **signer**
+- [ ] 🟡 Buttons: Copy ✔ · Reveal executable ✔ · File properties ✔ · Verify ✔ — one click deeper
+      rather than a fourth button on this strip, because verifying is the same read of the same file
+      as the hash beside it and two buttons over one read would be two answers to look at (§5.2) —
+      against **Inspect binary**
 
 **Everything unticked here is unticked for one of three reasons, and none of them is this page.**
-Version, company, description, signer and signature status are §21's, which verifies nothing yet —
-and the page says outright that no signature was checked rather than leaving a blank, because a
-properties window with no signature row reads as one that checked and was happy (§70). File hashes
-and package identity are both readable and both cost the size of the file or a scan of every
-installed package's file list, so they are opt-in elsewhere and would be a page that hung on opening
-if they were here (§5.4, §14, §21). **Verify** and **Inspect binary** are buttons onto §21 and §53,
-neither of which exists.
+
+The first is what a file costs to read. The hash is the size of the image, the package is a walk of
+every installed package's file list, and the signature is both — so none of the three is paid for on
+opening, and each is a row saying it has not been asked and naming the button that asks it. Silence
+would have been the wrong answer twice over: a properties window with no signature row reads as one
+that checked and was happy (§70), and a missing package row reads as a program that belongs to no
+package rather than one nobody looked up (§72.3). "**Not read — this build verifies no signatures**"
+was the wrong answer too, and had been for some time: the button behind it verifies an Authenticode
+signature on Windows, and on Linux reports what the packaging system recorded — the digest the
+package kept and who validated the package — which is the whole of what an ELF admits of. The row
+says *not checked* now, and names the way to the answer.
+
+The second is the file format. Version, company and description are three of the five strings a PE
+keeps in its version resource, the signer is bound to the key its signature was made with, and an
+ELF has neither and never did (§5.3). All four are read on Windows and the signature is verified
+there — that half of §21 is written — and this page does not carry them, which is the one thing
+still owed here and is owed only on Windows. The Linux equivalents are a different question with a
+different answer and are the package's, above.
+
+The third is a view that does not exist. **Inspect binary** is a button onto §53, and there is no
+§53. **Verify** is not in that class any more: the File properties dialog computes the digest and
+checks the image in the same read, which is the button §27 was asking for, one click deeper because
+two buttons over one read would be two answers to look at (§5.2).
 
 **The runtime and the creation timestamp were being read and thrown away**, which is the cheapest
 kind of gap there is: `DescribeImage` already makes the one `statx` for the birth time and already
@@ -2318,6 +2387,11 @@ because those are facts about the service and several processes share one.
 `/usr/share/applications`, which answers for the third of processes that have a launcher and for
 nothing else — a page that showed a picture for some rows and a blank for most would be describing
 which programs ship a `.desktop` file rather than describing the process.
+
+**Application identity** is the same lookup wearing a name, and is unticked here for the cost rather
+than for the argument: `app.name` and `app.id` are columns of the table already, and filling either
+means reading the machine's three hundred desktop files or its package database. That is the same
+price as the package row above it and belongs behind the same button, which does not name it yet.
 
 # 28. Performance process properties
 

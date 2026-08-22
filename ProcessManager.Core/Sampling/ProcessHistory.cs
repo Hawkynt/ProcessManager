@@ -20,6 +20,13 @@ public enum HistorySeries : byte { Cpu, Memory, Io }
 /// The rings are short on purpose — a sparkline is forty pixels wide, so sixty samples is already
 /// more than it can show.
 /// </para>
+/// <para>
+/// Which field feeds which ring is not decided here: the catalogue declares it, as
+/// <see cref="Query.FieldDescriptor.Series"/> on <c>cpu</c>, <c>private</c> and <c>io.total</c>, and
+/// on the three drawn columns that plot them. A test reads the declaration and checks this class
+/// against it, so a ring cannot quietly come to hold something other than the column it is drawn
+/// beside (PRD §5.1).
+/// </para>
 /// </remarks>
 public sealed class ProcessHistory {
 
@@ -105,14 +112,15 @@ public sealed class ProcessHistory {
       if (process.PrivateBytes.HasValue)
         peakMemory = Math.Max(peakMemory, process.PrivateBytes.Value);
 
-      var read = delta.ReadBytesPerSecond(index);
-      var write = delta.WriteBytesPerSecond(index);
-      if (read.HasValue || write.HasValue) {
-        var total = read.GetValueOrDefault() + write.GetValueOrDefault();
-        entry.Io.Add(Rate.Of(total));
-        peakIo = Math.Max(peakIo, total);
-      } else
-        entry.Io.Add(Rate.Gap);
+      // The same total the "I/O total rate" column shows, and read from the same place: this used to
+      // add read and write here and leave out the third figure Windows keeps, so the plot and the
+      // column beside it were two different numbers under one name. Which field feeds which ring is
+      // declared in the catalogue now (PRD §5.1) — <c>io.total</c> for this one — and a test holds
+      // the two together.
+      var io = delta.IoTotalBytesPerSecond(index);
+      entry.Io.Add(io);
+      if (io.HasValue)
+        peakIo = Math.Max(peakIo, io.Value);
     }
 
     this.CpuScale = Math.Max(peakCpu, this.CpuScale * 0.92);

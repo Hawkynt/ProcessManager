@@ -1029,7 +1029,11 @@ public sealed class MainWindow : Form {
     if (RowPalette.HeatColour(row.HeatOf(info.Id), e.Theme) is { } heat)
       e.Graphics.FillRectangle(heat, e.Bounds);
 
-    if (info.Series is not { } series) {
+    // Drawn or written is the kind's question, not the series'. Both the plot and the column it is
+    // plotted from name the same ring now — that is what "eligible for history" means in the
+    // catalogue (PRD §5.1) — so a cell that asked "does this field have a series" would have drawn a
+    // sparkline over the CPU percentage.
+    if (!info.IsGraph || info.Series is not { } series) {
       this.PaintMatch(e, info, row.TextOf(info.Id));
       return;
     }

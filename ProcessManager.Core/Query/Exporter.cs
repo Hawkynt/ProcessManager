@@ -157,19 +157,25 @@ public static class Exporter {
     out bool isNumber
   ) {
     isNumber = false;
-    var descriptor = FieldRegistry.Get(field);
+    switch (FieldRegistry.Get(field).Serialisation) {
+      // A drawn history has no cell. TryParseFields refuses one by name, so this is only reachable
+      // through the API.
+      case FieldSerialisation.None: return null;
+      case FieldSerialisation.Text: return FieldAccessor.RawText(field, in process, delta, index);
 
-    if (descriptor.Kind is FieldKind.Text or FieldKind.State)
-      return FieldAccessor.RawText(field, in process, delta, index);
+      // A timestamp is a number internally and useless as one in a file. ISO 8601 sorts correctly as
+      // text, which is what anybody importing this will do with it.
+      //
+      // Every field the catalogue declares a timestamp, and not the start time alone: this named one
+      // field, so the image's creation time and a signature's countersigning date — both added long
+      // after — exported as null in every row while the column beside them showed a date. That is
+      // precisely the second definition of a field one catalogue exists to prevent (PRD §5.1).
+      case FieldSerialisation.Timestamp:
+        return FieldAccessor.Number(field, in process, delta, index) is { } ticks && ticks > 0
+          ? new DateTime((long)ticks, DateTimeKind.Utc).ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture)
+          : null;
 
-    // A timestamp is a number internally and useless as one in a file. ISO 8601 sorts correctly as
-    // text, which is what anybody importing this will do with it.
-    if (descriptor.Unit == FieldUnit.Timestamp) {
-      if (field != ProcessField.StartTime || process.StartTimeUtcTicks <= 0)
-        return null;
-
-      return new DateTime(process.StartTimeUtcTicks, DateTimeKind.Utc)
-        .ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture);
+      default: break;
     }
 
     if (FieldAccessor.Number(field, in process, delta, index) is not { } number)

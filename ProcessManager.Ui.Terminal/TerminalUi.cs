@@ -2070,7 +2070,7 @@ public sealed class TerminalUi {
         var placement = placements[i];
         var column = FieldRegistry.Get(placement.Field);
         var x = placement.X + 1;
-        if (column.Series is { } series && this.GraphStyle != GraphStyle.Numbers) {
+        if (column.IsGraph && column.Series is { } series && this.GraphStyle != GraphStyle.Numbers) {
           // Drawn, not written: the ramp turns a column of text into a plot (PRD §11).
           this._screen.Write(
             x, y,
@@ -2162,7 +2162,10 @@ public sealed class TerminalUi {
 
       default: {
         var descriptor = FieldRegistry.Get(field);
-        if (descriptor.Series is { } series && this.GraphStyle == GraphStyle.Numbers)
+        // A drawn column, not merely one whose readings are kept: the CPU and memory columns name
+        // the same rings their plots do, and writing a sixty-second summary into the CPU percentage
+        // cell would be answering a question nobody asked (PRD §5.1).
+        if (descriptor.IsGraph && descriptor.Series is { } series && this.GraphStyle == GraphStyle.Numbers)
           // The plot as figures: what it would have shown, for a terminal or a reader that cannot
           // see a plot at all (PRD §57.4).
           return HistorySummary.Compact(this._rowHistory.Get(process.Key, series), series, descriptor.TerminalWidth);

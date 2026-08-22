@@ -248,6 +248,96 @@ public enum FieldCost : byte {
 
 }
 
+/// <summary>
+/// What authority reading a field needs, which is what turns an em dash into an explanation
+/// (PRD §5.1, §7).
+/// </summary>
+/// <remarks>
+/// <para>
+/// Two levels and not a list of capability names, because two is what a reader can act on: there is
+/// nothing to do, or there is the elevated helper. Which capability the kernel is actually applying
+/// — it is <c>ptrace_may_access</c> for every one of these on Linux, and a stronger handle right on
+/// Windows — belongs in the field's description where it is worth naming, and is not something this
+/// program can hand anybody.
+/// </para>
+/// <para>
+/// A field declares the most it can need on a platform that supports it: the I/O counters are free
+/// on Windows, where one system-wide query fills them, and behind the owner's authority on Linux,
+/// where the file has been mode 0400 since 5.12. <see cref="Owner"/> is what that field declares,
+/// because the reader who will find an em dash in the column is the reason the declaration exists.
+/// </para>
+/// <para>
+/// There is no third level, and that is a finding rather than an omission: no field in the catalogue
+/// needs elevation to be read about a process of your own. The things that do — a thread's kernel
+/// stack, its current system call — are not fields of the table and are refused with their own
+/// reasons (PRD §29, §30).
+/// </para>
+/// </remarks>
+public enum FieldPrivilege : byte {
+
+  /// <summary>Asks for nothing beyond being logged in. Most of a process table is this.</summary>
+  Ordinary,
+
+  /// <summary>
+  /// Yours for the asking; another user's needs the elevated helper. The shape of every <c>/proc</c>
+  /// file the kernel gates with <c>ptrace_may_access</c>, and of a Windows handle that wants more
+  /// than limited information.
+  /// </summary>
+  Owner,
+
+}
+
+/// <summary>
+/// How a machine-readable export writes a field (PRD §5.1, §61, §76).
+/// </summary>
+/// <remarks>
+/// Derived from the kind and the unit rather than declared a hundred and fifty times, so that a
+/// field cannot be declared a byte count in one place and serialised as a string in another — which
+/// is exactly the drift one catalogue exists to prevent.
+/// </remarks>
+public enum FieldSerialisation : byte {
+
+  /// <summary>Nothing to write. A drawn history has no cell in a file.</summary>
+  None,
+
+  /// <summary>The underlying string, as it is held rather than as it was abbreviated for a column.</summary>
+  Text,
+
+  /// <summary>The raw number in the field's own unit — bytes as bytes, nanoseconds as nanoseconds.</summary>
+  Number,
+
+  /// <summary>ISO 8601 in UTC, which sorts as text and imports as a date everywhere.</summary>
+  Timestamp,
+
+}
+
+/// <summary>
+/// Which rings keep a field's readings over time (PRD §5.1, §8.2, §28).
+/// </summary>
+/// <remarks>
+/// Eligibility, not a promise that a ring exists: history is kept for the rows a front-end says are
+/// on screen and for the process a properties window is pinned to, and for nothing else (PRD §5.4).
+/// </remarks>
+[Flags]
+public enum FieldHistory : byte {
+
+  /// <summary>Not kept. The value is whatever the last sample said and nothing remembers the one before.</summary>
+  None = 0,
+
+  /// <summary>
+  /// Kept in the short shared rings behind the table's sparklines — sixty samples, one scale for
+  /// every row so that rows compare (PRD §8.2).
+  /// </summary>
+  Row = 1,
+
+  /// <summary>
+  /// Kept for as long as a properties window pinned to the process stays open, which is where the
+  /// hour of §28's plots comes from.
+  /// </summary>
+  Process = 2,
+
+}
+
 /// <summary>Which platforms can fill a field. A platform not listed renders <c>n/a</c>, not zero.</summary>
 [Flags]
 public enum FieldPlatforms : byte {
@@ -277,6 +367,13 @@ public enum FieldPlatforms : byte {
 /// Whether biggest-first is what a single click should give. Sorting by CPU ascending is not what
 /// anybody wants from one keypress, and sorting names descending is not either.
 /// </param>
+/// <param name="Series">
+/// Which of the shared row rings this field's readings go into, for the fields any history is kept
+/// for. Both the drawn column and the number it is drawn from name the same ring, which is what
+/// stops a sparkline being plotted from a different reading than the column beside it.
+/// </param>
+/// <param name="Privilege">What reading it needs beyond being logged in.</param>
+/// <param name="History">Which rings keep it, if any.</param>
 public sealed record FieldDescriptor(
   ProcessField Id,
   string Key,
@@ -292,11 +389,69 @@ public sealed record FieldDescriptor(
   bool RightAligned,
   bool PrefersDescending,
   HistorySeries? Series = null,
-  string? Aliases = null
+  string? Aliases = null,
+  FieldPrivilege Privilege = FieldPrivilege.Ordinary,
+  FieldHistory History = FieldHistory.None
 ) {
 
   /// <summary>True for the three drawn histories, which have no text and no sort order.</summary>
   public bool IsGraph => this.Kind == FieldKind.Graph;
+
+  /// <summary>
+  /// How a machine format writes this field (PRD §5.1, §61).
+  /// </summary>
+  /// <remarks>
+  /// One rule read off the kind and the unit rather than a hundred and fifty separate declarations
+  /// that would each be a chance to disagree with the column. It is what the exporter dispatches on,
+  /// so a field added to the catalogue is serialised correctly on the day it is added — which the
+  /// two timestamp fields added after the exporter was written were not: everything but the start
+  /// time exported as <c>null</c>, because the timestamp branch named one field instead of asking
+  /// what the field was.
+  /// </remarks>
+  public FieldSerialisation Serialisation =>
+    this.Kind == FieldKind.Graph ? FieldSerialisation.None
+    : this.Unit == FieldUnit.Timestamp ? FieldSerialisation.Timestamp
+    : this.Kind is FieldKind.Text or FieldKind.State ? FieldSerialisation.Text
+    : FieldSerialisation.Number;
+
+  /// <summary>The value of <see cref="Precision"/> for a field whose formatter chooses by magnitude.</summary>
+  /// <remarks>
+  /// A byte count is written "512 B", "1.5K" and "4.0G" — one decimal until the mantissa reaches a
+  /// hundred and none after, so that a column keeps its width where it is widest. There is no single
+  /// number to declare for that, and declaring the wrong one would be worse than declaring none.
+  /// </remarks>
+  public const int ByMagnitude = -1;
+
+  /// <summary>The value of <see cref="Precision"/> for a field that is not a number at all.</summary>
+  public const int NotNumeric = -2;
+
+  /// <summary>
+  /// How many decimals this field's value is written with (PRD §5.1).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Read off the unit, because that is where it is decided: every percentage on the machine is
+  /// written to the same precision, every byte count scales the same way, and a count is a count.
+  /// Repeating the number on every entry would put a hundred and fifty copies of one rule in a file
+  /// whose whole purpose is that there is one — and the copies would be the thing that drifted.
+  /// </para>
+  /// <para>
+  /// Percentages follow <see cref="Humanize.PercentDecimals"/>, which is a setting: somebody who has
+  /// asked for two decimals has asked every front-end for two, and this answers with what they will
+  /// actually see rather than with the default they changed.
+  /// </para>
+  /// </remarks>
+  public int Precision => this.Kind switch {
+    FieldKind.Graph or FieldKind.Text or FieldKind.State => NotNumeric,
+    // A pid is a whole number and never anything else, whatever unit it claims.
+    FieldKind.Identifier => 0,
+    _ => this.Unit switch {
+      FieldUnit.Percent => Humanize.PercentDecimals,
+      FieldUnit.Bytes or FieldUnit.BytesPerSecond or FieldUnit.CountPerSecond => ByMagnitude,
+      // A duration is written h:mm:ss and a timestamp to the second; neither carries a fraction.
+      _ => 0,
+    },
+  };
 
   /// <summary>False for graphs, true for everything else.</summary>
   public bool IsSortable => this.Kind != FieldKind.Graph;

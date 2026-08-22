@@ -299,6 +299,15 @@ public sealed class ProcessPropertiesWindow : Form {
     return true;
   }
 
+  /// <summary>
+  /// Which fields the performance page keeps an hour of (PRD §28).
+  /// </summary>
+  /// <remarks>
+  /// Public because the catalogue declares the same thing — a field kept per process says so — and
+  /// the two are held to each other by a test rather than by anybody remembering (PRD §5.1).
+  /// </remarks>
+  public static IReadOnlyList<ProcessField> PlottedFields => ProcessPerformancePage.Plotted;
+
   /// <summary>What the General page says, for a test with no display to read it off.</summary>
   public string GeneralText => this._general.Description;
 
@@ -715,9 +724,23 @@ public sealed class ProcessPropertiesWindow : Form {
     if (this._image?.CreatedUtc is { } created)
       extras.Add(new("Image created", created.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture) + "Z"));
 
-    // Said rather than left blank. A properties window with no signature row reads as one that
-    // checked and found nothing wrong, which is the one thing this must never imply (PRD §70).
-    extras.Add(new("Signature", "not read — this build verifies no signatures"));
+    // Said rather than left blank, and all three of them. A properties window with no signature row
+    // reads as one that checked and found nothing wrong, which is the one thing this must never
+    // imply (PRD §70) — and the package an image came from and the digest of its bytes are the same
+    // kind of silence: questions this page does not ask rather than questions with no answer.
+    //
+    // Not asked here because each costs the size of the file, or a walk of every installed package's
+    // file list, and a properties window that stalled for a second on opening is what §5.4 exists to
+    // prevent. They are one button away, which is where a reading somebody has to ask for belongs
+    // (PRD §5.2, §27).
+    //
+    // "not checked" rather than the old "this build verifies no signatures", which was untrue on
+    // both platforms by the time it was read: the button behind it verifies an Authenticode
+    // signature on Windows, and on Linux reports what the packaging system recorded — the digest the
+    // package kept and who validated the package — which is the whole of what an ELF admits of.
+    extras.Add(new("Signature", "not checked — File properties… checks it"));
+    extras.Add(new("Package", "not looked up — File properties… names it"));
+    extras.Add(new("Image hash", "not computed — File properties… computes it"));
     return extras;
   }
 
