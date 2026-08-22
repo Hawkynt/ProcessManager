@@ -335,4 +335,173 @@ public sealed class ShellWindowTests {
 
   #endregion
 
+  #region what a row offers (PRD §41, §42)
+
+  private static List<string> MenuItems(Control root, string table) {
+    foreach (var control in Descendants(root))
+      if (control is TreeListView list
+        && string.Equals(list.AccessibleName, table, StringComparison.Ordinal)
+        && list.ContextMenuStrip is { } menu) {
+        var texts = new List<string>();
+        foreach (var item in menu.Items)
+          texts.Add(item.Text ?? string.Empty);
+
+        return texts;
+      }
+
+    Assert.Fail($"the {table} table has no menu");
+    return [];
+  }
+
+  /// <summary>
+  /// §41's six read-only actions, on a machine with no manager to command. They were the whole of
+  /// what a person looking at a unit list actually needs and none of them was reachable from
+  /// anywhere: a service list you cannot open the unit file from is a list you have to leave to use.
+  /// </summary>
+  [Test]
+  public void AUnitRowOffersTheActionsThatOnlyReadIt() {
+    var window = Window();
+    window.ShowView("Services");
+
+    Assert.That(MenuItems(window, "Services"), Is.SupersetOf(new[] {
+      "Open its configuration",
+      "Reveal its executable",
+      "Go to its main process",
+      "Unit properties…",
+      "Inspect dependencies…",
+      "Copy row",
+      "Copy all units",
+    }));
+  }
+
+  /// <summary>
+  /// And with no manager the six verbs are absent rather than present and refusing. A menu of items
+  /// that all answer "not on this platform" is worse than a shorter menu (PRD §7).
+  /// </summary>
+  [Test]
+  public void WithNoManagerTheUnitRowOffersNoVerbs() {
+    var window = Window();
+    window.ShowView("Services");
+
+    Assert.That(MenuItems(window, "Services"), Does.Not.Contain("Stop"));
+  }
+
+  [Test]
+  public void ALoginEntryOffersTheActionsThatOnlyReadIt() {
+    var window = Window();
+    window.ShowView("Startup");
+
+    Assert.That(MenuItems(window, "Startup entries"), Is.SupersetOf(new[] {
+      "Run it now",
+      "Open its configuration",
+      "Reveal its program",
+      "Entry properties…",
+      "Copy row",
+      "Copy all entries",
+    }));
+  }
+
+  /// <summary>
+  /// Deleting is not offered where nothing can write the switch, and never beside it: turning an
+  /// entry off is undone by the item above it and deleting a file is undone by nothing (PRD §42).
+  /// </summary>
+  [Test]
+  public void DeletingIsNotOfferedWhereNothingCanWriteTheSwitch() {
+    var window = Window();
+    window.ShowView("Startup");
+
+    Assert.That(MenuItems(window, "Startup entries"), Does.Not.Contain("Delete this entry…"));
+  }
+
+  /// <summary>
+  /// The columns §41 asks for that this machine's files answer, in the table rather than only in a
+  /// box: the type, the account, the load state, the activation time and the dependency counts.
+  /// </summary>
+  [Test]
+  public void TheServiceTableCarriesTheFieldsTheUnitFilesAnswer() {
+    var probe = new StubProbe {
+      Services = [
+        new("one.service", "The first", ServiceState.Running, true, false, 42, "/usr/bin/one --daemon", "/lib/systemd/system/one.service", "always") {
+          Type = "notify",
+          Account = "nobody",
+          LoadState = ServiceLoadState.Loaded,
+        },
+      ],
+    };
+
+    var window = Window(probe);
+    window.ShowView("Services");
+
+    var text = window.DescribeView("Services");
+    Assert.Multiple(() => {
+      Assert.That(text, Does.Contain("notify"));
+      Assert.That(text, Does.Contain("nobody"));
+      Assert.That(text, Does.Contain("loaded"));
+      Assert.That(text, Does.Contain("/usr/bin/one --daemon"));
+    });
+  }
+
+  /// <summary>
+  /// A unit that is active with no processes is neither running nor stopped, and this reader used to
+  /// call it stopped — which is the answer somebody would act on and be wrong (PRD §41).
+  /// </summary>
+  [Test]
+  public void AUnitActiveWithNoProcessesIsNeitherRunningNorInactive() {
+    var probe = new StubProbe {
+      Services = [
+        new("done.service", "Set something up", ServiceState.Active, true, false, 0, null, "/lib/systemd/system/done.service", null),
+      ],
+    };
+
+    var window = Window(probe);
+    window.ShowView("Services");
+
+    var text = window.DescribeView("Services");
+    Assert.That(text, Does.Contain("active · exited"));
+    Assert.That(text.Split('\n')[0], Does.Contain("1 more active"));
+  }
+
+  /// <summary>
+  /// The impact column says nothing measured it rather than inventing a category. A "Medium" beside a
+  /// program nobody has timed is a guess wearing a measurement's clothes, and it is the one a reader
+  /// would act on (PRD §42).
+  /// </summary>
+  [Test]
+  public void TheImpactColumnSaysThatNothingMeasuredIt() {
+    var probe = new StubProbe {
+      Startup = [new("Thing", "/usr/bin/thing", "/etc/xdg/autostart/thing.desktop", true, null, StartupScope.System, null)],
+    };
+
+    var window = Window(probe);
+    window.ShowView("Startup");
+
+    var text = window.DescribeView("Startup");
+    Assert.That(text, Does.Contain("not measured"));
+    Assert.That(text, Does.Not.Contain("Medium"));
+    Assert.That(text.Split('\n')[0], Does.Contain("Impact is not measured"));
+  }
+
+  /// <summary>
+  /// Which mechanism will start an entry is in the table, because it is also what turning it off
+  /// means: a desktop file and a user unit are switched in completely different ways (PRD §42).
+  /// </summary>
+  [Test]
+  public void TheStartupTableSaysWhichMechanismWillStartAnEntry() {
+    var probe = new StubProbe {
+      Startup = [
+        new("agent.service", "/usr/lib/agent", "/usr/lib/systemd/user/agent.service", true, null, StartupScope.System, null) {
+          Mechanism = StartupMechanism.SystemdUserUnit,
+          Executable = "/usr/lib/agent",
+        },
+      ],
+    };
+
+    var window = Window(probe);
+    window.ShowView("Startup");
+
+    Assert.That(window.DescribeView("Startup"), Does.Contain("systemd user unit"));
+  }
+
+  #endregion
+
 }

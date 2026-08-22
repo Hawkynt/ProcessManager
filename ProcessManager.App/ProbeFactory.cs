@@ -303,15 +303,19 @@ internal static class ProbeFactory {
   /// The thing that can turn a login entry on and off, or null where nothing can.
   /// </summary>
   /// <remarks>
-  /// Null on a machine with no home directory to keep an entry in, and on Windows until the Run keys
-  /// and the Startup folder are written — neither is read yet either, so there is nothing there to
-  /// switch.
+  /// Null on a machine with no home directory to keep an entry in and no user manager to ask, and on
+  /// Windows until the Run keys and the Startup folder are written — neither is read yet either, so
+  /// there is nothing there to switch.
+  /// <para>
+  /// The service control goes in with it, because half of what starts at login on this platform is a
+  /// systemd user unit and the thing that enables one correctly is the manager that owns it (PRD §42).
+  /// </para>
   /// </remarks>
   public static IStartupControl? CreateStartupControl() {
     if (!OperatingSystem.IsLinux())
       return null;
 
-    var control = new Platform.Linux.XdgAutostartControl();
+    var control = new Platform.Linux.LinuxStartupControl(units: CreateServiceControl());
     return control.IsAvailable ? control : null;
   }
 

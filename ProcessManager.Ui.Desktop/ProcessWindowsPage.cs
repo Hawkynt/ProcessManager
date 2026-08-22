@@ -53,13 +53,22 @@ internal sealed class ProcessWindowsPage {
   );
 
   private readonly ISystemProbe _probe;
-  private readonly IProcessActions? _actions;
   private WindowList _windows = WindowList.NotImplemented;
+
+  /// <summary>
+  /// What may be asked of a window, or null in a read-only front-end.
+  /// </summary>
+  /// <remarks>
+  /// Settable rather than a constructor argument: the page is built by the detail pane, whose own
+  /// actions are assigned after it exists, and a page that captured null at construction had a row
+  /// menu that was drawn and inert.
+  /// </remarks>
+  public IProcessActions? Actions { get; set; }
 
   public ProcessWindowsPage(ISystemProbe probe, IProcessActions? actions) {
     ArgumentNullException.ThrowIfNull(probe);
     this._probe = probe;
-    this._actions = actions;
+    this.Actions = actions;
 
     this._table.Control.Dock = DockStyle.Fill;
     this._buttons.Dock = DockStyle.Bottom;
@@ -76,8 +85,24 @@ internal sealed class ProcessWindowsPage {
 
   public Control Control => this._panel;
 
-  /// <summary>Which process this page is about. Set once, by the window that owns it.</summary>
-  public ProcessKey Key { get; set; }
+  /// <summary>
+  /// Which process this page is about.
+  /// </summary>
+  /// <remarks>
+  /// Pointing it at a different process throws away what was read for the last one — see the same
+  /// property on <see cref="ProcessMemoryMapPage"/> for why that matters at the foot of the main
+  /// window and never in a properties window (PRD §86).
+  /// </remarks>
+  public ProcessKey Key {
+    get;
+    set {
+      if (field == value)
+        return;
+
+      field = value;
+      this._filled = false;
+    }
+  }
 
   /// <summary>What the process is called, for the sentences that name it.</summary>
   public string Name { get; set; } = string.Empty;
@@ -229,12 +254,12 @@ internal sealed class ProcessWindowsPage {
       return;
     }
 
-    if (this._actions is null) {
+    if (this.Actions is null) {
       MessageBox.Show("This build has no actions for this platform.", "Process Manager");
       return;
     }
 
-    var result = this._actions.CommandWindow(this.Key, handle, command);
+    var result = this.Actions.CommandWindow(this.Key, handle, command);
     // Both outcomes are said. A request granted silently looks the same as one that went nowhere, and
     // the difference between "asked to close" and "closed" is the whole of §25.1's distinction.
     MessageBox.Show(result.Detail ?? result.Outcome.ToString(), "Process Manager");

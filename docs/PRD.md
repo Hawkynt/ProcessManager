@@ -479,15 +479,30 @@ Lower-pane modes:
 - [x] Modules
 - [x] Handles / descriptors
 - [x] Network
-- [ ] Memory mappings
+- [x] Memory mappings
 - [x] Environment
-- [ ] Windows
-- [ ] Services
-- [ ] Security
-- [ ] Timeline
+- [x] Windows
+- [x] Services
+- [x] Security
+- [ ] Timeline — it needs the event history of §63, and nothing in this program records one. A tab
+      named for a feature nobody wrote is worse than a missing one
 
 The lower pane is the defining Process Explorer interaction and is the highest-value single item in
 this document.
+
+**The four that arrived last are pages rather than lists, and they were the properties window's
+until they moved.** §26 asks that window for one row of tabs and not two, and it gets that by hosting
+this pane and adding its own pages to the pane's strip — so a memory map owned by the window and a
+memory map owned by the pane would have been two tabs of the same name side by side. Owning them here
+gave the lower pane four of §10's modes and cost the window nothing: its own tab list is unchanged,
+and a test now counts every caption on the strip so that a page somebody forgets to stop adding fails
+a build rather than shipping as a duplicate.
+
+**A page at the foot of the main window follows the selection, and one in a properties window never
+does.** That difference is the whole of what had to be written rather than moved: the memory map and
+the window list each remember that they have been filled, and a page that kept that flag across a
+change of process showed one process's mappings under another's name. Pointing either at a new
+process throws away what it read for the last one (§72.2, §86).
 
 **The window stacks menu, command bar, plots, then the rail beside the content, with the status line
 along the foot.** The adds run the other way round, because the toolkit's layout pass walks its
@@ -3069,24 +3084,36 @@ three front-ends. One process's own unit is also a page of the properties window
 Shared columns:
 
 - [ ] 🟡 Name ✔ · description ✔ (which is systemd's display name) · state ✔ · enabled ✔ · PID ✔ ·
-      binary/command ✔. User/account, service type, arguments, dependencies, dependents, failure
-      state, start time and last state change are not read
+      binary/command ✔ · user/account ✔ · service type ✔ · arguments ✔ · dependencies ✔ ·
+      dependents ✔ · start time ✔. **Failure state and last state change are not**, and cannot be:
+      the manager keeps both in its own memory and writes neither to any file. Everything else came
+      off disk — the account and the type out of `[Service]`, the arguments out of the `ExecStart`
+      line, the dependencies out of the `[Unit]` keys *and* the `.wants` and `.requires` directories,
+      and the start time off the manager's own runtime directory (below)
 
 Windows-specific:
 
 - [ ] Service type · service group · accepted controls · error control · start account ·
       delayed start · trigger information · required privileges · preshutdown timeout ·
-      key modification time · driver service indicator
+      key modification time · driver service indicator — **blocked on the reading half**: nothing
+      opens the service control manager, so `WindowsProbe.GetServices` answers with an empty list and
+      there are no rows for any of these to be columns of
 
 systemd-specific:
 
-- [ ] 🟡 Unit name ✔ · main PID ✔ · fragment path ✔ · description ✔ · restart policy ✔ · masked ✔.
-      Load state, sub-state, control PID and the activation timestamp are not — those need systemd
-      itself to answer
+- [ ] 🟡 Unit name ✔ · main PID ✔ · fragment path ✔ · description ✔ · restart policy ✔ · masked ✔ ·
+      load state ✔ · activation timestamp ✔ · sub-state 🟡. **The control PID is not**, and neither
+      are the sub-states that go with it: `failed`, `auto-restart` and `start-pre` live in the
+      manager's memory, and a unit in any of them looks like `dead` from out here. Three sub-states
+      are on disk and honestly named — `running` when the cgroup has processes, `exited` when there
+      is a current invocation and no processes, `dead` when there is no invocation — which is why the
+      enum has three members and not systemd's dozen
 
 launchd-specific:
 
-- [ ] Label · domain · PID · status · executable/program · arguments · keep-alive · run-at-load
+- [ ] Label · domain · PID · status · executable/program · arguments · keep-alive · run-at-load —
+      **blocked on the platform**: macOS is a stub (§6.3) and `MacOsProbe.GetServices` throws rather
+      than answering, so there is nothing here to put a column beside
 
 Actions:
 
@@ -3097,8 +3124,17 @@ Actions:
       something are confirmed whatever the confirmation setting says: one of these units is what
       keeps the machine on the network. Enable and disable are worded as being about the next boot,
       so that nobody reaches for "disable" meaning "stop"
-- [ ] Open configuration · reveal executable · go to process · properties · copy ·
-      inspect dependencies
+- [x] Open configuration · reveal executable · go to process · properties · copy ·
+      inspect dependencies — all six from a right-click on the window's Services page, and all six
+      offered on a machine with no manager to command. That is the point of them: opening a unit
+      file, following a unit to the process systemd watches and reading what pulls it in are what
+      somebody diagnosing a machine actually needs, and none of them asks a manager for anything. The
+      six verbs above are dropped where there is nothing to ask; these six are not (§7). "Go to
+      process" goes to the **main** process specifically, because everything else in the cgroup is a
+      child systemd will take down with it. "Inspect dependencies" names each edge in systemd's own
+      vocabulary rather than one word for all of them — `Wants` and `Requires` differ in what happens
+      when the other unit fails — and says where the edge was found, because a setting in a unit file
+      and a symlink in a `.wants` directory are changed in completely different ways
 
 **A template instance shows its template's description**, `%i` and all: `user@1000.service` reads
 "User Manager for UID %i". The specifiers are systemd's own and expanding them needs the same
@@ -3107,10 +3143,41 @@ raw string is at least visibly a template rather than a wrong name.
 - [ ] Creating and editing services — deferred to a later release
 
 **Read without D-Bus and without spawning `systemctl`.** Everything the columns need is on disk: the
-unit files say what a service is, the `*.wants` symlinks say whether it starts at boot, and the
-cgroup tree says what is running and with which main process. A D-Bus client is a substantial piece
-of machinery, and shelling out to read state is the thing that stops working on the machine you most
-need it on.
+unit files say what a service is, the `*.wants` symlinks say whether it starts at boot, the cgroup
+tree says what is running and with which main process, and `/run/systemd/units` — which is a
+directory of files the manager writes, not an interface to it — says when the current invocation of a
+unit began. A D-Bus client is a substantial piece of machinery, and shelling out to read state is the
+thing that stops working on the machine you most need it on.
+
+**That runtime directory settled two things at once.** It holds one symlink per current invocation,
+named `invocation:`*unit*, and the symlink's own modification time is the moment the manager created
+it — checked against `systemctl show -p ActiveEnterTimestamp` on three units of three different types
+and agreeing to the second. Its *presence* is worth as much as its time: a `Type=oneshot` unit with
+`RemainAfterExit=yes` is active with nothing in a cgroup, and this reader used to call every one of
+them inactive. There were 34 of them on this machine when this was written. The state column says `running`,
+`active · exited` and `inactive`, which are three answers and not two, and `stopped` is no longer
+said about a unit that is doing its job.
+
+**Checked against `systemctl list-units --state=active`: 56 against 56, with no difference in either
+direction.** Six of those were found only by that check. They are all instances of templates —
+`systemd-pcrlogin@1000.service`, `user-runtime-dir@1000.service` — which finished and stayed active,
+so they have an invocation, no processes and no file of their own; a scan of the cgroup tree alone
+cannot see them at all. The running count is unchanged at 22 against 22.
+
+**The dependency list is what is written down, and `systemctl show -p Wants` is not the same set.**
+The manager adds a handful of its own to every unit — `system.slice`, `sysinit.target`, the mount its
+files live on — so its answer for `NetworkManager.service` is three units longer than the file's. That
+is a difference between two questions rather than a disagreement: this column says what somebody
+configured, which is what somebody about to change it needs, and the implicit ones are the same for
+every unit on the machine. Where a count here differs from `systemctl`'s, work out which set each
+side is describing before changing either.
+
+**Unit files are read with their drop-ins.** A `foo.service.d/*.conf` is the supported way to change
+a packaged unit, and a reader of the main file alone reports the packaged answer for a unit the
+administrator has already altered. The awkward half of the rule is that a drop-in *adds* to a
+list-valued key and *replaces* a scalar one, and that a key written with nothing after the equals
+sign clears whatever came before it — which is the only way a drop-in can take a setting away. All
+three are in the engine rather than behind the platform seam, so the rule is tested without files.
 
 Three shapes of running service had to be handled, and each was found by comparing against
 `systemctl` rather than by reading the documentation:
@@ -3138,35 +3205,69 @@ which is the part that matters.
 
 # 42. Startup applications
 
-- [ ] Columns: name · publisher · enabled · status · startup impact · startup CPU · startup disk I/O ·
-      command · executable · location/source · user scope · last launch · file path · signature ·
-      architecture
+- [ ] 🟡 Columns: name ✔ · enabled ✔ · status ✔ · startup impact ✔ (as a refusal — see the last box)
+      · command ✔ · executable ✔ · location/source ✔ · user scope ✔ · file path ✔. **Publisher,
+      signature, architecture, startup CPU, startup disk I/O and last launch are not read**, and each
+      for its own reason rather than one: a publisher means asking the package database which package
+      owns the program, which builds an index of every path on the machine and is not a price a view
+      should pay for a column (§5.4); a signature means §70, and this build verifies none; the two
+      cost columns need the boot measurement the impact box below refuses to invent; and nothing on a
+      Linux desktop records when an entry last ran, so there is no file to read it out of. Each of
+      them is a row in the entry's properties box saying so, because four missing rows read as four
+      fields nobody wrote (§72.3)
 
 Sources:
 
 - [ ] Windows: registered startup applications · Startup folders · Run registry mechanisms ·
-      supported startup tasks
-- [ ] 🟡 Linux: XDG autostart ✔ — read and switchable. systemd user services categorised as login
-      startup are not: a user unit wanted by `default.target` is a login-time entry by any reasonable
-      reading, and nothing here looks for one
-- [ ] macOS: login items · user launch agents
+      supported startup tasks — **blocked on the reading half**: `WindowsProbe.GetStartupEntries`
+      answers with an empty list, so there is nothing here to show or to switch
+- [x] Linux: XDG autostart ✔ and systemd user units ✔. A user unit that `default.target` wants is a
+      login-time entry by any reasonable reading — it is started when the session starts, by the
+      manager the session starts with — and for as long as this program looked only in the autostart
+      directories it reported a desktop that has moved its session to systemd as having nothing at
+      login. Read from the same kind of files as everything else here: the `default.target.wants`
+      directories say what is wanted, and the unit each symlink points at says what will run. Only
+      services: those directories also hold timers and path units, and a timer is a schedule rather
+      than something that starts at login. One case is an entry and is reported as one that will
+      never run — an enablement whose unit was removed with its package, which is still somebody's
+      symlink to delete, and leaving it out would hide the thing that needs doing about it
+- [ ] macOS: login items · user launch agents — **blocked on the platform**: macOS is a stub (§6.3)
+      and `MacOsProbe.GetStartupEntries` throws rather than answering
 
 Actions:
 
-- [ ] 🟡 Enable ✔ · disable ✔ — from a right-click on the window's Startup page, through the
-      specification's own `Hidden=true`. A user's own entry is edited where it is; a system-wide one
+- [x] Enable ✔ · disable ✔ · reveal executable ✔ · reveal configuration ✔ · properties ✔ · run
+      now ✔ — all six from a right-click on the window's Startup page. The switch goes through the
+      specification's own `Hidden=true`: a user's own entry is edited where it is; a system-wide one
       is never written to, because that file belongs to a package and the next update would overwrite
       whatever we did — it is switched off by writing a file of the same name into the user's own
       directory, which is the specification's override and the mechanism every desktop's own switch
       uses. Switching it back on removes that override rather than writing "not hidden" into it, so
-      the package's file speaks again and a new command in it is not frozen out for ever. Reveal
-      executable, reveal configuration, properties and run now are not written
-- [ ] Delete entry — only where safe and explicit. Deliberately after the switch rather than beside
-      it: turning an entry off is reversible from the item next to it, and deleting a package's file
-      is not reversible at all
+      the package's file speaks again and a new command in it is not frozen out for ever.
+      **A systemd user unit is neither of those and is handed to the manager that owns it**: its
+      enablement is a symlink in a `.wants` directory, and writing one behind the manager's back
+      would be ignored until the next login and wrong afterwards. Both mechanisms sit behind one
+      switch, because a front-end has a row under the pointer and no business knowing which kind it
+      is — the moment it has to know is the moment one of them quietly stops being switchable.
+      "Run it now" strips the field codes a `.desktop` file's `Exec` carries, because `%U` is the
+      launcher's business and several programs treat a literal one as a file name and fail on it
+- [x] Delete entry — only where safe and explicit, which on this platform means the user's own
+      desktop file and nothing else. A package's file is refused, and the refusal names the thing to
+      do instead: deleting it looks like it worked and does not, because the next update of that
+      package puts it straight back. A unit file is refused too, for a different reason — the
+      enablement that lists it is a symlink, and removing the file behind it leaves the manager
+      complaining at every login afterwards. Deliberately below a rule and last rather than beside
+      the switch: turning an entry off is undone by the item at the top of the menu, and this is
+      undone by nothing, which is the test §69 uses rather than a preference. Confirmed whatever the
+      confirmation setting says, for the same reason
 
-- [ ] Impact categories are computed only where a **reliable measurement** exists; where it does not,
-      the column says so rather than inventing a "Medium"
+- [x] Impact categories are computed only where a **reliable measurement** exists; where it does not,
+      the column says so rather than inventing a "Medium". There is no such measurement here:
+      working out what an entry costs at login means timing a login, and nothing in this program
+      does. So the column says `not measured` on every row, the heading says it once in words, and
+      the entry's properties box gives the reason and says the same about the processor and disk
+      columns beside it. A category derived from the size of the binary would be a guess wearing a
+      measurement's clothes, and it is the one a reader would act on
 
 # 43. Users and sessions
 

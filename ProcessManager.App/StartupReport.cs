@@ -38,8 +38,12 @@ internal static class StartupReport {
       // running; the reason after the command, because it explains the state.
       var state = entry.Enabled ? "on " : "off";
       var scope = entry.Scope == StartupScope.User ? "user  " : "system";
+      // Which mechanism will start it, because it is also what turning it off means — and because
+      // the window's Startup page has a column for it, and the two front-ends must not disagree
+      // about what one entry is (PRD §58).
+      var kind = entry.Mechanism == StartupMechanism.SystemdUserUnit ? "unit   " : "desktop";
       var reason = entry.DisabledReason is { } why ? $"   ({why})" : string.Empty;
-      Console.WriteLine($"{state}  {scope}  {entry.Name.PadRight(width)}  {entry.Command}{reason}");
+      Console.WriteLine($"{state}  {scope}  {kind}  {entry.Name.PadRight(width)}  {entry.Command}{reason}");
     }
 
     return 0;
@@ -59,6 +63,9 @@ internal static class StartupReport {
         .Append(",\"enabled\":").Append(entry.Enabled ? "true" : "false")
         .Append(",\"reason\":").Append(entry.DisabledReason is null ? "null" : Json(entry.DisabledReason))
         .Append(",\"scope\":").Append(Json(entry.Scope.ToString().ToLowerInvariant()))
+        .Append(",\"mechanism\":").Append(Json(entry.Mechanism == StartupMechanism.SystemdUserUnit ? "systemd-user-unit" : "xdg-autostart"))
+        .Append(",\"executable\":").Append(entry.Executable is null ? "null" : Json(entry.Executable))
+        .Append(",\"arguments\":").Append(entry.Arguments is null ? "null" : Json(entry.Arguments))
         .Append('}');
     }
 

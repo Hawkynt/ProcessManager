@@ -2370,7 +2370,11 @@ public sealed partial class LinuxProbe : ISystemProbe {
     ],
     // The whole tree, not just system.slice: a user's manager runs as user@1000.service under
     // user.slice, and starting at the system slice reports it as stopped.
-    this._options.ServiceCgroupRoot ?? "/sys/fs/cgroup"
+    this._options.ServiceCgroupRoot ?? "/sys/fs/cgroup",
+    // systemd's own runtime directory, which is a directory of files and not an interface: it holds
+    // one symlink per current invocation, and the symlink's own timestamp is when that invocation
+    // began (PRD §41).
+    this._options.ServiceRuntimeDirectory ?? "/run/systemd/units"
   );
 
   /// <summary>
@@ -2390,13 +2394,47 @@ public sealed partial class LinuxProbe : ISystemProbe {
   }
 
   /// <summary>
-  /// XDG autostart entries, user files overriding system ones of the same name (PRD §42).
+  /// What starts at login, from both mechanisms this desktop has (PRD §42).
   /// </summary>
-  public IReadOnlyList<StartupEntry> GetStartupEntries() => XdgAutostartReader.Read(
-    this._options.AutostartUserDirectory ?? DefaultUserAutostart(),
-    this._options.AutostartSystemDirectories ?? ["/etc/xdg/autostart"],
-    this._options.CurrentDesktop ?? Environment.GetEnvironmentVariable("XDG_CURRENT_DESKTOP")
-  );
+  /// <remarks>
+  /// XDG autostart entries, user files overriding system ones of the same name, and the user units
+  /// <c>default.target</c> wants. Two lists rather than one because they are two different things that
+  /// happen to have the same effect, and a front-end has to know which it is looking at before it can
+  /// offer to switch it off — the mechanism is on every entry for exactly that reason.
+  /// </remarks>
+  public IReadOnlyList<StartupEntry> GetStartupEntries() {
+    var entries = new List<StartupEntry>(XdgAutostartReader.Read(
+      this._options.AutostartUserDirectory ?? DefaultUserAutostart(),
+      this._options.AutostartSystemDirectories ?? ["/etc/xdg/autostart"],
+      this._options.CurrentDesktop ?? Environment.GetEnvironmentVariable("XDG_CURRENT_DESKTOP")
+    ));
+
+    entries.AddRange(SystemdUserStartupReader.Read(
+      this._options.UserUnitDirectories ?? DefaultUserUnitDirectories()
+    ));
+
+    entries.Sort(static (left, right) => string.Compare(left.Name, right.Name, StringComparison.OrdinalIgnoreCase));
+    return entries;
+  }
+
+  /// <summary>
+  /// The user manager's unit directories, least specific first (PRD §42).
+  /// </summary>
+  /// <remarks>
+  /// The user's own last, so it has the final word — which is what makes masking a packaged unit
+  /// work at all.
+  /// </remarks>
+  private static IReadOnlyList<string> DefaultUserUnitDirectories() {
+    var configuration = Environment.GetEnvironmentVariable("XDG_CONFIG_HOME");
+    if (string.IsNullOrEmpty(configuration)) {
+      var home = Environment.GetEnvironmentVariable("HOME");
+      configuration = string.IsNullOrEmpty(home) ? null : Path.Combine(home, ".config");
+    }
+
+    return configuration is null
+      ? ["/usr/lib/systemd/user", "/etc/systemd/user"]
+      : ["/usr/lib/systemd/user", "/etc/systemd/user", Path.Combine(configuration, "systemd", "user")];
+  }
 
   private static string? DefaultUserAutostart() {
     var config = Environment.GetEnvironmentVariable("XDG_CONFIG_HOME");

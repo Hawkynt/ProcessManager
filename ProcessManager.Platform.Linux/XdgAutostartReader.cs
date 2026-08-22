@@ -1,4 +1,5 @@
 using Hawkynt.ProcessManager.Model;
+using Hawkynt.ProcessManager.Query;
 
 namespace Hawkynt.ProcessManager.Platform.Linux;
 
@@ -86,7 +87,7 @@ internal static class XdgAutostartReader {
       return null;
     }
 
-    string? name = null, command = null, onlyShowIn = null, notShowIn = null, tryExec = null;
+    string? name = null, command = null, onlyShowIn = null, notShowIn = null, tryExec = null, comment = null;
     var hidden = false;
     var autostartEnabled = true;
     var inDesktopEntry = false;
@@ -115,6 +116,7 @@ internal static class XdgAutostartReader {
         // The plain key only: "Name[de]" is a translation, and picking one at random would show a
         // German name to an English reader.
         case "Name": name ??= value; break;
+        case "Comment": comment ??= value; break;
         case "Exec": command ??= value; break;
         case "TryExec": tryExec ??= value; break;
         case "Hidden": hidden = IsTrue(value); break;
@@ -130,6 +132,7 @@ internal static class XdgAutostartReader {
       return null;
 
     var (enabled, reason) = Decide(hidden, autostartEnabled, tryExec, onlyShowIn, notShowIn, currentDesktop);
+    var (executable, arguments) = DesktopEntry.SplitCommand(command);
     return new(
       name ?? Path.GetFileNameWithoutExtension(file),
       command,
@@ -138,7 +141,12 @@ internal static class XdgAutostartReader {
       reason,
       scope,
       onlyShowIn
-    );
+    ) {
+      Mechanism = StartupMechanism.XdgAutostart,
+      Executable = executable,
+      Arguments = arguments,
+      Description = comment,
+    };
   }
 
   /// <summary>

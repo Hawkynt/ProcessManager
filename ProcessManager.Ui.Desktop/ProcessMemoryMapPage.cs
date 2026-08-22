@@ -68,13 +68,22 @@ internal sealed class ProcessMemoryMapPage {
   );
 
   private readonly ISystemProbe _probe;
-  private readonly IProcessActions? _actions;
   private MemoryMapReading _reading = MemoryMapReading.NotImplemented;
+
+  /// <summary>
+  /// What may be done from this page, or null in a read-only front-end.
+  /// </summary>
+  /// <remarks>
+  /// Settable rather than a constructor argument: the page is built by the detail pane, whose own
+  /// actions are assigned after it exists, and a page that captured null at construction offered a
+  /// file-properties box that could not open a folder.
+  /// </remarks>
+  public IProcessActions? Actions { get; set; }
 
   public ProcessMemoryMapPage(ISystemProbe probe, IProcessActions? actions) {
     ArgumentNullException.ThrowIfNull(probe);
     this._probe = probe;
-    this._actions = actions;
+    this.Actions = actions;
 
     this._table.Control.Dock = DockStyle.Fill;
     this._buttons.Dock = DockStyle.Bottom;
@@ -91,8 +100,26 @@ internal sealed class ProcessMemoryMapPage {
 
   public Control Control => this._panel;
 
-  /// <summary>Which process this page is about. Set once, by the window that owns it.</summary>
-  public ProcessKey Key { get; set; }
+  /// <summary>
+  /// Which process this page is about.
+  /// </summary>
+  /// <remarks>
+  /// Pointing it at a different process throws away what was read for the last one. In a properties
+  /// window that never happens — one window is one process for its whole life — but the same page is
+  /// docked at the foot of the main window, where the selection moves, and a page that kept its
+  /// "already filled" flag across a change showed one process's mappings under another's name
+  /// (PRD §72.2, §86).
+  /// </remarks>
+  public ProcessKey Key {
+    get;
+    set {
+      if (field == value)
+        return;
+
+      field = value;
+      this._filled = false;
+    }
+  }
 
   /// <summary>What the page says, for a test and for the capture log (PRD §9.6).</summary>
   public string Description => this._table.Description;
@@ -294,7 +321,7 @@ internal sealed class ProcessMemoryMapPage {
       new MemoryRegionDialog(
         regions[i],
         regions,
-        this._actions,
+        this.Actions,
         image => this._probe.DescribeImage(image, verify: true)
       ).ShowDialog();
 
@@ -343,7 +370,7 @@ internal sealed class ProcessMemoryMapPage {
     new FilePropertiesDialog(
       path,
       [],
-      this._actions,
+      this.Actions,
       image => this._probe.DescribeImage(image, verify: true)
     ).ShowDialog();
   }

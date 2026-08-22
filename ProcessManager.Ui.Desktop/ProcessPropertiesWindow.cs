@@ -49,10 +49,6 @@ public sealed class ProcessPropertiesWindow : Form {
   private const string _GeneralTab = "General";
   private const string _PerformanceTab = "Performance";
   private const string _GpuTab = "GPU";
-  private const string _MemoryMapTab = "Memory map";
-  private const string _SecurityTab = "Security";
-  private const string _ServicesTab = "Services";
-  private const string _WindowsTab = "Windows";
   // The kernel's own word for it. "Jobs" is a Windows object and "container" is a convention built on
   // top of this one; naming the tab after either would be the false equivalence §5.3 forbids.
   private const string _CgroupTab = "cgroup";
@@ -149,44 +145,6 @@ public sealed class ProcessPropertiesWindow : Form {
   );
 
   /// <summary>
-  /// What confines the process (PRD §36).
-  /// </summary>
-  /// <remarks>
-  /// Every field here is already in the sample — the uids and gids come off one line of
-  /// <c>status</c> each, and the five capability sets off five more — so the page costs nothing to
-  /// draw. The two that are not in the sample, the LSM label and the group list, cost a read apiece
-  /// and arrive as extras below (PRD §5.4).
-  /// <para>
-  /// The four user ids are all here rather than only the effective one, because the gap between them
-  /// is the interesting part: a process whose real and effective uids differ is running as somebody
-  /// it was not started by, which is what a setuid binary looks like from outside.
-  /// </para>
-  /// </remarks>
-  private readonly ProcessFactsPage _security = new(
-    ProcessField.UserName,
-    ProcessField.UserId,
-    ProcessField.EffectiveUserName,
-    ProcessField.EffectiveUserId,
-    ProcessField.SavedUserId,
-    ProcessField.FilesystemUserId,
-    ProcessField.PrivilegeChanged,
-    ProcessField.Elevated,
-    ProcessField.GroupId,
-    ProcessField.EffectiveGroupId,
-    ProcessField.SavedGroupId,
-    ProcessField.FilesystemGroupId,
-    ProcessField.NoNewPrivileges,
-    ProcessField.Seccomp,
-    ProcessField.SeccompFilters,
-    ProcessField.Capabilities,
-    ProcessField.PermittedCapabilities,
-    ProcessField.InheritableCapabilities,
-    ProcessField.BoundingCapabilities,
-    ProcessField.AmbientCapabilities,
-    ProcessField.CapabilitiesHex
-  );
-
-  /// <summary>
   /// The ceilings that belong to the group rather than to the process (PRD §38).
   /// </summary>
   /// <remarks>
@@ -196,33 +154,8 @@ public sealed class ProcessPropertiesWindow : Form {
   /// </remarks>
   private readonly ProcessFactsPage _cgroup = new();
 
-  /// <summary>
-  /// The unit this process belongs to, and what its unit file says (PRD §41).
-  /// </summary>
-  /// <remarks>
-  /// No fields either, for the same reason the cgroup page has none: a restart policy and a unit file
-  /// path are facts about the <em>service</em>, and several processes share one. What belongs to the
-  /// process is which unit it is in, and that is a row on the General page.
-  /// </remarks>
-  private readonly ProcessFactsPage _services = new();
-
-  private readonly ProcessMemoryMapPage _map;
-
-  /// <summary>
-  /// What this process has on screen, and what may be asked of it (PRD §39).
-  /// </summary>
-  /// <remarks>
-  /// The list and the row menu arrived together on purpose: §26 refused this page for as long as it
-  /// would have been a list with nothing behind it, on the ground that a page which can show a window
-  /// and not close it is half a feature.
-  /// </remarks>
-  private readonly ProcessWindowsPage _windows;
-
   private TabPage? _gpuPage;
-  private TabPage? _mapPage;
   private TabPage? _cgroupPage;
-  private TabPage? _servicesPage;
-  private TabPage? _windowsPage;
   private ImageInfo? _image;
   private FileFacts? _imageFacts;
   private bool _imageRead;
@@ -255,9 +188,17 @@ public sealed class ProcessPropertiesWindow : Form {
     this.Key = key;
     this._name = name;
     this.Unavailable = unavailable;
-    this._pane = new(probe) { Actions = actions };
-    this._map = new(probe, actions) { Key = key };
-    this._windows = new(probe, actions) { Key = key, Name = name };
+    // The memory map, the window list, the security context and the unit are the pane's four pages
+    // now, not this window's. §26 asks for one row of tabs and not two, so a window that hosts the
+    // pane and added its own Security page would have put two tabs of that name on one strip — and
+    // the main window's lower pane gets the same four modes out of it, which is what §10 asked for.
+    this._pane = new(probe) {
+      Actions = actions,
+      ProcessName = name,
+      Unavailable = unavailable,
+    };
+
+    this._pane.Select(key);
 
     this.Text = $"{name} ({key.Pid})";
     // A secondary window closing must not take the program with it. Form.QuitsOnClose defaults to
@@ -290,11 +231,7 @@ public sealed class ProcessPropertiesWindow : Form {
       AddPage(this._tabs, "Memory", this._memory.Control);
       AddPage(this._tabs, "I/O", this._io.Control);
       this._gpuPage = AddPage(this._tabs, _GpuTab, this._gpu.Control);
-      this._mapPage = AddPage(this._tabs, _MemoryMapTab, this._map.Control);
-      AddPage(this._tabs, _SecurityTab, this._security.Control);
       this._cgroupPage = AddPage(this._tabs, _CgroupTab, this._cgroup.Control);
-      this._servicesPage = AddPage(this._tabs, _ServicesTab, this._services.Control);
-      this._windowsPage = AddPage(this._tabs, _WindowsTab, this._windows.Control);
       this._tabs.SelectedTab = this.PageNamed(_GeneralTab);
       // The map is the one page whose cost is the size of the process, so it is filled when somebody
       // asks for it rather than when the window opens. The tick fills it too, for the same reason and
@@ -368,26 +305,33 @@ public sealed class ProcessPropertiesWindow : Form {
   /// <summary>What the graphs are drawing, for the same reason (PRD §9.6).</summary>
   public string PerformanceText => this._performance.Description;
 
-  /// <summary>What the Security page says (PRD §36).</summary>
-  public string SecurityText => this._security.Description;
+  /// <summary>
+  /// What the Security page says (PRD §36).
+  /// </summary>
+  /// <remarks>
+  /// Forwarded to the pane, which owns that page and the three beside it. Kept on this window because
+  /// it is what a test and the capture log read, and moving where the page lives is not a reason to
+  /// move where the test looks.
+  /// </remarks>
+  public string SecurityText => this._pane.SecurityText;
 
   /// <summary>What the cgroup page says (PRD §38).</summary>
   public string CgroupText => this._cgroup.Description;
 
   /// <summary>What the Services page says (PRD §41).</summary>
-  public string ServicesText => this._services.Description;
+  public string ServicesText => this._pane.ServicesText;
 
   /// <summary>The sentence above the memory map, which is the half that explains an empty one.</summary>
-  public string MemoryMapHeading => this._map.Heading;
+  public string MemoryMapHeading => this._pane.MemoryMapHeading;
 
   /// <summary>How many mappings the memory map is showing (PRD §34).</summary>
-  public int MemoryMapRows => this._map.RowCount;
+  public int MemoryMapRows => this._pane.MemoryMapRows;
 
   /// <summary>The sentence above the window list — the half that explains an empty one (PRD §39).</summary>
-  public string WindowsHeading => this._windows.Heading;
+  public string WindowsHeading => this._pane.WindowsHeading;
 
   /// <summary>How many windows this process has on screen, as the page last read them (PRD §39).</summary>
-  public int WindowRows => this._windows.RowCount;
+  public int WindowRows => this._pane.WindowRows;
 
   /// <summary>How wide the graphs' axis is, in seconds (PRD §28).</summary>
   public int SpanSeconds => this._performance.SpanSeconds;
@@ -454,10 +398,6 @@ public sealed class ProcessPropertiesWindow : Form {
     ]);
 
     this.UpdateGpu(row, in process, delta, index);
-    // Kept for the pages that are filled only when they are the one showing, which cannot ask the
-    // sample for a row of their own.
-    this._row = row;
-    this._containerPath = process.ContainerPath;
     // Once, on the first sample. The cgroup read is a dozen small files, which is cheap enough to
     // spend on knowing whether there is anything to put on the tab — so the hidden preference has
     // its answer before somebody clicks it rather than after, the way the graphics tab's does. Every
@@ -469,6 +409,8 @@ public sealed class ProcessPropertiesWindow : Form {
     this._performance.Append(in process, delta, index, descriptors);
     this._performance.Refresh();
 
+    // The overview call is also what hands the pane the row and the cgroup path its own four pages
+    // need, so it comes before the refresh that fills whichever of them is showing.
     this._pane.UpdateOverview(in process, row);
     this._pane.Refresh();
 
@@ -534,80 +476,6 @@ public sealed class ProcessPropertiesWindow : Form {
         : "no driver on this machine reports what a process uses the graphics device for"
     );
   }
-
-  #region the Security page (PRD §36)
-
-  /// <summary>
-  /// What confines the process: the identity from the sample, and the two things that cost a read.
-  /// </summary>
-  /// <remarks>
-  /// The two extras are read on every tick while the window is open rather than once, because unlike
-  /// the image they can change under a running process: a program may drop groups, and a label
-  /// changes at an <c>exec</c>. Two small files for one process is not a cost worth caching wrongly.
-  /// </remarks>
-  private void UpdateSecurity(ProcessRow row) {
-    var extras = new List<KeyValuePair<string, string>>();
-    var security = this._probe.DescribeSecurity(this.Key);
-
-    extras.Add(new("Security module", Label(security)));
-    extras.Add(new("Supplementary groups", Groups(security)));
-
-    // The namespaces, from the image description this window already reads once. They are where a
-    // container actually is: two processes sharing an inode share that namespace, which is a harder
-    // fact than a cgroup path anybody may write (PRD §14, §36).
-    if (this._image is { Namespaces.Count: > 0 } image)
-      foreach (var (kind, inode) in image.Namespaces)
-        extras.Add(new($"Namespace, {kind}", inode));
-    else
-      // Said rather than left off. Every process on Linux is in a namespace of every kind, so a page
-      // with no namespace rows on it would be stating something that cannot be true — the honest
-      // reading of an empty list here is that the links under /proc/[pid]/ns could not be followed
-      // (PRD §72.3).
-      extras.Add(new("Namespaces", "not readable — the links under /proc/[pid]/ns need the same permission as attaching a debugger"));
-
-    this._security.Update(row, extras);
-  }
-
-  /// <summary>
-  /// The LSM label, or which of the two reasons there is none.
-  /// </summary>
-  /// <remarks>
-  /// A kernel with no security module fails the read outright rather than producing an empty file, so
-  /// "nothing is confining this" and "we were not allowed to look" arrive the same way and must not be
-  /// reported the same way. Neither is a blank, which would read as a clean bill of health (PRD §70).
-  /// </remarks>
-  private static string Label(ProcessSecurity? security) => security switch {
-    null => "the process has ended",
-    { Label: { Length: > 0 } label } => label,
-    { LabelReason: UnknownReason.NotPermitted } => "not readable as this user",
-    _ => "none — this kernel has no SELinux or AppArmor loaded",
-  };
-
-  private static string Groups(ProcessSecurity? security) {
-    if (security is null)
-      return "the process has ended";
-
-    if (security.GroupsReason != UnknownReason.None)
-      return Humanize.Explain(security.GroupsReason);
-
-    if (security.SupplementaryGroups.Count == 0)
-      // A real answer rather than a hole. Every kernel thread is in none, and so is anything started
-      // by a service manager that cleared them.
-      return "none";
-
-    var names = new List<string>(security.SupplementaryGroups.Count);
-    foreach (var group in security.SupplementaryGroups)
-      // The number always, the name when this machine's own file has one. A group that comes from a
-      // directory service is in no file here and stays a number, which is the honest answer rather
-      // than a blank (PRD §5.3).
-      names.Add(group.Name is { Length: > 0 } name
-        ? $"{name} ({group.Id.ToString(CultureInfo.InvariantCulture)})"
-        : group.Id.ToString(CultureInfo.InvariantCulture));
-
-    return string.Join(", ", names);
-  }
-
-  #endregion
 
   #region the cgroup page (PRD §38)
 
@@ -732,265 +600,26 @@ public sealed class ProcessPropertiesWindow : Form {
 
   #endregion
 
-  #region the Services page (PRD §41)
-
-  /// <summary>
-  /// Which service this process belongs to, and what that service's unit file says.
-  /// </summary>
-  /// <remarks>
-  /// <para>
-  /// Read once, when the page is first asked for, and not again. The reading is a walk of every unit
-  /// file on the machine — 372 of them here — which is far too much to spend on a tick, and it does
-  /// not need spending twice: a process cannot move between units while it runs, and a unit that
-  /// stops takes its processes with it, so this window would say "ended" rather than showing a stale
-  /// service. What can change underneath it is somebody running <c>systemctl disable</c> in another
-  /// window, and that is a fair price for not walking a thousand files a second (PRD §5.4).
-  /// </para>
-  /// <para>
-  /// The unit comes from the cgroup, because a systemd unit <em>is</em> a cgroup — the same join
-  /// §40's owning-service column makes, through the same code, so the two cannot disagree. The
-  /// innermost one wins: a desktop application sits inside its own session manager, which is itself a
-  /// unit, and naming the outer one would report every program a user starts as belonging to the
-  /// manager that started it.
-  /// </para>
-  /// </remarks>
-  private void UpdateServices() {
-    if (this._servicesRead)
-      return;
-
-    // Before the first sample there is no cgroup to look a unit up by, and the answer would latch —
-    // somebody quick enough to click this tab inside the first tick would have been told for the rest
-    // of the window's life that the cgroup could not be read. Nothing is settled until there is
-    // something to settle it from; the tick calls this again.
-    if (this._row is null)
-      return;
-
-    this._servicesRead = true;
-    var services = this._probe.GetServices();
-    if (services.Count == 0) {
-      // No service manager this build can read — which is a fact about the machine, not about this
-      // process, and so is the one case the tab may be taken off the strip.
-      this.SettleServicesTab();
-      this._services.ShowUnavailable(
-        "Nothing on this machine publishes services in a form this build reads. Only systemd is read, "
-        + "from the unit files and the cgroup tree rather than over D-Bus."
-      );
-
-      return;
-    }
-
-    if (CgroupUnit.Of(this._containerPath) is not { } unit) {
-      // A finding rather than a hole, and the tab stays: most of a desktop is like this. A slice is
-      // deliberately not a unit for this purpose — it holds no processes of its own — so a cgroup
-      // with only slices in it answers nothing rather than the nearest thing that looks like one.
-      this._services.Update([
-        new("Service", "none — this process is under no systemd unit"),
-        new(
-          "Why",
-          this._containerPath is { Length: > 0 } path
-            ? $"its cgroup is {path}, and no segment of that is a service, a scope or a socket unit"
-            : "its cgroup could not be read, so there is nothing to look a unit up by"
-        ),
-        new("Units on this machine", services.Count.ToString(CultureInfo.InvariantCulture)),
-      ]);
-
-      return;
-    }
-
-    if (Find(services, unit) is not { } service) {
-      // The cgroup names a unit that the unit-file walk did not produce: a transient scope systemd
-      // made without a file on disk is the usual one. The name is still the truth about the process,
-      // so it is reported, and the absence is explained rather than shown as an empty page.
-      this._services.Update([
-        new("Service", unit),
-        new("Unit file", "none on disk — a transient unit, created at runtime and never written out"),
-        new("Read from", "the cgroup this process is in, which is what a systemd unit is"),
-      ]);
-
-      return;
-    }
-
-    this._services.Update([
-      new("Service", service.Name),
-      new("Description", service.Description is { Length: > 0 } text ? text : "—"),
-      new("State", service.State == ServiceState.Unknown ? "unknown" : service.State.ToString().ToLowerInvariant()),
-      new("Starts at boot", StartsAtBoot(service)),
-      // Its own row and not folded into the one above: masked units can never run whatever else is
-      // configured, and it is the setting people forget they made.
-      new("Masked", service.Masked ? "yes — it can never be started while this stands" : "no"),
-      new("Main process", MainProcess(service, this.Key.Pid)),
-      new("Restart policy", service.RestartPolicy is { Length: > 0 } policy ? policy : "—"),
-      new("Command", service.Command is { Length: > 0 } command ? command : "—"),
-      new("Unit file", service.Path),
-    ]);
-  }
-
-  /// <summary>The unit of that name, or null when the walk of the unit files did not produce one.</summary>
-  private static ServiceRecord? Find(IReadOnlyList<ServiceRecord> services, string unit) {
-    foreach (var service in services)
-      if (string.Equals(service.Name, unit, StringComparison.Ordinal))
-        return service;
-
-    return null;
-  }
-
-  /// <summary>
-  /// Whether the unit starts at boot.
-  /// </summary>
-  /// <remarks>
-  /// Three answers and not two. A unit started only by a socket or a timer is neither enabled nor
-  /// disabled in the sense the row means, and saying "no" about one would be wrong about a service
-  /// that starts perfectly reliably (PRD §41, §72.3).
-  /// </remarks>
-  private static string StartsAtBoot(ServiceRecord service) => service.Enabled switch {
-    true => "yes",
-    false => "no",
-    _ => "neither — nothing links it into a boot target, so something else starts it: a socket, a timer, or another unit",
-  };
-
-  /// <summary>
-  /// The unit's main process, and whether it is this one.
-  /// </summary>
-  /// <remarks>
-  /// The distinction the page is worth opening for. A service's main process is the one systemd
-  /// watches and restarts; everything else in the cgroup is a child it will take down with it, and
-  /// the two are not the same thing to be looking at.
-  /// </remarks>
-  private static string MainProcess(ServiceRecord service, int pid) {
-    if (service.MainPid <= 0)
-      return "none recorded — the unit's cgroup was empty when it was read";
-
-    var number = service.MainPid.ToString(CultureInfo.InvariantCulture);
-    return service.MainPid == pid
-      ? $"{number} — this process"
-      : $"{number} — this process is one of its children, not the one systemd watches";
-  }
-
-  /// <summary>
-  /// Takes the Services tab off the strip once, on a machine with no service manager to read.
-  /// </summary>
-  /// <remarks>
-  /// Only for that case. A process under no unit is a finding about the process and keeps its tab,
-  /// the same way a GPU tab stays on a machine whose driver simply says nothing about one process.
-  /// </remarks>
-  private void SettleServicesTab() {
-    if (this.Unavailable != UnavailableTabs.Hidden || this._servicesPage is not { } page || this._tabs is null)
-      return;
-
-    this._tabs.TabPages.Remove(page);
-    this._servicesPage = null;
-  }
-
-  private bool _servicesRead;
-
-  /// <summary>
-  /// The cgroup path from the last sample, which is what the unit is looked up by.
-  /// </summary>
-  /// <remarks>
-  /// Kept rather than read off the row's Container cell: that cell is formatted for a table, and
-  /// looking a unit up by our own formatting is how the two quietly stop agreeing.
-  /// </remarks>
-  private string? _containerPath;
-
-  #endregion
-
-  #region the Memory map page (PRD §34)
+  #region what the tick fills, and what waits to be asked for
 
   /// <summary>
   /// Fills the page somebody is actually looking at.
   /// </summary>
   /// <remarks>
-  /// The three pages that cost a read to fill, and the only three that are not refilled from a sample
-  /// already taken. Nothing is collected for a tab nobody has opened, which is the discipline the
-  /// pane's own tabs follow and the reason this is a method rather than three calls in the tick
-  /// (PRD §5.4).
+  /// One page now rather than five. The memory map, the security context, the unit and the window
+  /// list moved onto the pane with the tabs that show them, and the pane fills whichever of its own
+  /// is up; what is left here is the cgroup, which is this window's and not a mode of the lower pane
+  /// (PRD §10, §26).
   /// <para>
-  /// They are not the same kind of expensive, so they are not filled the same way. The map is a walk
-  /// of the process's page tables and is done once, with a button for a fresher one; the other two
-  /// are two or three small files and are re-read on every tick while their page is showing, because
-  /// a cgroup's memory, throttle count and pressure all move while somebody watches them.
+  /// It is re-read on every tick while its page is showing, unlike the map: this is a dozen small
+  /// files rather than a page-table walk, and half of what is on it — the memory in use, the throttle
+  /// count, the pressure figures — moves while somebody watches it (PRD §5.4).
   /// </para>
   /// </remarks>
   private void FillVisiblePage() {
-    if (this._tabs?.SelectedTab is not { } page)
-      return;
-
-    if (string.Equals(page.Text, _MemoryMapTab, StringComparison.Ordinal)) {
-      this._map.EnsureFilled();
-      this.SettleMapTab();
-      return;
-    }
-
-    if (string.Equals(page.Text, _SecurityTab, StringComparison.Ordinal)) {
-      if (this._row is { } row)
-        this.UpdateSecurity(row);
-
-      return;
-    }
-
-    if (string.Equals(page.Text, _CgroupTab, StringComparison.Ordinal)) {
+    if (this._tabs?.SelectedTab is { } page && string.Equals(page.Text, _CgroupTab, StringComparison.Ordinal))
       this.UpdateCgroup();
-      return;
-    }
-
-    if (string.Equals(page.Text, _ServicesTab, StringComparison.Ordinal)) {
-      this.UpdateServices();
-      return;
-    }
-
-    if (string.Equals(page.Text, _WindowsTab, StringComparison.Ordinal)) {
-      this._windows.EnsureFilled();
-      this.SettleWindowsTab();
-    }
   }
-
-  /// <summary>
-  /// Takes the Windows tab off the strip once, where the platform does not read windows at all.
-  /// </summary>
-  /// <remarks>
-  /// On <see cref="WindowSourceState.NotImplemented"/> alone, which is the only one of the four that
-  /// is a statement about this build. A Wayland session refusing and a machine with no display are
-  /// facts about the machine and keep their tab, saying which — collapsing them would make "this
-  /// desktop will not tell you" and "this build cannot ask" the same answer (PRD §5.3, §26).
-  /// </remarks>
-  private void SettleWindowsTab() {
-    if (this._windowsSettled || this._windows.State != WindowSourceState.NotImplemented)
-      return;
-
-    this._windowsSettled = true;
-    if (this.Unavailable != UnavailableTabs.Hidden || this._windowsPage is not { } page || this._tabs is null)
-      return;
-
-    this._tabs.TabPages.Remove(page);
-    this._windowsPage = null;
-  }
-
-  private bool _windowsSettled;
-
-  /// <summary>The last sample's row, for the pages that are filled only while they are showing.</summary>
-  private ProcessRow? _row;
-
-  /// <summary>
-  /// Takes the map off the strip once, on a platform that does not read one.
-  /// </summary>
-  /// <remarks>
-  /// On the state and not on the row count. A refused read and a kernel thread both give nought rows
-  /// and neither is a statement about this build's capability — the tab stays for both of those,
-  /// saying which it was (PRD §26).
-  /// </remarks>
-  private void SettleMapTab() {
-    if (this._mapSettled || this._map.State != MemoryMapState.NotImplemented)
-      return;
-
-    this._mapSettled = true;
-    if (this.Unavailable != UnavailableTabs.Hidden || this._mapPage is not { } page || this._tabs is null)
-      return;
-
-    this._tabs.TabPages.Remove(page);
-    this._mapPage = null;
-  }
-
-  private bool _mapSettled;
 
   #endregion
 
@@ -1185,14 +814,13 @@ public sealed class ProcessPropertiesWindow : Form {
       this._memory,
       this._io,
       this._gpu,
-      this._security,
       this._cgroup,
-      this._services,
     ])
       page.Stretch();
 
-    this._map.Stretch();
-    this._windows.Stretch();
+    // The pane's own four go with it. A control outside the toolkit's assembly cannot see its own
+    // resize, so whoever owns a page lays it out — and these are the pane's pages now (PRD §10).
+    this._pane.ApplyLayout();
     this._performance.Refresh();
   }
 

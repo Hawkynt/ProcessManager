@@ -151,6 +151,31 @@ public static class DesktopEntry {
     return slash < 0 ? first : slash + 1 < first.Length ? first[(slash + 1)..] : null;
   }
 
+  /// <summary>
+  /// An <c>Exec</c> line split into the program it runs and what it passes (PRD §42).
+  /// </summary>
+  /// <remarks>
+  /// The whole path, unlike <see cref="ProgramOf"/>, which wants a name to match a process against.
+  /// A column headed "executable" is read to find out <em>which</em> <c>python</c> an entry starts,
+  /// and the directory is the entire answer to that.
+  /// <para>
+  /// The arguments come back as the rest of the line rather than as re-joined tokens, so the quoting
+  /// the file was written with survives into anything that copies the cell. Re-joining would produce a
+  /// line that looks like the original and does not run the same way.
+  /// </para>
+  /// </remarks>
+  public static (string? Executable, string? Arguments) SplitCommand(string? command) {
+    if (command is not { Length: > 0 })
+      return (null, null);
+
+    var program = NextToken(command, 0, out var next);
+    if (program is not { Length: > 0 })
+      return (null, null);
+
+    var rest = next < command.Length ? command[next..].TrimStart() : string.Empty;
+    return (program, rest.Length > 0 ? rest : null);
+  }
+
   /// <summary>One shell-ish token, honouring double quotes and the backslash inside them.</summary>
   private static string? NextToken(string command, int start, out int next) {
     while (start < command.Length && command[start] == ' ')

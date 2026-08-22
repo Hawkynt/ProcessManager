@@ -47,6 +47,23 @@ public static class DesktopOpen {
     return string.IsNullOrEmpty(folder) ? null : new(opener, [folder]);
   }
 
+  /// <summary>
+  /// Opens a file itself, in whatever the session has chosen to open that kind of file (PRD §41, §42).
+  /// </summary>
+  /// <remarks>
+  /// The file and not its folder, which is the difference from <see cref="Reveal"/> and the whole
+  /// point of "open configuration": a unit file and a <c>.desktop</c> entry are text somebody wants to
+  /// read, and stopping at the directory they are in leaves the reader to find them by eye among four
+  /// hundred others.
+  /// <para>
+  /// Which program that is remains the session's business. A guess at an editor is wrong on every
+  /// machine somebody else configured, and on a machine with no desktop at all there is no opener and
+  /// this answers null rather than starting something nobody asked for.
+  /// </para>
+  /// </remarks>
+  public static LaunchRequest? Open(string? path)
+    => Opener is { } opener && !string.IsNullOrWhiteSpace(path) ? new(opener, [path]) : null;
+
   /// <summary>Opens a page in whatever the session calls its browser.</summary>
   public static LaunchRequest? Browse(string? url)
     => Opener is { } opener && Uri.TryCreate(url, UriKind.Absolute, out var parsed)
