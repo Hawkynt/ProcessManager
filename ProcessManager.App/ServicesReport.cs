@@ -35,9 +35,16 @@ internal static class ServicesReport {
         continue;
 
       ++shown;
+      // Four states, because "active" is not "running" and not "stopped" either: a oneshot unit that
+      // set something up and finished has no processes and is still doing its job, and calling that
+      // stopped is the answer somebody would act on and be wrong (PRD §41).
       var state = service.Masked ? "masked "
-        : service.State == ServiceState.Running ? "running"
-        : "stopped";
+        : service.State switch {
+          ServiceState.Running => "running",
+          ServiceState.Active => "active ",
+          ServiceState.Inactive => "stopped",
+          _ => "—      ",
+        };
 
       // Three states, not two: enabled, disabled, and "nothing wants it" — which is what a
       // socket-activated unit looks like and is not the same as disabled.

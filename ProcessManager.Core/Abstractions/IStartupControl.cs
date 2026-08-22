@@ -27,4 +27,17 @@ public interface IStartupControl {
   /// </remarks>
   ActionResult SetEnabled(in StartupEntry entry, bool enabled);
 
+  /// <summary>
+  /// Removes an entry altogether (PRD §42).
+  /// </summary>
+  /// <remarks>
+  /// Only where it is safe and unambiguous, which on a Linux desktop means the user's own file and
+  /// nothing else. A package's file is not this program's to delete — the next update would put it
+  /// back, and on most machines the write would be refused anyway — and a unit file has an enablement
+  /// pointing at it that deleting the file would leave dangling. Both of those refuse and say why,
+  /// which is the whole difference between this and <see cref="SetEnabled"/>: turning an entry off is
+  /// undone by the item beside it, and this is not undone by anything.
+  /// </remarks>
+  ActionResult Delete(in StartupEntry entry);
+
 }

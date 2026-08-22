@@ -108,6 +108,27 @@ public sealed record LinuxProbeOptions {
   public string? ServiceCgroupRoot { get; init; }
 
   /// <summary>
+  /// The manager's own runtime directory, which is where a unit's activation time comes from
+  /// (PRD §41).
+  /// </summary>
+  /// <remarks>
+  /// Null uses <c>/run/systemd/units</c>. Set to a fixture in tests, and set to an empty string to
+  /// describe a machine whose manager writes nothing — every unit's activation time is then a refusal
+  /// carrying that reason rather than a zero.
+  /// </remarks>
+  public string? ServiceRuntimeDirectory { get; init; }
+
+  /// <summary>
+  /// The user manager's unit directories, whose <c>default.target.wants</c> holds what starts at
+  /// login (PRD §42).
+  /// </summary>
+  /// <remarks>
+  /// Least specific first, the same way <see cref="UnitDirectories"/> is. Null uses the three the
+  /// specification names, with the user's own last so it has the final word.
+  /// </remarks>
+  public IReadOnlyList<string>? UserUnitDirectories { get; init; }
+
+  /// <summary>
   /// Where the unified cgroup hierarchy is mounted, for reading a process's limits (PRD §38).
   /// </summary>
   /// <remarks>

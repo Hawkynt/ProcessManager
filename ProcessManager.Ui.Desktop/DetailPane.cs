@@ -31,6 +31,67 @@ public sealed class DetailPane : IDisposable {
   private readonly Label _hint = new();
 
   /// <summary>
+  /// The four modes §10 asks the lower pane for that are pages rather than lists (PRD §10, §26).
+  /// </summary>
+  /// <remarks>
+  /// They live here rather than in the properties window that used to own them, and that is not a
+  /// tidy-up: §26 asks for one row of tabs and not two, so a window that hosts this pane and adds its
+  /// own Security page would have put two tabs called Security on one strip. Owning them here gives
+  /// the main window's lower pane the same four modes for free, which is what §10 was asking for.
+  /// </remarks>
+  private readonly ProcessMemoryMapPage _map;
+
+  private readonly ProcessWindowsPage _windowList;
+
+  /// <summary>
+  /// What confines the process (PRD §36).
+  /// </summary>
+  /// <remarks>
+  /// Every field here is already in the sample — the uids and gids come off one line of
+  /// <c>status</c> each, and the five capability sets off five more — so the page costs nothing to
+  /// draw. The two that are not in the sample, the LSM label and the group list, cost a read apiece
+  /// and are only asked for while this is the tab showing (PRD §5.4).
+  /// <para>
+  /// The four user ids are all here rather than only the effective one, because the gap between them
+  /// is the interesting part: a process whose real and effective uids differ is running as somebody
+  /// it was not started by, which is what a setuid binary looks like from outside.
+  /// </para>
+  /// </remarks>
+  private readonly ProcessFactsPage _security = new(
+    ProcessField.UserName,
+    ProcessField.UserId,
+    ProcessField.EffectiveUserName,
+    ProcessField.EffectiveUserId,
+    ProcessField.SavedUserId,
+    ProcessField.FilesystemUserId,
+    ProcessField.PrivilegeChanged,
+    ProcessField.Elevated,
+    ProcessField.GroupId,
+    ProcessField.EffectiveGroupId,
+    ProcessField.SavedGroupId,
+    ProcessField.FilesystemGroupId,
+    ProcessField.NoNewPrivileges,
+    ProcessField.Seccomp,
+    ProcessField.SeccompFilters,
+    ProcessField.Capabilities,
+    ProcessField.PermittedCapabilities,
+    ProcessField.InheritableCapabilities,
+    ProcessField.BoundingCapabilities,
+    ProcessField.AmbientCapabilities,
+    ProcessField.CapabilitiesHex
+  );
+
+  /// <summary>
+  /// The unit this process belongs to, and what its unit file says (PRD §41).
+  /// </summary>
+  /// <remarks>
+  /// No fields, because none of this is a column of the process table: a restart policy and a unit
+  /// file path are facts about the <em>service</em>, and several processes share one. What belongs to
+  /// the process is which unit it is in.
+  /// </remarks>
+  private readonly ProcessFactsPage _serviceFacts = new();
+
+  /// <summary>
   /// One socket's byte totals against the last reading of the same socket, which is the only way to
   /// a rate: the kernel publishes totals and never a rate (PRD §40).
   /// </summary>
@@ -111,8 +172,44 @@ public sealed class DetailPane : IDisposable {
   /// Optional for the same reason <see cref="Abstractions.IProcessActions"/> is a separate interface
   /// from the probe: a pane that only shows things must be constructible without the ability to
   /// change any of them.
+  /// <para>
+  /// Passed on to the two pages that have actions of their own. They are built in the constructor and
+  /// this is assigned afterwards, so a page that took the value once would have taken null — which is
+  /// how the window list came to have a row menu that was drawn and inert.
+  /// </para>
   /// </remarks>
-  public Abstractions.IProcessActions? Actions { get; set; }
+  public Abstractions.IProcessActions? Actions {
+    get;
+    set {
+      field = value;
+      this._map.Actions = value;
+      this._windowList.Actions = value;
+    }
+  }
+
+  /// <summary>
+  /// What the process is called, for the pages whose sentences name it.
+  /// </summary>
+  /// <remarks>
+  /// Set by whoever owns the pane. The main window sets it as the selection moves; a properties
+  /// window sets it once and it never changes, which is the point of a properties window.
+  /// </remarks>
+  public string ProcessName {
+    get;
+    set {
+      field = value;
+      this._windowList.Name = value;
+    }
+  } = string.Empty;
+
+  /// <summary>
+  /// What becomes of a tab this machine cannot fill — see <see cref="UnavailableTabs"/> (PRD §26).
+  /// </summary>
+  /// <remarks>
+  /// Settled once per tab and never toggled: a page removed and added back as a reading came and went
+  /// would move every tab to its right while somebody was reading one.
+  /// </remarks>
+  public UnavailableTabs Unavailable { get; set; } = UnavailableTabs.Disabled;
 
   /// <summary>The process the thread rows belong to, for the identity check the actions make.</summary>
   private ProcessKey Key => this._key;
@@ -120,6 +217,8 @@ public sealed class DetailPane : IDisposable {
   public DetailPane(ISystemProbe probe) {
     ArgumentNullException.ThrowIfNull(probe);
     this._probe = probe;
+    this._map = new(probe, actions: null);
+    this._windowList = new(probe, actions: null);
     this._threads.ContextMenuStrip = this.BuildThreadMenu();
     this._modules.ContextMenuStrip = this.BuildModuleMenu();
     this._handles.ContextMenuStrip = this.BuildHandleMenu();
@@ -307,16 +406,33 @@ public sealed class DetailPane : IDisposable {
 
     this._network.ContextMenuStrip = this.BuildNetworkMenu();
 
+    // The four modes §10 asks for that are pages rather than lists. They go on the end because the
+    // toolkit's page collection has Add and Remove and no Insert, and because everything before them
+    // is what somebody opens this pane for most often (PRD §10).
+    //
+    // Timeline is the fifth and is not here: it needs the event history of §63, and nothing in this
+    // program records one yet. A tab named for a feature nobody wrote is worse than a missing one.
+    this._mapPage = AddPage(_MemoryMapTab, this._map.Control);
+    this._windowsPage = AddPage(_WindowsTab, this._windowList.Control);
+    this._servicesPage = AddPage(_ServicesTab, this._serviceFacts.Control);
+    AddPage(_SecurityTab, this._security.Control);
+
     // Switching to a tab is the request to fill it; nothing is collected for a tab nobody looked at.
     this._tabs.SelectedIndexChanged += (_, _) => {
       this._dirty = true;
       this.Refresh();
     };
 
-    void AddPage(string title, Control content) {
+    TabPage AddPage(string title, Control content) {
       var page = new TabPage(title);
+      content.Dock = DockStyle.Fill;
+      // The tab carries the title and the control inside it carries nothing, so a reader who moves
+      // off the strip into the page is told only that it is a table. Named from the tab it is under,
+      // unless the page named itself something better (PRD §74).
+      content.AccessibleName ??= title;
       page.Controls.Add(content);
       this._tabs.TabPages.Add(page);
+      return page;
     }
 
     void AddList(string title, TreeListView list, params (string Header, int Width)[] columns) {
@@ -354,13 +470,326 @@ public sealed class DetailPane : IDisposable {
 
     this._key = key;
     this._dirty = true;
+    // The four pages that are not lists follow the key too. Each of them throws away what it read for
+    // the last process, so a pane that moves with the selection cannot show one process's mappings
+    // under another's name (PRD §72.2).
+    this._map.Key = key;
+    this._windowList.Key = key;
+    this._image = null;
+    this._imageRead = false;
+    this._servicesRead = false;
   }
+
+  #region the four pages that are not lists (PRD §10, §26)
+
+  private const string _MemoryMapTab = "Memory map";
+  private const string _SecurityTab = "Security";
+  private const string _ServicesTab = "Services";
+  private const string _WindowsTab = "Windows";
+
+  private TabPage? _mapPage;
+  private TabPage? _windowsPage;
+  private TabPage? _servicesPage;
+  private bool _mapSettled;
+  private bool _windowsSettled;
+  private bool _servicesRead;
+
+  /// <summary>The last sample's row, for the pages that are filled only while they are showing.</summary>
+  private ProcessRow? _row;
+
+  /// <summary>
+  /// The cgroup path from the last sample, which is what the unit is looked up by.
+  /// </summary>
+  /// <remarks>
+  /// Kept rather than read off the row's Container cell: that cell is formatted for a table, and
+  /// looking a unit up by our own formatting is how the two quietly stop agreeing.
+  /// </remarks>
+  private string? _containerPath;
+
+  private ImageInfo? _image;
+  private bool _imageRead;
+
+  /// <summary>What the Security page says, for a test with no display to read it off (PRD §36).</summary>
+  public string SecurityText => this._security.Description;
+
+  /// <summary>What the Services page says (PRD §41).</summary>
+  public string ServicesText => this._serviceFacts.Description;
+
+  /// <summary>The sentence above the memory map, which is the half that explains an empty one.</summary>
+  public string MemoryMapHeading => this._map.Heading;
+
+  /// <summary>How many mappings the memory map is showing (PRD §34).</summary>
+  public int MemoryMapRows => this._map.RowCount;
+
+  /// <summary>The sentence above the window list — the half that explains an empty one (PRD §39).</summary>
+  public string WindowsHeading => this._windowList.Heading;
+
+  /// <summary>How many windows this process has on screen, as the page last read them (PRD §39).</summary>
+  public int WindowRows => this._windowList.RowCount;
+
+  /// <summary>
+  /// Lays out the four pages the toolkit cannot lay out for us.
+  /// </summary>
+  /// <remarks>
+  /// A control outside the toolkit's own assembly cannot observe its own resize, so whoever owns the
+  /// pane runs this from its layout pass. Every part of it is a no-op once the size has settled.
+  /// </remarks>
+  public void ApplyLayout() {
+    this._map.Stretch();
+    this._windowList.Stretch();
+    this._security.Stretch();
+    this._serviceFacts.Stretch();
+  }
+
+  /// <summary>
+  /// What confines the process: the identity from the sample, and the two things that cost a read.
+  /// </summary>
+  /// <remarks>
+  /// The two extras are read on every tick while this is the page showing rather than once, because
+  /// unlike the image they can change under a running process: a program may drop groups, and a label
+  /// changes at an <c>exec</c>. Two small files for one process is not a cost worth caching wrongly.
+  /// </remarks>
+  private void UpdateSecurity(ProcessRow row) {
+    var extras = new List<KeyValuePair<string, string>>();
+    var security = this._probe.DescribeSecurity(this._key);
+
+    extras.Add(new("Security module", Label(security)));
+    extras.Add(new("Supplementary groups", Groups(security)));
+
+    // The namespaces, from the image description, read once per process and kept. They are where a
+    // container actually is: two processes sharing an inode share that namespace, which is a harder
+    // fact than a cgroup path anybody may write (PRD §14, §36).
+    if (!this._imageRead) {
+      this._imageRead = true;
+      this._image = this._probe.DescribeImage(this._key);
+    }
+
+    if (this._image is { Namespaces.Count: > 0 } image)
+      foreach (var (kind, inode) in image.Namespaces)
+        extras.Add(new($"Namespace, {kind}", inode));
+    else
+      // Said rather than left off. Every process on Linux is in a namespace of every kind, so a page
+      // with no namespace rows on it would be stating something that cannot be true — the honest
+      // reading of an empty list here is that the links under /proc/[pid]/ns could not be followed
+      // (PRD §72.3).
+      extras.Add(new("Namespaces", "not readable — the links under /proc/[pid]/ns need the same permission as attaching a debugger"));
+
+    this._security.Update(row, extras);
+  }
+
+  /// <summary>
+  /// The LSM label, or which of the two reasons there is none.
+  /// </summary>
+  /// <remarks>
+  /// A kernel with no security module fails the read outright rather than producing an empty file, so
+  /// "nothing is confining this" and "we were not allowed to look" arrive the same way and must not be
+  /// reported the same way. Neither is a blank, which would read as a clean bill of health (PRD §70).
+  /// </remarks>
+  private static string Label(ProcessSecurity? security) => security switch {
+    null => "the process has ended",
+    { Label: { Length: > 0 } label } => label,
+    { LabelReason: UnknownReason.NotPermitted } => "not readable as this user",
+    _ => "none — this kernel has no SELinux or AppArmor loaded",
+  };
+
+  private static string Groups(ProcessSecurity? security) {
+    if (security is null)
+      return "the process has ended";
+
+    if (security.GroupsReason != UnknownReason.None)
+      return Humanize.Explain(security.GroupsReason);
+
+    if (security.SupplementaryGroups.Count == 0)
+      // A real answer rather than a hole. Every kernel thread is in none, and so is anything started
+      // by a service manager that cleared them.
+      return "none";
+
+    var names = new List<string>(security.SupplementaryGroups.Count);
+    foreach (var group in security.SupplementaryGroups)
+      // The number always, the name when this machine's own file has one. A group that comes from a
+      // directory service is in no file here and stays a number, which is the honest answer rather
+      // than a blank (PRD §5.3).
+      names.Add(group.Name is { Length: > 0 } name
+        ? $"{name} ({group.Id.ToString(CultureInfo.InvariantCulture)})"
+        : group.Id.ToString(CultureInfo.InvariantCulture));
+
+    return string.Join(", ", names);
+  }
+
+  /// <summary>
+  /// Which service this process belongs to, and what that service's unit file says (PRD §41).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Read once per process, when the page is first asked for. The reading is a walk of every unit file
+  /// on the machine — 372 of them here — which is far too much to spend on a tick, and it does not
+  /// need spending twice: a process cannot move between units while it runs, and a unit that stops
+  /// takes its processes with it. What can change underneath it is somebody running
+  /// <c>systemctl disable</c> in another window, and that is a fair price for not walking a thousand
+  /// files a second (PRD §5.4).
+  /// </para>
+  /// <para>
+  /// The unit comes from the cgroup, because a systemd unit <em>is</em> a cgroup — the same join
+  /// §40's owning-service column makes, through the same code, so the two cannot disagree. The
+  /// innermost one wins: a desktop application sits inside its own session manager, which is itself a
+  /// unit, and naming the outer one would report every program a user starts as belonging to the
+  /// manager that started it.
+  /// </para>
+  /// </remarks>
+  private void UpdateServices() {
+    if (this._servicesRead)
+      return;
+
+    // Before the first sample there is no cgroup to look a unit up by, and the answer would latch —
+    // somebody quick enough to click this tab inside the first tick would have been told for the rest
+    // of the pane's life that the cgroup could not be read. Nothing is settled until there is
+    // something to settle it from; the tick calls this again.
+    if (this._row is null)
+      return;
+
+    this._servicesRead = true;
+    var services = this._probe.GetServices();
+    if (services.Count == 0) {
+      // No service manager this build can read — which is a fact about the machine, not about this
+      // process, and so is the one case the tab may be taken off the strip.
+      this.Settle(ref this._servicesPage);
+      this._serviceFacts.ShowUnavailable(
+        "Nothing on this machine publishes services in a form this build reads. Only systemd is read, "
+        + "from the unit files and the cgroup tree rather than over D-Bus."
+      );
+
+      return;
+    }
+
+    if (CgroupUnit.Of(this._containerPath) is not { } unit) {
+      // A finding rather than a hole, and the tab stays: most of a desktop is like this. A slice is
+      // deliberately not a unit for this purpose — it holds no processes of its own — so a cgroup
+      // with only slices in it answers nothing rather than the nearest thing that looks like one.
+      this._serviceFacts.Update([
+        new("Service", "none — this process is under no systemd unit"),
+        new(
+          "Why",
+          this._containerPath is { Length: > 0 } path
+            ? $"its cgroup is {path}, and no segment of that is a service, a scope or a socket unit"
+            : "its cgroup could not be read, so there is nothing to look a unit up by"
+        ),
+        new("Units on this machine", services.Count.ToString(CultureInfo.InvariantCulture)),
+      ]);
+
+      return;
+    }
+
+    if (FindService(services, unit) is not { } service) {
+      // The cgroup names a unit that the unit-file walk did not produce: a transient scope systemd
+      // made without a file on disk is the usual one. The name is still the truth about the process,
+      // so it is reported, and the absence is explained rather than shown as an empty page.
+      this._serviceFacts.Update([
+        new("Service", unit),
+        new("Unit file", "none on disk — a transient unit, created at runtime and never written out"),
+        new("Read from", "the cgroup this process is in, which is what a systemd unit is"),
+      ]);
+
+      return;
+    }
+
+    this._serviceFacts.Update([
+      new("Service", service.Name),
+      new("Description", service.Description is { Length: > 0 } text ? text : "—"),
+      new("State", DescribeServiceState(service)),
+      new("Starts at boot", StartsAtBoot(service)),
+      // Its own row and not folded into the one above: masked units can never run whatever else is
+      // configured, and it is the setting people forget they made.
+      new("Masked", service.Masked ? "yes — it can never be started while this stands" : "no"),
+      new("Main process", MainProcess(service, this._key.Pid)),
+      new("Service type", service.Type ?? "—"),
+      new("Runs as", service.Account ?? "the unit file names no account, so the manager's default applies: root"),
+      new("Restart policy", service.RestartPolicy is { Length: > 0 } policy ? policy : "—"),
+      new("Command", service.Command is { Length: > 0 } command ? command : "—"),
+      new("Unit file", service.Path.Length > 0 ? service.Path : "none on disk"),
+    ]);
+  }
+
+  private static string DescribeServiceState(ServiceRecord service) => service.State switch {
+    ServiceState.Running => "running",
+    // Not folded into "inactive", which is what this used to say about it: a oneshot unit that set
+    // something up and finished is still doing its job and has nothing in a cgroup to find.
+    ServiceState.Active => "active, with no processes of its own",
+    ServiceState.Inactive => "inactive",
+    _ => "unknown",
+  };
+
+  /// <summary>The unit of that name, or null when the walk of the unit files did not produce one.</summary>
+  private static ServiceRecord? FindService(IReadOnlyList<ServiceRecord> services, string unit) {
+    foreach (var service in services)
+      if (string.Equals(service.Name, unit, StringComparison.Ordinal))
+        return service;
+
+    return null;
+  }
+
+  /// <summary>
+  /// Whether the unit starts at boot.
+  /// </summary>
+  /// <remarks>
+  /// Three answers and not two. A unit started only by a socket or a timer is neither enabled nor
+  /// disabled in the sense the row means, and saying "no" about one would be wrong about a service
+  /// that starts perfectly reliably (PRD §41, §72.3).
+  /// </remarks>
+  private static string StartsAtBoot(ServiceRecord service) => service.Enabled switch {
+    true => "yes",
+    false => "no",
+    _ => "neither — nothing links it into a boot target, so something else starts it: a socket, a timer, or another unit",
+  };
+
+  /// <summary>
+  /// The unit's main process, and whether it is this one.
+  /// </summary>
+  /// <remarks>
+  /// The distinction the page is worth opening for. A service's main process is the one systemd
+  /// watches and restarts; everything else in the cgroup is a child it will take down with it, and
+  /// the two are not the same thing to be looking at.
+  /// </remarks>
+  private static string MainProcess(ServiceRecord service, int pid) {
+    if (service.MainPid <= 0)
+      return "none recorded — the unit's cgroup was empty when it was read";
+
+    var number = service.MainPid.ToString(CultureInfo.InvariantCulture);
+    return service.MainPid == pid
+      ? $"{number} — this process"
+      : $"{number} — this process is one of its children, not the one systemd watches";
+  }
+
+  /// <summary>
+  /// Takes a tab off the strip once, where that is the preference.
+  /// </summary>
+  /// <remarks>
+  /// Only ever called for a state that is a statement about <em>this build</em> rather than about the
+  /// machine or the process. A Wayland session refusing to list windows and a kernel refusing to walk
+  /// a page table are facts about the machine and keep their tab, saying which — collapsing them
+  /// would make "this desktop will not tell you" and "this build cannot ask" the same answer
+  /// (PRD §5.3, §26).
+  /// </remarks>
+  private void Settle(ref TabPage? page) {
+    if (this.Unavailable != UnavailableTabs.Hidden || page is not { } removing)
+      return;
+
+    this._tabs.TabPages.Remove(removing);
+    page = null;
+  }
+
+  #endregion
 
   /// <summary>
   /// Describes the selected process in the overview tab. Called every sample, because the numbers
   /// here come from the snapshot that was just taken and cost nothing.
   /// </summary>
   public void UpdateOverview(in ProcessRecord process, ProcessRow row) {
+    // Kept for the four pages that are filled only when they are the one showing, which cannot ask
+    // the sample for a row of their own.
+    this._row = row;
+    this._containerPath = process.ContainerPath;
+    this.ProcessName = process.Name;
+
     this._overview.Text =
       $"{process.Name} ({process.Pid})    parent {process.ParentPid}    user {row.User}    session {process.SessionId}\n"
       + $"state {row.State}    priority {process.Priority}    nice {process.Nice}    started {row.Started}\n"
@@ -396,6 +825,26 @@ public sealed class DetailPane : IDisposable {
       return;
     }
 
+    // The two sheets that are re-read on every tick while they are showing, unlike the lists beside
+    // them. A security context is two small files and a unit look-up is settled once per process, and
+    // half of what is on the security page — the groups, the label — moves under a running process
+    // (PRD §26).
+    switch (selected) {
+      case _SecurityTab:
+        this._dirty = false;
+        if (this._row is { } row)
+          this.UpdateSecurity(row);
+
+        return;
+
+      case _ServicesTab:
+        this._dirty = false;
+        this.UpdateServices();
+        return;
+
+      default: break;
+    }
+
     if (!this._dirty)
       return;
 
@@ -405,6 +854,27 @@ public sealed class DetailPane : IDisposable {
       case "Handles": this.FillHandles(); break;
       case "Environment": this.FillEnvironment(); break;
       case "Network": this.FillNetwork(); break;
+      // The two whose cost is the size of the process rather than a constant: filled when the tab is
+      // opened, with a button underneath for a fresher answer. The tab is only taken off the strip
+      // for the one state that is a statement about this build (PRD §5.4, §26).
+      case _MemoryMapTab:
+        this._map.EnsureFilled();
+        if (!this._mapSettled && this._map.State == MemoryMapState.NotImplemented) {
+          this._mapSettled = true;
+          this.Settle(ref this._mapPage);
+        }
+
+        break;
+
+      case _WindowsTab:
+        this._windowList.EnsureFilled();
+        if (!this._windowsSettled && this._windowList.State == WindowSourceState.NotImplemented) {
+          this._windowsSettled = true;
+          this.Settle(ref this._windowsPage);
+        }
+
+        break;
+
       default: break;
     }
   }

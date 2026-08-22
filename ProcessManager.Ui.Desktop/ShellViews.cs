@@ -49,18 +49,32 @@ internal sealed class ShellViews(ISystemProbe probe) {
 
   #region what starts when you log in (PRD §42)
 
-  // Every one of these tables is laid out to fit the content region at the window's default width.
-  // That is a constraint rather than a preference: the toolkit's table scrolls vertically and not
-  // horizontally, so a column past the right-hand edge is not a column somebody can scroll to, it is
-  // a column that does not exist. The last one is widened to whatever is actually there, so a wider
-  // window spends the room on the widest value instead of on empty page (PRD §11).
+  // Ordered by what a reader came for, and everything a narrow window cuts off is reachable by
+  // scrolling sideways rather than lost. The last column is widened to whatever is actually there, so
+  // a wider window spends the room on the widest value instead of on empty page (PRD §11).
   private readonly RecordTable _startup = new(
     "Startup entries",
-    ("Name", 220),
-    ("Enabled", 150),
+    // A unit's own name is the long case here: `drkonqi-coredump-cleanup.service` is thirty-two
+    // characters, and at 258 the capture still lost its last letter against the column beside it.
+    ("Name", 276),
+    ("Enabled", 76),
+    // Why, when it will not run. Its own column now rather than sharing the one above: "hidden by a
+    // user override" and "not for this desktop" are different problems with different fixes, and
+    // both of them are longer than the word they used to replace.
+    ("Status", 210),
+    // Which mechanism will start it, which is also what turning it off means. A desktop file and a
+    // user unit are switched in completely different ways (PRD §42).
+    ("Started by", 150),
     ("Scope", 70),
-    ("Shown in", 110),
-    ("Command", 230),
+    // "KDE, GNOME, Unity, XFCE" is a real value on this machine and is twenty-three characters; at
+    // 168 it lost the last desktop in the list, which is the one thing this column is read for.
+    ("Shown in", 196),
+    // What it would cost at login. Empty of numbers on purpose: nothing on this machine measures it,
+    // and a made-up "Medium" is the one answer §42 forbids.
+    ("Impact", 132),
+    ("Program", 230),
+    ("Arguments", 230),
+    ("Description", 240),
     // Last, so it is the one that grows with the window. These paths share a long prefix and differ
     // at the end, so a truncated one loses precisely the part that says which file it is.
     ("Configured by", 250)
@@ -86,19 +100,38 @@ internal sealed class ShellViews(ISystemProbe probe) {
   /// </remarks>
   public StartupEntry? SelectedStartup {
     get {
-      if (this._startup.Selected is not { Length: > 5 } cells)
+      if (this._startup.Selected is not { Length: > _StartupPathColumn } cells)
         return null;
 
       foreach (var entry in this._startupEntries)
-        if (string.Equals(entry.Path, cells[5], StringComparison.Ordinal))
+        if (string.Equals(entry.Path, cells[_StartupPathColumn], StringComparison.Ordinal))
           return entry;
 
       return null;
     }
   }
 
-  /// <summary>Says the switch is there, and how to get at it.</summary>
-  public void StartupIsSwitchable() => this._startupHint = "  Right-click an entry to turn it on or off.";
+  /// <summary>Where the file path is. A column index in one place rather than in three.</summary>
+  private const int _StartupPathColumn = 10;
+
+  /// <summary>Every entry as text, in the order the table shows them (PRD §42, §95).</summary>
+  public string DescribeStartup() => this._startup.Describe();
+
+  /// <summary>The selected entry as text, headers included.</summary>
+  public string DescribeSelectedStartup() => this._startup.DescribeSelected();
+
+  /// <summary>
+  /// Says what a right-click offers here, which depends on whether anything can write the switch.
+  /// </summary>
+  /// <remarks>
+  /// Two sentences and not one-or-nothing. A machine that cannot switch an entry can still open its
+  /// file, reveal its program and copy the row, and a heading that went silent about the menu would
+  /// hide six commands because of three (PRD §7).
+  /// </remarks>
+  public void StartupIsSwitchable(bool switchable)
+    => this._startupHint = switchable
+      ? "  Right-click an entry to turn it on or off."
+      : "  Right-click an entry to open or copy it; nothing here can write the switch.";
 
   private string _startupHint = string.Empty;
 
@@ -119,20 +152,59 @@ internal sealed class ShellViews(ISystemProbe probe) {
     this._startup.Fill(
       entries.Count == 0
         ? "Nothing is configured to start at login — or nothing this build knows how to read is."
-        : $"{entries.Count} entries, {enabled} of which will run.  {AsOf()}{this._startupHint}",
+        // The impact column is named here rather than explained in every cell of it, and the whole
+        // sentence is in an entry's properties box. Short enough to fit the heading band at the
+        // window's default width: the first draft of it was cut off with an ellipsis three words
+        // before the end, which is a clause nobody ever reads (PRD §11, §42).
+        : $"{entries.Count} entries, {enabled} of which will run. Impact is not measured.  {AsOf()}{this._startupHint}",
       entries.Count,
       i => [
         entries[i].Name,
-        // The reason, not the boolean. "Hidden by a user override" and "not for this desktop" are
-        // different problems with different fixes, and a column of "no" tells the reader neither.
-        entries[i].Enabled ? "yes" : entries[i].DisabledReason ?? "no",
+        entries[i].Enabled ? "yes" : "no",
+        // The reason beside the answer, not instead of it. "Hidden by a user override" and "not for
+        // this desktop" are different problems with different fixes, and a column of "no" tells the
+        // reader neither.
+        entries[i].Enabled ? "it will run at your next login" : entries[i].DisabledReason ?? "switched off",
+        entries[i].Mechanism switch {
+          StartupMechanism.SystemdUserUnit => "systemd user unit",
+          _ => "XDG autostart",
+        },
         entries[i].Scope == StartupScope.System ? "machine" : "user",
-        entries[i].OnlyShowIn ?? "any desktop",
-        entries[i].Command,
-        entries[i].Path,
+        Desktops(entries[i].OnlyShowIn),
+        // No category and no invented number. Working out what an entry costs at login means timing
+        // the login, and nothing here does — a "Medium" derived from the size of the binary would be
+        // a guess wearing a measurement's clothes (PRD §42).
+        _NoImpactMeasurement,
+        entries[i].Executable ?? "—",
+        entries[i].Arguments ?? "—",
+        entries[i].Description ?? "—",
+        entries[i].Path.Length > 0 ? entries[i].Path : "no file — only the enablement",
       ]
     );
   }
+
+  /// <summary>
+  /// What the impact column says on a machine that measures nothing (PRD §42).
+  /// </summary>
+  /// <remarks>
+  /// Short, because it is on every row; the heading carries the sentence. What it must not be is a
+  /// category: "Medium" next to a program nobody has timed is the invented answer §42 exists to
+  /// forbid, and it is the one a reader would act on.
+  /// </remarks>
+  private const string _NoImpactMeasurement = "not measured";
+
+  /// <summary>
+  /// The desktops an entry is limited to, as a list a person reads rather than as the file's own.
+  /// </summary>
+  /// <remarks>
+  /// The specification's separator is a semicolon and its lists end with one, so the raw value is
+  /// <c>KDE;GNOME;Unity;</c> — which reads as a fourth, empty desktop. The value is not changed
+  /// anywhere it matters: the entry's own file still says what it says, and this is a cell.
+  /// </remarks>
+  private static string Desktops(string? onlyShowIn)
+    => onlyShowIn is { Length: > 0 } list
+      ? string.Join(", ", list.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+      : "any desktop";
 
   #endregion
 
@@ -183,14 +255,39 @@ internal sealed class ShellViews(ISystemProbe probe) {
 
   #region what the machine runs in the background (PRD §41)
 
+  // Ordered by what a reader came for rather than by what a unit file happens to say first. The list
+  // scrolls sideways, so the columns past the right-hand edge are reachable rather than lost — which
+  // is what makes fourteen of them defensible where six used to be the ceiling (PRD §11, §41).
   private readonly RecordTable _services = new(
     "Services",
-    // Unit names run long — `NetworkManager-wait-online-initrd.service` is not unusual.
-    ("Unit", 300),
-    ("State", 78),
-    ("At boot", 88),
+    // Unit names run long — `NetworkManager-wait-online-initrd.service` is not unusual, and it is
+    // forty characters. Measured off a capture rather than guessed: at 320 that unit's name still lost its last letter against
+    // the state beside it with nothing between them.
+    ("Unit", 348),
+    // State and sub-state in one cell. "active · exited" is one answer at two levels of detail, and
+    // two columns would put "active" beside "exited" as though they disagreed.
+    ("State", 120),
+    ("At boot", 84),
     ("Main PID", 72),
-    ("Unit file", 260),
+    // When the manager's current invocation of the unit began, from its own runtime directory. As
+    // wide as a whole timestamp: at 140 the capture showed "2026-08-18 18:41:4(", which is a minute
+    // that could be any of sixty.
+    ("Started", 158),
+    // "notify-reload" is the longest of systemd's type names and is thirteen characters; at 88 it
+    // photographed as "notify-reloa" running into the account beside it.
+    ("Type", 112),
+    // The account, and whether the unit says so or is taking the manager's default. Two different
+    // statements about a unit, and one column that collapses them would be wrong about both.
+    ("Runs as", 118),
+    ("Load", 84),
+    // "on-failure" and "on-abnormal" are the two long ones; at 82 the first lost its last letter.
+    ("Restart", 96),
+    // How many units this one is tied to, and how many are tied to it. The counts rather than the
+    // lists: the lists are what "Inspect dependencies…" opens, and one of them is forty units long.
+    ("Needs", 56),
+    ("Needed by", 78),
+    ("Command", 280),
+    ("Unit file", 250),
     ("Description", 260)
   );
 
@@ -200,8 +297,18 @@ internal sealed class ShellViews(ISystemProbe probe) {
   /// </summary>
   private string _servicesHint = "  Starting and stopping them needs a service manager this build cannot reach.";
 
-  /// <summary>Says the commands are there, and how to get at them.</summary>
-  public void ServicesAreCommandable() => this._servicesHint = "  Right-click a unit to start, stop or enable it.";
+  /// <summary>
+  /// Says what a right-click offers here, which depends on whether there is a manager to ask.
+  /// </summary>
+  /// <remarks>
+  /// The second sentence is not a consolation prize. Opening a unit file, going to its main process
+  /// and reading its dependencies are the things somebody diagnosing a machine actually needs, and
+  /// none of them asks a manager for anything (PRD §7).
+  /// </remarks>
+  public void ServicesAreCommandable(bool commandable)
+    => this._servicesHint = commandable
+      ? "  Right-click a unit to start, stop or enable it."
+      : "  Right-click a unit to inspect it; starting and stopping needs a manager this build cannot reach.";
 
   public Control ServicesControl => this._services.Control;
 
@@ -211,23 +318,28 @@ internal sealed class ShellViews(ISystemProbe probe) {
 
   public void RefreshServices() {
     var services = this._probe.GetServices();
+    this._serviceRows = services;
     var running = 0;
+    var active = 0;
     foreach (var service in services)
-      if (service.State == ServiceState.Running)
-        ++running;
+      switch (service.State) {
+        case ServiceState.Running: ++running; break;
+        case ServiceState.Active: ++active; break;
+        default: break;
+      }
 
     this._services.Fill(
       services.Count == 0
         ? "No services came back. On Windows the service control manager is not read yet; on Linux this needs systemd's unit files."
-        : $"{services.Count} units, {running} running.  {AsOf()}{this._servicesHint}",
+        // Active and running counted apart, because they are different answers: a unit that set
+        // something up and finished is still doing its job and has nothing in a cgroup. Kept short
+        // enough to fit the heading band at the window's default width — a sentence the label has to
+        // cut off with an ellipsis is one whose last clause nobody reads.
+        : $"{services.Count} units, {running} running and {active} more active with no processes.  {AsOf()}{this._servicesHint}",
       services.Count,
       i => [
         services[i].Name,
-        services[i].State switch {
-          ServiceState.Running => "running",
-          ServiceState.Inactive => "inactive",
-          _ => "—",
-        },
+        DescribeState(services[i]),
         // Masked first, because a masked unit can never run whatever else is configured, and it is
         // the state people forget they set. Null is neither enabled nor disabled — a unit started by
         // a socket or a timer is genuinely neither.
@@ -237,14 +349,87 @@ internal sealed class ShellViews(ISystemProbe probe) {
           null => "—",
         },
         services[i].MainPid > 0 ? services[i].MainPid.ToString(CultureInfo.InvariantCulture) : "—",
-        services[i].Path,
-        // Last, and it is the column somebody reads to find out what a unit is for. The restart
-        // policy is not here: seven columns do not fit the content region, the table does not
-        // scroll sideways, and a column past the edge is not one somebody can scroll to.
+        Started(services[i].ActivatedUtcTicks),
+        services[i].Type ?? "—",
+        // The default is stated as a default. "It says root" and "it says nothing, and the system
+        // manager's default is root" are different facts about a unit (PRD §5.3).
+        services[i].Account ?? (services[i].LoadState == ServiceLoadState.Loaded ? "root (default)" : "—"),
+        services[i].LoadState switch {
+          ServiceLoadState.Loaded => "loaded",
+          ServiceLoadState.Masked => "masked",
+          ServiceLoadState.Transient => "transient",
+          _ => "—",
+        },
+        services[i].RestartPolicy ?? "—",
+        services[i].Dependencies.Count.ToString(CultureInfo.InvariantCulture),
+        services[i].Dependents.Count.ToString(CultureInfo.InvariantCulture),
+        services[i].Command ?? "—",
+        services[i].Path.Length > 0 ? services[i].Path : "none on disk",
+        // The column somebody reads to find out what a unit is for, and last so it takes the width
+        // the window has spare.
         services[i].Description ?? "—",
       ]
     );
   }
+
+  /// <summary>
+  /// The state and the sub-state in one cell (PRD §41).
+  /// </summary>
+  /// <remarks>
+  /// "active · exited" is one answer at two levels of detail: the unit is doing its job and there is
+  /// nothing of it in a cgroup, which is what a <c>oneshot</c> that set something up looks like. Two
+  /// columns would print those side by side as though they were two claims that disagreed.
+  /// </remarks>
+  private static string DescribeState(ServiceRecord service) => service.State switch {
+    ServiceState.Running => "running",
+    ServiceState.Active => "active · exited",
+    ServiceState.Inactive => "inactive",
+    _ => "—",
+  };
+
+  /// <summary>
+  /// When the unit's current invocation began, or which of the two reasons there is no answer.
+  /// </summary>
+  /// <remarks>
+  /// A unit the manager holds no invocation of has not started, and a machine whose manager writes no
+  /// runtime directory cannot say whether anything has. Both are placeholders and they are not the
+  /// same placeholder (PRD §72.3).
+  /// </remarks>
+  private static string Started(Counter activated)
+    => activated.TryGetValue(out var ticks)
+      ? Humanize.Timestamp((long)ticks)
+      : activated.Reason == UnknownReason.SourceGone ? "—" : Humanize.Placeholder(activated.Reason);
+
+  /// <summary>
+  /// The units as they were last read, so an action works from the record rather than from the text
+  /// of a row.
+  /// </summary>
+  /// <remarks>
+  /// A dependency list, a unit file path and an executable are all things a menu item needs and none
+  /// of them survives a trip through a table cell intact — the command cell holds one line, and the
+  /// dependency cells hold counts.
+  /// </remarks>
+  private IReadOnlyList<ServiceRecord> _serviceRows = [];
+
+  /// <summary>The record behind the selected unit, or null when the cursor is on nothing.</summary>
+  public ServiceRecord? SelectedServiceRecord {
+    get {
+      if (this.SelectedService is not { Length: > 0 } name)
+        return null;
+
+      foreach (var service in this._serviceRows)
+        if (string.Equals(service.Name, name, StringComparison.Ordinal))
+          return service;
+
+      return null;
+    }
+  }
+
+  /// <summary>Every unit as text, in the order the table shows them (PRD §41, §95).</summary>
+  public string DescribeServices() => this._services.Describe();
+
+  /// <summary>The selected unit as text, headers included.</summary>
+  public string DescribeSelectedService() => this._services.DescribeSelected();
 
   /// <summary>
   /// Puts the cursor on one unit, for a navigation that came from a process (PRD §25.3).

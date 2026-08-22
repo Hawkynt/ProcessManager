@@ -171,7 +171,7 @@ public sealed class StartupControlTests {
       File.WriteAllText(file, _Entry);
 
       var entry = new StartupEntry("Something", "x", file, true, null, StartupScope.User, null);
-      var result = new XdgAutostartControl(directory).SetEnabled(in entry, enabled: false);
+      var result = new LinuxStartupControl(directory).SetEnabled(in entry, enabled: false);
 
       Assert.That(result.Succeeded, Is.True, result.Detail);
       Assert.That(File.ReadAllText(file), Does.Contain("Hidden=true"));
@@ -195,7 +195,7 @@ public sealed class StartupControlTests {
       File.WriteAllText(file, _Entry);
 
       var entry = new StartupEntry("Something", "x", file, true, null, StartupScope.System, null);
-      var result = new XdgAutostartControl(directory).SetEnabled(in entry, enabled: false);
+      var result = new LinuxStartupControl(directory).SetEnabled(in entry, enabled: false);
 
       Assert.Multiple(() => {
         Assert.That(result.Succeeded, Is.True, result.Detail);
@@ -230,7 +230,7 @@ public sealed class StartupControlTests {
       File.WriteAllText(file, _Entry);
 
       var entry = new StartupEntry("Something", "x", file, true, null, StartupScope.System, null);
-      var control = new XdgAutostartControl(directory);
+      var control = new LinuxStartupControl(directory);
       control.SetEnabled(in entry, enabled: false);
 
       Assert.That(control.SetEnabled(in entry, enabled: true).Succeeded, Is.True);
@@ -253,7 +253,7 @@ public sealed class StartupControlTests {
       File.WriteAllText(file, _Entry);
 
       var entry = new StartupEntry("Something", "x", file, true, null, StartupScope.User, null);
-      new XdgAutostartControl(directory).SetEnabled(in entry, enabled: false);
+      new LinuxStartupControl(directory).SetEnabled(in entry, enabled: false);
 
       Assert.That(Directory.GetFiles(directory, "*.procman-new"), Is.Empty);
     } finally {
@@ -273,7 +273,7 @@ public sealed class StartupControlTests {
       File.WriteAllText(file, _Entry);
 
       var entry = new StartupEntry("Something", "x", file, true, null, StartupScope.User, null);
-      new XdgAutostartControl(directory).SetEnabled(in entry, enabled: false);
+      new LinuxStartupControl(directory).SetEnabled(in entry, enabled: false);
 
       var read = XdgAutostartReader.Read(directory, [], null);
       Assert.That(read, Has.Count.EqualTo(1));
@@ -281,6 +281,129 @@ public sealed class StartupControlTests {
     } finally {
       Directory.Delete(directory, recursive: true);
     }
+  }
+
+  #endregion
+
+  #region removing an entry (PRD §42)
+
+  /// <summary>
+  /// The user's own file is theirs to delete, and this is the only case that deletes anything.
+  /// </summary>
+  [Test]
+  public void AUsersOwnEntryCanBeDeleted() {
+    var directory = Scratch();
+    try {
+      var file = Path.Combine(directory, "mine.desktop");
+      File.WriteAllText(file, _Entry);
+
+      var entry = new StartupEntry("Something", "x", file, true, null, StartupScope.User, null);
+      var result = new LinuxStartupControl(directory).Delete(in entry);
+
+      Assert.That(result.Succeeded, Is.True, result.Detail);
+      Assert.That(File.Exists(file), Is.False);
+    } finally {
+      Directory.Delete(directory, recursive: true);
+    }
+  }
+
+  /// <summary>
+  /// A package's file is refused, and the refusal names the thing to do instead. Deleting it looks
+  /// like it worked and does not: the next update of that package puts it straight back.
+  /// </summary>
+  [Test]
+  public void APackagesEntryIsRefusedRatherThanDeleted() {
+    var system = Scratch() + "-package";
+    Directory.CreateDirectory(system);
+    try {
+      var file = Path.Combine(system, "theirs.desktop");
+      File.WriteAllText(file, _Entry);
+
+      var entry = new StartupEntry("Something", "x", file, true, null, StartupScope.System, null);
+      var result = new LinuxStartupControl(Path.Combine(system, "user")).Delete(in entry);
+
+      Assert.Multiple(() => {
+        Assert.That(result.Succeeded, Is.False);
+        Assert.That(result.Outcome, Is.EqualTo(ActionOutcome.Refused));
+        Assert.That(result.Detail, Does.Contain("switching it off"));
+        Assert.That(File.Exists(file), Is.True, "and it is still there");
+      });
+    } finally {
+      Directory.Delete(system, recursive: true);
+    }
+  }
+
+  /// <summary>
+  /// A unit file is refused too, for a different reason: the enablement that lists it is a symlink,
+  /// and deleting the file behind it leaves the manager complaining at every login afterwards.
+  /// </summary>
+  [Test]
+  public void AUserUnitIsRefusedRatherThanDeleted() {
+    var directory = Scratch();
+    try {
+      var entry = new StartupEntry("agent.service", "x", "/nowhere/agent.service", true, null, StartupScope.User, null) {
+        Mechanism = StartupMechanism.SystemdUserUnit,
+      };
+
+      var result = new LinuxStartupControl(directory).Delete(in entry);
+
+      Assert.That(result.Succeeded, Is.False);
+      Assert.That(result.Detail, Does.Contain("Switching it off"));
+    } finally {
+      Directory.Delete(directory, recursive: true);
+    }
+  }
+
+  #endregion
+
+  #region a unit is handed to the manager that owns it (PRD §42)
+
+  /// <summary>
+  /// Nothing here starts, stops or enables anything on the machine: the control is handed a stand-in
+  /// that records what it was asked and does nothing at all. What is being tested is the routing —
+  /// that a unit goes to the manager and not into a desktop file the manager would never read.
+  /// </summary>
+  private sealed class RecordingUnits : IServiceControl {
+
+    public bool IsAvailable { get; init; } = true;
+
+    public string Asked { get; private set; } = string.Empty;
+
+    public ActionResult Apply(ServiceCommand command, string unit, bool userScope = false) {
+      this.Asked = $"{IServiceControl.Verb(command)} {unit} {(userScope ? "user" : "system")}";
+      return ActionResult.Ok;
+    }
+
+  }
+
+  [Test]
+  public void SwitchingAUnitOffAsksTheUsersOwnManager() {
+    var units = new RecordingUnits();
+    var entry = new StartupEntry("agent.service", "x", "/nowhere/agent.service", true, null, StartupScope.User, null) {
+      Mechanism = StartupMechanism.SystemdUserUnit,
+    };
+
+    var result = new LinuxStartupControl("/nowhere", units).SetEnabled(in entry, enabled: false);
+
+    Assert.That(result.Succeeded, Is.True, result.Detail);
+    Assert.That(units.Asked, Is.EqualTo("disable agent.service user"), "the user's manager, not the system's");
+  }
+
+  /// <summary>
+  /// And with no manager to ask, it refuses and says why rather than writing a <c>Hidden=</c> key into
+  /// a unit file, which nothing on the machine reads.
+  /// </summary>
+  [Test]
+  public void WithNoManagerAUnitRefusesRatherThanBeingEdited() {
+    var entry = new StartupEntry("agent.service", "x", "/nowhere/agent.service", true, null, StartupScope.User, null) {
+      Mechanism = StartupMechanism.SystemdUserUnit,
+    };
+
+    var result = new LinuxStartupControl("/nowhere", new RecordingUnits { IsAvailable = false })
+      .SetEnabled(in entry, enabled: false);
+
+    Assert.That(result.Succeeded, Is.False);
+    Assert.That(result.Outcome, Is.EqualTo(ActionOutcome.NotSupportedOnPlatform));
   }
 
   #endregion

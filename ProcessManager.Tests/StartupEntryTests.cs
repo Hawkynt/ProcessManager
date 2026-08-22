@@ -19,6 +19,10 @@ public sealed class StartupEntryTests {
       AutostartUserDirectory = Path.Combine(Fixtures, "autostart-user"),
       AutostartSystemDirectories = [Path.Combine(Fixtures, "autostart-system")],
       CurrentDesktop = desktop,
+      // Named empty, and never left to the default: the other half of what starts at login is read
+      // from the machine's own user-unit directories, and a fixture that quietly picked those up
+      // would pass or fail according to what the runner happens to have installed.
+      UserUnitDirectories = [],
       EffectiveUserId = 0,
     });
 
@@ -179,10 +183,120 @@ public sealed class StartupEntryTests {
       ProcRoot = Path.Combine(Fixtures, "proc-desktop"),
       AutostartUserDirectory = Path.Combine(Fixtures, "does-not-exist"),
       AutostartSystemDirectories = [Path.Combine(Fixtures, "also-not-there")],
+      UserUnitDirectories = [Path.Combine(Fixtures, "no-units-here")],
       EffectiveUserId = 0,
     });
 
     Assert.That(probe.GetStartupEntries(), Is.Empty);
+  }
+
+  /// <summary>
+  /// The command is split once, where the format is known, rather than by every reader of the row.
+  /// A field code is not an argument and a quoted path may contain a space, so the first word of the
+  /// command is not reliably the program (PRD §42).
+  /// </summary>
+  [Test]
+  public void TheProgramAndItsArgumentsAreSeparated() {
+    var entry = One(Read(), "Plain Thing");
+
+    Assert.That(entry.Mechanism, Is.EqualTo(StartupMechanism.XdgAutostart));
+    Assert.That(entry.Executable, Is.Not.Null.And.Not.Empty);
+    Assert.That(entry.Command, Does.StartWith(entry.Executable!));
+  }
+
+  #endregion
+
+  #region the other half: systemd user units (PRD §42)
+
+  /// <summary>
+  /// A user unit that <c>default.target</c> wants is a login-time entry by any reasonable reading —
+  /// it is started when the session starts — and for as long as this program looked only in the
+  /// autostart directories it reported a machine with a dozen of them as having nothing at login.
+  /// </summary>
+  private static string UnitTree() {
+    var root = Path.Combine(Path.GetTempPath(), $"procman-user-units-{Guid.NewGuid():N}");
+    var vendor = Path.Combine(root, "usr");
+    var mine = Path.Combine(root, "mine");
+    Directory.CreateDirectory(Path.Combine(vendor, "default.target.wants"));
+    Directory.CreateDirectory(Path.Combine(mine, "default.target.wants"));
+
+    File.WriteAllText(Path.Combine(vendor, "agent.service"), """
+      [Unit]
+      Description=Something the session needs
+
+      [Service]
+      ExecStart=/usr/lib/agent --session
+      """);
+
+    File.WriteAllText(Path.Combine(vendor, "default.target.wants", "agent.service"), "symlink stand-in");
+
+    // A timer in the same directory. It is a schedule rather than a thing that starts at login, and
+    // listing it here would be answering a different question (PRD §5.3).
+    File.WriteAllText(Path.Combine(vendor, "cleanup.timer"), "[Unit]\nDescription=Weekly tidy\n");
+    File.WriteAllText(Path.Combine(vendor, "default.target.wants", "cleanup.timer"), "symlink stand-in");
+
+    // An enablement whose unit was removed with the package. It will never run, and saying so is
+    // more use than leaving it out: the symlink is still there and still somebody's to delete.
+    File.WriteAllText(Path.Combine(mine, "default.target.wants", "gone.service"), "symlink stand-in");
+    return root;
+  }
+
+  private static IReadOnlyList<StartupEntry> ReadUnits(string root) {
+    using var probe = new LinuxProbe(new() {
+      ProcRoot = Path.Combine(Fixtures, "proc-desktop"),
+      AutostartUserDirectory = Path.Combine(Fixtures, "does-not-exist"),
+      AutostartSystemDirectories = [],
+      UserUnitDirectories = [Path.Combine(root, "usr"), Path.Combine(root, "mine")],
+      EffectiveUserId = 0,
+    });
+
+    return probe.GetStartupEntries();
+  }
+
+  [Test]
+  public void AUserUnitThatDefaultTargetWantsIsALoginEntry() {
+    var root = UnitTree();
+    try {
+      var entry = One(ReadUnits(root), "agent.service");
+
+      Assert.Multiple(() => {
+        Assert.That(entry.Mechanism, Is.EqualTo(StartupMechanism.SystemdUserUnit));
+        Assert.That(entry.Enabled, Is.True, "the symlink is the enablement");
+        Assert.That(entry.Executable, Is.EqualTo("/usr/lib/agent"));
+        Assert.That(entry.Arguments, Is.EqualTo("--session"));
+        Assert.That(entry.Description, Is.EqualTo("Something the session needs"));
+      });
+    } finally {
+      Directory.Delete(root, recursive: true);
+    }
+  }
+
+  [Test]
+  public void ATimerInTheSameDirectoryIsNotALoginEntry() {
+    var root = UnitTree();
+    try {
+      foreach (var entry in ReadUnits(root))
+        Assert.That(entry.Name, Is.Not.EqualTo("cleanup.timer"));
+    } finally {
+      Directory.Delete(root, recursive: true);
+    }
+  }
+
+  /// <summary>
+  /// An enablement pointing at a unit that is not installed. Reported, and reported as one that will
+  /// not run — leaving it out would hide a symlink somebody has to remove by hand.
+  /// </summary>
+  [Test]
+  public void AnEnablementWithNoUnitFileIsListedAndSaysWhyItWillNotRun() {
+    var root = UnitTree();
+    try {
+      var entry = One(ReadUnits(root), "gone.service");
+
+      Assert.That(entry.Enabled, Is.False);
+      Assert.That(entry.DisabledReason, Does.Contain("no unit file"));
+    } finally {
+      Directory.Delete(root, recursive: true);
+    }
   }
 
   #endregion

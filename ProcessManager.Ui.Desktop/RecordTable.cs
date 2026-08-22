@@ -127,6 +127,40 @@ internal sealed class RecordTable {
   public string[]? Selected => this._list.SelectedNode?.Tag as string[];
 
   /// <summary>
+  /// Every row as tab-separated text, with the column headers above it (PRD §95).
+  /// </summary>
+  /// <remarks>
+  /// The headers and not only the values: a row of fourteen cells pasted into a message is unreadable
+  /// without them, and this is the only way to the columns a narrow window puts off the right-hand
+  /// edge.
+  /// </remarks>
+  public string Describe() {
+    var text = new System.Text.StringBuilder();
+    text.Append(this.Headers());
+    foreach (var node in this._list.Nodes)
+      if (node.Tag is string[] cells)
+        text.Append('\n').Append(string.Join('\t', cells));
+
+    return text.ToString();
+  }
+
+  /// <summary>The selected row as text, headers included. Empty when nothing is selected.</summary>
+  public string DescribeSelected()
+    => this.Selected is { } cells ? this.Headers() + "\n" + string.Join('\t', cells) : string.Empty;
+
+  private string Headers() {
+    var text = new System.Text.StringBuilder();
+    for (var i = 0; i < this._list.Columns.Count; ++i) {
+      if (i > 0)
+        text.Append('\t');
+
+      text.Append(this._list.Columns[i].Text);
+    }
+
+    return text.ToString();
+  }
+
+  /// <summary>
   /// Selects the row whose first cell is <paramref name="name"/> (PRD §25.3).
   /// </summary>
   /// <remarks>

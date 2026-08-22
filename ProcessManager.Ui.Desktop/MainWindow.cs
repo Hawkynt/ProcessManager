@@ -233,6 +233,10 @@ public sealed class MainWindow : Form {
 
     this._settings = settings;
     this._save = save;
+    // The lower pane's four page-shaped modes take the same preference the properties window takes,
+    // because they are the same four pages: whether a tab this machine cannot fill stays put saying
+    // so, or comes off the strip (PRD §10, §26).
+    this._details.Unavailable = settings.HideUnavailableTabs ? UnavailableTabs.Hidden : UnavailableTabs.Disabled;
     RowPalette.Apply(settings.Colours);
     ProcessRow.Thresholds = settings.Thresholds;
 
@@ -1944,16 +1948,19 @@ public sealed class MainWindow : Form {
     // lifetime, and embedding a second copy of it here would mean two of everything it samples.
     this.AddView("Performance", null, this.ShowPerformance, () => "opens the performance window", () => 0);
     this.AddView("Startup", this._shell.StartupControl, this._shell.RefreshStartup, () => this._shell.StartupText, () => this._shell.StartupRows);
-    if (this._startup is { IsAvailable: true }) {
-      this._shell.StartupMenu = this.StartupMenu();
-      this._shell.StartupIsSwitchable();
-    }
+    // The menu is hung either way now. Most of what it offers only looks at an entry — open its
+    // file, reveal its program, copy the row — and a machine that cannot write the switch can still
+    // do all of that. Hiding the whole menu because of the three items that write hid six that do
+    // not (PRD §7, §42).
+    var switchable = this._startup is { IsAvailable: true };
+    this._shell.StartupMenu = this.StartupMenu(switchable);
+    this._shell.StartupIsSwitchable(switchable);
+
     this.AddView("Users", this._shell.SessionsControl, this._shell.RefreshSessions, () => this._shell.SessionsText, () => this._shell.SessionsRows);
     this.AddView("Services", this._shell.ServicesControl, this._shell.RefreshServices, () => this._shell.ServicesText, () => this._shell.ServicesRows);
-    if (this._services is { IsAvailable: true }) {
-      this._shell.ServicesMenu = this.ServiceMenu();
-      this._shell.ServicesAreCommandable();
-    }
+    var commandable = this._services is { IsAvailable: true };
+    this._shell.ServicesMenu = this.ServiceMenu(commandable);
+    this._shell.ServicesAreCommandable(commandable);
     this.AddView("Network", this._shell.NetworkControl, this.RefreshNetwork, () => this._shell.NetworkText, () => this._shell.NetworkRows);
     this.AddView("Find resources", null, this.FindResource, () => "opens the find dialog", () => 0);
 
@@ -2419,6 +2426,10 @@ public sealed class MainWindow : Form {
     }
 
     this._shell.Stretch();
+    // The lower pane's four page-shaped modes — the memory map, the window list, the security context
+    // and the unit — lay out the same way the shell tables do, because a control outside the toolkit's
+    // own assembly cannot observe its own resize (PRD §10).
+    this._details.ApplyLayout();
 
     if (this._splitPlaced || this._split.Height <= 240)
       return;
@@ -2631,11 +2642,183 @@ public sealed class MainWindow : Form {
   /// be off for a reason that is not this switch — not for this desktop, or its program is missing —
   /// and a single "toggle" would have to guess which way it was going.
   /// </remarks>
-  private ContextMenuStrip StartupMenu() {
+  /// <param name="switchable">
+  /// Whether anything here can write the switch. False leaves the six items that only look at an
+  /// entry and drops the three that change one — a menu of items that all answer "not on this
+  /// platform" is worse than a shorter menu (PRD §7).
+  /// </param>
+  private ContextMenuStrip StartupMenu(bool switchable) {
     var menu = new ContextMenuStrip();
-    menu.Items.Add(Item("Run this at login", () => this.SwitchStartup(true)));
-    menu.Items.Add(Item("Do not run this at login", () => this.SwitchStartup(false)));
+    if (switchable) {
+      menu.Items.Add(Item("Run this at login", () => this.SwitchStartup(true)));
+      menu.Items.Add(Item("Do not run this at login", () => this.SwitchStartup(false)));
+      menu.Items.Add(new ToolStripSeparator());
+    }
+
+    // Now rather than at login, which is what somebody who has just switched an entry on wants next.
+    menu.Items.Add(Item("Run it now", this.RunStartupEntryNow));
+    menu.Items.Add(Item("Open its configuration", this.OpenStartupConfiguration));
+    menu.Items.Add(Item("Reveal its program", this.RevealStartupProgram));
+    menu.Items.Add(Item("Entry properties…", this.ShowStartupProperties));
+    menu.Items.Add(Item("Copy row", () => Clipboard.SetText(this._shell.DescribeSelectedStartup())));
+    menu.Items.Add(Item("Copy all entries", () => Clipboard.SetText(this._shell.DescribeStartup())));
+
+    // Below a rule and last, deliberately. Turning an entry off is undone by the item at the top of
+    // this menu; deleting a file is undone by nothing at all (PRD §42, §69).
+    if (switchable) {
+      menu.Items.Add(new ToolStripSeparator());
+      menu.Items.Add(Item("Delete this entry…", this.DeleteStartupEntry));
+    }
+
     return menu;
+  }
+
+  /// <summary>
+  /// Starts the entry's program now (PRD §42).
+  /// </summary>
+  /// <remarks>
+  /// Through the same launcher as everything else this program starts, so it goes through the same
+  /// refusals and the same tests. The arguments come off the entry rather than being re-split here:
+  /// the split was done once where the file format was known, and doing it again would be a second
+  /// opinion about the same string.
+  /// </remarks>
+  private void RunStartupEntryNow() {
+    if (this._shell.SelectedStartup is not { } entry)
+      return;
+
+    if (this._actions is null) {
+      this.Say("This build has no actions for this platform.");
+      return;
+    }
+
+    if (entry.Executable is not { Length: > 0 } program) {
+      this.Say(
+        entry.Mechanism == StartupMechanism.SystemdUserUnit
+          ? $"'{entry.Name}' names no program to run — its unit file has no ExecStart, or there is no unit file."
+          : $"'{entry.Name}' names no program to run."
+      );
+
+      return;
+    }
+
+    // The field codes a .desktop file's Exec carries — %U, %f, %i — are the launcher's business and
+    // not arguments to the program. Passing them through starts the program with a literal "%U" on
+    // its command line, which several programs treat as a file name and fail on.
+    var arguments = new List<string>();
+    foreach (var argument in (entry.Arguments ?? string.Empty).Split(' ', StringSplitOptions.RemoveEmptyEntries))
+      if (argument.Length != 2 || argument[0] != '%' || argument[1] == '%')
+        arguments.Add(argument);
+
+    var result = this._actions.Launch(new(program, arguments));
+    this.Say(result.Outcome.Succeeded
+      ? $"Started {entry.Name} as pid {result.Pid}."
+      : result.Outcome.Detail ?? result.Outcome.Outcome.ToString());
+  }
+
+  private void OpenStartupConfiguration() {
+    if (this._shell.SelectedStartup is not { } entry)
+      return;
+
+    if (entry.Path is not { Length: > 0 } path) {
+      this.Say($"'{entry.Name}' has no file behind it — only the enablement that names it.");
+      return;
+    }
+
+    this.Hand(DesktopOpen.Open(path), "There is no desktop opener here to hand the file to.");
+  }
+
+  private void RevealStartupProgram() {
+    if (this._shell.SelectedStartup is not { } entry)
+      return;
+
+    if (entry.Executable is not { Length: > 0 } program) {
+      this.Say($"'{entry.Name}' names no program, so there is no folder to open.");
+      return;
+    }
+
+    this.Hand(DesktopOpen.Reveal(program), "There is no desktop opener here to hand the folder to.");
+  }
+
+  /// <summary>
+  /// Everything one login entry is, in a box (PRD §42).
+  /// </summary>
+  /// <remarks>
+  /// The row is one line high and several of these answers are not: a reason for not running is a
+  /// sentence, a command is two hundred characters, and the impact rows exist to say plainly that
+  /// nothing here measured them.
+  /// </remarks>
+  private void ShowStartupProperties() {
+    if (this._shell.SelectedStartup is not { } entry)
+      return;
+
+    var facts = new List<KeyValuePair<string, string>> {
+      new("Name", entry.Name),
+      new("Will run at login", entry.Enabled ? "yes" : "no — " + (entry.DisabledReason ?? "switched off")),
+      new("Started by", entry.Mechanism == StartupMechanism.SystemdUserUnit
+        ? "the systemd user manager, because default.target wants this unit"
+        : "the desktop session, from an XDG autostart entry"),
+      new("Scope", entry.Scope == StartupScope.System
+        ? "the whole machine — the file belongs to a package"
+        : "this user only"),
+      new("Only on", entry.OnlyShowIn ?? "any desktop"),
+      new("Program", entry.Executable ?? "—"),
+      new("Arguments", entry.Arguments ?? "—"),
+      new("Command, as written", entry.Command.Length > 0 ? entry.Command : "—"),
+      new("Description", entry.Description ?? "the file carries none"),
+      new("Configured by", entry.Path.Length > 0 ? entry.Path : "no file — only the enablement that names it"),
+      // Said outright rather than left off. Four missing rows read as four fields nobody wrote, and
+      // an absent impact row reads as an entry that costs nothing (PRD §72.3, §42).
+      new("Startup impact", "not measured — working this out means timing a login, and nothing here does"),
+      new("Startup processor time", "not measured, for the same reason"),
+      new("Startup disk I/O", "not measured, for the same reason"),
+      new("Last launched", "not recorded — neither mechanism keeps a history of when an entry last ran"),
+      new("Publisher", "not read — asking the package database which package owns the program is a "
+        + "separate, dearer question this view does not spend"),
+      new("Signature", "not read — this build verifies no signatures"),
+    };
+
+    new FactsDialog($"Startup entry — {entry.Name}", facts).Show();
+  }
+
+  /// <summary>
+  /// Removes an entry, having asked and having said what cannot be undone (PRD §42, §5.5).
+  /// </summary>
+  /// <remarks>
+  /// Confirmed whatever the confirmation setting says. Everything else in this menu is undone by the
+  /// item above it; this one is not undone by anything, and that is the test §69 uses rather than a
+  /// preference.
+  /// </remarks>
+  private void DeleteStartupEntry() {
+    if (this._startup is null || this._shell.SelectedStartup is not { } entry)
+      return;
+
+    if (MessageBox.Show(
+      $"Delete {entry.Name}?\n\n{entry.Path}\n\nThis removes the file. Switching the entry off instead "
+      + "is undone by the item at the top of this menu; this is not undone by anything.",
+      "Process Manager",
+      MessageBoxButtons.YesNo
+    ) != DialogResult.Yes)
+      return;
+
+    this.Report(this._startup.Delete(in entry));
+    this._shell.RefreshStartup();
+  }
+
+  /// <summary>Hands a request to the desktop, or says why there was nothing to hand it to.</summary>
+  private void Hand(LaunchRequest? request, string refusal) {
+    if (this._actions is null) {
+      this.Say("This build has no actions for this platform.");
+      return;
+    }
+
+    if (request is null) {
+      this.Say(refusal);
+      return;
+    }
+
+    var result = this._actions.Launch(request);
+    if (!result.Outcome.Succeeded)
+      this.Say(result.Outcome.Detail ?? result.Outcome.Outcome.ToString());
   }
 
   /// <summary>
@@ -2654,17 +2837,225 @@ public sealed class MainWindow : Form {
     this._shell.RefreshStartup();
   }
 
-  private ContextMenuStrip ServiceMenu() {
+  /// <param name="commandable">
+  /// Whether there is a manager here to ask. False drops the six verbs and keeps the six items that
+  /// only read a unit — which is the difference between a machine that cannot be commanded and one
+  /// whose service list may not be inspected either (PRD §7).
+  /// </param>
+  private ContextMenuStrip ServiceMenu(bool commandable) {
     var menu = new ContextMenuStrip();
-    menu.Items.Add(Item("Start", () => this.CommandService(ServiceCommand.Start)));
-    menu.Items.Add(Item("Stop", () => this.CommandService(ServiceCommand.Stop)));
-    menu.Items.Add(Item("Restart", () => this.CommandService(ServiceCommand.Restart)));
-    menu.Items.Add(Item("Reload its configuration", () => this.CommandService(ServiceCommand.Reload)));
-    menu.Items.Add(new ToolStripSeparator());
-    menu.Items.Add(Item("Start it at boot", () => this.CommandService(ServiceCommand.Enable)));
-    menu.Items.Add(Item("Do not start it at boot", () => this.CommandService(ServiceCommand.Disable)));
+    if (commandable) {
+      menu.Items.Add(Item("Start", () => this.CommandService(ServiceCommand.Start)));
+      menu.Items.Add(Item("Stop", () => this.CommandService(ServiceCommand.Stop)));
+      menu.Items.Add(Item("Restart", () => this.CommandService(ServiceCommand.Restart)));
+      menu.Items.Add(Item("Reload its configuration", () => this.CommandService(ServiceCommand.Reload)));
+      menu.Items.Add(new ToolStripSeparator());
+      menu.Items.Add(Item("Start it at boot", () => this.CommandService(ServiceCommand.Enable)));
+      menu.Items.Add(Item("Do not start it at boot", () => this.CommandService(ServiceCommand.Disable)));
+      menu.Items.Add(new ToolStripSeparator());
+    }
+
+    menu.Items.Add(Item("Open its configuration", this.OpenServiceConfiguration));
+    menu.Items.Add(Item("Reveal its executable", this.RevealServiceExecutable));
+    menu.Items.Add(Item("Go to its main process", this.GoToServiceProcess));
+    menu.Items.Add(Item("Unit properties…", this.ShowServiceProperties));
+    menu.Items.Add(Item("Inspect dependencies…", this.ShowServiceDependencies));
+    menu.Items.Add(Item("Copy row", () => Clipboard.SetText(this._shell.DescribeSelectedService())));
+    menu.Items.Add(Item("Copy all units", () => Clipboard.SetText(this._shell.DescribeServices())));
     return menu;
   }
+
+  private void OpenServiceConfiguration() {
+    if (this._shell.SelectedServiceRecord is not { } service)
+      return;
+
+    if (service.Path.Length == 0) {
+      this.Say(
+        $"{service.Name} has no unit file on this machine — a transient unit, created at runtime and "
+        + "never written out. There is nothing to open."
+      );
+
+      return;
+    }
+
+    this.Hand(DesktopOpen.Open(service.Path), "There is no desktop opener here to hand the file to.");
+  }
+
+  private void RevealServiceExecutable() {
+    if (this._shell.SelectedServiceRecord is not { } service)
+      return;
+
+    if (service.Executable is not { Length: > 0 } program) {
+      this.Say(
+        service.Masked
+          ? $"{service.Name} is masked: its file is a link to /dev/null, so there is nothing in it to name a program."
+          : $"{service.Name} names no program to start. A unit may exist only to order other units, or only to stop things."
+      );
+
+      return;
+    }
+
+    this.Hand(DesktopOpen.Reveal(program), "There is no desktop opener here to hand the folder to.");
+  }
+
+  /// <summary>
+  /// Goes from a unit to the process systemd watches (PRD §25.3, §41).
+  /// </summary>
+  /// <remarks>
+  /// The main process specifically, which is the one worth going to: everything else in a unit's
+  /// cgroup is a child systemd will take down with it, and the main process is the one it restarts.
+  /// </remarks>
+  private void GoToServiceProcess() {
+    if (this._shell.SelectedServiceRecord is not { } service)
+      return;
+
+    if (service.MainPid <= 0) {
+      this.Say(
+        service.State == ServiceState.Active
+          ? $"{service.Name} is active and has no processes: it set something up and finished, which is "
+            + "what a oneshot unit that stays active looks like."
+          : $"{service.Name} is not running, so there is no process to go to."
+      );
+
+      return;
+    }
+
+    this._rail.SelectedIndex = 0;
+    if (!this.SelectPid(service.MainPid))
+      this.Say(
+        $"{service.Name}'s main process was pid {service.MainPid.ToString(CultureInfo.InvariantCulture)}, "
+        + "which is not in the process list any more — the list of units was read when the view was opened."
+      );
+  }
+
+  /// <summary>
+  /// Everything one unit is, in a box (PRD §41).
+  /// </summary>
+  /// <remarks>
+  /// The columns the table has, plus the ones it cannot hold and the ones nothing on disk answers.
+  /// The last of those are rows rather than omissions: a sheet with no failure state on it reads as a
+  /// unit that has not failed, which is precisely the thing this cannot tell (PRD §72.3).
+  /// </remarks>
+  private void ShowServiceProperties() {
+    if (this._shell.SelectedServiceRecord is not { } service)
+      return;
+
+    var facts = new List<KeyValuePair<string, string>> {
+      new("Unit", service.Name),
+      new("Description", service.Description ?? "—"),
+      new("State", service.State switch {
+        ServiceState.Running => "running — it has processes",
+        ServiceState.Active => "active, with no processes of its own — a oneshot that set something up and stayed",
+        ServiceState.Inactive => "inactive — the manager holds no invocation of it",
+        _ => "unknown",
+      }),
+      new("Load state", service.LoadState switch {
+        ServiceLoadState.Loaded => "loaded",
+        ServiceLoadState.Masked => "masked — it can never be started while this stands",
+        ServiceLoadState.Transient => "transient — running with no file on disk, created at runtime",
+        _ => "unknown",
+      }),
+      new("Starts at boot", service.Enabled switch {
+        true => "yes",
+        false => "no",
+        _ => "neither — nothing links it into a boot target, so something else starts it: a socket, a timer, or another unit",
+      }),
+      new("Main process", service.MainPid > 0
+        ? service.MainPid.ToString(CultureInfo.InvariantCulture)
+        : "none — the unit's cgroup was empty when it was read"),
+      new("Started", service.ActivatedUtcTicks.TryGetValue(out var ticks)
+        ? Humanize.Timestamp((long)ticks)
+        : service.ActivatedUtcTicks.Reason == UnknownReason.SourceGone
+          ? "it has no current invocation"
+          : "nothing on this machine writes the manager's runtime directory, so nobody here can say"),
+      new("Service type", service.Type ?? "—"),
+      new("Runs as", service.Account ?? "the unit file names no account, so the system manager's default applies: root"),
+      new("Restart policy", service.RestartPolicy ?? "—"),
+      new("Program", service.Executable ?? "—"),
+      new("Arguments", service.Arguments ?? "—"),
+      new("Command prefixes", Prefixes(service.CommandPrefixes)),
+      new("Command, as written", service.Command ?? "—"),
+      new("Unit file", service.Path.Length > 0 ? service.Path : "none on disk"),
+      new("Depends on", service.Dependencies.Count.ToString(CultureInfo.InvariantCulture) + " units"),
+      new("Depended on by", service.Dependents.Count.ToString(CultureInfo.InvariantCulture) + " units"),
+      // The three the files do not answer, named rather than left out.
+      new("Failure state", "not readable — the manager keeps it in its own memory and writes it to no file"),
+      new("Control process", "not readable, for the same reason: it exists only while a start or stop step is running"),
+      new("Last state change", "not readable — only the start of the current invocation is on disk, and that is the row above"),
+    };
+
+    new FactsDialog($"Unit — {service.Name}", facts).Show();
+  }
+
+  /// <summary>
+  /// What the special characters in front of an <c>ExecStart</c> mean, spelled out.
+  /// </summary>
+  /// <remarks>
+  /// A leading <c>-</c> is the difference between a unit that reports a failure and one that quietly
+  /// does not, which is exactly the thing somebody opens this box to find out.
+  /// </remarks>
+  private static string Prefixes(string? prefixes) {
+    if (prefixes is not { Length: > 0 })
+      return "none";
+
+    var said = new List<string>(prefixes.Length);
+    foreach (var mark in prefixes)
+      said.Add(mark switch {
+        '-' => "- a non-zero exit is ignored and not recorded as a failure",
+        '@' => "@ the program is passed a different argv[0]",
+        '+' => "+ it runs with full privileges and none of the unit's sandboxing",
+        '!' => "! privileges are dropped by the program rather than by the manager",
+        ':' => ": environment variables in the command are not expanded",
+        _ => mark.ToString(),
+      });
+
+    return string.Join('\n', said);
+  }
+
+  /// <summary>
+  /// What a unit is tied to, and what is tied to it (PRD §41).
+  /// </summary>
+  /// <remarks>
+  /// systemd's own words for the relations rather than one word for all of them: <c>Wants</c> and
+  /// <c>Requires</c> differ in what happens when the other unit fails, and "depends on" loses exactly
+  /// that. Where each edge came from is on the row, because a setting in a unit file and a symlink an
+  /// administrator dropped into a <c>.wants</c> directory are changed in completely different ways.
+  /// </remarks>
+  private void ShowServiceDependencies() {
+    if (this._shell.SelectedServiceRecord is not { } service)
+      return;
+
+    var facts = new List<KeyValuePair<string, string>>();
+    if (service.Dependencies.Count == 0 && service.Dependents.Count == 0)
+      facts.Add(new(
+        "Nothing either way",
+        service.Path.Length > 0
+          ? "this unit declares no dependencies and nothing on this machine names it"
+          : "there is no unit file to read dependencies out of — this unit was created at runtime"
+      ));
+
+    foreach (var edge in service.Dependencies)
+      facts.Add(new($"{service.Name} {Relation(edge.Relation)}", $"{edge.Unit}    (from {edge.Source})"));
+
+    foreach (var edge in service.Dependents)
+      facts.Add(new($"{edge.Unit} {Relation(edge.Relation)}", $"this unit    (from {edge.Source})"));
+
+    new FactsDialog($"Dependencies — {service.Name}", facts).Show();
+  }
+
+  /// <summary>The relation as a phrase, in systemd's vocabulary rather than a translation of it.</summary>
+  private static string Relation(UnitRelation relation) => relation switch {
+    UnitRelation.Requires => "requires",
+    UnitRelation.Requisite => "needs already started (Requisite)",
+    UnitRelation.Wants => "wants",
+    UnitRelation.BindsTo => "is bound to",
+    UnitRelation.PartOf => "is part of",
+    UnitRelation.Upholds => "upholds",
+    UnitRelation.Conflicts => "conflicts with",
+    UnitRelation.After => "starts after",
+    UnitRelation.Before => "starts before",
+    _ => "relates to",
+  };
 
   /// <summary>
   /// Asks the manager, having asked the person first.
