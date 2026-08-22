@@ -40,6 +40,12 @@ public sealed record TerminalStartup {
   /// </remarks>
   public bool ConfirmSingleActions { get; init; } = true;
 
+  /// <summary>How long a newly started process stays highlighted, in seconds (PRD §87).</summary>
+  public double NewHighlightSeconds { get; init; } = 1;
+
+  /// <summary>Whether the table scrolls to a process that has just started (PRD §87).</summary>
+  public bool ScrollToNewProcess { get; init; }
+
   /// <summary>The saved columns, or null to let the width decide (PRD §57.1).</summary>
   public ProcessField[]? Columns { get; init; }
 
@@ -110,6 +116,7 @@ public sealed class TerminalHost : IDisposable {
     Attributes.Apply(startup?.Colours);
     var ui = new TerminalUi(sampler, probe, actions, width, height, DetectColorDepth(), services) {
       ConfirmSingleActions = startup?.ConfirmSingleActions ?? true,
+      ScrollToNewProcess = startup?.ScrollToNewProcess ?? false,
       Keys = KeyBindings.Load(),
       ClipboardOutput = this._output,
     };
@@ -117,6 +124,10 @@ public sealed class TerminalHost : IDisposable {
     // The picker moves it from here on, which is why the loop below reads it round rather than
     // keeping the value it was called with (PRD §12).
     ui.IntervalMilliseconds = (int)Math.Round(interval.TotalMilliseconds);
+    // On the delta, which is where the window puts it too: how long a process counts as new is one
+    // statement, and a front-end holding its own copy is how two front-ends come to disagree
+    // (PRD §58, §87).
+    sampler.Delta.NewHighlightSeconds = startup?.NewHighlightSeconds ?? 1;
 
     if (startup is not null) {
       ui.Notifications = startup.Notifications;

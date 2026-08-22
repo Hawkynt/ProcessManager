@@ -31,8 +31,8 @@ shorthand:
 it is not known*. An unticked box must never become a zero on screen. This is restated here because
 it is the single requirement most likely to be broken while filling the tables in.
 
-**Counting, as of the last update:** **1095 of 1320 boxes are ticked** — 169 of 188 in the field
-registry (§14–22), 926 of 1132 across the capabilities. A further 163 are marked 🟡, meaning some of
+**Counting, as of the last update:** **1104 of 1320 boxes are ticked** — 171 of 190 in the field
+registry (§14–22), 933 of 1130 across the capabilities. A further 161 are marked 🟡, meaning some of
 the work behind them is already done. §100 tracks the phases; §101 defines when this may be called
 finished.
 
@@ -1166,7 +1166,16 @@ a zero — and a process nobody asked about reports *not sampled*. Neither is no
       `/proc/[pid]/io` byte for byte on three live processes
 - [ ] 🟡 `io.other.ops` — Windows only
 - [x] `io.other.bytes` — Windows only, and on Linux the cell says the platform has no such figure
-      rather than nought, which would claim the process made no such calls
+      rather than nought, which would claim the process made no such calls. Its *declaration* said
+      every platform while its own description said Windows, so the catalogue offered a column Linux
+      can never fill — `/proc/[pid]/io` has seven fields and not one of them is a third figure
+      (checked; `rchar wchar syscr syscw read_bytes write_bytes cancelled_write_bytes`)
+- [x] `io.other.rate` — the rate beside the two ordinary ones. The delta has computed it since the
+      rates were written and it was never given a column, so the only way to see it was folded into
+      `io.total.rate`
+- [x] `io.read.bytes` and `io.write.bytes` declare `Owner` privilege, as the rates derived from them
+      already did. `/proc/[pid]/io` is 0400 and has been since 5.12, so another user's total is an em
+      dash without the helper; one reading was being described two ways (§5.1)
 - [x] `io.rate` — aggregate bytes/sec
 - [x] `io.priority` — the class the scheduler holds the process at, read as well as set
 - [x] `cpu.time.user` / `cpu.time.kernel` — the per-process split, free from `stat`'s `utime` and
@@ -5835,9 +5844,17 @@ drift §58's parity contract exists to catch.
 
 # 87. Process creation / termination visual behaviour
 
-- [ ] Configurable new-process highlight duration
-- [ ] Configurable exited-process highlight duration
-- [ ] Scroll to new process
+- [x] Configurable new-process highlight duration — `highlight.new` in the settings file, a picker in
+      the settings dialog, `off` for none. **In seconds and not in samples**, so it means the same
+      thing at a one-second refresh and at a ten-second one; the delta remembers when each process
+      first appeared and forgets it the moment the window closes, so the memory is bounded by how
+      many processes started inside the highlight rather than by how long the program has run
+- [ ] Configurable exited-process highlight duration — a row that has gone is not in the table to
+      colour, so this needs the row kept past its process, which nothing does yet
+- [x] Scroll to new process — `scroll.new`, off by default and deliberately: it is the one thing
+      allowed to move the view during a refresh, which is otherwise promised not to happen. Both
+      front-ends read the delta's *arrived this sample* rather than *is new*, or the view would stay
+      pinned to one row for the whole highlight
 - [x] Do not move the selected process during transient sorting
 - [ ] 🟡 "Stable sort while interacting" for fast-changing lists — the scroll anchor and the
       selection are held across every rebuild (§12); the sort itself still runs each sample
@@ -6168,13 +6185,11 @@ protection · hash · reputation
 
 **I/O:** name · PID · read rate · write rate · read bytes · write bytes · other rate · I/O priority
 
-- [ ] 🟡 Available except the two cumulative byte totals and the other-operations rate. I/O priority
-      *is* in the set — it was missing rather than unavailable, and costs one `ioprio_get` per
-      process per sample, which naming this set pays for. The three that are absent are absent from
-      the field catalogue rather than from this set: `ProcessRecord` carries `ReadBytes`,
-      `WriteBytes` and `OtherBytes` and the sampler fills them, but the only columns built on them
-      are the rates. **§17 ticks `io.read.bytes` and `io.write.bytes` and there are no such
-      columns** — that is §17's box to correct, not this one's
+- [x] Available. I/O priority was missing rather than unavailable, and costs one `ioprio_get` per
+      process per sample, which naming this set pays for. The other three were absent from the field
+      catalogue rather than from this set — `ProcessRecord` carried `ReadBytes`, `WriteBytes` and
+      `OtherBytes` and the sampler filled them while the only columns built on them were the rates.
+      All three have columns now (§17), and the other rate is Windows' where the totals are not
 
 **Network:** name · PID · send · receive · connections · listening ports
 
@@ -6603,6 +6618,15 @@ Every entity exposes:
 
 Implemented today: `Host`, `Cpu`, `Memory`, `Process`, `Thread`, `Module`, `Resource`,
 `NetworkEndpoint`, `MemoryRegion`. The rest do not exist.
+
+`Thread` has the identity pair now. A tid is recycled exactly as a pid is and is only meaningful
+inside the process that owns it, so `ThreadKey` is owner plus tid plus start time — the same shape as
+`ProcessKey` and for the same reason. Without it a thread's rates could be carried across a
+recycled tid, which is §72.2's whole argument one level down.
+
+`Host` has its creation timestamp: `btime` out of `/proc/stat` on Linux and the boot time on Windows,
+as ticks rather than as an interval, because an uptime computed at display time and an uptime
+computed at sample time differ by however long the frame took.
 
 # 105. API semantics
 

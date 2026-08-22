@@ -51,6 +51,20 @@ public sealed class LinuxThreadTests(bool portable) {
   }
 
   /// <summary>
+  /// Every enumerated thread says which process it belongs to, which is half of §104's stable
+  /// internal id: a tid is unique only inside a process, so a record that does not name one cannot
+  /// be told apart from the same number in any other.
+  /// </summary>
+  [Test]
+  public void EveryThreadNamesTheProcessItBelongsTo() {
+    foreach (var thread in this.Threads()) {
+      Assert.That(thread.Owner.Pid, Is.EqualTo(1001), $"tid {thread.Tid} was not stamped with its owner");
+      Assert.That(thread.Owner.IsNone, Is.False);
+      Assert.That(thread.Key, Is.EqualTo(new ThreadKey(thread.Owner, thread.Tid, thread.StartTimeUtcTicks)));
+    }
+  }
+
+  /// <summary>
   /// Linux gives every thread its own name and puts it in the same stat line everything else here
   /// comes from, so it costs nothing — and it is usually the most useful column on the page.
   /// </summary>

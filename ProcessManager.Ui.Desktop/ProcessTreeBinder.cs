@@ -121,6 +121,17 @@ public sealed class ProcessTreeBinder {
   /// </remarks>
   public bool ExpandOnNewChild { get; set; }
 
+  /// <summary>
+  /// Whether the view scrolls to a process that has just started (PRD §87).
+  /// </summary>
+  /// <remarks>
+  /// Off, and it is the one thing here allowed to move the scroll position during a refresh — §12
+  /// promises that a rebuild leaves the view where it was, and every other line of this class is
+  /// about keeping that promise. Asked for rather than arrived at, because on a machine where
+  /// something starts most seconds it would take the table out from under whoever was reading it.
+  /// </remarks>
+  public bool ScrollToNewProcess { get; set; }
+
   public void Sync(SystemSnapshot snapshot, SnapshotDelta delta, ProcessView view) {
     ArgumentNullException.ThrowIfNull(snapshot);
     ArgumentNullException.ThrowIfNull(view);
@@ -135,6 +146,7 @@ public sealed class ProcessTreeBinder {
     ++this._generation;
     var processes = snapshot.Processes;
     var rows = view.Rows;
+    TreeNode? arrived = null;
 
     this.SyncGroups(view);
 
@@ -178,6 +190,13 @@ public sealed class ProcessTreeBinder {
         this._nodes[key] = node;
       } else if (!string.Equals(node.Text, row.Label, StringComparison.Ordinal))
         node.Text = row.Label;
+
+      // The first process that arrived in this sample, kept for the scroll at the end. The delta's
+      // own answer rather than "a node had to be made", which is also true of a row a filter has
+      // just stopped hiding — and rather than IsNew, which stays true for as long as the highlight
+      // window lasts and would pin the view to one row for the whole of it (PRD §87).
+      if (this.ScrollToNewProcess && arrived is null && delta.AppearedThisSample(index))
+        arrived = node;
     }
 
     // Second pass: parents. Done after the first so a child seen before its parent still finds it.
@@ -220,6 +239,41 @@ public sealed class ProcessTreeBinder {
     this.RemoveStale();
     this.ReorderToMatch(processes, rows, view);
     Restore(this._tree, anchor, selected);
+
+    if (this.ScrollToNewProcess && arrived is not null)
+      this.Follow(arrived);
+  }
+
+  /// <summary>
+  /// Brings a process that has just started into view, if it is not already (PRD §87).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Only when it is off screen, so a process starting somewhere already visible does not shift the
+  /// rows under the reader for no gain. When it is off screen the new row becomes the top one, which
+  /// is what somebody watching for something to appear is asking for.
+  /// </para>
+  /// <para>
+  /// The visible count is worked out from the two pieces of geometry the control publishes rather
+  /// than from its own, which is protected: the difference is the horizontal scrollbar, so this can
+  /// think one row more is visible than is. The cost of being wrong is that a process arriving on
+  /// the last row is left there instead of being scrolled to, and the row is on screen either way.
+  /// </para>
+  /// <para>
+  /// A node under a collapsed parent has no row at all, and nothing is scrolled to it: pulling it
+  /// into view would mean opening a subtree somebody closed, which is the gesture the whole of this
+  /// class exists to avoid.
+  /// </para>
+  /// </remarks>
+  private void Follow(TreeNode arrived) {
+    var row = this._tree.RowOf(arrived);
+    if (row < 0)
+      return;
+
+    var top = this._tree.TopIndex;
+    var visible = Math.Max(1, (this._tree.Height - this._tree.HeaderHeight) / Math.Max(1, this._tree.ItemHeight));
+    if (row < top || row >= top + visible)
+      this._tree.TopIndex = row;
   }
 
   /// <summary>

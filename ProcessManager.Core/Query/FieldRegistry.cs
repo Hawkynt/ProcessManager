@@ -251,6 +251,17 @@ public static class FieldRegistry {
       Aliases: "write",
       Privilege: FieldPrivilege.Owner,
       History: FieldHistory.Process),
+    // PRD §94's I/O set names an "other rate" beside the read and write ones, and the delta has
+    // computed it since the rates were written — it was simply never given a column, so the only way
+    // to see it was folded into the total. Windows-only, like the counter under it: /proc/[pid]/io
+    // has no third figure of any kind, so on Linux this is a quantity the platform does not keep
+    // rather than a nought, and the rate inherits that reason from the counter it differences.
+    new(ProcessField.OtherBytesPerSecond, "io.other", "I/O other rate", "Other/s",
+      "Bytes per second moved by calls that were neither a read nor a write — a device control, a "
+      + "mapping faulted in. The rate beside the two ordinary ones, and the part of the I/O total "
+      + "that neither of them accounts for.",
+      FieldKind.Rate, FieldUnit.BytesPerSecond, _WINDOWS, FieldCost.Derived, 104, 8, true, true,
+      Aliases: "other io.other.rate"),
     // PRD §17. The operation counts beside the byte counts, and the pair is the point: a process
     // moving a gigabyte in a thousand operations and one moving it in a million are the same row
     // under the byte columns and very different machines to be sitting in front of. Free on both
@@ -261,17 +272,26 @@ public static class FieldRegistry {
       + "doing now; this says what it has done, which is the question a process that spent an hour "
       + "reading and is idle when you look at it answers differently.",
       FieldKind.Cumulative, FieldUnit.Bytes, _ALL, FieldCost.Free, 140, 10, true, true,
-      Aliases: "read.total"),
+      Aliases: "read.total",
+      // The same file as the rate derived from it, and the same authority: 0400 since 5.12, so
+      // another user's total is an em dash without the elevated helper. Declared Ordinary while the
+      // rate over it declared Owner, which is one reading described two ways (PRD §5.1).
+      Privilege: FieldPrivilege.Owner),
     new(ProcessField.WriteBytesTotal, "io.write.bytes", "I/O write total", "Wr total",
       "Bytes this process has caused to be written since it started, counted the same way as the "
       + "read total beside it.",
       FieldKind.Cumulative, FieldUnit.Bytes, _ALL, FieldCost.Free, 140, 10, true, true,
-      Aliases: "write.total"),
+      Aliases: "write.total",
+      Privilege: FieldPrivilege.Owner),
     new(ProcessField.OtherBytesTotal, "io.other.bytes", "I/O other total", "Oth total",
       "Bytes moved by calls that were neither a read nor a write — a device control, a mapping "
       + "faulted in. Windows accounts these separately and Linux does not, so on Linux the cell says "
       + "the platform has no such figure rather than nought, which would claim the process made none.",
-      FieldKind.Cumulative, FieldUnit.Bytes, _ALL, FieldCost.Free, 140, 10, true, true,
+      // Windows, and its own description said so while it declared every platform: the Linux probe
+      // sets OtherBytes to NotSupported for every process and always will, because /proc/[pid]/io
+      // has no third figure of any kind. A platform listed here is a platform that can fill the
+      // field, so listing Linux claimed a reading that does not exist (PRD §17, §72.3).
+      FieldKind.Cumulative, FieldUnit.Bytes, _WINDOWS, FieldCost.Free, 140, 10, true, true,
       Aliases: "other.total"),
     new(ProcessField.ReadOperations, "io.read.ops", "I/O read operations", "Rd ops",
       "How many read calls this process has made. Not the same question as how many bytes: a million one-byte reads and one large one move the same data and cost the machine completely differently.",

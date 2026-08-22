@@ -75,6 +75,7 @@ public enum ProcessField : byte {
   OtherBytesTotal,
   ReadBytesPerSecond,
   WriteBytesPerSecond,
+  OtherBytesPerSecond,
   ReadOperations,
   ReadOperationsDelta,
   WriteOperations,

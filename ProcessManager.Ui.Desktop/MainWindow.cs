@@ -280,6 +280,10 @@ public sealed class MainWindow : Form {
     this._view.SortDescending = settings.SortDescending;
     this._view.TreeMode = settings.TreeMode;
     this._sampler.CpuPercentMode = settings.CpuMode;
+    // On the delta rather than here, so the terminal and the window cannot come to disagree about
+    // how long a process counts as new — it is the same flag both of them read (PRD §87).
+    this._sampler.Delta.NewHighlightSeconds = settings.NewHighlightSeconds;
+    this._binder.ScrollToNewProcess = settings.ScrollToNewProcess;
     // Static because every percentage in the program renders through Humanize; applied here so that
     // a change made in the settings dialog reaches the table on the next draw (PRD §15).
     Humanize.PercentDecimals = settings.PercentDecimals;

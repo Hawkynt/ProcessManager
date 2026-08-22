@@ -152,6 +152,13 @@ public readonly record struct ThreadSchedStat(
 /// declines to invent: this is how long the thread has been kept waiting by other threads since it
 /// started, not how long its current wait has lasted.
 /// </param>
+/// <param name="Owner">
+/// The process the thread belongs to, which with <paramref name="Tid"/> and
+/// <paramref name="StartTimeUtcTicks"/> is <see cref="Key"/> (PRD §104). Last and defaulted because
+/// it is the caller's own argument to <see cref="Abstractions.ISystemProbe.GetThreads"/> handed back;
+/// <see cref="ProcessKey.None"/> means nobody stamped it, which <see cref="ThreadKey.IsNone"/> can
+/// be asked about rather than being mistaken for pid zero.
+/// </param>
 public readonly record struct ThreadRecord(
   int Tid,
   ProcessState State,
@@ -178,8 +185,22 @@ public readonly record struct ThreadRecord(
   Counter StackBytes,
   ThreadMode Mode,
   Counter SyscallNumber,
-  Counter QueuedNs
-);
+  Counter QueuedNs,
+  ProcessKey Owner = default
+) {
+
+  /// <summary>
+  /// What makes this the same thread across two readings (PRD §104).
+  /// </summary>
+  /// <remarks>
+  /// Not <see cref="Tid"/> on its own: thread ids recycle, and they are unique only inside a
+  /// process. <see cref="Sampling.ThreadDelta"/> matches on this, so a pool that ends a worker and
+  /// gets its number back for the next one does not charge the new thread with the old one's
+  /// processor time.
+  /// </remarks>
+  public ThreadKey Key => new(this.Owner, this.Tid, this.StartTimeUtcTicks);
+
+}
 
 /// <summary>What a stack frame is a frame of (PRD §30).</summary>
 public enum FrameKind : byte {

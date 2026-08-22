@@ -64,6 +64,10 @@ public sealed class Sampler : IDisposable {
     // silently inflate every rate it produced.
     var startedAt = Stopwatch.GetTimestamp();
     this._current.TimestampTicks = startedAt;
+    // Which backend the reading came from, stamped here because this is the one place that knows
+    // both the probe and the snapshot. A replay against a recorded tree names the tree, so a bundle
+    // and a live reading cannot be confused for one another (PRD §104).
+    this._current.Source = this._probe.Description;
     this._probe.Sample(this._current);
     // After the probe, before the delta: a row's parent name is a fact about the table as a whole,
     // and no probe can know it while it is still filling the table in.

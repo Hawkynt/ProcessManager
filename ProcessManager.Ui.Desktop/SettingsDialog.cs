@@ -110,6 +110,28 @@ public sealed class SettingsDialog : Form {
   private readonly ComboBox _decimals = new() { DropDownStyle = ComboBoxStyle.DropDownList };
   private readonly Label _groupingCaption = new() { Text = "Group the process list by" };
   private readonly ComboBox _grouping = new() { DropDownStyle = ComboBoxStyle.DropDownList };
+  private readonly Label _highlightCaption = new() { Text = "Highlight a new process for" };
+  private readonly ComboBox _highlight = new() { DropDownStyle = ComboBoxStyle.DropDownList };
+  private readonly CheckBox _followNew = new() { Text = "Scroll to a process that has just started" };
+
+  /// <summary>
+  /// The offered highlight durations (PRD §87).
+  /// </summary>
+  /// <remarks>
+  /// Seconds and not samples, which is the whole point of the setting: the flash used to last until
+  /// the next sample, so how long anybody saw it was decided by the refresh rate. "Not at all" is
+  /// first because it is the one answer that is not a length of time.
+  /// </remarks>
+  private static readonly (double Seconds, string Label)[] _Highlights = [
+    (0, "not at all"),
+    (0.5, "half a second"),
+    (1, "1 second"),
+    (2, "2 seconds"),
+    (5, "5 seconds"),
+    (10, "10 seconds"),
+  ];
+
+  private int _filledHighlight = -1;
 
   /// <summary>
   /// How the terminal draws a history column, including letting it decide for itself.
@@ -231,6 +253,7 @@ public sealed class SettingsDialog : Form {
     this.Row(this._confirm);
     this.Row(this._lowerPane);
     this.Row(this._hideTabs);
+    this.Row(this._followNew);
 
     this.Section("The performance page", _HeadingGap);
     this.Row(this._busiest);
@@ -242,6 +265,7 @@ public sealed class SettingsDialog : Form {
     this.Pair(this._cpuCaption, this._cpuMode);
     this.Pair(this._decimalsCaption, this._decimals);
     this.Pair(this._groupingCaption, this._grouping);
+    this.Pair(this._highlightCaption, this._highlight);
 
     this.Section("The terminal front-end", _HeadingGap);
     this.Pair(this._graphsCaption, this._graphs);
@@ -324,8 +348,17 @@ public sealed class SettingsDialog : Form {
         TerminalGraphs = _Graphs[Math.Clamp(this._graphs.SelectedIndex, 0, _Graphs.Length - 1)].Style,
         BlockCharacters = _Graphs[Math.Clamp(this._graphs.SelectedIndex, 0, _Graphs.Length - 1)].Style != GraphStyle.Ascii,
         TerminalMouse = this._mouse.Checked,
+        ScrollToNewProcess = this._followNew.Checked,
         ManualRefresh = manual,
       };
+
+      // The same care the interval gets below, and for the same reason: the file takes any duration
+      // and this picker offers six, so a file saying three seconds opens showing "2 seconds" — the
+      // nearest there is. Writing that back would round somebody's hand-written value down every
+      // time they opened this box and pressed OK (PRD §87).
+      var highlight = this._highlight.SelectedIndex;
+      if (highlight >= 0 && highlight != this._filledHighlight)
+        settings = settings with { NewHighlightSeconds = _Highlights[highlight].Seconds };
 
       // Kept when the tick is off, so switching it back on returns to the rate somebody chose rather
       // than to the default (PRD §12) — and kept when the picker was not touched, which is the case
@@ -392,6 +425,7 @@ public sealed class SettingsDialog : Form {
     (this._grouping, this._groupingCaption),
     (this._graphs, this._graphsCaption),
     (this._decimals, this._decimalsCaption),
+    (this._highlight, this._highlightCaption),
   ];
 
   private string CaptionOf(ComboBox picker) {
@@ -426,6 +460,8 @@ public sealed class SettingsDialog : Form {
     this._hideTabs.Checked = settings.HideUnavailableTabs;
     this._busiest.Checked = settings.PerformanceOpensOnBusiest;
     this._compact.Checked = settings.CompactPerformancePage;
+    this._followNew.Checked = settings.ScrollToNewProcess;
+    this.FillHighlight(settings.NewHighlightSeconds);
     if (this._graphs.Items.Count == 0)
       foreach (var (_, label) in _Graphs)
         this._graphs.Items.Add(label);
@@ -462,6 +498,21 @@ public sealed class SettingsDialog : Form {
 
     this._interval.SelectedIndex = nearest;
     this._filledInterval = nearest;
+  }
+
+  /// <summary>The nearest offered highlight duration to whatever the file said (PRD §87).</summary>
+  private void FillHighlight(double seconds) {
+    if (this._highlight.Items.Count == 0)
+      foreach (var (_, label) in _Highlights)
+        this._highlight.Items.Add(label);
+
+    var nearest = 0;
+    for (var i = 1; i < _Highlights.Length; ++i)
+      if (Math.Abs(_Highlights[i].Seconds - seconds) < Math.Abs(_Highlights[nearest].Seconds - seconds))
+        nearest = i;
+
+    this._highlight.SelectedIndex = nearest;
+    this._filledHighlight = nearest;
   }
 
   private void EditThresholds() {

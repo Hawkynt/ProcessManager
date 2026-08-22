@@ -264,6 +264,64 @@ public sealed class FieldRegistryTests {
 
   #endregion
 
+  #region the other-operations rate of §94's I/O set
+
+  /// <summary>
+  /// §94's I/O set names an "other rate" and the delta had computed one since the read and write
+  /// rates were written; there was simply no column over it, so the only place the figure appeared
+  /// was folded into the I/O total.
+  /// </summary>
+  [Test]
+  public void TheOtherRateReportsWhatTheOtherCounterDid() {
+    var (before, after) = TwoSamplesWithOtherBytes(Counter.Of(1_000ul), Counter.Of(3_000ul));
+
+    var delta = new SnapshotDelta();
+    delta.Update(before, after, CpuPercentMode.Normalized);
+
+    // Two thousand bytes over one second.
+    Assert.That(
+      FieldAccessor.Number(ProcessField.OtherBytesPerSecond, in after.Processes[0], delta, 0),
+      Is.EqualTo(2000d).Within(1d)
+    );
+  }
+
+  /// <summary>
+  /// And on a platform that keeps no such counter it says so rather than nought. /proc/[pid]/io has
+  /// no third figure of any kind, so a zero here would claim a process made no such calls when what
+  /// happened is that nobody can count them (PRD §17, §72.3).
+  /// </summary>
+  [Test]
+  public void TheOtherRateIsUnsupportedRatherThanZeroWhereTheCounterIs() {
+    var (before, after) = TwoSamplesWithOtherBytes(Counter.NotSupported, Counter.NotSupported);
+
+    var delta = new SnapshotDelta();
+    delta.Update(before, after, CpuPercentMode.Normalized);
+
+    Assert.That(FieldAccessor.Number(ProcessField.OtherBytesPerSecond, in after.Processes[0], delta, 0), Is.Null);
+    Assert.That(
+      FieldAccessor.Text(ProcessField.OtherBytesPerSecond, in after.Processes[0], delta, 0),
+      Is.EqualTo(Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform))
+    );
+  }
+
+  private static (SystemSnapshot Before, SystemSnapshot After) TwoSamplesWithOtherBytes(Counter first, Counter second) {
+    var before = new SystemSnapshot { TimestampTicks = 0 };
+    var after = new SystemSnapshot { TimestampTicks = System.Diagnostics.Stopwatch.Frequency };
+    Fill(before, first);
+    Fill(after, second);
+    return (before, after);
+
+    static void Fill(SystemSnapshot snapshot, Counter otherBytes) {
+      var records = snapshot.PrepareProcesses(1);
+      records[0] = default;
+      records[0].Key = new(7, 7);
+      records[0].Name = "test";
+      records[0].OtherBytes = otherBytes;
+    }
+  }
+
+  #endregion
+
   private static SystemSnapshot OneProcess() {
     var snapshot = new SystemSnapshot();
     var records = snapshot.PrepareProcesses(1);

@@ -265,6 +265,7 @@ internal static class LinuxHostReader {
       OperatingSystemVersion = TryReadText(Path.Combine(procRoot, "sys", "kernel", "osrelease"))
         ?? Environment.OSVersion.Version.ToString(),
       Architecture = System.Runtime.InteropServices.RuntimeInformation.OSArchitecture.ToString(),
+      BootTimeUtcTicks = ReadBootTime(procRoot),
 
       // /proc/cpuinfo first, because a fixture replay has to describe the fixture; CPUID fills in
       // where the file is silent, which is what a stripped container looks like.
@@ -567,6 +568,30 @@ internal static class LinuxHostReader {
     } catch (UnauthorizedAccessException) {
       return null;
     }
+  }
+
+  /// <summary>
+  /// When the machine came up, from <c>/proc/stat</c>'s <c>btime</c> (PRD §104).
+  /// </summary>
+  /// <remarks>
+  /// That line rather than <c>/proc/uptime</c>, which would have to be subtracted from the wall
+  /// clock and would therefore give a slightly different answer every time it was asked. <c>btime</c>
+  /// is the instant itself, in seconds since the epoch, and does not move.
+  /// </remarks>
+  private static Counter ReadBootTime(string procRoot) {
+    foreach (var line in TryReadLines(Path.Combine(procRoot, "stat"))) {
+      if (!line.StartsWith("btime ", StringComparison.Ordinal))
+        continue;
+
+      return long.TryParse(line.AsSpan(6).Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var seconds)
+        && seconds > 0
+          ? Counter.Of(DateTime.UnixEpoch.Ticks + seconds * TimeSpan.TicksPerSecond)
+          : Counter.Unknown(UnknownReason.CounterInvalid);
+    }
+
+    // The file was looked at and had no such line — a kernel too old for it, or a recorded tree that
+    // did not capture one. Not "nobody asked", which is what a caller would wait for.
+    return Counter.Unknown(UnknownReason.SourceGone);
   }
 
   private static string[] TryReadLines(string path) {

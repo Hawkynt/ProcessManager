@@ -221,6 +221,10 @@ internal static class Program {
         // The window has read this since the setting existed; the terminal asked whatever the file
         // said, which is stricter and so never unsafe, but made one preference into two programs.
         ConfirmSingleActions = options.ConfirmSingleActions,
+        // §87's two, by the same route and for the same reason: the window reads both, and a
+        // preference only one front-end honours is one preference producing two programs.
+        NewHighlightSeconds = options.NewHighlightSeconds,
+        ScrollToNewProcess = options.ScrollToNewProcess,
         // Only when somebody said so: otherwise the terminal decides from the locale, which is the
         // one thing a capture may not do and a person watching wants. Saying so includes saying so
         // in the settings file, which is what tui.graphs is for — before it existed, a preference

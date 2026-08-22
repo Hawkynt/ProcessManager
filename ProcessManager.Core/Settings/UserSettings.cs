@@ -232,6 +232,29 @@ public sealed record UserSettings {
   public bool ConfirmDestructiveActions { get; init; } = true;
 
   /// <summary>
+  /// How long a newly started process stays highlighted, in seconds (PRD §87).
+  /// </summary>
+  /// <remarks>
+  /// One second, which is what the flash already was at the default refresh rate — it lasted until
+  /// the next sample, so the rate decided it. That is the whole reason this exists: at a
+  /// quarter-second tick the green went before an eye could land on it, and at ten seconds it stayed
+  /// for ten. Nought is the off switch, and is §12's "optionally highlighted" said from this end.
+  /// </remarks>
+  public double NewHighlightSeconds { get; init; } = 1;
+
+  /// <summary>
+  /// Whether the table follows a process that has just started (PRD §87).
+  /// </summary>
+  /// <remarks>
+  /// Off, and it has to be: §12 promises that a refresh leaves the scroll position where it was, and
+  /// this is the one thing in the program allowed to break that promise. It is for watching for
+  /// something specific to appear — a build step, a service restarting — and on an ordinary desktop,
+  /// where something starts most seconds, it would move the table out from under whoever was reading
+  /// it. So it is asked for rather than arrived at.
+  /// </remarks>
+  public bool ScrollToNewProcess { get; init; }
+
+  /// <summary>
   /// Whether the performance page opens tightened up (PRD §45.7, §67).
   /// </summary>
   /// <remarks>
@@ -388,9 +411,17 @@ public sealed record UserSettings {
       // that says why a row's rates look the way they do: a process at idle I/O reads slowly because
       // it is yielding the disk, not because it has little to read. It costs an ioprio_get per
       // process per sample, which naming this set is what pays for (PRD §5.4, §17).
+      //
+      // The two cumulative totals are the other half of the set's question and were missing from it
+      // while the fields existed: a rate says what a process is doing now, and a process that spent
+      // an hour reading and is idle when somebody looks at it answers that with a nought. The other
+      // rate is Windows' — /proc/[pid]/io keeps no third figure — and is in the set anyway, because
+      // the platform that cannot fill it says so in the cell rather than being quietly dropped from
+      // a named set (PRD §5.3, §72.3).
       ["io"] = [
         ProcessField.Name, ProcessField.Pid, ProcessField.ReadBytesPerSecond,
-        ProcessField.WriteBytesPerSecond, ProcessField.IoTotalRate, ProcessField.IoPriority,
+        ProcessField.WriteBytesPerSecond, ProcessField.ReadBytesTotal, ProcessField.WriteBytesTotal,
+        ProcessField.OtherBytesPerSecond, ProcessField.IoTotalRate, ProcessField.IoPriority,
         ProcessField.IoHistory,
       ],
       // §94's network set, less the two columns §18 refuses. Endpoints rather than traffic, and
@@ -738,6 +769,24 @@ public sealed record UserSettings {
 
           break;
 
+        // Seconds rather than samples, so it means the same thing at every refresh rate (PRD §87).
+        // "off" as well as nought, because a reader of the file should not have to know that a
+        // duration of nothing is how the highlight is switched off.
+        case "highlight.new":
+          if (value.Equals("off", StringComparison.OrdinalIgnoreCase))
+            settings = settings with { NewHighlightSeconds = 0 };
+          else if (double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var highlight)
+              && highlight is >= 0 and <= 3600)
+            settings = settings with { NewHighlightSeconds = highlight };
+
+          break;
+
+        case "scroll.new":
+          if (TryParseBool(value, out var follow))
+            settings = settings with { ScrollToNewProcess = follow };
+
+          break;
+
         case "tui.mouse":
           if (TryParseBool(value, out var mouse))
             settings = settings with { TerminalMouse = mouse };
@@ -907,6 +956,27 @@ public sealed record UserSettings {
       text.AppendLine();
       text.AppendLine("# The performance page opens tightened up, with its diagnostics block open.");
       text.AppendLine("performance.density=compact");
+    }
+
+    // Only when it is not the one second it has always been, which is the rule every block here
+    // follows: the absence of a line means the default, and a file full of defaults is a file
+    // nobody reads (PRD §87).
+    if (this.NewHighlightSeconds != 1) {
+      text.AppendLine();
+      text.AppendLine("# How long a newly started process stays highlighted, in seconds. \"off\"");
+      text.AppendLine("# for no highlight at all. Seconds and not samples, so it means the same");
+      text.AppendLine("# thing whatever the refresh rate is.");
+      text.Append("highlight.new=").AppendLine(this.NewHighlightSeconds <= 0
+        ? "off"
+        : this.NewHighlightSeconds.ToString(CultureInfo.InvariantCulture));
+    }
+
+    if (this.ScrollToNewProcess) {
+      text.AppendLine();
+      text.AppendLine("# The table scrolls to a process that has just started. Off by default, and");
+      text.AppendLine("# deliberately: it is the one thing allowed to move the view during a");
+      text.AppendLine("# refresh, which is otherwise promised not to happen.");
+      text.AppendLine("scroll.new=true");
     }
 
     // Written out only where a rule was actually set, for the reason every other block here is:

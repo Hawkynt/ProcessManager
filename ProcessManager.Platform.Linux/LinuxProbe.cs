@@ -2672,7 +2672,8 @@ public sealed partial class LinuxProbe : ISystemProbe {
         ),
         Mode: ModeOf(syscall, waitChannel),
         SyscallNumber: syscall.Number,
-        QueuedNs: sched.QueuedNs
+        QueuedNs: sched.QueuedNs,
+        Owner: key
       ));
     }
 

@@ -243,4 +243,43 @@ public sealed class LinuxHostTests {
 
   #endregion
 
+  #region when the machine came up (PRD §104)
+
+  /// <summary>
+  /// §104 asks every entity for a creation timestamp where one is meaningful, and the host's is when
+  /// it booted. The instant rather than the age: an age is a different number every time it is asked
+  /// for and cannot be compared with a process's start time or with an entry in the event log.
+  /// </summary>
+  [Test]
+  public void TheHostSaysWhenItCameUp() {
+    // btime 1700000000 in the fixture's /proc/stat.
+    Assert.That(Read().BootTimeUtcTicks.HasValue, Is.True);
+    Assert.That(
+      new DateTime(checked((long)Read().BootTimeUtcTicks.Value), DateTimeKind.Utc),
+      Is.EqualTo(new DateTime(2023, 11, 14, 22, 13, 20, DateTimeKind.Utc))
+    );
+  }
+
+  /// <summary>
+  /// And a tree that records no such line says so rather than reporting a machine that came up in
+  /// the year 1, which is what a bare tick count would have said (PRD §72.3).
+  /// </summary>
+  [Test]
+  public void ATreeWithNoBootTimeSaysSoRatherThanReportingTheYearOne() {
+    var root = Path.Combine(Path.GetTempPath(), $"procman-noboot-{Guid.NewGuid():N}");
+    Directory.CreateDirectory(root);
+    try {
+      File.WriteAllText(Path.Combine(root, "stat"), "cpu  1 0 1 1 0 0 0 0\n");
+      using var probe = new LinuxProbe(new() { ProcRoot = root, SysRoot = root, EffectiveUserId = 0 });
+
+      var boot = probe.DescribeHost().BootTimeUtcTicks;
+      Assert.That(boot.HasValue, Is.False);
+      Assert.That(boot.Reason, Is.EqualTo(UnknownReason.SourceGone));
+    } finally {
+      Directory.Delete(root, recursive: true);
+    }
+  }
+
+  #endregion
+
 }

@@ -438,7 +438,8 @@ internal static class SystemProcessInformationReader {
             // Windows dispatches system calls by number too, but the bulk query does not carry the
             // one a thread is in and there is no supported way to ask.
             SyscallNumber: Counter.NotSupported,
-            QueuedNs: Counter.NotSupported
+            QueuedNs: Counter.NotSupported,
+            Owner: key
           ));
         }
 

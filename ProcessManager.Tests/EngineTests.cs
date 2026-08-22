@@ -140,6 +140,125 @@ public sealed class SnapshotDeltaTests {
     Assert.That(delta.Exited[0].StartTicks, Is.EqualTo(111ul));
   }
 
+  #region how long a process counts as new (PRD §87)
+
+  /// <summary>
+  /// The flash used to last exactly one sample, so how long anybody saw it was decided by the
+  /// refresh rate: gone before an eye could land on it at a quarter-second tick, and ten seconds
+  /// long at ten. It is a duration now, and the duration is what is honoured.
+  /// </summary>
+  [Test]
+  public void ANewProcessStaysNewForTheWholeHighlightAndNoLonger() {
+    var delta = new SnapshotDelta { NewHighlightSeconds = 2 };
+    var first = Build(0, (1, 0, 1));
+    delta.Update(null, first, CpuPercentMode.PerCore);
+
+    // Quarter-second samples: it appears in the second one and must still be new in the fifth.
+    var quarter = Stopwatch.Frequency / 4;
+    var arrives = Build(quarter, (1, 0, 1), (2, 0, 2));
+    delta.Update(first, arrives, CpuPercentMode.PerCore);
+    Assert.That(delta.IsNew(1), Is.True, "the sample it arrived in");
+
+    var previous = arrives;
+    for (var tick = 2; tick <= 8; ++tick) {
+      var next = Build(quarter * tick, (1, 0, 1), (2, 0, 2));
+      delta.Update(previous, next, CpuPercentMode.PerCore);
+      previous = next;
+      Assert.That(delta.IsNew(1), Is.True, $"still inside the two seconds at tick {tick}");
+    }
+
+    // Nine quarters is two and a quarter seconds after the first sample, which is two seconds after
+    // it arrived: the window has closed.
+    var after = Build(quarter * 9, (1, 0, 1), (2, 0, 2));
+    delta.Update(previous, after, CpuPercentMode.PerCore);
+    Assert.That(delta.IsNew(1), Is.False);
+  }
+
+  /// <summary>Nought is the off switch, which is §12's "optionally highlighted" from this end.</summary>
+  [Test]
+  public void AHighlightOfNothingNeverMarksAnythingNew() {
+    var delta = new SnapshotDelta { NewHighlightSeconds = 0 };
+    var before = Build(0, (1, 0, 1));
+    var after = Build(Stopwatch.Frequency, (1, 0, 1), (2, 0, 2));
+
+    delta.Update(before, after, CpuPercentMode.PerCore);
+
+    Assert.That(delta.IsNew(1), Is.False);
+    // The count is not a highlight and is still true: the event log and the notifications are built
+    // on it, and switching a colour off must not switch a record off.
+    Assert.That(delta.StartedCount, Is.EqualTo(1));
+    Assert.That(delta.AppearedThisSample(1), Is.True);
+  }
+
+  /// <summary>
+  /// "Should this row still be drawn as new" and "did something just happen" are two questions, and
+  /// only the second may move a view: following the first would pin a table that scrolls to new
+  /// processes onto one row for the whole highlight (PRD §87).
+  /// </summary>
+  [Test]
+  public void ArrivingIsOneSampleEvenWhileTheHighlightLasts() {
+    var delta = new SnapshotDelta { NewHighlightSeconds = 10 };
+    var first = Build(0, (1, 0, 1));
+    var arrives = Build(Stopwatch.Frequency, (1, 0, 1), (2, 0, 2));
+    var later = Build(2 * Stopwatch.Frequency, (1, 0, 1), (2, 0, 2));
+
+    delta.Update(null, first, CpuPercentMode.PerCore);
+    delta.Update(first, arrives, CpuPercentMode.PerCore);
+    Assert.That(delta.AppearedThisSample(1), Is.True);
+
+    delta.Update(arrives, later, CpuPercentMode.PerCore);
+    Assert.That(delta.IsNew(1), Is.True, "ten seconds of highlight is not over");
+    Assert.That(delta.AppearedThisSample(1), Is.False, "but it arrived a sample ago");
+  }
+
+  /// <summary>
+  /// The start times are swept rather than accumulated. A machine that forks steadily would
+  /// otherwise gain an entry per process for the life of the program.
+  /// </summary>
+  [Test]
+  public void TheHighlightRemembersOnlyWhatIsStillInsideIt() {
+    var delta = new SnapshotDelta { NewHighlightSeconds = 1 };
+    var previous = Build(0, (1, 0, 1));
+    delta.Update(null, previous, CpuPercentMode.PerCore);
+
+    // A different process starts and ends every half second, for fifty of them.
+    for (var tick = 1; tick <= 50; ++tick) {
+      var next = Build(Stopwatch.Frequency * tick / 2, (1, 0, 1), (100 + tick, 0, (ulong)(100 + tick)));
+      delta.Update(previous, next, CpuPercentMode.PerCore);
+      previous = next;
+    }
+
+    // One second of highlight at two samples a second: what is remembered is the couple still inside
+    // their window, not the fifty that have been through.
+    Assert.That(delta.RememberedStartsCount, Is.LessThanOrEqualTo(3));
+  }
+
+  /// <summary>Nothing is new against no previous sample, whatever the window says.</summary>
+  [Test]
+  public void AWholeTableIsNotNewOnStartUp() {
+    var delta = new SnapshotDelta { NewHighlightSeconds = 30 };
+    var first = Build(0, (1, 0, 1), (2, 0, 2));
+    var second = Build(Stopwatch.Frequency, (1, 0, 1), (2, 0, 2));
+
+    delta.Update(null, first, CpuPercentMode.PerCore);
+    Assert.That(delta.IsNew(0), Is.False);
+
+    delta.Update(first, second, CpuPercentMode.PerCore);
+    Assert.That(delta.IsNew(0), Is.False, "a process that was there on the first sample never arrived");
+    Assert.That(delta.IsNew(1), Is.False);
+  }
+
+  /// <summary>A duration nobody could honour is refused rather than taken.</summary>
+  [Test]
+  public void AnImpossibleHighlightIsNoHighlight() {
+    Assert.That(new SnapshotDelta { NewHighlightSeconds = -1 }.NewHighlightSeconds, Is.Zero);
+    Assert.That(new SnapshotDelta { NewHighlightSeconds = double.NaN }.NewHighlightSeconds, Is.Zero);
+    Assert.That(new SnapshotDelta { NewHighlightSeconds = double.PositiveInfinity }.NewHighlightSeconds, Is.Zero);
+    Assert.That(new SnapshotDelta { NewHighlightSeconds = 1e9 }.NewHighlightSeconds, Is.EqualTo(3600));
+  }
+
+  #endregion
+
   [Test]
   public void AProcessThatVanishedIsReportedExactlyOnce() {
     var before = Build(0, (1, 0, 1), (2, 0, 2));

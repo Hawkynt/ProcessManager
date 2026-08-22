@@ -103,6 +103,7 @@ public static class FieldAccessor {
       case ProcessField.IoTotalRate:
       case ProcessField.ReadBytesPerSecond:
       case ProcessField.WriteBytesPerSecond:
+      case ProcessField.OtherBytesPerSecond:
         return Humanize.BytesPerSecond(Rated(delta, index, field));
 
       case ProcessField.ReadOperations: return Humanize.Count(process.ReadOperations);
@@ -582,7 +583,8 @@ public static class FieldAccessor {
       case ProcessField.PrivateBytesDelta:
       case ProcessField.IoTotalRate:
       case ProcessField.ReadBytesPerSecond:
-      case ProcessField.WriteBytesPerSecond: {
+      case ProcessField.WriteBytesPerSecond:
+      case ProcessField.OtherBytesPerSecond: {
         var rate = Rated(delta, index, field);
         return rate.HasValue ? rate.Value : null;
       }
@@ -1433,6 +1435,7 @@ public static class FieldAccessor {
       ProcessField.IoTotalRate => delta.IoTotalBytesPerSecond(index),
       ProcessField.ReadBytesPerSecond => delta.ReadBytesPerSecond(index),
       ProcessField.WriteBytesPerSecond => delta.WriteBytesPerSecond(index),
+      ProcessField.OtherBytesPerSecond => delta.OtherBytesPerSecond(index),
       ProcessField.ReadOperationsDelta => delta.ReadOperationsPerSecond(index),
       ProcessField.WriteOperationsDelta => delta.WriteOperationsPerSecond(index),
       ProcessField.GpuPercent => delta.GpuPercent(index),
