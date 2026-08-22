@@ -2035,17 +2035,21 @@ this program has not got, and §30's reasoning for stacks applies to the first o
 
 - [x] **Set the out-of-memory priority** — `oom_score_adj`, which decides who the kernel kills when
       the machine runs out, shown beside the badness score that says who it would actually pick
-- [ ] Trim working set — `process_madvise` needs CAP_SYS_NICE to reach another process, which
+- ∅ Trim working set — `process_madvise` needs CAP_SYS_NICE to reach another process, which
       nothing on a desktop holds, so the item could only ever refuse
-- [ ] Read memory — needs PTRACE_MODE_ATTACH; `kernel.yama.ptrace_scope` is 1 on this machine, so
-      even a process of the same user that is not a descendant is refused
-- [ ] Save memory range — as above
-- [ ] Search readable memory — as above
-- [ ] Inspect mapped region — the map of §34 now says which regions there are, which is the half of
-      this that does not need to read a byte of anybody's memory
+- ∅ Read memory — needs PTRACE_MODE_ATTACH; `kernel.yama.ptrace_scope` is 1 on this machine, so
+      even a process of the same user that is not a descendant is refused. §4 does not ship a
+      debugger or a memory reverse-engineering suite, and this is the same line seen from here
+- ∅ Save memory range — as above
+- ∅ Search readable memory — as above
+- [x] **Inspect mapped region** — Inspect ▸ Memory map ▸ a row, which opens everything a mapping is
+      and a row one line high cannot hold: the whole path, the kernel's `VmFlags` line, the eight
+      counters spelled out, and the other mappings of the same file. The half that would read its
+      bytes is refused with the four above
 
-- [ ] Direct modification of another process's memory is classified expert/debugging and **disabled
-      by default** — the only feature here requiring a deliberate per-session opt-in
+- ∅ Direct modification of another process's memory is classified expert/debugging and **disabled
+      by default** — there is nothing to gate, because nothing here writes to another process's
+      address space at all
 
 **Trimming another process's working set on Linux would be an item that could only ever refuse.**
 `process_madvise` with `MADV_PAGEOUT` is the closest thing there is, and its own manual page says
@@ -2062,8 +2066,16 @@ process may read only its own descendants — so on an ordinary desktop reading 
 this program did not start is refused for the same user, never mind another. Building a hex viewer, a
 range exporter and a scanner on top of a call that is refused by default, for a feature that is
 supposed to be off by default anyway, is work whose first honest screen would be a permission error.
-The map of §34 is the piece of this that does not need the permission and it is built; the rest waits
-for somebody who actually wants a debugger.
+The map of §34 is the piece of this that does not need the permission and it is built, down to the
+box that spells one mapping out in full; the rest is §4's debugger, which this program does not
+ship.
+
+**And the opt-in that was to guard the writing half has nothing to guard.** It was written down as
+the one feature here needing a deliberate per-session switch, on the assumption that the four above
+would exist to be switched on. None of them does, and nothing else in this program writes a byte to
+another process's address space — so the honest state of that line is that there is no such mode
+rather than that there is one and it is off. A switch that gates nothing is a claim that something
+dangerous is being held back, which would be the opposite of true.
 
 **The out-of-memory adjustment is not a memory limit and the dialogs say so.** It reserves nothing
 and caps nothing: it decides *which* process dies when something has to, so lowering one process's
@@ -4122,11 +4134,12 @@ themselves do not, and this is where that is written down instead of being disco
 - [x] `procman ps --columns pid,name,cpu,memory` — with `--format` for the six formats
 - [x] `procman ps --filter 'cpu > 50'` — as `--filter`, plus `--help-fields` listing every
       field, its aliases and the filter grammar, generated from the registry so it cannot drift
-- [ ] `procman process 1234`
-- [ ] `procman process 1234 threads`
-- [ ] `procman process 1234 modules`
-- [ ] `procman process 1234 handles`
-- [ ] `procman process 1234 network`
+- [x] `procman process 1234` — as `--process 1234`, the summary page the window and the terminal
+      both open with
+- [x] `procman process 1234 threads` — as `--process 1234 threads`
+- [x] `procman process 1234 modules` — as `--process 1234 modules`
+- [x] `procman process 1234 handles` — as `--process 1234 handles`, or `fds`
+- [x] `procman process 1234 network` — as `--process 1234 network`
 - [x] `procman kill 1234`
 - [x] `procman suspend 1234`
 - [x] `procman resume 1234`
@@ -4142,7 +4155,9 @@ themselves do not, and this is where that is written down instead of being disco
 - [x] `procman --startup` — what will run at login
 - [x] `procman --users` — who is logged in, and what their processes cost
 - [x] `procman --services` — which services exist and which are running
-- [ ] `procman perf cpu`
+- [x] `procman perf cpu` — as `--perf cpu`: forty samples a tenth of a second apart, plotted beside
+      the figures `--host` prints without them. Also `memory`, `disk`, `net`, `gpu`, or a device by
+      name — `--perf nvme0n1`, `--perf wlp148s0`
 
 Output formats:
 
@@ -4155,6 +4170,24 @@ Output formats:
 - [x] Stable, versioned JSON schemas — every document carries `"schema": 1`, bumped when a key is
       renamed or removed. The keys are the registry keys now rather than a second camel-cased set
       kept alongside them, which is the rename this version records.
+
+**The five process pages are the terminal's detail view, printed rather than drawn.** Both read the
+same table builder, so the columns a script asks for and the columns somebody sees over ssh are the
+same columns by construction rather than by two lists agreeing for as long as anybody keeps them in
+step — the argument that put the fields in one registry (§5.1, §58). `environment` is a sixth page
+for the same reason, and `--environment` remains the older spelling of it.
+
+**They are text and take no `--format`.** Every cell on them has already been through the humaniser,
+and §76 requires that a machine format carry the raw measurement rather than the rounded string a
+screen shows: a CSV of `1.5G` cannot be summed. Offering one here would be a promise the page cannot
+keep, so it is not offered — `--list --format` is where an exportable table lives.
+
+**`--perf` is the graph `--host` has no room for.** The sections are the same ones, from the same
+builder the window's performance page draws, so the three cannot disagree about the machine (§58);
+what this adds is time. A tenth of a second between samples rather than the `--interval` default of
+one, because forty samples at a second each is forty seconds of waiting for a plot — an `--interval`
+given on the command line is honoured, since then the wait is what was asked for. A processor brings
+its cores with it: a terminal has no checkbox to reveal them behind, so it prints them (§46).
 
 # 60. Local API
 

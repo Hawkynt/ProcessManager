@@ -60,6 +60,12 @@ internal static class Program {
     // export goes through Humanize, so this is the one place it has to be applied (PRD §15, §67).
     Humanize.PercentDecimals = options.PercentDecimals;
 
+    // On stderr, and before anything is collected: a column that will be empty for the whole run is
+    // something to say once, up front, rather than to leave the reader to work out from a screen of
+    // placeholders (PRD §81).
+    if (options.MinimalNotice is { } notice)
+      Console.Error.WriteLine($"procman: {notice}");
+
     if (options.SaveSettings && !SaveSettings(options, settings, settingsPath))
       Console.Error.WriteLine("procman: the settings could not be written; carrying on with them unsaved.");
 
@@ -139,6 +145,8 @@ internal static class Program {
         RunMode.Host => HostReport.Run(sampler, probe),
         RunMode.Limits => LimitsReport.Run(sampler, probe, options.TargetPid),
         RunMode.Environment => EnvironmentReport.Run(sampler, probe, options.TargetPid, options.Format),
+        RunMode.ProcessDetail => ProcessReport.Run(sampler, probe, options.TargetPid, options.DetailPage),
+        RunMode.Performance => PerformanceCommand.Run(sampler, probe, options),
         RunMode.Run => LaunchCommand.Run(actions, options),
         RunMode.Startup => StartupReport.Run(probe, options),
         RunMode.Users => UsersReport.Run(sampler, probe),
