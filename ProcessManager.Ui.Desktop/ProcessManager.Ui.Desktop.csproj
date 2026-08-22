@@ -33,4 +33,11 @@
     <Error Text="ProcessManager currently builds against the NativeForms sibling repository. Clone https://github.com/Hawkynt/NativeForms next to this one (see README, Build). This is temporary - it goes back to the NuGet packages once Hawkynt/NativeForms#8 ships." />
   </Target>
 
+  <!-- The same reason Core does it: a rule worth testing does not have to become public API to be
+       tested. The argument splitter behind the run box is a pure text rule, and it is the part of
+       that box where a mistake starts the wrong program. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Hawkynt.ProcessManager.Tests" />
+  </ItemGroup>
+
 </Project>
