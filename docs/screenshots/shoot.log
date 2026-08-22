@@ -12,12 +12,13 @@ filter:       (none), case ignored
 refresh:      every 1 s
 ticked rows:  0
 split at:     304, lower pane shown
-rail:         {X=0,Y=190,Width=168,Height=608}, 7 entries — Processes, Performance, Startup, Users, Services, Network, Find resources
+tray:         0 indicator(s)
+rail:         {X=0,Y=190,Width=168,Height=608}, 9 entries — Processes, Performance, Startup, Users, Services, Network, History, Timeline, Find resources
 command bar:  {X=0,Y=26,Width=1240,Height=30}, 7 items
 content:      {X=168,Y=190,Width=1072,Height=608} showing Processes
 plots:        cpu {X=6,Y=6,Width=392,Height=92}, memory {X=404,Y=6,Width=392,Height=92}, cores {X=802,Y=6,Width=432,Height=92}
 topology:     16 logical, 1 socket(s), hybrid False
-status:       20 of 20 processes  ·  CPU 100% (normalized)  ·  memory 125G total, 89.1G free  ·  sample 1.3 ms
+status:       20 of 20 processes  ·  CPU 40.7% (normalized)  ·  memory 125G total, 96.8G free  ·  sample 0.9 ms
 capture:      1240x820 -> docs/screenshots/desktop.png
 title:        Process Manager
 bounds:       {X=0,Y=0,Width=1240,Height=820}
@@ -32,7 +33,8 @@ filter:       (none), case ignored
 refresh:      every 1 s
 ticked rows:  0
 split at:     304, lower pane shown
-rail:         {X=0,Y=190,Width=168,Height=608}, 7 entries — Processes, Performance, Startup, Users, Services, Network, Find resources
+tray:         0 indicator(s)
+rail:         {X=0,Y=190,Width=168,Height=608}, 9 entries — Processes, Performance, Startup, Users, Services, Network, History, Timeline, Find resources
 command bar:  {X=0,Y=26,Width=1240,Height=30}, 7 items
 content:      {X=168,Y=190,Width=1072,Height=608} showing Processes
 plots:        cpu {X=6,Y=6,Width=392,Height=92}, memory {X=404,Y=6,Width=392,Height=92}, cores {X=802,Y=6,Width=432,Height=92}
@@ -52,12 +54,13 @@ filter:       ba, case ignored
 refresh:      every 1 s
 ticked rows:  0
 split at:     304, lower pane shown
-rail:         {X=0,Y=190,Width=168,Height=608}, 7 entries — Processes, Performance, Startup, Users, Services, Network, Find resources
+tray:         0 indicator(s)
+rail:         {X=0,Y=190,Width=168,Height=608}, 9 entries — Processes, Performance, Startup, Users, Services, Network, History, Timeline, Find resources
 command bar:  {X=0,Y=26,Width=1240,Height=30}, 7 items
 content:      {X=168,Y=190,Width=1072,Height=608} showing Processes
 plots:        cpu {X=6,Y=6,Width=392,Height=92}, memory {X=404,Y=6,Width=392,Height=92}, cores {X=802,Y=6,Width=432,Height=92}
 topology:     16 logical, 1 socket(s), hybrid False
-status:       7 of 20 processes  ·  CPU 100% (normalized)  ·  memory 125G total, 89.0G free  ·  sample 1.4 ms
+status:       7 of 20 processes  ·  CPU 41.3% (normalized)  ·  memory 125G total, 96.8G free  ·  sample 0.8 ms
 filtered capture: 1240x820 -> docs/screenshots/desktop-filtered.png
 title:        Process Manager
 bounds:       {X=0,Y=0,Width=1240,Height=820}
@@ -72,12 +75,13 @@ filter:       (none), case ignored
 refresh:      every 1 s
 ticked rows:  0
 split at:     304, lower pane shown
-rail:         {X=0,Y=190,Width=168,Height=608}, 7 entries — Processes, Performance, Startup, Users, Services, Network, Find resources
+tray:         0 indicator(s)
+rail:         {X=0,Y=190,Width=168,Height=608}, 9 entries — Processes, Performance, Startup, Users, Services, Network, History, Timeline, Find resources
 command bar:  {X=0,Y=26,Width=1240,Height=30}, 7 items
 content:      {X=168,Y=190,Width=1072,Height=608} showing Processes
 plots:        cpu {X=6,Y=6,Width=392,Height=92}, memory {X=404,Y=6,Width=392,Height=92}, cores {X=802,Y=6,Width=432,Height=92}
 topology:     16 logical, 1 socket(s), hybrid False
-status:       20 of 20 processes  ·  CPU 100% (normalized)  ·  memory 125G total, 89.0G free  ·  sample 1.4 ms
+status:       20 of 20 processes  ·  CPU 41.3% (normalized)  ·  memory 125G total, 96.8G free  ·  sample 0.8 ms
 pinned capture: 1240x820 -> docs/screenshots/desktop-pinned.png
 columns opened:  name:260* | pid:70 cpu:78 ws:92 private:96
 columns fitted:  name:114* | pid:44 cpu:69 ws:105 private:112
@@ -95,7 +99,7 @@ page plots:   914x186 at 254,94
 page bar:     composition shown
 page sweep:
   System                   0 graph(s) at 0 px · 7 live, 0 hardware, 0 diagnostic
-  Activity                 0 graph(s) at 0 px · 8 live, 0 hardware, 0 diagnostic
+  Activity                 0 graph(s) at 0 px · 10 live, 0 hardware, 0 diagnostic
   Processor                1 graph(s) at 154 px · 10 live, 14 hardware, 12 diagnostic
   Memory                   4 graph(s) at 44 px · 12 live, 7 hardware, 19 diagnostic
   GPU — NVIDIA RTX A5000 Laptop GPU 6 graph(s) at 55 px · 9 live, 7 hardware, 0 diagnostic
@@ -127,16 +131,18 @@ page expanded: 1180x780 -> docs/screenshots/performance-expanded.png
 shell views:
   Processes        20 row(s) — 20 rows
   Performance      (opens a window of its own)
-  Startup          23 row(s) — 23 entries, 13 of which will run.  As of 00:01:18.
-  Users            4 row(s) — 4 records, 1 of them somebody logged in.  As of 00:01:18.
-  Services         372 row(s) — 372 units, 1 running.  As of 00:01:18.  Right-click a unit to start, stop or enable it.
-  Network          1352 row(s) — 1352 sockets, 10 of them traceable to a process from this account.  As of 00:01:18.
+  Startup          24 row(s) — 24 entries, 14 of which will run. Impact is not measured.  As of 07:51:50.  Right-click an entry to turn it on or off.
+  Users            4 row(s) — 4 records, 1 of them somebody logged in.  As of 07:51:50.
+  Services         377 row(s) — 377 units, 1 running and 55 more active with no processes.  As of 07:51:51.  Right-click a unit to start, stop or enable it.
+  Network          1290 row(s) — 1290 sockets, 10 of them traceable to a process from this account.  As of 07:51:51.
+  History          0 row(s) — Nothing is being recorded. Put history.usage=true in the settings file to keep a record of what each program costs this machine, across sessions.
+  Timeline         3 row(s) — 3 things have happened.  As of 07:51:51.
   Find resources   (opens a window of its own)
-properties:   17 tabs, 29 facts on General
+properties:   19 tabs, 32 facts on General
 properties general: 1280x640 -> docs/screenshots/properties.png
-span:         60 s over 19 retained samples
+span:         60 s over 17 retained samples
   CPU         {X=8,Y=40,Width=627,Height=169}  0.1 %
-  Memory      {X=643,Y=40,Width=627,Height=169}  17.9M
+  Memory      {X=643,Y=40,Width=627,Height=169}  17.7M
   Disk        {X=8,Y=217,Width=627,Height=169}  0 B/s
   GPU         {X=643,Y=217,Width=627,Height=169}  …
   Descriptors {X=8,Y=394,Width=627,Height=169}  10
@@ -146,24 +152,34 @@ properties graphs: 1280x640 -> docs/screenshots/properties-performance.png
 properties Memory map: 1280x640 -> docs/screenshots/properties-memory-map.png
   detail tab:   Security, 33 row(s), 2 columns
 properties Security: 1280x640 -> docs/screenshots/properties-security.png
-  detail tab:   cgroup, 13 row(s), 2 columns
+  detail tab:   cgroup, 25 row(s), 2 columns
 properties cgroup: 1280x640 -> docs/screenshots/properties-cgroup.png
   detail tab:   Modules, 51 row(s), 21 columns
 properties Modules: 1280x640 -> docs/screenshots/properties-modules.png
   detail tab:   Handles, 10 row(s), 13 columns
 properties Handles: 1280x640 -> docs/screenshots/properties-handles.png
-properties map: 272 mappings — 272 mappings · 236M of address space · 114M of it resident · read at 00:01:19
+  properties strings: 8936 run(s) — 8,936 runs of at least 4 characters in 1,973,888 bytes.
+properties Strings: 1280x640 -> docs/screenshots/properties-strings.png
+  properties timeline: 0 entr(ies) — Nothing has happened to this process since the program started; 3 events have been recorded about others.
+properties Timeline: 1280x640 -> docs/screenshots/properties-timeline.png
+properties map: 272 mappings — 272 mappings · 236M of address space · 114M of it resident · read at 07:51:51
 properties security: 33 rows
-properties cgroup: 13 rows
+properties cgroup: 25 rows
 properties services: 3 rows
 file box:     8 lines
 file capture: 720x372 -> docs/screenshots/file.png
+  binary page: Summary, 17 row(s), 2 columns
+binary Summary: 1080x620 -> docs/screenshots/binary-summary.png
+  binary page: Section headers, 32 row(s), 11 columns
+binary Sections: 1080x620 -> docs/screenshots/binary-sections.png
+  binary page: Signature, 0 row(s), 2 columns
+binary Signature: 1080x620 -> docs/screenshots/binary-signature.png
 legend:       12 colours, 10 lines of note, 718 tall
 legend capture: 760x718 -> docs/screenshots/legend.png
-settings box: 15 settings, 576 tall
-settings capture: 730x576 -> docs/screenshots/settings.png
+settings box: 18 settings, 684 tall
+settings capture: 730x684 -> docs/screenshots/settings.png
 detail window:procman (43), 1280x640
-detail tab:   Threads, 19 row(s), 21 columns
+detail tab:   Threads, 21 row(s), 21 columns
 thread shot:  1280x640 -> docs/screenshots/threads.png
 stack window: 1 row(s), 8 columns
 stack frames: 1 (0 kernel)
