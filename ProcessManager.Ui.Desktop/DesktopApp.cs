@@ -305,6 +305,34 @@ public static class DesktopApp {
           } else
             description += "file box:     the selected process has no readable executable\n";
 
+          // And §53's inspector, on three of its sixteen pages: the two-column summary, a wide
+          // table. The second is the one worth a picture — its columns are rebuilt for every page,
+          // so a width that is wrong takes the last column off the right-hand edge without failing
+          // an assertion, which is exactly what happened to the modules list before it was
+          // photographed (PRD §9.6, §53).
+          if (window.OpenBinaryInspector() is { } binary) {
+            foreach (var (which, image) in (ReadOnlySpan<(Query.BinaryPage Which, string Image)>)[
+              (Query.BinaryPage.Summary, "binary-summary.png"),
+              (Query.BinaryPage.Sections, "binary-sections.png"),
+              // The third is the one with no rows on it: an ELF carries no signature, so this page
+              // is nothing but the paragraph saying why. The note band sizes itself to however many
+              // lines that wrapped to, which either clips the explanation or leaves a strip of
+              // nothing above the table, and no assertion can see either (PRD §9.6, §72.3).
+              (Query.BinaryPage.Signature, "binary-signature.png"),
+            ]) {
+              binary.ShowPage(which);
+              binary.ApplyLayout();
+              // What the page holds, before the picture of it: a table photographed as an empty
+              // rectangle and a table of nought rows look identical in a PNG.
+              description += "  " + binary.DescribeForCapture();
+              var binaryPng = Path.Combine(directory, image);
+              description += GtkCapture.Window(binaryPng, out var binaryFail, binary.Text) is { } binaryShot
+                ? $"binary {which}: {binaryShot.Width}x{binaryShot.Height} -> {binaryPng}\n"
+                : $"binary {which}: none — {binaryFail}\n";
+            }
+          } else
+            description += "binary:       the selected process has no readable executable\n";
+
           // And the legend of §23 — the one window here whose entire content is colour, and the one
           // that has to be looked at to be checked. It lays itself out by arithmetic against a height
           // it computes from its own rows, so a category added to it either lands under the buttons

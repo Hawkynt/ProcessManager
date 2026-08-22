@@ -2232,15 +2232,23 @@ likelier to be chosen, and that is a decision to take at a root prompt rather th
 
 - [x] View module — Inspect ▸ Modules…
 - [x] Reveal module file
-- [ ] Verify signature — there is nothing to run: the verdict is a column, read for every row from
-      the package database, rather than an action somebody starts (§70)
+- [x] Verify signature — the button in the file properties box, which hashes the image once and asks
+      the packaging system whether those are still the bytes it recorded (§70). This box said for a
+      long time that there was nothing to run because "the verdict is a column", and that was never
+      true of the code: the modules list has twenty-one columns and no verdict among them, because a
+      verdict costs a read of the file and §5.4 does not pay that for a column nobody looked at. It
+      is an action somebody starts, on one module at a time, and this line is the correction
 - [x] **Hash file** — SHA-256, computed on request and never as a side effect
-- [ ] Open binary inspector — as above
-- [ ] Search reputation — a network service that does not exist, and §3 promises no executable
-      information leaves the machine unasked
+- [x] Open binary inspector — a row's own menu ▸ Binary inspector…, and Inspect ▸ Binary inspector…
+      for the process's own image. Sixteen read-only pages over the file on disk (§53), and modeless
+      so that two libraries can be held side by side — which is most of what somebody opens it to do
+- ∅ Search reputation — a network service that does not exist, and §3 promises that no executable
+      information leaves the machine unasked. An item that offered it would be a disclosure dressed
+      as a convenience (§70)
 - [x] Copy path
 - [x] Inspect mapped memory — Inspect ▸ Memory map…
-- [ ] Unload module — expert-only, with an explicit instability warning
+- ∅ Unload module — expert-only with an explicit instability warning was the design, and the warning
+  is the only part of it that could ever appear. The argument is below and it is §32's
 
 **A hash is not a verdict.** It says what the bytes are and nothing about whether they are signed,
 trusted or known; the four stay separate operations and this program never conflates them (§70).
@@ -2248,6 +2256,12 @@ trusted or known; the four stay separate operations and this program never confl
 It is asked for rather than computed, because hashing is the one operation here whose cost is the
 size of the file: doing it for every module a process has loaded would read a gigabyte to fill a
 column nobody looked at (§5.4).
+
+**The inspector and the properties box answer different questions and are both here.** The box is
+about the file as the file system has it — its size, its mode, its digest and what the packaging
+system says about it — and the inspector is about the file as a *program*: what it needs, what it
+publishes, what it was built with and what it asks the kernel for. Folding the second into the first
+would have put sixteen pages behind a button labelled "properties".
 
 - ∅ **Unloading a module on Linux** — there is no supported way to make another process drop a shared
   object, and an item that could only ever refuse is a lie dressed as a feature. The same reasoning
@@ -2963,11 +2977,50 @@ has no single answer to put in a column. **Stack owner** is the 4.5 change above
 
 # 35. Strings view — expert
 
-- [ ] Scan accessible memory or executable files for ASCII, UTF-8 and UTF-16
-- [ ] Configurable minimum length
-- [ ] Filters: executable image only · private memory · mapped memory · specific region · regex ·
-      substring
-- [ ] **The UI warns that a full process scan is expensive before starting one, not after**
+- [x] 🟡 Scan accessible memory or executable files for ASCII, UTF-8 and UTF-16 — the files half, in
+      all three encodings and in both byte orders of the third. **The memory half is refused for the
+      reason §25.5 records**: `process_vm_readv` and `/proc/[pid]/mem` are both governed by
+      `PTRACE_MODE_ATTACH`, every current distribution ships Yama's `ptrace_scope` at 1 — so a
+      process this program did not start is refused for the same user, never mind another — and a
+      scanner whose first honest screen on an ordinary desktop is a permission error is not a feature
+- [x] Configurable minimum length — four by default, which is what `strings` uses and what makes the
+      output of either readable: at two, every table of pointers in the file is a hit. `--min-length`
+      on the command line, and the same number on the window's page
+- [x] 🟡 Filters: executable image only · private memory · mapped memory · specific region · regex ·
+      substring — four of the six. **Executable image only** is the code sections of an ELF or a PE
+      and the executable segments of a Mach-O, which for `libc.so.6` is 1.5 MB of its 2.2; **a
+      specific region** is a byte range; and **regex** and **substring** are §33's grammar unchanged,
+      which brings a wildcard and an exact match with it — a program with two spellings of "find" is
+      a program in which neither is learnt (§58). The two memory filters are ∅ for the reason above:
+      both are about a running process's address space rather than about a file
+- [x] 🟡 **The UI warns that a full process scan is expensive before starting one, not after** — kept,
+      with the requirement reworded to the thing that exists. There is no process scan to warn about;
+      the expensive read is the file, and a runtime image is three hundred megabytes of disk. So the
+      page opens with nothing scanned and the cost written on the button — *Scan 2.1 MB for text* —
+      and `--inspect FILE strings` prints the same figure to stderr before it begins. A warning that
+      arrives once the window has already been unresponsive for four seconds is not a warning, it is
+      an apology
+
+**A run is classified by what it contains and is never counted twice.** One pass finds the byte-wise
+text and calls it UTF-8 only when a valid multi-byte sequence was actually inside it; the same run
+does not also appear as ASCII. Without that rule every string in the file would be listed two or
+three times and the count at the top of the page would mean nothing.
+
+**The wide pass stops at Latin-1, and that is a deliberate loss.** A sixteen-bit pass has no
+validation to lean on — every pair of bytes is a code unit — so the acceptance rule is the only thing
+separating text from machine code, and roughly nine byte pairs in ten land somewhere in the CJK
+block. Accepting the whole plane was tried against `/usr/bin/ls` and produced thirty runs of
+ideographs, every one of them a stretch of the ELF header or of compiled code. So the rule is the one
+`strings -el` uses, the pairing is fixed to the parity of the scan's first byte for the same reason,
+and a wide string in a script outside Latin-1 is not found here. The UTF-8 pass, which does have
+validation, is where such text is found instead.
+
+**Held against the tool rather than against itself.** `--inspect /usr/bin/ls strings` against
+`strings -a -n 4`: of the 1,196 runs the tool prints, 1,192 appear here verbatim and the other four
+appear *inside* longer runs that a neighbouring high byte made UTF-8. This program adds 97 UTF-8 runs
+and one wide run that the tool's default pass does not report — and most of those 97 are valid
+multi-byte sequences occurring by accident in the instruction stream, which is exactly why the
+encoding is a column rather than a footnote.
 
 # 36. Security / token view
 
@@ -4315,14 +4368,77 @@ eBPF on Linux (a privileged helper call); an ETW session on Windows.
 
 Read-only. PE, ELF and Mach-O.
 
-- [ ] Summary · headers · sections/segments · imports · exports · dependencies · symbols · strings ·
-      resources · signatures · hashes · debug information · security properties
-- [ ] PE: DOS/NT headers · optional header · data directories · load configuration · delay imports ·
-      CLR metadata presence · manifest · Authenticode · ASLR/DEP/CFG/CET flags
-- [ ] ELF: program headers · section headers · dynamic section · interpreter · symbols ·
-      relocations · build ID
-- [ ] Mach-O: load commands · segments · dylib dependencies · code signature · entitlements
-- [ ] **Read-only in baseline releases** — this is a viewer, not a patcher
+- [x] 🟡 Summary · headers · sections/segments · imports · exports · dependencies · symbols · strings ·
+      resources · signatures · hashes · debug information · security properties — sixteen pages, one
+      per question, as `procman --inspect FILE [page]` and as Inspect ▸ Binary inspector… in the
+      window. Two of the thirteen are less than the word suggests and say so on the page rather than
+      coming up empty: a **resource** tree exists only in PE, because neither of the other two
+      formats has one at all; and a **signature** page reports what is attached rather than whether
+      it is good, because "do these bytes still match" and "does this machine trust whoever signed
+      them" are §70's separate questions and need a package database or a root store rather than the
+      file
+- [x] 🟡 PE: DOS/NT headers · optional header · data directories · load configuration · delay imports ·
+      CLR metadata presence · manifest · Authenticode · ASLR/DEP/CFG/CET flags — all of them, from
+      the file's own bytes and never from its name; the manifest is shown as the XML it is rather
+      than parsed, and the load configuration as its size, its stack cookie and its guard flags
+      rather than every field of a structure that has grown a member per Windows release.
+      **CET is not in the optional header**: the sixteen `DllCharacteristics` bits were spent before
+      shadow stacks existed, so an image built for one declares it in a debug directory record of
+      type 20 or nowhere, and a reader that looked only at the header would report every
+      CET-compatible binary on Windows as not asking for it.
+      The Authenticode row is the certificate table's own entries — where, how long, which revision,
+      which type — and not the signer, which is the reader §21 already built and which lives in the
+      Windows probe wired to a process record rather than to this page
+- [x] ELF: program headers · section headers · dynamic section · interpreter · symbols ·
+      relocations · build ID — all seven, and each held against the system's own tools rather than
+      against itself: the header, the segments and the section table against `readelf -hlS`, the
+      dynamic section against `readelf -d`, the symbol versions against `objdump -T`, the exports
+      against `nm -D`, the relocation counts against `readelf -r` and the debug link against
+      `readelf -x`, on `/usr/bin/ls`, `libc.so.6` and `libcap.so.2`
+- [x] 🟡 Mach-O: load commands · segments · dylib dependencies · code signature · entitlements — all
+      five are parsed and **not one of them has ever been read from a Mach-O anybody shipped**. §6.3
+      has macOS as a stub, there is no Darwin binary on the machines this is built on, and the whole
+      of the evidence is a fixture written byte by byte from the format's documentation. That is a
+      weaker footing than the ELF side has and it is written down here rather than left to be
+      found out
+- [x] **Read-only in baseline releases** — this is a viewer, not a patcher. Enforced rather than
+      asserted: the file is opened for reading, no method on any of the three format readers takes a
+      byte to write, and a test walks the public surface so that the day somebody adds one in good
+      faith it fails
+
+**Reading a file is not debugging it.** §4 ships neither a debugger nor a memory reverse-engineering
+suite, and this stays on the right side of that line by construction rather than by intention: it
+opens a file somebody named, reads ranges of it, and never attaches to a process, never reads another
+address space and never disassembles a byte. The §35 pages inside it are the same file read for text,
+which is `strings` and is not a debugger either. What the *running* process has mapped is §31's, and
+that view is where a module's row opens this one.
+
+**By header and never by extension.** `.dll` names a managed assembly and a Windows library both,
+`.so` is occasionally a linker script, and a Wine process has files of every kind mapped at once — so
+the name is exactly the evidence that cannot settle it (§5.3). A universal binary is recognised too,
+and every page then describes one of the images inside it rather than the table at the front.
+
+**One page at a time, and the file is opened per page.** A binary inspector that read everything on
+opening would walk a symbol table nobody asked to see; a window that held the file open for as long
+as somebody left it open would hold a handle on an image a package manager wants to replace (§5.4,
+§8.2). The one page whose cost is the size of the file is the strings page, and §35 is where it says
+so before it starts.
+
+**Nothing here is a verdict.** The hashes page says what the bytes are; the signature page says what
+is attached to them. Whether anybody this machine trusts signed for them is §70's fourth question,
+and it is asked in the file properties box because it needs the package databases — which is also why
+the two pages are separate rather than one page with a word on it.
+
+**Owed and named rather than assumed: the terminal has no inspector page.** §58 wants a TUI
+representation for every view and this has none; `--inspect` is how somebody over a connection reads
+one, which satisfies §58's second clause and not its first. The same shape as the four actions §58
+already records as owed.
+
+- ∅ **Relocations on Mach-O** — an extra page the box above does not ask for, and the one format it
+  cannot answer for. A current Darwin image carries chained fixups rather than a relocation table,
+  and walking the chains means decoding the image's own pointer format — which is past reading a
+  structure and into interpreting one. The load commands page names the `LC_DYLD_CHAINED_FIXUPS`
+  record and stops there.
 
 # 54. Run / launch new process
 

@@ -78,6 +78,23 @@ public enum SearchMode : byte {
 }
 
 /// <summary>
+/// A pattern that has already been read, so a scan asks it rather than re-reading it (PRD §33, §35).
+/// </summary>
+/// <remarks>
+/// An interface rather than a concrete type because the shape is the whole contract: something that
+/// answers whether one value matches, and says which of the four modes it decided the pattern was in
+/// so a front-end can put that in a caption without running a search to find out.
+/// </remarks>
+public interface ICompiledPattern {
+
+  /// <summary>Which of the four modes the pattern's own shape asked for.</summary>
+  SearchMode Mode { get; }
+
+  bool Matches(string value);
+
+}
+
+/// <summary>
 /// "Which process is using this?" (PRD §33).
 /// </summary>
 /// <remarks>
@@ -287,6 +304,19 @@ public static class ResourceSearch {
     return Matcher.For(pattern, matchCase) is { } matcher && matcher.Matches(value);
   }
 
+  /// <summary>
+  /// The same pattern, read once and then asked about many values (PRD §33, §35).
+  /// </summary>
+  /// <remarks>
+  /// <see cref="Matches"/> reads the pattern on every call, which is right for the handful of values
+  /// a search compares and wrong for a scan that has a million of them: a regular expression
+  /// recompiled per candidate is the whole cost of the strings view. This hands back the compiled
+  /// form so that the grammar stays in one place and nobody writes a second spelling of "contains".
+  /// </remarks>
+  /// <returns>Null for an empty pattern, which matches everything and is best asked as nothing.</returns>
+  public static ICompiledPattern? Compile(string? pattern, bool matchCase = false)
+    => pattern is { Length: > 0 } text ? Matcher.For(text, matchCase) : null;
+
   /// <summary>Which of the four modes a pattern asks for, by its shape (PRD §33).</summary>
   public static SearchMode ModeOf(string? pattern) {
     if (string.IsNullOrEmpty(pattern))
@@ -303,7 +333,7 @@ public static class ResourceSearch {
       : SearchMode.Substring;
   }
 
-  private sealed class Matcher {
+  private sealed class Matcher : ICompiledPattern {
 
     private readonly string _text;
     private readonly Regex? _pattern;
@@ -346,6 +376,8 @@ public static class ResourceSearch {
           return new(pattern, null, mode, matchCase);
       }
     }
+
+    public SearchMode Mode => this._mode;
 
     public bool Matches(string value) {
       var comparison = this._matchCase ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;

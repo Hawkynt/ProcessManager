@@ -7,7 +7,7 @@ using Hawkynt.ProcessManager.Ui.Terminal;
 namespace Hawkynt.ProcessManager.App;
 
 /// <summary>Which face of the program the arguments asked for.</summary>
-internal enum RunMode : byte { Desktop, Terminal, List, Find, Kill, EndTask, Restart, Scheduling, Signal, ResourceLimit, OutOfMemory, Freezer, SelfTest, HelperCheck, Help, HelpFields, Host, Startup, Users, Services, ServiceControl, Connections, Limits, Environment, ProcessDetail, Performance, Run, Version, Settings }
+internal enum RunMode : byte { Desktop, Terminal, List, Find, Kill, EndTask, Restart, Scheduling, Signal, ResourceLimit, OutOfMemory, Freezer, SelfTest, HelperCheck, Help, HelpFields, Host, Startup, Users, Services, ServiceControl, Connections, Limits, Environment, ProcessDetail, Performance, Run, Version, Settings, Inspect }
 
 /// <summary>
 /// What <see cref="RunMode.Settings"/> was asked to do to the settings file (PRD §67).
@@ -88,6 +88,28 @@ internal sealed record CommandLineOptions {
 
   /// <summary>Which page of a process <c>--process</c> asked for (PRD §59).</summary>
   public ProcessDetailPage DetailPage { get; init; }
+
+  /// <summary>Which file <c>--inspect</c> was pointed at, and which page of it (PRD §53).</summary>
+  public string? InspectPath { get; init; }
+
+  public BinaryPage InspectPage { get; init; }
+
+  /// <summary>
+  /// How long a run of text has to be before the strings page counts it (PRD §35).
+  /// </summary>
+  /// <remarks>
+  /// Four, which is what <c>strings</c> uses and what makes the output of either readable: at two,
+  /// every table of pointers in the file is a hit.
+  /// </remarks>
+  public int MinimumTextLength { get; init; } = 4;
+
+  /// <summary>
+  /// A filter over the strings page, in the same grammar <c>--find</c> uses (PRD §33, §35).
+  /// </summary>
+  public string? TextPattern { get; init; }
+
+  /// <summary>Restrict a strings scan to the parts of the file that hold code (PRD §35).</summary>
+  public bool TextCodeOnly { get; init; }
 
   /// <summary>
   /// Collect nothing that costs a syscall, whatever the columns ask for (PRD §81).
@@ -1315,6 +1337,52 @@ internal sealed record CommandLineOptions {
           ++i;
           break;
 
+        case "--inspect": {
+          // A path, and then the name of a page or nothing. The same shape as --process, and for the
+          // same reason: the summary is what somebody naming a file and stopping meant, and sixteen
+          // more switches would be sixteen spellings of one question (PRD §53, §59).
+          if (i + 1 >= args.Length)
+            return options with {
+              Error = $"--inspect needs a file, and optionally a page ({BinaryInspector.PageVocabulary})",
+            };
+
+          var file = args[++i];
+          var binaryPage = BinaryPage.Summary;
+          if (i + 1 < args.Length && !args[i + 1].StartsWith('-')) {
+            if (!BinaryInspector.TryParsePage(args[i + 1], out binaryPage))
+              return options with {
+                Error = $"there is no page called '{args[i + 1]}'; it is one of {BinaryInspector.PageVocabulary}",
+              };
+
+            ++i;
+          }
+
+          options = options with { Mode = RunMode.Inspect, InspectPath = file, InspectPage = binaryPage };
+          explicitMode = true;
+          break;
+        }
+
+        case "--min-length": {
+          if (i + 1 >= args.Length || !int.TryParse(args[i + 1], out var minimum) || minimum < 1)
+            return options with { Error = "--min-length needs a positive number of characters" };
+
+          options = options with { MinimumTextLength = minimum };
+          ++i;
+          break;
+        }
+
+        case "--match": {
+          if (i + 1 >= args.Length)
+            return options with { Error = "--match needs a pattern" };
+
+          options = options with { TextPattern = args[++i] };
+          break;
+        }
+
+        case "--code-only":
+          options = options with { TextCodeOnly = true };
+          break;
+
         case "--limits":
           if (i + 1 >= args.Length || !int.TryParse(args[i + 1], out var limited))
             return options with { Error = "--limits needs a pid" };
@@ -1464,6 +1532,10 @@ internal sealed record CommandLineOptions {
                                      (the default), memory, disk, net, gpu, or a device by name
       procman --process PID [page]   one process in detail: overview (the default), threads,
                                      modules, handles, environment, network
+      procman --inspect FILE [page]  what a binary is, read-only: summary (the default), headers,
+                                     segments, sections, dynamic, dependencies, imports, exports,
+                                     symbols, relocations, resources, signature, hashes, debug,
+                                     security, strings
       procman --environment PID      the variables it was started with, as the kernel laid them down
       procman --limits PID           every ceiling on a process: its own, its cgroup's, and the
                                      out-of-memory standing that decides who dies first
@@ -1509,6 +1581,10 @@ internal sealed record CommandLineOptions {
       --capture-size WxH the size of a captured terminal frame (default 120x40)
       --capture-keys <k> press these keys before capturing: \t tab, \n enter, \e escape, \s space
       --no-mouse         do not ask the terminal for mouse reports
+      --min-length <n>   with --inspect FILE strings: how long a run must be (default 4)
+      --match <pattern>  with --inspect FILE strings: keep only runs matching it. Substring, or
+                         *wildcard*, or "exact", or /regular expression/ — the same grammar --find uses
+      --code-only        with --inspect FILE strings: scan only the parts that hold code
       --resolve          with --connections: turn addresses into hostnames (asks a resolver)
       -n, --numeric      with --connections: leave ports as numbers rather than naming them
       --gpu              account for what each process is doing to the graphics adapters (costly)

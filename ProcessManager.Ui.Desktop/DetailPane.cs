@@ -1022,6 +1022,11 @@ public sealed class DetailPane : IDisposable {
         image => this._probe.DescribeImage(image, verify: true)
       ).ShowDialog()
     ));
+
+    // §25.6's "open binary inspector", which until now had nowhere to go. Modeless rather than
+    // modal: somebody comparing two libraries' imports wants both windows at once, and a box that
+    // blocks the pane behind it makes that impossible (PRD §53).
+    menu.Items.Add(ModuleItem("Binary inspector…", path => new BinaryInspectorWindow(path).Show()));
     return menu;
   }
 
