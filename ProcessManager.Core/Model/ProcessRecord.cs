@@ -87,6 +87,13 @@ public struct ProcessRecord {
   /// </para>
   /// </remarks>
   public static void ClearPlatformReadings(ref ProcessRecord record) {
+    // A record handed out for reuse is a living process until something says otherwise. Left over
+    // from the last row that occupied this slot, a stale exit time would turn a running process into
+    // a tombstone and colour it as dead (PRD §14, §87).
+    record.ExitedUtcTicks = 0;
+    // And nobody has looked, which for an exit code is nearly always the final answer: neither kernel
+    // tells a bystander what a process it did not start exited with.
+    record.ExitCode = Counter.NotPermitted;
     record.ProtectionLevel = Counter.NotSupported;
     record.IsAppContainer = Counter.NotSupported;
     record.Emulation = Counter.NotSupported;
@@ -290,6 +297,44 @@ public struct ProcessRecord {
 
   /// <summary>Start time as UTC ticks, for display. Identity uses <see cref="Key"/>, not this.</summary>
   public long StartTimeUtcTicks;
+
+  /// <summary>
+  /// When this process ended, as UTC ticks, or nought while it is running (PRD §14, §87).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Non-zero marks a <b>tombstone</b>: the last reading taken of a process that has since gone,
+  /// kept in the table for as long as somebody asked for. Nothing in a probe ever sets this — a probe
+  /// reports what is there — and the sampler appends the row after the delta has already reported the
+  /// process as exited.
+  /// </para>
+  /// <para>
+  /// Nought rather than nullable so a record stays a value type the snapshot's array can hold without
+  /// allocating, and because nought is not a time anything could have ended at: the wall clock does
+  /// not run backwards to year one.
+  /// </para>
+  /// <para>
+  /// Every counter on a tombstone is the last one that was read, not a fresh one, and every
+  /// <em>rate</em> over it is unsampled — a row that has stopped moving must not report the rate it
+  /// had when it stopped, which would show a dead process using a processor (§3.4, §72.3).
+  /// </para>
+  /// </remarks>
+  public long ExitedUtcTicks;
+
+  /// <summary>Whether this row is the remains of a process rather than a process.</summary>
+  public readonly bool HasExited => this.ExitedUtcTicks > 0;
+
+  /// <summary>
+  /// What the process exited with, where that is knowable (PRD §14).
+  /// </summary>
+  /// <remarks>
+  /// <b>Usually it is not, and the reason is the same on both platforms.</b> Neither kernel will tell
+  /// a bystander what a process it did not start exited with: the status is delivered to the parent
+  /// through <c>wait</c> on Unix, and on Windows it needs a handle held open across the exit. So this
+  /// carries <see cref="UnknownReason.NotPermitted"/> for everything this program did not launch —
+  /// which is nearly everything — and a real value only for a child it started itself and reaped.
+  /// </remarks>
+  public Counter ExitCode;
 
   /// <summary>
   /// Private memory the process has committed — <c>PrivatePageCount</c> on Windows, <c>VmData</c> on

@@ -243,6 +243,18 @@ public sealed record UserSettings {
   public double NewHighlightSeconds { get; init; } = 1;
 
   /// <summary>
+  /// How long a row is kept after the process behind it has gone, in seconds (PRD §14, §87).
+  /// </summary>
+  /// <remarks>
+  /// <b>Nought, and off.</b> A table that keeps its dead is showing something that is not there — a
+  /// considered thing to ask for and a bad thing to assume — and on a machine that churns through
+  /// processes it doubles the table for nobody who was not looking for one that ended. It is also
+  /// what makes `exit.time` answerable at all: with this off, that column is a dash everywhere,
+  /// because there is nowhere for the answer to live.
+  /// </remarks>
+  public double KeepExitedSeconds { get; init; }
+
+  /// <summary>
   /// Whether the table follows a process that has just started (PRD §87).
   /// </summary>
   /// <remarks>
@@ -781,6 +793,18 @@ public sealed record UserSettings {
 
           break;
 
+        // The other half of the pair, and off rather than defaulted to a duration: keeping the dead
+        // is a thing to ask for (PRD §14, §87).
+        case "highlight.exited":
+        case "keep.exited":
+          if (value.Equals("off", StringComparison.OrdinalIgnoreCase))
+            settings = settings with { KeepExitedSeconds = 0 };
+          else if (double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var keep)
+              && keep is >= 0 and <= 3600)
+            settings = settings with { KeepExitedSeconds = keep };
+
+          break;
+
         case "scroll.new":
           if (TryParseBool(value, out var follow))
             settings = settings with { ScrollToNewProcess = follow };
@@ -969,6 +993,15 @@ public sealed record UserSettings {
       text.Append("highlight.new=").AppendLine(this.NewHighlightSeconds <= 0
         ? "off"
         : this.NewHighlightSeconds.ToString(CultureInfo.InvariantCulture));
+    }
+
+    if (this.KeepExitedSeconds > 0) {
+      text.AppendLine();
+      text.AppendLine("# How long a row stays in the table after the process behind it has gone, in");
+      text.AppendLine("# seconds. Off by default: a table that keeps its dead is showing something");
+      text.AppendLine("# that is not there. It is also what makes the exit.time column answerable.");
+      text.Append("keep.exited=")
+        .AppendLine(this.KeepExitedSeconds.ToString(CultureInfo.InvariantCulture));
     }
 
     if (this.ScrollToNewProcess) {

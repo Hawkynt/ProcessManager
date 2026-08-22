@@ -31,8 +31,8 @@ shorthand:
 it is not known*. An unticked box must never become a zero on screen. This is restated here because
 it is the single requirement most likely to be broken while filling the tables in.
 
-**Counting, as of the last update:** **1115 of 1320 boxes are ticked** — 171 of 190 in the field
-registry (§14–22), 944 of 1130 across the capabilities. A further 163 are marked 🟡, meaning some of
+**Counting, as of the last update:** **1118 of 1320 boxes are ticked** — 173 of 190 in the field
+registry (§14–22), 945 of 1130 across the capabilities. A further 163 are marked 🟡, meaning some of
 the work behind them is already done. §100 tracks the phases; §101 defines when this may be called
 finished.
 
@@ -802,14 +802,18 @@ term all use it, and it never changes even when the display name differs per pla
       work and is not done on Windows either
 - [x] `start.time` — process creation timestamp
 - [x] `running.time` — elapsed lifetime
-- [ ] `exit.time` — requires retaining dead rows; ties to §87. **Every platform, and unwritten on all
-      of them**: nothing here keeps a row after the process behind it has gone, so there is nowhere
-      for the answer to live yet. The nearest thing that does exist is §63's timeline, which records
-      a process ending with the time it happened — a line in a log rather than a cell on a row, and
-      the difference matters: a column can be sorted and filtered on and a log line cannot
-- [ ] `exit.code` — only for children we spawned or via job/wait; honest `—` otherwise. **Every
-      platform, and unwritten on all of them**, for the same reason and with a second one on top:
-      neither kernel will tell a bystander what a process it did not start exited with
+- [x] `exit.time` — rows outlive their processes now, so the answer has somewhere to live. `keep.exited`
+      in the settings file, in seconds, **off by default**: a table that keeps its dead is showing
+      something that is not there, which is a considered thing to ask for and a bad thing to assume.
+      With it off the column is a dash everywhere, which is the honest rendering of a question nobody
+      has arranged to be able to answer. Checked live: a process started and left to end came back as
+      a row with a true exit time three seconds after it had gone
+- [x] `exit.code` — the column exists and is honest, which is what this box asked for. It is
+      `NotPermitted` and renders `—` for everything this program did not launch, and the reason is
+      the same on both platforms: the status goes to the parent through `wait` on Unix and needs a
+      handle held open across the exit on Windows, so a bystander is not told. **Nought is the code
+      that means success**, which makes it the one value that must never be invented — a defaulted
+      counter here would report every process on the machine as having exited cleanly
 - [x] `user` — account owning the process
 - [x] `user.id` — SID / UID
 - [x] `session` — login/terminal session
@@ -5993,8 +5997,27 @@ drift §58's parity contract exists to catch.
       thing at a one-second refresh and at a ten-second one; the delta remembers when each process
       first appeared and forgets it the moment the window closes, so the memory is bounded by how
       many processes started inside the highlight rather than by how long the program has run
-- [ ] Configurable exited-process highlight duration — a row that has gone is not in the table to
-      colour, so this needs the row kept past its process, which nothing does yet
+- [x] Configurable exited-process highlight duration — `keep.exited`, in seconds, off by default.
+      The row is kept past its process, which is what makes there be something to colour: the
+      `Exited` colour has been in the palette and the legend since they were written and **nothing
+      ever produced it** until now.
+
+      Every counter on a kept row is the last one that was read and every *rate* over it is
+      unsampled, because a row that has stopped moving must not go on reporting the rate it had when
+      it stopped — that would draw a dead process using a processor (§3.4, §72.3). `Exited` is
+      classified ahead of `New`, because a short-lived process can be born and buried inside one
+      frame and "it has gone" is the more urgent of the two things to say about it.
+
+      Two bounds and not one, because they fail differently: the duration is what somebody asked
+      for, and a cap of two thousand rows is what stops a build machine ending a thousand processes a
+      second from making the table unreadable. Switching it off forgets what was being kept rather
+      than freezing it on screen.
+
+      **A defect the tests caught and a reader would not have.** The delta sizes its per-row arrays
+      to the snapshot the probe left, which is before the kept rows are appended to it — so the row
+      was in the table, looked correct, and threw the moment any front-end asked it for a
+      percentage. The delta is extended after the append now, and the blanking of those rows happens
+      there
 - [x] Scroll to new process — `scroll.new`, off by default and deliberately: it is the one thing
       allowed to move the view during a refresh, which is otherwise promised not to happen. Both
       front-ends read the delta's *arrived this sample* rather than *is new*, or the view would stay

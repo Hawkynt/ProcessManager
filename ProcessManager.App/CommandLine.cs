@@ -816,6 +816,9 @@ internal sealed record CommandLineOptions {
   /// <summary>Whether the table scrolls to a process that has just started (PRD §87).</summary>
   public bool ScrollToNewProcess { get; init; }
 
+  /// <summary>How long a row is kept after its process has gone, in seconds (PRD §14, §87).</summary>
+  public double KeepExitedSeconds { get; init; }
+
   /// <summary>Whether the terminal asks for mouse reports (PRD §57.5).</summary>
   public bool UseMouse { get; init; } = true;
 
@@ -905,6 +908,7 @@ internal sealed record CommandLineOptions {
       ConfirmSingleActions = settings.ConfirmDestructiveActions,
       NewHighlightSeconds = settings.NewHighlightSeconds,
       ScrollToNewProcess = settings.ScrollToNewProcess,
+      KeepExitedSeconds = settings.KeepExitedSeconds,
       TerminalColours = settings.TerminalColours,
       Notifications = settings.Notifications,
     };

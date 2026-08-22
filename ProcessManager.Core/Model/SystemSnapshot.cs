@@ -411,6 +411,23 @@ public sealed class SystemSnapshot {
     return span;
   }
 
+  /// <summary>
+  /// Adds one more record past what <see cref="PrepareProcesses"/> asked for.
+  /// </summary>
+  /// <remarks>
+  /// For the rows that outlive their processes (§14, §87). A probe fills the living and does not
+  /// know about the dead; the sampler appends them afterwards, because it is the one place that has
+  /// both this snapshot and the previous one to take the last reading from.
+  /// </remarks>
+  internal ref ProcessRecord AppendProcess() {
+    if (this._processes.Length <= this.ProcessCount)
+      Array.Resize(ref this._processes, Math.Max(8, this._processes.Length * 2));
+
+    var index = this.ProcessCount++;
+    ProcessRecord.ClearPlatformReadings(ref this._processes[index]);
+    return ref this._processes[index];
+  }
+
   private DiskCounters[] _disks = [];
   private NetworkCounters[] _networks = [];
 
