@@ -414,6 +414,28 @@ public static class Humanize {
     : "—";
 
   /// <summary>
+  /// When something happened, against a moment it is being read at (PRD §63).
+  /// </summary>
+  /// <remarks>
+  /// The time alone for something that happened today, and the date as well for anything older. A
+  /// timeline is usually read minutes after the thing in it, where a date on every line is width
+  /// spent saying "today" over and over; but a program left running for a week has entries where the
+  /// day is the whole of what a reader needs, and a bare clock time there is actively misleading.
+  /// Local, like <see cref="Timestamp"/>, because the reader is comparing this against their own
+  /// logs.
+  /// </remarks>
+  public static string When(long utcTicks, long nowUtcTicks) {
+    if (utcTicks <= 0)
+      return "—";
+
+    var moment = new DateTime(utcTicks, DateTimeKind.Utc).ToLocalTime();
+    var now = new DateTime(nowUtcTicks <= 0 ? utcTicks : nowUtcTicks, DateTimeKind.Utc).ToLocalTime();
+    return moment.Date == now.Date
+      ? moment.ToString("HH:mm:ss", CultureInfo.InvariantCulture)
+      : moment.ToString("dd MMM HH:mm", CultureInfo.InvariantCulture);
+  }
+
+  /// <summary>
   /// A scheduler class under the kernel's own name, because that is what a person will search for.
   /// </summary>
   /// <remarks>

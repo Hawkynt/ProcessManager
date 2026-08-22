@@ -111,6 +111,13 @@ public sealed class ListOverlay {
     foreach (var item in this._items)
       contentWidth = Math.Max(contentWidth, item.Label.Length + item.Hint.Length + 6);
 
+    // A hint column past the right-hand edge silently drew nothing: the clip below took a negative
+    // width and there was no hint at all, with nothing to say so. The box is as wide as it needs to
+    // be for the widest label and its hint, so a column that does not fit is a caller's arithmetic
+    // being wrong rather than a request to hide the hints.
+    if (this.HintColumn > 0)
+      contentWidth = Math.Max(contentWidth, this.HintColumn + 8);
+
     var width = this.FullScreen ? screen.Width : Math.Min(screen.Width - 2, Math.Max(24, contentWidth + 4));
     var height = this.FullScreen
       ? screen.Height

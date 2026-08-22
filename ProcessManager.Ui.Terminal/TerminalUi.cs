@@ -66,7 +66,7 @@ public sealed class TerminalUi {
   private enum InputMode : byte { Normal, Search, Filter, Confirm, SchedulingClass, Detail, Overlay, ExportPath }
 
   /// <summary>Which list is on screen, so one set of keys can drive all three.</summary>
-  private enum OverlayKind : byte { None, Actions, Columns, Help, Grouping, Interval, Service }
+  private enum OverlayKind : byte { None, Actions, Columns, Help, Grouping, Interval, Service, Timeline }
 
   /// <summary>
   /// What the pending confirmation will do if it is answered yes.
@@ -126,6 +126,19 @@ public sealed class TerminalUi {
   }
 
   private NotificationWatch _watch = new(new NotificationRules());
+
+  /// <summary>
+  /// What has happened while this has been running (PRD §63).
+  /// </summary>
+  /// <remarks>
+  /// In memory and bounded, so it costs nothing to keep and nothing survives the session. A table
+  /// says what is true now; this says that the process using the processor a minute ago has since
+  /// gone, which is what somebody who looked away and looked back is actually asking.
+  /// </remarks>
+  private readonly EventLog _timeline = new();
+
+  /// <summary>Whether this is the first sample, so a whole machine starting is not the first entry.</summary>
+  private bool _timelineStarted;
 
   /// <summary>
   /// How many samples pass between service checks, when a rule names a unit at all (PRD §5.4, §64).
@@ -272,6 +285,13 @@ public sealed class TerminalUi {
   /// a question is the more useful of the two.
   /// </remarks>
   private void Announce() {
+    // The timeline records what happened whether or not anybody asked to be interrupted about it:
+    // a notification is an interruption and this is the record, and the two are different questions
+    // (PRD §63, §64).
+    var now = DateTime.UtcNow.Ticks;
+    this._timeline.Add(this._sampler.Current, this._sampler.Delta, !this._timelineStarted, now);
+    this._timelineStarted = true;
+
     if (!this._watch.Rules.Any)
       return;
 
@@ -283,8 +303,12 @@ public sealed class TerminalUi {
         found = [.. found, .. stopped];
     }
 
-    if (found.Count > 0)
-      this.Say(NotificationWatch.Summarise(found), Attributes.Warn);
+    if (found.Count == 0)
+      return;
+
+    // In the words it was announced in, so the record and the interruption cannot disagree.
+    this._timeline.Add(found, now);
+    this.Say(NotificationWatch.Summarise(found), Attributes.Warn);
   }
 
   /// <summary>Recomposes without sampling — for a keypress that only changes what is shown.</summary>
@@ -533,6 +557,7 @@ public sealed class TerminalUi {
       case TerminalAction.SchedulingClass: this.BeginSchedulingClass(); return true;
       case TerminalAction.CountHandles: this.FillHandleCounts(); return true;
       case TerminalAction.ServiceMenu: this.OpenServiceMenu(); return true;
+      case TerminalAction.Timeline: this.OpenTimeline(); return true;
       case TerminalAction.Threads: this.OpenDetail(DetailTab.Threads); return true;
       case TerminalAction.Modules: this.OpenDetail(DetailTab.Modules); return true;
       case TerminalAction.Handles: this.OpenDetail(DetailTab.Handles); return true;
@@ -822,6 +847,16 @@ public sealed class TerminalUi {
       case OverlayKind.Service:
         this.CloseOverlay();
         this.CommandUnit((ServiceCommand)item.Tag);
+        return true;
+
+      // An entry about a process goes to it, where it is still there. An entry about one that has
+      // ended says so rather than moving the cursor somewhere arbitrary — which is most of what a
+      // timeline holds, and the reason it exists.
+      case OverlayKind.Timeline:
+        this.CloseOverlay();
+        if (item.Tag > 0 && !this.SelectByPid(item.Tag))
+          this.Say($"PID {item.Tag.ToString(CultureInfo.InvariantCulture)} is not in the list any more", Attributes.Dim);
+
         return true;
 
       case OverlayKind.Interval:
@@ -1620,6 +1655,82 @@ public sealed class TerminalUi {
   /// how somebody arrives at wanting this. They are looking at a row eating the machine, and what
   /// they want is not to kill that process but to stop the unit that will start it again.
   /// </remarks>
+  /// <summary>
+  /// What has happened since this started (PRD §63).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Newest first, which is the opposite of the order it is recorded in and the right one for
+  /// reading: somebody opening this has just noticed something and wants the most recent thing
+  /// first, not to scroll past an hour to reach it.
+  /// </para>
+  /// <para>
+  /// The heading says how many are being shown against how many there have been, because a ring that
+  /// has dropped the older ones and says only "five hundred" reads as though five hundred is all
+  /// there was.
+  /// </para>
+  /// </remarks>
+  /// <summary>
+  /// Puts the cursor on a process by its number, or says it is not there any more.
+  /// </summary>
+  /// <remarks>
+  /// By pid rather than by identity, because that is all a timeline entry keeps: the record a
+  /// process had went with it, which is the whole difficulty of describing something that has
+  /// ended. Within one sample a pid is unique, so a match here is the process the entry named — and
+  /// a miss is the ordinary case, since most of what a timeline holds has finished.
+  /// </remarks>
+  private bool SelectByPid(int pid) {
+    var rows = this._view.Rows;
+    var processes = this._sampler.Current.Processes;
+    for (var i = 0; i < rows.Length; ++i) {
+      if (processes[rows[i].Index].Pid != pid)
+        continue;
+
+      this._selectedRow = i;
+      this._selectedKey = this.KeyAt(i);
+      this.ClampScroll();
+      return true;
+    }
+
+    return false;
+  }
+
+  private void OpenTimeline() {
+    var entries = this._timeline.Entries;
+    if (entries.Count == 0) {
+      this.Say("nothing has happened yet that this was watching for", Attributes.Dim);
+      return;
+    }
+
+    var items = new List<OverlayItem>();
+    var now = DateTime.UtcNow.Ticks;
+    var category = EventCategory.Unclassified;
+    for (var i = entries.Count - 1; i >= 0; --i) {
+      var entry = entries[i];
+      // A heading each time the kind changes, so a run of one sort of thing reads as one thing.
+      if (entry.Category != category) {
+        category = entry.Category;
+        items.Add(OverlayItem.Heading(EventLog.Describe(category)));
+      }
+
+      items.Add(OverlayItem.Entry(entry.Text, Humanize.When(entry.UtcTicks, now), entry.Pid));
+    }
+
+    // Where the time goes, from the widest sentence rather than a constant: an entry is a process
+    // name and a verb, so the width is whatever the machine happens to have been running.
+    var widest = 0;
+    foreach (var item in items)
+      if (!item.IsHeading)
+        widest = Math.Max(widest, item.Label.Length);
+
+    var total = this._timeline.Total;
+    var heading = entries.Count == total
+      ? $"{entries.Count} things have happened — Esc closes"
+      : $"the last {entries.Count} of {total} things — Esc closes";
+
+    this.ShowOverlay(new(heading, items) { HintColumn = widest + 3 }, OverlayKind.Timeline);
+  }
+
   private void OpenServiceMenu() {
     if (this._services is not { IsAvailable: true }) {
       this.Say("there is no service manager here to ask", Attributes.Dim);
