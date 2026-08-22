@@ -217,4 +217,70 @@ public sealed class CpuTopologyTests {
 
   #endregion
 
+  #region big.LITTLE, which has no PMU directories at all (PRD §46)
+
+  private static CpuTopology FromArmFixture() {
+    using var probe = new Platform.Linux.LinuxProbe(new() {
+      ProcRoot = Path.Combine(TestContext.CurrentContext.TestDirectory, "Fixtures", "proc-desktop"),
+      SysRoot = Path.Combine(TestContext.CurrentContext.TestDirectory, "Fixtures", "sys-biglittle"),
+      EffectiveUserId = 0,
+    });
+
+    return probe.DescribeTopology();
+  }
+
+  /// <summary>
+  /// An RK3399 shape: four A53s at capacity 467 and two A72s at 1024. The hybrid PMU directories are
+  /// Intel's and this machine has none, so the kind comes from the number the scheduler itself uses.
+  /// </summary>
+  [Test]
+  public void ABigLittleMachinesTwoKindsComeFromTheSchedulersOwnCapacities() {
+    var topology = FromArmFixture();
+
+    Assert.That(topology.Cores, Has.Count.EqualTo(6));
+    Assert.That(topology.IsHybrid, Is.True);
+
+    foreach (var core in topology.Cores)
+      Assert.That(
+        core.Kind,
+        Is.EqualTo(core.Logical >= 4 ? CoreKind.Performance : CoreKind.Efficiency),
+        $"cpu{core.Logical}"
+      );
+  }
+
+  /// <summary>
+  /// And the map draws the fast ones first, which on this board is the half the kernel enumerates
+  /// last: a grid in enumeration order would put the two A72s at the end.
+  /// </summary>
+  [Test]
+  public void TheBigCoresAreDrawnBeforeTheLittleOnes() {
+    var members = FromArmFixture().Of(0);
+
+    Assert.That(members[0].Logical, Is.EqualTo(4));
+    Assert.That(members[1].Logical, Is.EqualTo(5));
+    Assert.That(members[^1].Logical, Is.EqualTo(3));
+  }
+
+  /// <summary>
+  /// The machine this was written on publishes <c>cpu_capacity</c> too, and every processor reports
+  /// 1024. One capacity is a machine whose cores are all alike, and calling them all performance
+  /// cores would put a distinction on the page the silicon does not have (PRD §5.3).
+  /// </summary>
+  [Test]
+  public void OneCapacityForEveryProcessorIsNotAHybridMachine() {
+    using var probe = new Platform.Linux.LinuxProbe(new() {
+      ProcRoot = Path.Combine(TestContext.CurrentContext.TestDirectory, "Fixtures", "proc-desktop"),
+      SysRoot = Path.Combine(TestContext.CurrentContext.TestDirectory, "Fixtures", "sys-flat-capacity"),
+      EffectiveUserId = 0,
+    });
+
+    var topology = probe.DescribeTopology();
+    Assert.That(topology.Cores, Has.Count.EqualTo(2));
+    Assert.That(topology.IsHybrid, Is.False);
+    foreach (var core in topology.Cores)
+      Assert.That(core.Kind, Is.EqualTo(CoreKind.Unknown));
+  }
+
+  #endregion
+
 }

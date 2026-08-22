@@ -292,6 +292,83 @@ public sealed class ProcessPropertiesWindowTests {
   }
 
   /// <summary>
+  /// A window with a few samples in it and its graphs given a size, so the cursor has somewhere to
+  /// land. An unsized plot is a plot nothing can be pointed at, and the readings would be empty for
+  /// a reason that has nothing to do with the gesture.
+  /// </summary>
+  private static ProcessPropertiesWindow WindowWithHistory(int samples = 30) {
+    var (snapshot, delta, row, key) = Machine();
+    var window = new ProcessPropertiesWindow(new StubProbe(), key, row.Name);
+
+    foreach (var plot in window.PerformancePlots)
+      plot.Bounds = new(0, 0, 240, 96);
+
+    for (var i = 0; i < samples; ++i)
+      window.UpdateFromSample(snapshot, delta, row, Counter.Of(42));
+
+    return window;
+  }
+
+  /// <summary>
+  /// Pointing at a graph reports what it was doing at that moment, and says which moment (PRD §28).
+  /// </summary>
+  [Test]
+  public void PointingAtAGraphReportsTheReadingAndTheMomentItIsFrom() {
+    var window = WindowWithHistory();
+    var plot = window.PerformancePlots[0];
+
+    plot.PointAt(plot.Width - 1);
+    Assert.That(plot.HoverText, Does.Contain("now"), "the newest sample is the right-hand edge");
+
+    plot.PointAt(plot.Width / 2);
+    Assert.That(plot.HoverText, Does.Contain("s ago"), "and everything left of it is older");
+
+    // The footer echoes it, so the gesture is discoverable on a page of six graphs.
+    Assert.That(window.PerformanceFooter, Does.Contain(plot.Caption));
+    Assert.That(window.PerformanceFooter, Does.Contain("s ago"));
+  }
+
+  /// <summary>
+  /// And the arrow keys reach the same readings, which is the whole of "keyboard-accessible point
+  /// inspection" — including the footer, which followed the mouse only and went on reporting
+  /// wherever the pointer had last been while the keyboard moved the cursor (PRD §28, §45.9).
+  /// </summary>
+  [Test]
+  public void TheArrowKeysWalkTheCursorAndTheFooterFollowsThem() {
+    var window = WindowWithHistory();
+    var plot = window.PerformancePlots[0];
+
+    Assert.That(plot.TabStop, Is.True, "Tab cannot reach a graph it does not stop at");
+
+    plot.MoveCursor(-1);
+    Assert.That(plot.HoverText, Is.Not.Empty, "the first arrow key starts at the newest sample");
+    var first = window.PerformanceFooter;
+    Assert.That(first, Does.Contain(plot.Caption));
+
+    for (var i = 0; i < 20; ++i)
+      plot.MoveCursor(-1);
+
+    Assert.That(window.PerformanceFooter, Is.Not.EqualTo(first), "the footer did not follow the keyboard");
+    Assert.That(window.PerformanceFooter, Does.Contain("s ago"));
+  }
+
+  /// <summary>
+  /// Past the history the machine has, the cursor reports an absence rather than a nought: a graph
+  /// that has been running for ten minutes has nothing to say about the fifty before them, and
+  /// drawing that as idle is the same lie as any other confident zero (PRD §72.3).
+  /// </summary>
+  [Test]
+  public void APointBeforeTheHistoryStartsIsNotAReadingOfNought() {
+    var window = WindowWithHistory(samples: 3);
+    window.SetSpan(3600);
+    var plot = window.PerformancePlots[0];
+
+    plot.PointAt(0);
+    Assert.That(plot.HoverText, Does.Not.Contain("0.0 %"));
+    Assert.That(plot.HoverText, Does.Contain("…").Or.Contain("n/a"));
+  }
+
+  /// <summary>
   /// A machine whose driver says nothing about per-process graphics use keeps the tab and explains
   /// itself, which is what "disabled" means here.
   /// </summary>

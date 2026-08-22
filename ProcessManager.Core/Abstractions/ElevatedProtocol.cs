@@ -19,6 +19,16 @@ public enum ElevatedOpcode : byte {
   Resume = 7,
   SetPriority = 8,
   SetAffinity = 9,
+
+  /// <summary>
+  /// The firmware's SMBIOS structure table, which is root-only on every distribution that ships it
+  /// (PRD §47).
+  /// </summary>
+  /// <remarks>
+  /// The only opcode that names no process: it is a fact about the machine, the same bytes whoever
+  /// asks, and the path is a constant inside the helper rather than anything a caller supplies.
+  /// </remarks>
+  ReadSmbios = 10,
 }
 
 /// <summary>What the helper says back.</summary>

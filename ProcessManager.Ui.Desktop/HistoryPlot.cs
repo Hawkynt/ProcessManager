@@ -173,22 +173,58 @@ public sealed class HistoryPlot : OwnerDrawnControl {
   /// </remarks>
   public string HoverText { get; private set; } = string.Empty;
 
-  protected override void OnMouseMove(MouseEventArgs e) {
+  /// <summary>
+  /// Raised whenever the cursor lands somewhere new, however it got there (PRD §28).
+  /// </summary>
+  /// <remarks>
+  /// One event for the pointer and the arrow keys alike, because the page that echoes the readings
+  /// into its footer must follow both. It hung off <c>MouseMove</c> at first, which left the
+  /// keyboard drawing its cursor on the plot while the footer went on reporting wherever the mouse
+  /// had last been — a reading beside the wrong moment, which is worse than no reading (PRD §45.9).
+  /// </remarks>
+  public event EventHandler? CursorMoved;
+
+  /// <summary>
+  /// Puts the cursor at a pixel from the left — what a mouse move does, without a mouse.
+  /// </summary>
+  /// <remarks>
+  /// Public so the gesture is testable at all: <c>OnMouseMove</c> is raised by a realized canvas and
+  /// nothing else, so a window-less test can otherwise say nothing about what a reader sees when
+  /// they point at a graph (PRD §9.6).
+  /// </remarks>
+  public void PointAt(int x) {
     var was = this._hoverX;
-    this._hoverX = e.X;
+    this._hoverX = x;
     this.UpdateHoverText();
+    this.CursorMoved?.Invoke(this, EventArgs.Empty);
     if (was != this._hoverX)
       this.Invalidate();
   }
 
-  protected override void OnMouseLeave(EventArgs e) {
+  /// <summary>
+  /// Walks the cursor along the axis — what an arrow key does. Starts at the newest sample.
+  /// </summary>
+  public void MoveCursor(int step) {
+    if (this.Width < 2)
+      return;
+
+    this.PointAt(this._hoverX < 0 ? this.Width - 1 : Math.Clamp(this._hoverX + step, 0, this.Width - 1));
+  }
+
+  /// <summary>Takes the cursor off the plot, which is what leaving it does.</summary>
+  public void ClearCursor() {
     if (this._hoverX < 0)
       return;
 
     this._hoverX = -1;
     this.HoverText = string.Empty;
+    this.CursorMoved?.Invoke(this, EventArgs.Empty);
     this.Invalidate();
   }
+
+  protected override void OnMouseMove(MouseEventArgs e) => this.PointAt(e.X);
+
+  protected override void OnMouseLeave(EventArgs e) => this.ClearCursor();
 
   /// <summary>
   /// Arrow keys walk the cursor along the axis, so the tooltip is reachable without a mouse
@@ -204,9 +240,7 @@ public sealed class HistoryPlot : OwnerDrawnControl {
     if (step == 0)
       return;
 
-    this._hoverX = this._hoverX < 0 ? this.Width - 1 : Math.Clamp(this._hoverX + step, 0, this.Width - 1);
-    this.UpdateHoverText();
-    this.Invalidate();
+    this.MoveCursor(step);
     e.Handled = true;
   }
 

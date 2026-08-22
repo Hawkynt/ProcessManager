@@ -57,6 +57,11 @@ public sealed class WindowsProbe : ISystemProbe {
   /// <summary>Read once; nothing in it changes while the program runs.</summary>
   public HostInfo DescribeHost() => this._host ??= WindowsHostReader.Read();
 
+  private CpuTopology? _topology;
+
+  /// <summary>Read once: a machine does not repartition its cores while a program watches it.</summary>
+  public CpuTopology DescribeTopology() => this._topology ??= WindowsHostReader.ReadPlacement();
+
   public void Dispose() => this._handleNames.Dispose();
 
   public void Sample(SystemSnapshot snapshot) {

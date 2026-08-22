@@ -47,6 +47,32 @@ internal static partial class Native {
   /// <summary>RelationAll — every record in one call rather than four calls for four kinds.</summary>
   public const int RelationAll = 0xFFFF;
 
+  /// <summary>
+  /// A firmware table, verbatim. <c>RSMB</c> is the raw SMBIOS one (PRD §47).
+  /// </summary>
+  /// <remarks>
+  /// Unprivileged on Windows, unlike Linux, where the same bytes are root-only: the kernel copies the
+  /// table at boot and hands it to anybody who asks. Called twice, once for the size and once for the
+  /// contents, because a firmware table has no useful upper bound.
+  /// </remarks>
+  [LibraryImport("kernel32.dll", SetLastError = true)]
+  internal static partial uint GetSystemFirmwareTable(uint provider, uint tableId, nint buffer, uint bufferSize);
+
+  /// <summary>The four characters <c>RSMB</c>, as the DWORD the API wants them in.</summary>
+  public const uint RawSmbiosProvider = 0x5253_4D42;
+
+  /// <summary>
+  /// Whether the processor has one of the features Windows enumerates (PRD §46).
+  /// </summary>
+  /// <remarks>
+  /// ARM has no <c>CPUID</c> reachable from user code and Windows publishes no auxiliary vector, so
+  /// this is the whole of what a Windows-on-ARM process can learn about its own processor. The
+  /// constants are Windows', not the architecture's — a list of questions rather than a word of bits.
+  /// </remarks>
+  [LibraryImport("kernel32.dll")]
+  [return: MarshalAs(UnmanagedType.Bool)]
+  internal static partial bool IsProcessorFeaturePresent(uint feature);
+
   [LibraryImport("kernel32.dll", SetLastError = true)]
   internal static partial nint OpenProcess(uint desiredAccess, [MarshalAs(UnmanagedType.Bool)] bool inheritHandle, int processId);
 

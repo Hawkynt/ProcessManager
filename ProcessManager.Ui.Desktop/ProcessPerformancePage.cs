@@ -92,10 +92,11 @@ internal sealed class ProcessPerformancePage {
 
     this._plots.AddRange([this._cpuPlot, this._memoryPlot, this._ioPlot, this._gpuPlot, this._handlePlot, this._threadPlot]);
     foreach (var plot in this._plots) {
-      // Hovering one plot writes its readings into the footer as well as onto the plot itself, so
+      // Pointing at one plot writes its readings into the footer as well as onto the plot itself, so
       // that the gesture is discoverable: a cursor that only draws on the graph it is over is easy to
-      // miss on a page of six.
-      plot.MouseMove += (sender, _) => this.Report(sender as HistoryPlot);
+      // miss on a page of six. CursorMoved rather than MouseMove, because the arrow keys move the
+      // same cursor and the footer has to follow them too (PRD §45.9).
+      plot.CursorMoved += (sender, _) => this.Report(sender as HistoryPlot);
       this._panel.Controls.Add(plot);
     }
 
@@ -126,6 +127,12 @@ internal sealed class ProcessPerformancePage {
   ];
 
   public Control Control => this._panel;
+
+  /// <summary>The graphs, in the order they are tiled — so a test can point at one (PRD §28).</summary>
+  public IReadOnlyList<HistoryPlot> Plots => this._plots;
+
+  /// <summary>What the strip under the graphs currently says: the axis, or the readings under the cursor.</summary>
+  public string Footer => this._footer.Text;
 
   /// <summary>How wide the axis is, in seconds.</summary>
   public int SpanSeconds { get; private set; } = 60;

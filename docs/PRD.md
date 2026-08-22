@@ -2287,13 +2287,37 @@ which programs ship a `.desktop` file rather than describing the process.
 
 # 28. Performance process properties
 
-- [ ] Historical graphs for CPU, private/commit, resident/working set, I/O, disk, network, GPU,
-      handles/descriptors and thread count
-- [ ] Time windows: 60 s · 5 min · 15 min · 1 h · retained-history limit
-- [ ] Hover values
-- [ ] Keyboard-accessible point inspection
+- [x] 🟡 Historical graphs for CPU, private/commit, resident/working set, I/O, disk, GPU,
+      handles/descriptors and thread count — six plots tiled two across, each on a scale that
+      follows its readings up quickly and comes back down slowly, with the ceiling named in the
+      corner. Private and working set share one plot deliberately: a resident set far below the
+      commit charge is a process that has been paged out, and that is only visible side by side.
+      **Network is not among them**, and is refused rather than deferred for the reasons §18 gives
+      at length — a graph is a worse place than a column to put an unmeasurable quantity, because a
+      flat line along the floor reads as a quiet process rather than as an unmeasured one (§72.3)
+- [x] Time windows: 60 s · 5 min · 15 min · 1 h · retained-history limit — four buttons above the
+      graphs, and the limit in words under them. An hour of axis over ten minutes of history draws
+      as a graph that is mostly empty, and nothing on it would otherwise say whether that means
+      "idle" or "this program has not been running that long"
+- [x] Hover values — a rule down the sample under the pointer and its readings beside it, drawn on
+      the plot rather than in a floating tip, which on a page of six stacked graphs would cover the
+      neighbour a reader is comparing against. The same readings are echoed into the strip under the
+      graphs, so the gesture is discoverable at all
+- [x] Keyboard-accessible point inspection — Tab reaches every graph and ←/→ walk the cursor along
+      the axis. The strip follows the arrow keys as well as the pointer, which it did not: it hung
+      off the mouse alone, so the keyboard moved the cursor and drew it while the strip went on
+      reporting wherever the pointer had last been — a reading beside the wrong moment, which is
+      worse than no reading (§45.9)
 
-The 60-second ring exists (§8.2). The longer windows need the decimating ring from §85.
+Rings of its own rather than the table's. §8.2's are sized for a forty-pixel sparkline and are kept
+only for the rows a front-end says are on screen; this window is pinned to one process, so an hour at
+a one-second interval costs one process's worth of numbers and needs no decimation to hold it.
+
+Every series is appended on every tick, including the ones with nothing to report. A ring that only
+grew when a reading existed would put the samples out of step with each other and with the axis, and
+the plot would draw a gap as though it had never happened. Past the history the window actually
+holds, the cursor reports an absence and not a nought: the part of the axis this program has not been
+running long enough to fill is not a quiet minute (§72.3).
 
 ---
 
@@ -3521,7 +3545,7 @@ wrong, and which the tests now catch.
       something was stalled waiting for the processor
 - [x] Context switches per second
 - [x] Interrupts per second
-- [ ] System calls per second — refused. Linux keeps no machine-wide counter for them: the figure
+- ∅ System calls per second — refused. Linux keeps no machine-wide counter for them: the figure
       can be had per process with `ptrace` or a BPF probe, and both are far more intrusive than a
       performance page has any business being. The context-switch count moves at a similar speed
       and is a different number, which is exactly why it is not shown under this name (§5.3)
@@ -3589,8 +3613,24 @@ wrong on the first pass, `MTE3` and `SME`.
 - [x] arm64 cryptography — AES, PMULL, SHA1/2/3/512, SM3, SM4, CRC32, the SVE variants, RNG
 - [x] arm64 hardening — pointer authentication, BTI, MTE, MTE3, SSBS, SB, POE
 - [x] arm64 implementer and part, from `MIDR_EL1`
-- [ ] 32-bit arm — the capability words differ and are not read
-- [ ] Windows on ARM — needs `IsProcessorFeaturePresent`, which is not called
+- [x] 32-bit arm — `AT_HWCAP` and `AT_HWCAP2` as *that* architecture assigns them, which is a
+      different word entirely and shares not one bit position with the table above: NEON is bit 12
+      on 32-bit ARM and bit 1 on arm64, VFPv3 is bit 13 where arm64 has JSCVT. Decoding one
+      architecture's words with the other's table produces a full, plausible and entirely wrong
+      feature list, and because every bit is assigned in both there is nothing for a check to fail
+      on — so the table is chosen by the process's own architecture and never inferred. Held against
+      a vendored `arch/arm/include/uapi/asm/hwcap.h` in the same test the arm64 table gets. The
+      *signature* is still arm64's alone: `MIDR_EL1` does not exist there and 32-bit ARM publishes
+      the same fields as four lines of `/proc/cpuinfo`, which nothing reads yet — so that row is
+      blank on such a machine rather than wrong
+- [x] Windows on ARM — `IsProcessorFeaturePresent`, which is what Windows has instead of an
+      auxiliary vector: a call per feature answering yes or no to a numbered question, asked once at
+      startup rather than decoded from two words of bits. The ordinals are Windows' own and are an
+      ABI, so they are held against a vendored copy of the `PF_*` list in a test for the same reason
+      the arm64 bits are held against the kernel's header — nobody here has such a machine, and a
+      wrong ordinal produces a plausible list on one none of us can look at. The crypto extension is
+      one question covering AES, PMULL, SHA1 and SHA2, so the row names all four rather than
+      claiming four readings from one bit
 
 `CPUID` is read through `X86Base.CpuId`, which the runtime emits as the instruction itself: no native
 library, no `[LibraryImport]`, one implementation answering on Linux and Windows alike, and
@@ -3606,7 +3646,11 @@ Windows answers the same questions by different means: `GetLogicalProcessorInfor
 packages, NUMA nodes and caches, and `CPUID` leaves 0x80000002–4 for the brand string. Asking the
 processor rather than the registry avoids a dependency the trimmer would have to be told about, and
 returns the same string, because that is where Windows got it. ARM64 has no CPUID and reports that it
-does not know rather than inventing a name. The live clock speed is still `n/i` there — Windows
+does not know rather than inventing a name — the *feature* list there comes from the numbered
+questions above, and on x86 Windows it comes from the same `X86Base.CpuId` the Linux side uses, which
+is what "one implementation answering on Linux and Windows alike" was supposed to mean and did not:
+the Windows host record carried no feature list at all, so every Windows machine reported an empty
+one. The live clock speed is still `n/i` there — Windows
 exposes it only through a performance counter or a power interface, neither worth opening to describe
 a machine.
 
@@ -3641,9 +3685,21 @@ visible as a shape rather than worked out from sixteen numbers.
       `/sys/devices/cpu_core/cpus` and `/sys/devices/cpu_atom/cpus`, which exist only on a hybrid
       part and name exactly which processors are which
 - [x] Grouped by socket where the machine says which is which
-- [ ] ARM big.LITTLE — the PMU directories are Intel's; nothing here reads the equivalent, and a
-      guess from differing maximum clocks would be a guess. Unknown rather than wrong (§5.3)
-- [ ] Windows: no topology is read, so the map falls back to one flat row
+- [x] ARM big.LITTLE — from `cpu_capacity`, which is not the guess from differing maximum clocks
+      that was refused here before: it is the number the scheduler itself uses to decide that one
+      core does more work per second than another, normalised so the fastest is 1024, and it is the
+      kernel's own answer to exactly the question the map is asking. Read only where the hybrid PMU
+      directories said nothing, and only believed where the capacities actually differ — this
+      laptop publishes the file too and reports 1024 for all sixteen, which is a machine that is not
+      hybrid rather than a machine of sixteen performance cores (§5.3)
+- [x] Windows: the topology is read out of the buffer `GetLogicalProcessorInformationEx` was
+      already being called for and was simply never read from — which socket each processor is in,
+      which processors share a core, which NUMA node each is on, and the efficiency class that tells
+      a hybrid part's two kinds apart. The class is a rank rather than a kind and higher is faster,
+      so a machine reporting one class throughout is not hybrid; and past sixty-four processors a
+      processor's number is its position in its group plus sixty-four per group before it, which is
+      the arithmetic that decides whether the map draws a second socket or a second copy of the
+      first
 - [x] User vs kernel / system — plotted together, total in green with kernel over it in red, on the
       processor page and on every core
 
@@ -3683,19 +3739,57 @@ socket and cache topology.
       machine rather than for what Windows calls them (§5.3), and both are in the collapsed block
       with the slab total beside them — where they are now actually visible, which they were not
       while a column held twelve rows and these were the thirteenth and fourteenth
-- [ ] Hardware reserved — the row is there and is refused with its reason rather than computed as a
-      zero, because the installed total it subtracts from is one of the four firmware facts below
+- [x] Hardware reserved — installed less usable, where the installed figure was read. Where it was
+      not, the row is refused with its reason rather than computed as a zero: subtracting a number
+      nobody read gives a plausible nought, and "the firmware kept nothing for itself" is a claim
+      about the machine
 - [x] Memory pressure — both halves, `some` and `full`
-- [ ] **Memory speed** — refused rather than guessed: `—`, with the reason
-- [ ] **Channels**
-- [ ] **Form factor** — as above
-- [ ] **Slots used / available** — as above
+- [x] **Memory speed** — the *configured* rate rather than the rated one wherever the record is long
+      enough to carry it: a DDR5-5600 module the board would only train to 4800 is doing 4800, and
+      the rated figure would describe a machine nobody has
+- ∅ **Channels** — how many channels the modules are interleaved over is in no type-17 record and in
+      no file the kernel publishes for an ordinary machine. Type 17 describes a device and the slot
+      it sits in, never the controller's interleave; the locator strings that look like channel
+      names — `ChannelA-DIMM0` — are vendor-formatted text, and a parser reading channels out of
+      them would be guessing at a string the firmware author was free to write any way at all.
+      Linux exposes the real figure only through EDAC, and only where a driver for that particular
+      controller is bound, which on this laptop is nowhere. Refused with its reason (§5.3)
+- [x] **Form factor** — DIMM, SODIMM, CAMM and the rest of the enumeration. The two values that mean
+      the firmware declined to say — `Other` and `Unknown` — report not knowing, rather than
+      printing the word "Unknown" as though it were a shape
+- [x] **Slots used / available** — every type-17 record is a slot, populated or not, so an empty one
+      is counted as a slot and not as a module. Four slots with nothing in any of them is a readable
+      answer; nought bytes installed is not, and is refused
 - [x] NUMA distribution — how much memory each node has, from `/sys/devices/system/node/node*/meminfo`,
       and only where there is more than one node: "node 0 has all of it" is not a distribution
 
-The four in bold are the Task-Manager-style hardware facts. They come from DMI/SMBIOS type-17
-records: `/sys/firmware/dmi/tables` on Linux, which is root-readable and therefore a helper call, and
-`GetSystemFirmwareTable` on Windows.
+The four in bold are the Task-Manager-style hardware facts, and three of them come from DMI/SMBIOS
+type-17 records — one record per memory device on the board. The same bytes on both operating
+systems, so the same parser answers on both and is tested on machines that have neither: every field
+is bounds-checked against the record's own declared length rather than against the version in the
+anchor, because firmware in the field is routinely a revision behind its own version number and a
+record that stops before the configured speed is ordinary. Reading past its end would report the next
+record's handle as a clock rate.
+
+On Windows the table is `GetSystemFirmwareTable`'s `RSMB` provider and needs no elevation at all. On
+Linux the same bytes are `/sys/firmware/dmi/tables/DMI`, mode 0400 root, and there are three ways to
+end up looking at them:
+
+- **The program is root**, or is replaying a recorded tree that carries a copy, and reads the file
+  directly. That is what makes the whole path testable rather than just the parser.
+- **The helper is already running**, because somebody elevated for something else, and answers one
+  frame with the table. The helper reads it from a constant path of its own and this is the one
+  opcode that names no process — a firmware table is a fact about the machine, the same bytes
+  whoever asks, so the recycled-pid check has nothing to check. Every opcode that *does* name a
+  process still goes through it, and the split is by opcode, so nothing can talk its way past the
+  check by leaving a key out (§8.2).
+- **Neither**, which is the ordinary case, and the rows say `—` and mean "you may not look". The
+  helper is deliberately *not* started for this: a machine description is not something the user
+  asked for, and a password prompt raised by drawing a page is precisely what §8 exists to prevent.
+
+A machine with no `CONFIG_DMI` at all — most ARM boards, most virtual machines — has no such file,
+and that is `n/a` rather than `—`. The difference is the whole reason both reasons exist: one of them
+is a machine where starting the helper would answer the question and the other is not (§5.3).
 
 The page renders from `PerformanceReport`, which is data rather than a window — so `--host` on a
 terminal and the desktop view show the same figures by construction, and the content is unit-tested

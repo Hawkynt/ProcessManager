@@ -84,17 +84,25 @@ public sealed class LinuxHostTests {
     Assert.That(Read().OperatingSystemVersion, Is.EqualTo("6.12.0-fixture"));
 
   /// <summary>
-  /// The firmware tables are root-only, so the module facts are refused rather than guessed. A zero
-  /// would say the machine has no memory slots (PRD §72.3).
+  /// The fixture tree publishes no structure table, which is what a machine built without
+  /// <c>CONFIG_DMI</c> looks like — every ARM board and most virtual machines. Refused, and never a
+  /// zero, which would say the machine has no memory slots (PRD §72.3).
   /// </summary>
+  /// <remarks>
+  /// "Not supported here" rather than "you may not look", and the difference is the whole reason
+  /// both reasons exist: a machine that has the table and will not show it to this process is a
+  /// machine where starting the helper would answer the question, and one with no table at all is
+  /// not (PRD §5.3).
+  /// </remarks>
   [Test]
   public void TheFirmwareFactsAreRefusedRatherThanInvented() {
     var host = Read();
 
     Assert.That(host.MemoryTransfersPerSecond.HasValue, Is.False);
-    Assert.That(host.MemoryTransfersPerSecond.Reason, Is.EqualTo(UnknownReason.NotPermitted));
-    Assert.That(host.MemorySlotsUsed.Reason, Is.EqualTo(UnknownReason.NotPermitted));
-    Assert.That(host.MemorySlotsTotal.Reason, Is.EqualTo(UnknownReason.NotPermitted));
+    Assert.That(host.MemoryTransfersPerSecond.Reason, Is.EqualTo(UnknownReason.NotSupportedOnPlatform));
+    Assert.That(host.MemorySlotsUsed.Reason, Is.EqualTo(UnknownReason.NotSupportedOnPlatform));
+    Assert.That(host.MemorySlotsTotal.Reason, Is.EqualTo(UnknownReason.NotSupportedOnPlatform));
+    Assert.That(host.InstalledMemoryBytes.Reason, Is.EqualTo(UnknownReason.NotSupportedOnPlatform));
     Assert.That(host.MemoryFormFactor, Is.Null);
   }
 
@@ -156,5 +164,83 @@ public sealed class LinuxHostTests {
     Assert.That(snapshot.System.TotalThreads, Is.EqualTo(expected));
     Assert.That(snapshot.System.TotalThreads, Is.GreaterThan(0));
   }
+
+  #region the firmware's memory facts (PRD §47)
+
+  /// <summary>
+  /// A structure table where the fixture trees have none, so the whole Linux path — file to record
+  /// to row — is exercised rather than only the parser. Written under the test's own directory
+  /// because the bytes belong beside the assertions: a binary blob checked into the fixtures would
+  /// be a table nobody could read or amend.
+  /// </summary>
+  private static string TreeWithFirmware(byte[] table) {
+    var root = Path.Combine(Path.GetTempPath(), "procman-dmi-" + Guid.NewGuid().ToString("n"));
+    var tables = Path.Combine(root, "firmware", "dmi", "tables");
+    Directory.CreateDirectory(tables);
+    File.WriteAllBytes(Path.Combine(tables, "DMI"), table);
+    return root;
+  }
+
+  /// <summary>Two 16 GB SODIMMs at 4800 MT/s in four slots, and the end-of-table marker.</summary>
+  private static byte[] TwoModules() {
+    var table = new List<byte>();
+    foreach (var megabytes in new ushort[] { 16 * 1024, 0, 16 * 1024, 0 }) {
+      var record = new byte[0x54];
+      record[0] = 17;
+      record[1] = 0x54;
+      System.Buffers.Binary.BinaryPrimitives.WriteUInt16LittleEndian(record.AsSpan(0x0C), megabytes);
+      record[0x0E] = 0x0D;                                                                    // SODIMM
+      System.Buffers.Binary.BinaryPrimitives.WriteUInt16LittleEndian(record.AsSpan(0x20), 4800);
+      table.AddRange(record);
+      table.AddRange([0, 0]);
+    }
+
+    table.AddRange([127, 4, 0, 0, 0, 0]);
+    return [.. table];
+  }
+
+  [Test]
+  public void TheModulesAreReadOutOfTheStructureTable() {
+    var root = TreeWithFirmware(TwoModules());
+    try {
+      using var probe = new LinuxProbe(new() {
+        ProcRoot = Path.Combine(Fixtures, "proc-desktop"),
+        SysRoot = root,
+        EffectiveUserId = 0,
+      });
+
+      var host = probe.DescribeHost();
+      Assert.That(host.InstalledMemoryBytes.Value, Is.EqualTo(32ul * 1024 * 1024 * 1024));
+      Assert.That(host.MemoryTransfersPerSecond.Value, Is.EqualTo(4_800_000_000ul));
+      Assert.That(host.MemoryFormFactor, Is.EqualTo("SODIMM"));
+      Assert.That(host.MemorySlotsUsed.Value, Is.EqualTo(2ul));
+      Assert.That(host.MemorySlotsTotal.Value, Is.EqualTo(4ul));
+    } finally {
+      Directory.Delete(root, recursive: true);
+    }
+  }
+
+  /// <summary>
+  /// How many channels the modules are interleaved over is in no type-17 record and in no file the
+  /// kernel publishes, so it is refused rather than inferred from the locator strings — which look
+  /// like channel names and are vendor-formatted text (PRD §47).
+  /// </summary>
+  [Test]
+  public void TheChannelCountIsRefusedRatherThanInferred() {
+    var root = TreeWithFirmware(TwoModules());
+    try {
+      using var probe = new LinuxProbe(new() {
+        ProcRoot = Path.Combine(Fixtures, "proc-desktop"),
+        SysRoot = root,
+        EffectiveUserId = 0,
+      });
+
+      Assert.That(probe.DescribeHost().MemoryChannels.HasValue, Is.False);
+    } finally {
+      Directory.Delete(root, recursive: true);
+    }
+  }
+
+  #endregion
 
 }
