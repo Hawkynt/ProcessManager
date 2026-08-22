@@ -111,7 +111,32 @@ public sealed partial class LinuxProbe : ISystemProbe {
 
   /// <summary>Read once; nothing in it changes while the program runs, except the live clock speed.</summary>
   public HostInfo DescribeHost()
-    => this._host ??= LinuxHostReader.Read(this._options.ProcRoot, this._options.SysRoot, this.IsThisMachine);
+    => this._host ??= LinuxHostReader.Read(this._options.ProcRoot, this._options.SysRoot, this.IsThisMachine, this.ReadFirmwareTable);
+
+  /// <summary>
+  /// The firmware's SMBIOS table through the helper, or null (PRD §47).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// <see cref="Abstractions.ElevatedChannel.Available"/> rather than <c>Send</c> on its own, which
+  /// would start the helper: describing the machine is not something the user asked for, and a
+  /// password prompt raised by drawing a page is the thing §8 exists to prevent. Where somebody has
+  /// already elevated for an action, the table costs one frame and is read once for the run.
+  /// </para>
+  /// <para>
+  /// Only when the files beside it are this machine's. The helper reads the running machine's
+  /// firmware and no other, so a <c>--probe-root</c> replay must not ask it — mixing a fixture's
+  /// core count with this laptop's memory modules describes two machines in one table, which is the
+  /// same rule <c>CPUID</c> is held to (PRD §9.4).
+  /// </para>
+  /// </remarks>
+  private byte[]? ReadFirmwareTable() {
+    if (!this.IsThisMachine || this._options.Elevated is not { Available: true } channel)
+      return null;
+
+    var (status, payload) = channel.Send(Abstractions.ElevatedOpcode.ReadSmbios, default);
+    return status == Abstractions.ElevatedStatus.Ok ? payload : null;
+  }
 
   /// <summary>
   /// Whether the files being read are this machine's rather than a recorded tree's.

@@ -389,6 +389,12 @@ public sealed class ProcessPropertiesWindow : Form {
   /// <summary>How many windows this process has on screen, as the page last read them (PRD §39).</summary>
   public int WindowRows => this._windows.RowCount;
 
+  /// <summary>The graphs themselves, for a caller that wants to point at a moment (PRD §28).</summary>
+  public IReadOnlyList<HistoryPlot> PerformancePlots => this._performance.Plots;
+
+  /// <summary>What the strip under the graphs says — the axis, or the readings under the cursor.</summary>
+  public string PerformanceFooter => this._performance.Footer;
+
   /// <summary>How wide the graphs' axis is, in seconds (PRD §28).</summary>
   public int SpanSeconds => this._performance.SpanSeconds;
 

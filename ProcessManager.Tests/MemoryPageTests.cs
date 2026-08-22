@@ -173,19 +173,56 @@ public sealed class MemoryPageTests {
   /// The firmware facts are refused rather than guessed, and the reserved figure with them.
   /// </summary>
   /// <remarks>
-  /// Installed less usable is what Task Manager calls hardware-reserved, and on Linux the installed
-  /// half comes from root-only SMBIOS tables. Subtracting a figure nobody read gives a plausible
-  /// zero, and "nothing is reserved" is a claim about the machine that this program has no business
-  /// making (PRD §47).
+  /// Installed less usable is what Task Manager calls hardware-reserved, and the installed half
+  /// comes from the firmware's own SMBIOS tables — root-only on Linux, and absent altogether from
+  /// the fixture tree, which is what a machine built without <c>CONFIG_DMI</c> looks like.
+  /// Subtracting a figure nobody read gives a plausible zero, and "nothing is reserved" is a claim
+  /// about the machine that this program has no business making (PRD §47).
   /// </remarks>
   [Test]
   public void HardwareReservedIsRefusedWhenNobodyCanSayWhatIsInstalled() {
     var memory = Memory();
-    var refused = Humanize.Placeholder(UnknownReason.NotPermitted);
+    var refused = Humanize.Placeholder(UnknownReason.NotSupportedOnPlatform);
 
     Assert.That(ValueOf(memory, "Installed"), Is.EqualTo(refused));
     Assert.That(ValueOf(memory, "Hardware reserved"), Is.EqualTo(refused));
     Assert.That(ValueOf(memory, "Usable"), Is.EqualTo(Humanize.Bytes(Counter.Of(16_384_000ul * 1024))), "which the kernel does know");
+  }
+
+  /// <summary>
+  /// And where the firmware table <em>was</em> read, the reserved figure is the subtraction it has
+  /// always been: 16 GiB installed against a kernel that can allocate 16 384 000 KiB of it, which is
+  /// 384 MiB the firmware kept (PRD §47).
+  /// </summary>
+  [Test]
+  public void HardwareReservedIsTheDifferenceWhenTheFirmwareHasBeenRead() {
+    using var probe = new LinuxProbe(new() {
+      ProcRoot = Path.Combine(Fixtures, "proc-desktop"),
+      SysRoot = Path.Combine(Fixtures, "sys-desktop"),
+      PasswdPath = Path.Combine(Fixtures, "proc-desktop", "passwd"),
+      EffectiveUserId = 0,
+    });
+
+    var snapshot = new SystemSnapshot();
+    probe.Sample(snapshot);
+    var host = probe.DescribeHost() with {
+      InstalledMemoryBytes = Counter.Of(16ul * 1024 * 1024 * 1024),
+      MemoryTransfersPerSecond = Counter.Of(4_800_000_000ul),
+      MemoryFormFactor = "SODIMM",
+      MemorySlotsUsed = Counter.Of(2ul),
+      MemorySlotsTotal = Counter.Of(4ul),
+    };
+
+    PerformanceSection memory = default;
+    foreach (var section in PerformanceReport.Build(host, snapshot))
+      if (section.Title == "Memory")
+        memory = section;
+
+    var reserved = (16ul * 1024 * 1024 * 1024) - (16_384_000ul * 1024);
+    Assert.That(ValueOf(memory, "Hardware reserved"), Is.EqualTo(Humanize.Bytes(Counter.Of(reserved))));
+    Assert.That(ValueOf(memory, "Speed"), Is.EqualTo("4800 MT/s"));
+    Assert.That(ValueOf(memory, "Form factor"), Is.EqualTo("SODIMM"));
+    Assert.That(ValueOf(memory, "Slots used"), Is.EqualTo("2 of 4"));
   }
 
   /// <summary>

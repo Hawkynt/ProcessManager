@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using Hawkynt.ProcessManager.Model;
 using Hawkynt.ProcessManager.Platform.Windows;
 
 namespace Hawkynt.ProcessManager.Tests;
@@ -17,13 +18,33 @@ public sealed class WindowsTopologyTests {
   #region building records
 
   /// <summary>A core, covering the logical processors named by the bits of one affinity mask.</summary>
-  private static byte[] Core(ulong affinityMask) {
+  private static byte[] Core(ulong affinityMask, byte efficiencyClass = 0, ushort group = 0)
+    => Processor(LogicalProcessorInformation.RelationProcessorCore, affinityMask, efficiencyClass, group);
+
+  /// <summary>A socket, covering every logical processor in it. The same record layout as a core.</summary>
+  private static byte[] Package(ulong affinityMask, ushort group = 0)
+    => Processor(LogicalProcessorInformation.RelationProcessorPackage, affinityMask, 0, group);
+
+  private static byte[] Processor(uint relationship, ulong affinityMask, byte efficiencyClass, ushort group) {
     // relationship, size, flags, efficiency class, 20 reserved, group count, one GROUP_AFFINITY.
     var record = new byte[8 + 1 + 1 + 20 + 2 + 16];
-    BinaryPrimitives.WriteUInt32LittleEndian(record, LogicalProcessorInformation.RelationProcessorCore);
+    BinaryPrimitives.WriteUInt32LittleEndian(record, relationship);
     BinaryPrimitives.WriteUInt32LittleEndian(record.AsSpan(4), (uint)record.Length);
+    record[9] = efficiencyClass;
     BinaryPrimitives.WriteUInt16LittleEndian(record.AsSpan(8 + 22), 1);
     BinaryPrimitives.WriteUInt64LittleEndian(record.AsSpan(8 + 24), affinityMask);
+    BinaryPrimitives.WriteUInt16LittleEndian(record.AsSpan(8 + 32), group);
+    return record;
+  }
+
+  /// <summary>A NUMA node: its number at 8, and the processors on it in the mask at 32.</summary>
+  private static byte[] Numa(uint node, ulong affinityMask) {
+    var record = new byte[8 + 4 + 18 + 2 + 16];
+    BinaryPrimitives.WriteUInt32LittleEndian(record, LogicalProcessorInformation.RelationNumaNode);
+    BinaryPrimitives.WriteUInt32LittleEndian(record.AsSpan(4), (uint)record.Length);
+    BinaryPrimitives.WriteUInt32LittleEndian(record.AsSpan(8), node);
+    BinaryPrimitives.WriteUInt16LittleEndian(record.AsSpan(30), 1);
+    BinaryPrimitives.WriteUInt64LittleEndian(record.AsSpan(32), affinityMask);
     return record;
   }
 
@@ -156,6 +177,102 @@ public sealed class WindowsTopologyTests {
 
     Assert.That(LogicalProcessorInformation.Parse(record).LogicalProcessors.Value, Is.EqualTo(5ul));
   }
+
+  #region where each processor sits (PRD §46)
+
+  /// <summary>
+  /// The heat map's whole reason for existing: two logical processors on one core do not do twice
+  /// the work of one, and the map has to put them next to each other to show it.
+  /// </summary>
+  [Test]
+  public void SmtSiblingsShareACoreNumber() {
+    var topology = LogicalProcessorInformation.ParseTopology(Concat(Core(0b0011), Core(0b1100)));
+
+    Assert.That(topology.Cores, Has.Count.EqualTo(4));
+    Assert.That(topology.Cores[0].Core, Is.EqualTo(topology.Cores[1].Core), "0 and 1 share a core");
+    Assert.That(topology.Cores[2].Core, Is.EqualTo(topology.Cores[3].Core), "2 and 3 share a core");
+    Assert.That(topology.Cores[0].Core, Is.Not.EqualTo(topology.Cores[2].Core));
+  }
+
+  [Test]
+  public void EachProcessorIsPutInTheSocketWhoseMaskNamesIt() {
+    var buffer = Concat(
+      Core(0b0011), Core(0b1100),
+      Package(0b0011), Package(0b1100)
+    );
+
+    var topology = LogicalProcessorInformation.ParseTopology(buffer);
+    Assert.That(topology.Packages, Is.EqualTo(new[] { 0, 1 }));
+    Assert.That(topology.Of(0).Count, Is.EqualTo(2));
+    Assert.That(topology.Of(1).Count, Is.EqualTo(2));
+    foreach (var core in topology.Of(1))
+      Assert.That(core.Logical, Is.GreaterThan(1));
+  }
+
+  /// <summary>
+  /// Windows ranks cores by an efficiency class rather than naming two kinds, and higher is faster.
+  /// A machine whose cores all share one class is not hybrid, and calling every core a performance
+  /// core would put a distinction on the page the silicon does not have (PRD §5.3).
+  /// </summary>
+  [Test]
+  public void OneEfficiencyClassIsAMachineThatIsNotHybrid() {
+    var topology = LogicalProcessorInformation.ParseTopology(Concat(Core(0b0001, 1), Core(0b0010, 1)));
+
+    Assert.That(topology.IsHybrid, Is.False);
+    foreach (var core in topology.Cores)
+      Assert.That(core.Kind, Is.EqualTo(CoreKind.Unknown));
+  }
+
+  [Test]
+  public void TheFastestEfficiencyClassIsThePerformanceCores() {
+    var buffer = Concat(Core(0b0011, 1), Core(0b0100, 0), Core(0b1000, 0));
+    var topology = LogicalProcessorInformation.ParseTopology(buffer);
+
+    Assert.That(topology.IsHybrid, Is.True);
+    Assert.That(topology.Cores[0].Kind, Is.EqualTo(CoreKind.Performance));
+    Assert.That(topology.Cores[1].Kind, Is.EqualTo(CoreKind.Performance), "its SMT sibling");
+    Assert.That(topology.Cores[2].Kind, Is.EqualTo(CoreKind.Efficiency));
+    Assert.That(topology.Cores[3].Kind, Is.EqualTo(CoreKind.Efficiency));
+
+    // And the order the map draws them in: fast cores first, siblings adjacent.
+    var drawn = new List<int>();
+    foreach (var core in topology.Of(-1))
+      drawn.Add(core.Logical);
+
+    Assert.That(drawn, Is.EqualTo(new[] { 0, 1, 2, 3 }), "no package records, so every core is in the same unnamed one");
+  }
+
+  [Test]
+  public void EachProcessorGetsTheNodeWhoseMaskNamesIt() {
+    var buffer = Concat(Core(0b0001), Core(0b0010), Numa(0, 0b0001), Numa(1, 0b0010));
+    var topology = LogicalProcessorInformation.ParseTopology(buffer);
+
+    Assert.That(topology.Nodes, Is.EqualTo(new[] { 0, 1 }));
+    Assert.That(topology.OnNode(0)[0].Logical, Is.EqualTo(0));
+    Assert.That(topology.OnNode(1)[0].Logical, Is.EqualTo(1));
+  }
+
+  /// <summary>
+  /// Past sixty-four processors Windows splits them into groups, and a processor's number is its
+  /// position in its group plus sixty-four per group before it. Reading the bit index alone would
+  /// report group 1's processors as though they were group 0's — sixty-four cells drawn twice.
+  /// </summary>
+  [Test]
+  public void ProcessorsInASecondGroupAreNumberedPastTheFirst() {
+    var topology = LogicalProcessorInformation.ParseTopology(Concat(Core(0b0001, 0, 0), Core(0b0001, 0, 1)));
+
+    Assert.That(topology.Cores, Has.Count.EqualTo(2));
+    Assert.That(topology.Cores[0].Logical, Is.EqualTo(0));
+    Assert.That(topology.Cores[1].Logical, Is.EqualTo(64));
+  }
+
+  [Test]
+  public void ABufferWithNoProcessorRecordsIsNoTopologyRatherThanAnEmptyOne() {
+    Assert.That(LogicalProcessorInformation.ParseTopology([]), Is.SameAs(CpuTopology.Empty));
+    Assert.That(LogicalProcessorInformation.ParseTopology(Cache(3, 0, 1024)), Is.SameAs(CpuTopology.Empty));
+  }
+
+  #endregion
 
   #region refusing a buffer that does not add up
 

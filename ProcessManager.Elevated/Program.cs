@@ -58,7 +58,20 @@ internal static class Program {
     return 0;
   }
 
+  /// <summary>Where Linux publishes the firmware's structure table, root-readable and nowhere else.</summary>
+  private const string _SmbiosTable = "/sys/firmware/dmi/tables/DMI";
+
   private static void Handle(Stream output, in ElevatedProtocol.Request request) {
+    // The firmware table names no process, so the recycled-pid check has nothing to check: it is a
+    // fact about the machine, the same bytes whoever asks, and the path is the constant above rather
+    // than anything the caller sent. Every opcode that does name a process still goes through
+    // Identity below — the split is by opcode, so a caller cannot talk its way past the check by
+    // leaving a key out (PRD §8.2).
+    if (request.Opcode == ElevatedOpcode.ReadSmbios) {
+      Respond(output, ReadWholeFile(_SmbiosTable));
+      return;
+    }
+
     if (!Identity.Matches(request.Key, out var status)) {
       ElevatedProtocol.WriteResponse(output, status);
       return;
@@ -117,6 +130,28 @@ internal static class Program {
       return new(ElevatedStatus.NotPermitted, null);
     } catch (IOException) {
       return new(ElevatedStatus.ProcessExited, null);
+    }
+  }
+
+  /// <summary>
+  /// A file that is worth nothing in part, so a frame too small for it is a refusal rather than a
+  /// truncation.
+  /// </summary>
+  /// <remarks>
+  /// <see cref="ReadFile"/> cuts a long file short, which is right for a descriptor listing and wrong
+  /// for a structure table: half a table parses cleanly and reports half the memory slots, and
+  /// nothing downstream could tell that from a machine with half as many.
+  /// </remarks>
+  private static Result ReadWholeFile(string path) {
+    try {
+      var bytes = File.ReadAllBytes(path);
+      return bytes.Length > ElevatedProtocol.MaxFrameLength - 16
+        ? new(ElevatedStatus.Failed, null)
+        : new(ElevatedStatus.Ok, bytes);
+    } catch (UnauthorizedAccessException) {
+      return new(ElevatedStatus.NotPermitted, null);
+    } catch (IOException) {
+      return new(ElevatedStatus.Failed, null);
     }
   }
 

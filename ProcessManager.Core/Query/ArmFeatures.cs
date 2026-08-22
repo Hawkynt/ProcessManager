@@ -131,10 +131,92 @@ public static class ArmFeatures {
     (2, 63, "POE"),
   ];
 
+  /// <summary>
+  /// AT_HWCAP and AT_HWCAP2 for 32-bit ARM, which share not one bit position with the table above.
+  /// </summary>
+  /// <remarks>
+  /// A different word entirely: 32-bit ARM was assigning these before AArch64 existed, so NEON is
+  /// bit 12 here and bit 1 there, and decoding one architecture's words with the other's table
+  /// produces a full and entirely wrong feature list. That is why the architecture is chosen by the
+  /// process's own, and not by whether the words happen to look plausible.
+  /// <para>
+  /// The names are the same as the arm64 table's wherever the two mean the same silicon — FP16,
+  /// DOTPROD, BF16, I8MM — so a reader comparing a phone against a server is comparing like with
+  /// like. Where 32-bit ARM has something AArch64 does not, it keeps its own name: VFP is not
+  /// AArch64's FP and calling it that would be a claim about the instruction set.
+  /// </para>
+  /// </remarks>
+  private static readonly Bit[] _Arm32 = [
+    new(1, 2, "Thumb", CpuFeatureKind.InstructionSet),
+    new(1, 11, "ThumbEE", CpuFeatureKind.InstructionSet),
+    new(1, 5, "FPA", CpuFeatureKind.InstructionSet),
+    new(1, 6, "VFP", CpuFeatureKind.InstructionSet),
+    new(1, 13, "VFPv3", CpuFeatureKind.InstructionSet),
+    new(1, 14, "VFPv3-D16", CpuFeatureKind.InstructionSet),
+    new(1, 16, "VFPv4", CpuFeatureKind.InstructionSet),
+    new(1, 19, "VFP-D32", CpuFeatureKind.InstructionSet),
+    new(1, 7, "DSP extensions", CpuFeatureKind.InstructionSet),
+    new(1, 8, "Jazelle", CpuFeatureKind.InstructionSet),
+    new(1, 9, "iWMMXt", CpuFeatureKind.InstructionSet),
+    new(1, 10, "Crunch", CpuFeatureKind.InstructionSet),
+    new(1, 12, "NEON", CpuFeatureKind.InstructionSet),
+    new(1, 17, "IDIVA", CpuFeatureKind.InstructionSet),
+    new(1, 18, "IDIVT", CpuFeatureKind.InstructionSet),
+    new(1, 22, "FP16", CpuFeatureKind.InstructionSet),
+    new(1, 23, "ASIMD-FP16", CpuFeatureKind.InstructionSet),
+    new(1, 24, "DOTPROD", CpuFeatureKind.InstructionSet),
+    new(1, 25, "ASIMD-FHM", CpuFeatureKind.InstructionSet),
+    new(1, 26, "BF16", CpuFeatureKind.InstructionSet),
+    new(1, 27, "I8MM", CpuFeatureKind.InstructionSet),
+
+    new(2, 0, "AES", CpuFeatureKind.Cryptography),
+    new(2, 1, "PMULL", CpuFeatureKind.Cryptography),
+    new(2, 2, "SHA1", CpuFeatureKind.Cryptography),
+    new(2, 3, "SHA2", CpuFeatureKind.Cryptography),
+    new(2, 4, "CRC32", CpuFeatureKind.Cryptography),
+
+    new(2, 5, "SB", CpuFeatureKind.Security),
+    new(2, 6, "SSBS", CpuFeatureKind.Security),
+
+    new(1, 0, "SWP", CpuFeatureKind.Other),
+    new(1, 1, "Half-word loads", CpuFeatureKind.Other),
+    new(1, 3, "26-bit mode", CpuFeatureKind.Other),
+    new(1, 4, "Fast multiply", CpuFeatureKind.Other),
+    new(1, 15, "TLS register", CpuFeatureKind.Other),
+    new(1, 20, "LPAE", CpuFeatureKind.Other),
+    new(1, 21, "Event stream", CpuFeatureKind.Other),
+  ];
+
+  /// <summary>
+  /// The kernel's own name for each 32-bit bit, for the same test the arm64 table gets.
+  /// </summary>
+  public static IReadOnlyList<(int Word, int Index, string KernelName)> Arm32KernelNames { get; } = [
+    (1, 0, "SWP"), (1, 1, "HALF"), (1, 2, "THUMB"), (1, 3, "26BIT"), (1, 4, "FAST_MULT"),
+    (1, 5, "FPA"), (1, 6, "VFP"), (1, 7, "EDSP"), (1, 8, "JAVA"), (1, 9, "IWMMXT"),
+    (1, 10, "CRUNCH"), (1, 11, "THUMBEE"), (1, 12, "NEON"), (1, 13, "VFPv3"), (1, 14, "VFPv3D16"),
+    (1, 15, "TLS"), (1, 16, "VFPv4"), (1, 17, "IDIVA"), (1, 18, "IDIVT"), (1, 19, "VFPD32"),
+    (1, 20, "LPAE"), (1, 21, "EVTSTRM"), (1, 22, "FPHP"), (1, 23, "ASIMDHP"), (1, 24, "ASIMDDP"),
+    (1, 25, "ASIMDFHM"), (1, 26, "ASIMDBF16"), (1, 27, "I8MM"),
+    (2, 0, "AES"), (2, 1, "PMULL"), (2, 2, "SHA1"), (2, 3, "SHA2"), (2, 4, "CRC32"), (2, 5, "SB"),
+    (2, 6, "SSBS"),
+  ];
+
   /// <summary>Everything the two capability words report, in table order.</summary>
-  public static IReadOnlyList<CpuFeature> Decode(ulong hwcap, ulong hwcap2) {
+  public static IReadOnlyList<CpuFeature> Decode(ulong hwcap, ulong hwcap2) => Decode(_Arm64, hwcap, hwcap2);
+
+  /// <summary>
+  /// The same two words read as 32-bit ARM assigns them (PRD §46).
+  /// </summary>
+  /// <remarks>
+  /// A separate entry point rather than a flag on <see cref="Decode"/>, because the caller always
+  /// knows which architecture it is on and a wrong default here decodes silently into a wrong
+  /// answer: every bit is defined in both tables, so there is nothing for a check to fail on.
+  /// </remarks>
+  public static IReadOnlyList<CpuFeature> DecodeArm32(ulong hwcap, ulong hwcap2) => Decode(_Arm32, hwcap, hwcap2);
+
+  private static IReadOnlyList<CpuFeature> Decode(Bit[] table, ulong hwcap, ulong hwcap2) {
     var features = new List<CpuFeature>();
-    foreach (var bit in _Arm64) {
+    foreach (var bit in table) {
       var word = bit.Word == 1 ? hwcap : hwcap2;
       if ((word & (1ul << bit.Index)) != 0)
         features.Add(new(bit.Name, bit.Kind));

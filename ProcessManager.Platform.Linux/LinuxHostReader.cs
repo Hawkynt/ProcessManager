@@ -40,9 +40,13 @@ internal static class LinuxHostReader {
     var performance = ReadCpuList(Path.Combine(sysRoot, "devices", "cpu_core", "cpus"));
     var efficiency = ReadCpuList(Path.Combine(sysRoot, "devices", "cpu_atom", "cpus"));
     var nodes = ReadNodeMap(sysRoot);
+    var online = ReadCpuList(Path.Combine(cpuRoot, "online"));
+    var capacities = performance.Count > 0 || efficiency.Count > 0
+      ? new Dictionary<int, int>()
+      : ReadCapacities(cpuRoot, online);
 
     var cores = new List<CoreDescriptor>();
-    foreach (var logical in ReadCpuList(Path.Combine(cpuRoot, "online"))) {
+    foreach (var logical in online) {
       var topology = Path.Combine(cpuRoot, $"cpu{logical.ToString(CultureInfo.InvariantCulture)}", "topology");
       cores.Add(new(
         logical,
@@ -50,12 +54,62 @@ internal static class LinuxHostReader {
         ReadInt(Path.Combine(topology, "core_id")),
         performance.Contains(logical) ? CoreKind.Performance
           : efficiency.Contains(logical) ? CoreKind.Efficiency
-          : CoreKind.Unknown,
+          : KindFromCapacity(capacities, logical),
         nodes.GetValueOrDefault(logical, -1)
       ));
     }
 
     return cores.Count > 0 ? new(cores) : CpuTopology.Empty;
+  }
+
+  /// <summary>
+  /// What each processor's scheduling capacity is, where the kernel publishes one (PRD §46).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// This is how big.LITTLE is told apart. The hybrid PMU directories above are Intel's and exist on
+  /// no ARM machine; what an ARM kernel with capacity-aware scheduling publishes instead is
+  /// <c>cpu_capacity</c> — the number the scheduler itself uses to decide that one core does more
+  /// work per second than another, normalised so the fastest is 1024. It is not a guess from
+  /// differing maximum clocks: it is the kernel's own answer to exactly the question the heat map is
+  /// asking, and where the kernel does not publish it there is no answer here either (PRD §5.3).
+  /// </para>
+  /// <para>
+  /// Read only when the hybrid PMUs said nothing, because where both exist they agree and the PMU
+  /// directories are two reads against one per processor.
+  /// </para>
+  /// </remarks>
+  private static Dictionary<int, int> ReadCapacities(string cpuRoot, IReadOnlyList<int> online) {
+    var capacities = new Dictionary<int, int>();
+    foreach (var logical in online) {
+      var text = TryReadText(Path.Combine(cpuRoot, $"cpu{logical.ToString(CultureInfo.InvariantCulture)}", "cpu_capacity"));
+      if (text is not null && int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var capacity) && capacity > 0)
+        capacities[logical] = capacity;
+    }
+
+    // Every processor alike is a machine that is not hybrid, and saying so as "all performance
+    // cores" would put a distinction on the page that this silicon does not have.
+    var distinct = new HashSet<int>(capacities.Values);
+    return distinct.Count > 1 ? capacities : [];
+  }
+
+  /// <summary>
+  /// The fastest capacity is a performance core and anything slower is an efficiency one.
+  /// </summary>
+  /// <remarks>
+  /// Two kinds because that is what the page has room to say. A three-tier part — and they exist —
+  /// puts its middle tier with the slow ones, which is the truthful half of the distinction: the
+  /// question a heat map answers is whether the fast cores are the busy ones.
+  /// </remarks>
+  private static CoreKind KindFromCapacity(Dictionary<int, int> capacities, int logical) {
+    if (capacities.Count == 0 || !capacities.TryGetValue(logical, out var capacity))
+      return CoreKind.Unknown;
+
+    var fastest = 0;
+    foreach (var value in capacities.Values)
+      fastest = Math.Max(fastest, value);
+
+    return capacity == fastest ? CoreKind.Performance : CoreKind.Efficiency;
   }
 
   /// <summary>
@@ -101,11 +155,18 @@ internal static class LinuxHostReader {
     if (CpuId.IsSupported)
       return CpuId.Features;
 
-    if (RuntimeInformation.ProcessArchitecture is not (Architecture.Arm64 or Architecture.Arm))
+    // The two architectures share not one bit position, so the table is chosen by what this process
+    // actually is rather than by what the words look like: every bit is assigned in both, and
+    // decoding one with the other's table produces a full and entirely wrong list with nothing in it
+    // for a check to fail on (PRD §46).
+    var architecture = RuntimeInformation.ProcessArchitecture;
+    if (architecture is not (Architecture.Arm64 or Architecture.Arm))
       return [];
 
     var (hwcap, hwcap2) = Native.HardwareCapabilities();
-    return ArmFeatures.Decode(hwcap, hwcap2);
+    return architecture == Architecture.Arm
+      ? ArmFeatures.DecodeArm32(hwcap, hwcap2)
+      : ArmFeatures.Decode(hwcap, hwcap2);
   }
 
   private static string? LiveSignature(string sysRoot) {
@@ -145,8 +206,14 @@ internal static class LinuxHostReader {
   /// machine too — a <c>--probe-root</c> replay that mixed a fixture's core count with this laptop's
   /// feature list would be describing two machines in one table (PRD §9.4).
   /// </remarks>
-  public static HostInfo Read(string procRoot, string sysRoot, bool live) {
+  /// <param name="elevatedFirmware">
+  /// Asked for the SMBIOS table when this process may not read it itself, and only when the helper is
+  /// already running: a machine description must never be the thing that raises a password prompt
+  /// (PRD §8, §5.4). Null where there is no helper, which is the ordinary case.
+  /// </param>
+  public static HostInfo Read(string procRoot, string sysRoot, bool live, Func<byte[]?>? elevatedFirmware = null) {
     var cpuinfo = TryReadLines(Path.Combine(procRoot, "cpuinfo"));
+    var memoryHardware = ReadMemoryHardware(sysRoot, elevatedFirmware);
 
     // "physical id" counts sockets and "core id" counts cores within one; a machine reporting
     // neither is a container or an architecture that does not expose topology, and the honest
@@ -231,16 +298,55 @@ internal static class LinuxHostReader {
       L3Bytes = ReadCache(cpuRoot, level: 3, null),
       Virtualisation = ReadVirtualisation(sysRoot),
 
-      // The firmware tables are root-only on every distribution that ships them at all, so the
-      // module facts are a privileged read we do not do yet. Not permitted, rather than zero — and
-      // the installed total with them, because the difference between installed and usable is the
+      // The firmware tables are root-only on every distribution that ships them at all, so these
+      // read when the program is root or when the helper already is, and say "not permitted"
+      // otherwise — never zero, because the difference between installed and usable is the
       // hardware-reserved figure and a guess at it would be a claim about the machine (PRD §47).
-      InstalledMemoryBytes = Counter.NotPermitted,
-      MemoryTransfersPerSecond = Counter.NotPermitted,
-      MemorySlotsUsed = Counter.NotPermitted,
-      MemorySlotsTotal = Counter.NotPermitted,
-      MemoryChannels = Counter.NotPermitted,
+      InstalledMemoryBytes = memoryHardware.InstalledBytes,
+      MemoryTransfersPerSecond = memoryHardware.TransfersPerSecond,
+      MemoryFormFactor = memoryHardware.FormFactor,
+      MemorySlotsUsed = memoryHardware.SlotsUsed,
+      MemorySlotsTotal = memoryHardware.SlotsTotal,
+
+      // How many channels the modules are spread over is in no SMBIOS record and in no file the
+      // kernel publishes for an ordinary machine: type 17 describes a device and its slot, never the
+      // controller's interleave, and the locator strings that look like channel names — "ChannelA-
+      // DIMM0" — are vendor-formatted text a parser would be guessing at. Refused, and said so
+      // (PRD §47, §5.3).
+      MemoryChannels = Counter.NotSupported,
     };
+  }
+
+  /// <summary>
+  /// What the firmware says about the memory modules (PRD §47).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Three outcomes, and they are three different sentences on the page. The table read straight out
+  /// of <c>/sys</c> is the answer when the program is root — or when a <c>--probe-root</c> replay
+  /// carries a recorded copy, which is what makes the whole path testable on a machine whose own
+  /// table nobody here may read. A refusal is passed to the helper, but only if it is already
+  /// running: describing the machine must never be the thing that raises a password prompt.
+  /// And a machine with no <c>CONFIG_DMI</c> at all — every ARM board, most virtual machines — has
+  /// no such file, which is "not supported here" and not "you may not look".
+  /// </para>
+  /// </remarks>
+  private static Smbios.MemoryHardware ReadMemoryHardware(string sysRoot, Func<byte[]?>? elevatedFirmware) {
+    var path = Path.Combine(sysRoot, "firmware", "dmi", "tables", "DMI");
+    try {
+      return Smbios.ReadMemory(File.ReadAllBytes(path));
+    } catch (UnauthorizedAccessException) {
+      // The ordinary case on a machine this is not root on.
+    } catch (IOException) {
+      return Smbios.MemoryHardware.Unreadable(
+        File.Exists(path) ? UnknownReason.NotPermitted : UnknownReason.NotSupportedOnPlatform
+      );
+    }
+
+    var table = elevatedFirmware?.Invoke();
+    return table is { Length: > 0 }
+      ? Smbios.ReadMemory(table)
+      : Smbios.MemoryHardware.Unreadable(UnknownReason.NotPermitted);
   }
 
   private static string SafeHostName() {

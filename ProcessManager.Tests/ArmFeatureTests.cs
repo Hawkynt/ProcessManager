@@ -133,6 +133,102 @@ public sealed class ArmFeatureTests {
 
   #endregion
 
+  #region 32-bit arm, whose words are a different word entirely (PRD §46)
+
+  /// <summary>
+  /// <c>arch/arm/include/uapi/asm/hwcap.h</c>, vendored beside the arm64 one for the same reason.
+  /// </summary>
+  private static Dictionary<(int Word, int Index), string> Kernel32Bits() {
+    var path = Path.Combine(TestContext.CurrentContext.TestDirectory, "Fixtures", "arm-hwcap.h");
+    var text = File.ReadAllText(path);
+    var bits = new Dictionary<(int, int), string>();
+
+    foreach (Match match in Regex.Matches(text, @"#define\s+(HWCAP2?)_(\w+)\s+\(?1(?:UL)?\s*<<\s*(\d+)\)?")) {
+      var word = match.Groups[1].Value == "HWCAP" ? 1 : 2;
+      bits[(word, int.Parse(match.Groups[3].Value, System.Globalization.CultureInfo.InvariantCulture))] = match.Groups[2].Value;
+    }
+
+    return bits;
+  }
+
+  [Test]
+  public void The32BitHeaderIsThereAndParses() =>
+    Assert.That(Kernel32Bits(), Has.Count.GreaterThan(30), "the vendored arm hwcap.h did not parse");
+
+  /// <summary>
+  /// The same test the arm64 table gets, and it earns its keep the same way: nobody here has a
+  /// 32-bit ARM machine either.
+  /// </summary>
+  [Test]
+  public void Every32BitBitWeReadIsTheBitTheKernelDefines() {
+    var kernel = Kernel32Bits();
+
+    foreach (var (word, index, name) in ArmFeatures.Arm32KernelNames) {
+      Assert.That(kernel.ContainsKey((word, index)), Is.True, $"HWCAP{(word == 2 ? "2" : string.Empty)} bit {index} ({name}) is not defined by the kernel");
+      Assert.That(kernel[(word, index)], Is.EqualTo(name), $"HWCAP{(word == 2 ? "2" : string.Empty)} bit {index}");
+    }
+  }
+
+  private static List<string> Names32(ulong hwcap, ulong hwcap2) {
+    var names = new List<string>();
+    foreach (var feature in ArmFeatures.DecodeArm32(hwcap, hwcap2))
+      names.Add(feature.Name);
+
+    return names;
+  }
+
+  /// <summary>
+  /// The defect the two tables exist to prevent. Bit 1 is ASIMD on arm64 and half-word loads on
+  /// 32-bit ARM; bit 12 is NEON on 32-bit ARM and the rounding-double-multiply instruction on arm64.
+  /// Decoding one architecture's words with the other's table produces a full, plausible and
+  /// entirely wrong list — there is no bit for a check to fail on.
+  /// </summary>
+  [Test]
+  public void TheTwoArchitecturesDoNotShareTheirBits() {
+    Assert.That(Names32(1ul << 12, 0), Does.Contain("NEON"));
+    Assert.That(Names(1ul << 12, 0), Does.Not.Contain("NEON"));
+    Assert.That(Names(1ul << 1, 0), Does.Contain("ASIMD (NEON)"));
+    Assert.That(Names32(1ul << 1, 0), Does.Contain("Half-word loads"));
+  }
+
+  /// <summary>A Cortex-A72-shaped part: NEON, VFPv4, the divides, LPAE, and the crypto extension.</summary>
+  [Test]
+  public void AnArmv7ShapeDecodes() {
+    var hwcap = 0ul;
+    foreach (var bit in new[] { 0, 1, 2, 4, 6, 7, 11, 12, 13, 15, 16, 17, 18, 19, 20, 21 })
+      hwcap |= 1ul << bit;
+
+    var names = Names32(hwcap, 0b1_1111);
+
+    Assert.That(names, Does.Contain("NEON"));
+    Assert.That(names, Does.Contain("VFPv4"));
+    Assert.That(names, Does.Contain("IDIVA"));
+    Assert.That(names, Does.Contain("IDIVT"));
+    Assert.That(names, Does.Contain("LPAE"));
+    Assert.That(names, Does.Contain("AES"));
+    Assert.That(names, Does.Contain("CRC32"));
+    Assert.That(names, Does.Not.Contain("SSBS"), "bit 6 of the second word, and this part has none");
+  }
+
+  /// <summary>
+  /// The four the 32-bit table gained late — the same instructions AArch64 has, on a word that had
+  /// almost run out of room. An off-by-one at the top of the word loses I8MM and reports nothing
+  /// wrong.
+  /// </summary>
+  [Test]
+  public void TheLateAdditionsAtTheTopOfTheFirstWordAreRead() {
+    Assert.That(Names32(1ul << 24, 0), Does.Contain("DOTPROD"));
+    Assert.That(Names32(1ul << 25, 0), Does.Contain("ASIMD-FHM"));
+    Assert.That(Names32(1ul << 26, 0), Does.Contain("BF16"));
+    Assert.That(Names32(1ul << 27, 0), Does.Contain("I8MM"));
+  }
+
+  [Test]
+  public void A32BitKernelThatReportsNothingYieldsNothing() =>
+    Assert.That(ArmFeatures.DecodeArm32(0, 0), Is.Empty);
+
+  #endregion
+
   #region who made the core
 
   /// <summary>

@@ -106,6 +106,149 @@ internal static class LogicalProcessorInformation {
     );
   }
 
+  #region where each logical processor sits (PRD §46)
+
+  /// <summary>PROCESSOR_RELATIONSHIP and NUMA_NODE_RELATIONSHIP both put their group count here.</summary>
+  private const int _GroupCountOffset = 8 + 1 + 1 + 20;
+
+  /// <summary>…and the masks themselves immediately after it.</summary>
+  private const int _FirstMaskOffset = _GroupCountOffset + 2;
+
+  /// <summary>GROUP_AFFINITY: a 64-bit mask, the group number, and three reserved words.</summary>
+  private const int _GroupAffinitySize = 16;
+
+  /// <summary>
+  /// The same buffer read for placement rather than for counts (PRD §46).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The heat map needs to know which logical processors share a core, which socket each is in,
+  /// which NUMA node its memory is on and whether it is a performance or an efficiency core. Windows
+  /// publishes all four in the buffer <see cref="Parse"/> already walks — it was simply never read
+  /// out of it, which left the map one flat row on every Windows machine.
+  /// </para>
+  /// <para>
+  /// Cores are numbered by the order the kernel reports them, because Windows does not publish a
+  /// core id the way <c>/sys</c> does. The number is only ever used to say that two logical
+  /// processors share one core, which it does exactly.
+  /// </para>
+  /// </remarks>
+  public static CpuTopology ParseTopology(ReadOnlySpan<byte> buffer) {
+    var kinds = new Dictionary<int, byte>();
+    var coreOf = new Dictionary<int, int>();
+    var packageOf = new Dictionary<int, int>();
+    var nodeOf = new Dictionary<int, int>();
+    var order = new List<int>();
+    var core = 0;
+    var package = 0;
+
+    var offset = 0;
+    while (offset + 8 <= buffer.Length) {
+      var relationship = BinaryPrimitives.ReadUInt32LittleEndian(buffer[offset..]);
+      var size = (int)BinaryPrimitives.ReadUInt32LittleEndian(buffer[(offset + 4)..]);
+      if (size < 8 || offset + size > buffer.Length)
+        break;
+
+      var body = buffer.Slice(offset, size);
+      switch (relationship) {
+        case RelationProcessorCore: {
+          // The efficiency class is a rank rather than a kind: Windows documents higher as more
+          // performant and says nothing about how many there are. Which of them count as efficiency
+          // cores is decided below, once every core has been seen — a single class is a machine
+          // whose cores are all alike, not a machine of efficiency cores.
+          var efficiency = size > 9 ? body[9] : (byte)0;
+          foreach (var logical in Members(body)) {
+            kinds[logical] = efficiency;
+            coreOf[logical] = core;
+            if (!order.Contains(logical))
+              order.Add(logical);
+          }
+
+          ++core;
+          break;
+        }
+
+        case RelationProcessorPackage: {
+          foreach (var logical in Members(body))
+            packageOf[logical] = package;
+
+          ++package;
+          break;
+        }
+
+        case RelationNumaNode: {
+          var node = size > 12 ? (int)BinaryPrimitives.ReadUInt32LittleEndian(body[8..]) : -1;
+          foreach (var logical in Members(body))
+            nodeOf[logical] = node;
+
+          break;
+        }
+
+        default: break;
+      }
+
+      offset += size;
+    }
+
+    if (order.Count == 0)
+      return CpuTopology.Empty;
+
+    order.Sort();
+    var fastest = byte.MinValue;
+    var slowest = byte.MaxValue;
+    foreach (var rank in kinds.Values) {
+      fastest = Math.Max(fastest, rank);
+      slowest = Math.Min(slowest, rank);
+    }
+
+    var hybrid = fastest != slowest;
+    var cores = new List<CoreDescriptor>(order.Count);
+    foreach (var logical in order)
+      cores.Add(new(
+        logical,
+        packageOf.GetValueOrDefault(logical, -1),
+        coreOf.GetValueOrDefault(logical, -1),
+        !hybrid ? CoreKind.Unknown
+          : kinds.GetValueOrDefault(logical) == fastest ? CoreKind.Performance
+          : CoreKind.Efficiency,
+        nodeOf.GetValueOrDefault(logical, -1)
+      ));
+
+    return new(cores);
+  }
+
+  /// <summary>
+  /// The logical processors one record's group affinity masks name.
+  /// </summary>
+  /// <remarks>
+  /// A processor's number is its position in its group plus sixty-four per group before it, which is
+  /// how every per-processor counter on Windows is keyed. A machine with more than sixty-four
+  /// processors is the only one where that differs from the bit index, and it is exactly the machine
+  /// a heat map is for.
+  /// </remarks>
+  private static List<int> Members(ReadOnlySpan<byte> record) {
+    var members = new List<int>();
+    if (record.Length < _FirstMaskOffset)
+      return members;
+
+    var groups = BinaryPrimitives.ReadUInt16LittleEndian(record[_GroupCountOffset..]);
+    for (var i = 0; i < groups; ++i) {
+      var maskOffset = _FirstMaskOffset + (i * _GroupAffinitySize);
+      if (maskOffset + 10 > record.Length)
+        break;
+
+      var mask = BinaryPrimitives.ReadUInt64LittleEndian(record[maskOffset..]);
+      var group = BinaryPrimitives.ReadUInt16LittleEndian(record[(maskOffset + 8)..]);
+      for (var bit = 0; bit < 64; ++bit)
+        if ((mask & (1ul << bit)) != 0)
+          members.Add((group * 64) + bit);
+    }
+
+    return members;
+  }
+
+  #endregion
+
   /// <summary>
   /// How many logical processors one core covers, counted from its group affinity masks.
   /// </summary>
