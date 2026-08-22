@@ -206,7 +206,10 @@ public sealed class ProcessVerbTests {
       StackBytes: Counter.NotSupported,
       Mode: ThreadMode.User,
       SyscallNumber: Counter.NotSupported,
-      QueuedNs: Counter.NotSupported
+      QueuedNs: Counter.NotSupported,
+      Cycles: Counter.NotSupported,
+      IdealProcessor: Counter.NotSupported,
+      TebBase: Counter.NotSupported
     ));
 
     probe.Modules.Add(new(

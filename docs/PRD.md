@@ -31,8 +31,8 @@ shorthand:
 it is not known*. An unticked box must never become a zero on screen. This is restated here because
 it is the single requirement most likely to be broken while filling the tables in.
 
-**Counting, as of the last update:** **1104 of 1320 boxes are ticked** — 171 of 190 in the field
-registry (§14–22), 933 of 1130 across the capabilities. A further 161 are marked 🟡, meaning some of
+**Counting, as of the last update:** **1108 of 1320 boxes are ticked** — 171 of 190 in the field
+registry (§14–22), 937 of 1130 across the capabilities. A further 162 are marked 🟡, meaning some of
 the work behind them is already done. §100 tracks the phases; §101 defines when this may be called
 finished.
 
@@ -2467,14 +2467,27 @@ running long enough to fill is not a quiet minute (§72.3).
 
 The engine enumerates threads on both platforms; the table shows a subset.
 
+Three of these needed a handle on the thread rather than the one query that describes every thread on
+the machine, which is why they sat unread for so long. That pass runs for the threads of the one
+process somebody has open and never over the table: a machine with four hundred processes has several
+thousand threads, and three syscalls each for a page nobody opened is exactly the reading §5.4 says
+to charge for rather than take.
+
 - [x] Thread ID
 - [x] State
 - [x] CPU %
 - [x] CPU time
 - [x] User CPU time
 - [x] Kernel CPU time
-- [ ] Cycles
-- [ ] Cycles delta
+- [x] Cycles — `QueryThreadCycleTime` on Windows. Not another spelling of CPU time: time is what the
+      clock says the thread held a processor for and cycles are what the processor actually retired,
+      so on a machine whose frequency moves — every laptop — a thread on a core parked at 800 MHz
+      reads exactly as busy by time as one at 4.8 GHz. Linux says `n/i` and not `n/a`: the kernel
+      will charge cycles to a task through `perf_event_open`, subject to `kernel.perf_event_paranoid`,
+      and nothing here opens one yet
+- [x] Cycles delta — differenced in `ThreadDelta` over the interval the monotonic clock measured,
+      like every other per-thread rate, because the thread page is filled when somebody looks at it
+      rather than on the sampling tick
 - [x] Context switches
 - [x] Context-switch rate
 - [x] Start time
@@ -2493,14 +2506,25 @@ The engine enumerates threads on both platforms; the table shows a subset.
       collects and loses — a view showing one and not the other cannot show that a thread has been
       boosted, which is the reason both are columns
 - [x] Scheduling policy
-- [ ] Ideal processor
+- [x] Ideal processor — `GetThreadIdealProcessorEx`, flattened across processor groups the way every
+      other processor number here is, so it can be read against the last-CPU column beside it. The
+      pair is the question: a thread the scheduler prefers on processor 2 that keeps running on 7 is
+      a thread being bounced off its own cache, and neither column says that alone. Affinity is where
+      a thread is *allowed*, last CPU is where it *ran*, and this is where the scheduler would put it
+      given a free choice — three different questions that look like one. Linux has no per-thread
+      equivalent a caller can read, so `n/a` there
 - [x] Current / last CPU
 - [x] Affinity
 - [x] Wait reason
 - [ ] Wait duration
 - [x] 🟡 Kernel/user indicator
 - [x] 🟡 Stack usage
-- [ ] TEB / TLS information
+- [x] 🟡 TEB / TLS information — the address, from `NtQueryInformationThread`. What is *inside* a TEB
+      is another process's memory, and reading it means attaching, which §4 rules out along with the
+      driver — so this is the pointer a debugger would start from and not the contents it would go on
+      to read, and the box is partial for that reason rather than for a missing pass. Linux has no
+      TEB; the nearest thing is a thread pointer living in a register only `ptrace` will hand over,
+      which is the same refusal
 - [x] Name
 - ∅ Description
 - ∅ Service association

@@ -439,6 +439,13 @@ internal static class SystemProcessInformationReader {
             // one a thread is in and there is no supported way to ask.
             SyscallNumber: Counter.NotSupported,
             QueuedNs: Counter.NotSupported,
+            // All three want a handle on the thread rather than this one query about every thread on
+            // the machine, so the pass that opens one fills them in — see WindowsThreadFacts. Not
+            // sampled yet rather than not supported: the reading is available and this call is simply
+            // not the one that takes it (PRD §29, §72.3).
+            Cycles: Counter.Unknown(UnknownReason.NotSampledYet),
+            IdealProcessor: Counter.Unknown(UnknownReason.NotSampledYet),
+            TebBase: Counter.Unknown(UnknownReason.NotSampledYet),
             Owner: key
           ));
         }
