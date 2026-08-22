@@ -31,8 +31,8 @@ shorthand:
 it is not known*. An unticked box must never become a zero on screen. This is restated here because
 it is the single requirement most likely to be broken while filling the tables in.
 
-**Counting, as of the last update:** **1084 of 1323 boxes are ticked** — 169 of 189 in the field
-registry (§14–22), 915 of 1134 across the capabilities. A further 167 are marked 🟡, meaning some of
+**Counting, as of the last update:** **1095 of 1320 boxes are ticked** — 169 of 188 in the field
+registry (§14–22), 926 of 1132 across the capabilities. A further 163 are marked 🟡, meaning some of
 the work behind them is already done. §100 tracks the phases; §101 defines when this may be called
 finished.
 
@@ -5427,6 +5427,27 @@ lets a field be listed as available on a platform before it is built there.
 - [x] Both front-ends render them through one shared formatter, so a value reads the same in the
       window and in the terminal
 - [ ] 🟡 The explanation is reachable everywhere it is shown — currently only in the detail pane
+
+### Actions had never learnt this
+
+The distinction above was written for *readings* and the *actions* went without it for as long as
+there have been actions. Every unwritten one refused with `NotSupportedOnPlatform` and a sentence
+that named the machine — "this platform has no per-thread priority", "this platform cannot start a
+process" — because that was the only refusal `ActionOutcome` had. `IProcessActions` has eighteen
+members and the Windows implementation supplies six of them, so on Windows the other twelve all said
+it, and every one of the twelve is something Windows plainly does: `SetThreadPriority` and
+`SetThreadIdealProcessor` are exported functions of exactly those names.
+
+Ten default implementations were read against what each platform can actually do. Six were false and
+now carry `NotImplementedHere`: restarting, starting, commanding a window, I/O priority, and a
+thread's priority and affinity. Four are true platform limits and keep saying so — an out-of-memory
+score, a POSIX resource limit, a cgroup freezer, and a scheduler class, where the concept is missing
+rather than the code. Downgrading all ten would have been the same mistake pointing the other way.
+
+- [x] `ActionOutcome.NotImplementedHere` exists and is distinct from `NotSupportedOnPlatform`
+- [x] Every default refusal is classified against what the platform can do, not against whether this
+      program has written it
+- [x] The classification is pinned by test, wording included, so it cannot drift back
 
 # 73. Sampling and race conditions
 
