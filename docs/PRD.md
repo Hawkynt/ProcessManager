@@ -2493,8 +2493,8 @@ The engine enumerates threads on both platforms; the table shows a subset.
 - [x] 🟡 Stack usage
 - [ ] TEB / TLS information
 - [x] Name
-- [ ] Description
-- [ ] Service association
+- ∅ Description
+- ∅ Service association
 - [ ] AppDomain / runtime context
 
 The wait reason earns its place above the rest: it answers "why is this hanging" — §2's first
@@ -2564,20 +2564,43 @@ Linux addition — what the kernel reports and Windows has no equivalent for:
       together are read as the switch being off rather than as a thread that has never been given a
       processor, which is not something that can be true of a thread there is a file to read (§72.3)
 
-Still unticked and why — each re-checked against a live `/proc/[pid]/task/[tid]/` rather than taken
-on trust, since a kernel that grew a file would turn a refusal into a gap without anything saying so:
+Still unticked and why — each re-checked against a live `/proc/[pid]/task/[tid]/` *and* against the
+fields `SYSTEM_THREAD_INFORMATION` actually carries, rather than taken on trust. A kernel that grew a
+file turns a refusal into a gap without anything saying so; and a reason written for one platform
+reads as a reason for both, which is how the base priority above came to be listed as unavailable
+while it sat in the buffer. Three of these were that shape: the Linux half was right and the Windows
+half was missing rather than wrong, and a missing half is read as a refusal.
 
-- **Cycles** and **cycles delta** — no file under `/proc` carries a per-thread cycle count. The only
-  route is `perf_event_open`, which needs a descriptor held open per thread for the life of the view
-  and the same `PTRACE_MODE_ATTACH` `syscall` needs, and returns nothing at all on a machine with no
-  hardware PMU. Two hundred lines of native plumbing to render "not permitted" on every row of an
-  ordinary desktop is not a column, and the process-wide `Cycles` counter has said `n/a` on Linux for
-  the same reason since §8.
-- **Ideal processor** and **TEB / TLS information** — no Linux equivalent. The scheduler has no
-  notion of a thread's preferred processor that it will name — the closest thing in
-  `/proc/[pid]/task/[tid]/sched` is `numa_preferred_nid`, which is a memory node rather than a
-  processor and reads `-1` on a machine with one node — and the thread pointer is readable only
-  through `ptrace(ARCH_GET_FS)`, which means stopping the thread to ask.
+- **Cycles** and **cycles delta** — a refusal on Linux and unbuilt on Windows, which are §7's two
+  different sentences and were written here as one. On Linux no file under `/proc` carries a
+  per-thread cycle count: the task directory holds forty-seven entries on 7.1.7 and not one of them
+  is a counter. The only route is `perf_event_open`, which needs a descriptor held open per thread
+  for the life of the view and the same `PTRACE_MODE_ATTACH` `syscall` needs, and returns nothing at
+  all on a machine with no hardware PMU. Two hundred lines of native plumbing to render "not
+  permitted" on every row of an ordinary desktop is not a column, and the process-wide `Cycles`
+  counter has said `n/a` on Linux for the same reason since §8. **Windows can answer it.** The bulk
+  query cannot — that structure has eleven fields and no cycle time among them — but
+  `QueryThreadCycleTime` is a documented call on a thread handle, and the process-wide `CycleTime`
+  in the very same buffer is already read into the `Cycles` column. So this would read a figure on
+  Windows and `n/a` on Linux, exactly as `Cycles` does per process today, and what stands between
+  here and there is a handle per thread per tick that nobody has written — us, not the machine.
+- **Ideal processor** — no Linux equivalent, and unbuilt on Windows. The scheduler has no notion of a
+  thread's preferred processor that it will name: the closest thing in `/proc/[pid]/task/[tid]/sched`
+  is `numa_preferred_nid`, which is a memory node rather than a processor and reads `-1` on a machine
+  with one node — read again on a live task, and still the only candidate in the file. Windows has
+  the notion outright and publishes it through `GetThreadIdealProcessorEx`, so the Windows half of
+  this row is a fact about us (§7).
+- **TEB / TLS information** — the same split, and the Windows half is the nearest thing in this list
+  to the base-priority defect. Linux exposes no thread pointer: there is no `tls` and no `teb`, and
+  `arch_status` — the one per-task file that has grown recently, so the one worth opening again —
+  holds `AVX512_elapsed_ms` and nothing else. Reading the pointer means `ptrace(ARCH_GET_FS)`, which
+  means stopping the thread to ask. On Windows the TEB address is in the *extended* form of the
+  structure this program already parses: the same call with the extended information class returns
+  `SYSTEM_EXTENDED_THREAD_INFORMATION`, whose leading fields are the ones already read and which adds
+  `TebBase`, `StackBase`, `StackLimit` and `Win32StartAddress` behind them. Not arriving and
+  discarded, then — never asked for, which is one constant away rather than nothing at all. It is
+  documented by observation like the rest of `NtStructures`, so it would arrive with a replay test
+  over a captured buffer and not on trust.
 - **Wait duration** — deliberately left, and on both platforms rather than only on Linux, which is
   worth writing down because the Windows half looks answerable and is not. `schedstat` reports
   cumulative time queued for a processor, which is not how long the current wait has lasted, and
@@ -2588,16 +2611,29 @@ on trust, since a kernel that grew a file would turn a refusal into a gap withou
   what it means on a modern kernel is not something that can be established from here. Converting it
   to a duration would be inventing a precision nobody has, and this was written and then taken out
   again for that reason. There is no documented per-thread current-wait duration on either platform.
-- **Description** — Linux gives a thread one name, `comm`, and it is already the Name column. A
-  Description column would repeat it.
-- **Service association** — a thread may be moved into its own cgroup under v2's threaded mode, so
+- ∅ **Description** — refused rather than owed, and on both platforms, which is why it carries a mark
+  that says so instead of an empty box somebody will one day try to fill. Linux gives a thread one
+  name, `comm`, and it is already the Name column. Windows gives it one string too — the one
+  `SetThreadDescription` sets, which that API calls the description and every reader calls the name.
+  Neither platform has a second field to put in a second column, so a Description column would repeat
+  the Name column on every row of both.
+- ∅ **Service association** — also refused, and here the argument is cost rather than availability. A
+  thread may be moved into its own cgroup under v2's threaded mode, so
   `/proc/[pid]/task/[tid]/cgroup` is a real per-thread reading. Checked again rather than assumed:
   the file is there for every task, and for an ordinary process it is byte for byte the process's
   own. Reading it would be a *sixth* file per thread in the one view this section re-reads on every
   tick — the five it already reads are the 78 µs a thread measured above — spent on a column that
-  says the same thing on every row of almost every process. That is the §5.4 trade this view is
-  built around, so it stays unread and the reason stays written down.
-- **AppDomain / runtime context** — needs the runtime's own introspection, not the kernel's (§80).
+  says the same thing on every row of almost every process. Windows offers nothing to weigh against
+  that: a service there is a process or a share of one, and no thread belongs to a unit of its own.
+  That is the §5.4 trade this view is built around, so it stays unread and the reason stays written
+  down.
+- **AppDomain / runtime context** — needs the runtime's own introspection, not the kernel's (§80),
+  and §80 has nothing behind it yet. Worth naming what the column would hold if it did, because the
+  title has aged: .NET Core keeps one `AppDomain` per process, so the per-thread AppDomain this is
+  named for is a .NET Framework notion with no counterpart on either supported platform. What is left
+  is the runtime context — whether a thread is the runtime's or a native thread of the same process —
+  and that is the runtime's own bookkeeping. The module list §14 reads answers it for a process and
+  cannot answer it for a thread.
 
 Actions:
 
@@ -5856,20 +5892,59 @@ that has a tab for it. That drift is what made an earlier version of this matrix
       **Task Manager's own feature is a different thing** and this deliberately does not claim it:
       there, an application registers with `RegisterApplicationRestart` and Windows brings it back
       after a reboot or an update, with the state it asked to keep. Nothing on Linux offers that, and
-      calling this by that name would be the false equivalence §5.3 forbids
+      calling this by that name would be the false equivalence §5.3 forbids.
+
+      The Windows blocker is smaller than "no implementation" suggests, and naming it is the point of
+      an open box: the reading half is most of the way there already. The image path and the command
+      line are read every sample through `ProcessCommandLineInformation`, and the probe already walks
+      a target's `RTL_USER_PROCESS_PARAMETERS` to fetch its environment — the working directory is a
+      field of that same structure, reached by the same three reads. What is unwritten is the second
+      half: ending the process, waiting out the grace period, and declining to start a replacement if
+      the original is still there, which is the part the Linux implementation is mostly made of
 - [x] Priority
 - [x] Affinity
 - ∅ Efficiency / QoS — refused rather than unwritten: the nearest Linux relatives are the scheduling class and the I/O class, both already settable, and mapping a QoS class onto them is the false equivalence §5.3 forbids
-- [ ] Dumps
+- [ ] Dumps — nothing at all, on either platform: no code, no menu item, no switch. Left open rather
+      than refused, because the two halves are not the same kind of missing. **On Windows it is
+      unbuilt**: `MiniDumpWriteDump` is a documented call that takes a process handle and a file, and
+      writing one would be a page of code. **On Linux there is no way to dump a live process without
+      stopping it.** The kernel writes a core only when a fatal signal ends a task, which produces a
+      dump of the thing at the cost of the thing; everything that dumps a *running* process —
+      `gcore`, and every library that imitates it — attaches with `ptrace` first, because the
+      register sets a core file needs come from nowhere else. That is the debugger interface §4 rules
+      out, so if this is ever built it will be a Windows item that refuses here, and the refusal will
+      have to say which of the two things it is
 - [ ] 🟡 Wait chains — each thread says what it is blocked in and which syscall it is in, and the
       chain is followed for the one case a kernel states outright: a process queued behind a file
-      lock names the process holding it, on the properties window's General page. The other cases
-      are not followed and cannot be. Nothing publishes who holds a futex, and reconstructing it from
-      outside needs the debugger interface §4 rules out — so a general "wait chain" here would be
-      this one special case wearing a general name, which is what §5.3 forbids
+      lock names the process holding it, on the properties window's General page. On Linux the other
+      cases are not followed and cannot be: nothing publishes who holds a futex, and reconstructing it
+      from outside needs the debugger interface §4 rules out — so a general "wait chain" *here* would
+      be this one special case wearing a general name, which is what §5.3 forbids.
+
+      **That argument is a Linux argument and was standing in for both platforms, which it cannot
+      do.** Windows publishes the whole feature: Task Manager's own Analyze Wait Chain is the Wait
+      Chain Traversal API in `advapi32` — `OpenThreadWaitChainSession`, `GetThreadWaitChain`, a chain
+      of `WAITCHAIN_NODE_INFO` and a flag that says outright whether the chain is a cycle — and it
+      follows critical sections, mutexes, ALPC and COM across process boundaries, which is precisely
+      the set nothing on Linux will name. It has been there since Vista and it is not a debugger
+      interface. So the Windows half of this row is a fact about us and the Linux half is a fact
+      about the kernel (§7), and the box stays open on the strength of the first
 - [x] Process search / filter
 - [x] Startup enable / disable
-- [ ] User session control
+- [x] User session control — this row was stale. Logging a session off, locking its screen and
+      unlocking it again all work, through `loginctl` because the state belongs to logind and that is
+      the supported way in — so an ordinary user gets whatever polkit prompt their desktop is
+      configured to give rather than a silent failure. Reachable from the Users view's own context
+      menu in the window and as `--session` at the prompt, both building the same request. Ending a
+      session is confirmed by a dialog that names the account, the terminal and how many processes go
+      with it, and it is **not** the confirmation `confirm.destructive` can switch off (§43, §90).
+      **Disconnect is absent on purpose**: Windows separates disconnecting from signing off because a
+      terminal-services session survives with no client attached, logind has no such state, and an
+      item that could only ever refuse is a lie dressed as a feature. Ticked because Task Manager's
+      Users tab has an equivalent here that a person can reach — but owed and named rather than
+      assumed, in the shape §58 uses: **the terminal has no session actions.** `--users` lists them
+      and `--session` acts on one, so §58's second clause holds; there is no page in the TUI from
+      which to do it, which is the same debt as the four actions §58 already records
 - [x] Service controls
 - [x] Kernel vs user CPU graph
 
@@ -5902,7 +5977,14 @@ that has a tab for it. That drift is what made an earlier version of this matrix
 - [x] Handles
 - [x] Modules
 - [x] Threads
-- [ ] 🟡 Stack traces — the kernel stack where the machine permits it, with symbols where the image still carries them; a user-space walk needs the driver §4 rules out
+- [x] 🟡 Stack traces — the kernel stack where the machine permits it, with symbols where the image
+      still carries them, module and offset where they do not, the one user frame Linux does give up
+      from `syscall`, eight columns and six actions — every line §30 lists as reachable is built, and
+      the window opens one per thread and several at once. Amber and not plain because a user-space
+      *walk* needs the unwinder §4.1 rules out, which is a refusal with an argument rather than
+      outstanding work: it is marked ∅ in §30 rather than left as a gap, along with managed frames
+      (§80's) and source lines (DWARF). What the window shows when the kernel stack is refused is a
+      short list and a paragraph saying so, and the paragraph is the honest part
 - [x] Services — listed in a view, and started, stopped, restarted, reloaded, enabled or disabled
       from the window's Services page, from the terminal's action menu, and from `--service`
 - [x] Network connections
@@ -5916,11 +5998,36 @@ that has a tab for it. That drift is what made an earlier version of this matrix
 - [x] Detailed service control — all six verbs systemd offers, in all three front-ends, each
       carrying the manager's own answer rather than a word of ours. Pause and continue are not
       offered because systemd has no such thing
-- [ ] 🟡 Binary inspection — the ELF header and the mapped images; nothing disassembles
-- [ ] 🟡 Runtime inspection — each process and each loaded image says whether it is native, .NET,
-      a JVM or Python, read from the module list rather than guessed from a name; nothing
-      inspects a running runtime's own structures
-- [ ] Process notes / rules
+- [x] 🟡 Binary inspection — this row described an ELF header reader and had not been read against
+      the code since. §53 is sixteen pages over PE, ELF and Mach-O — summary, headers, sections,
+      imports, exports, dependencies, symbols, strings, resources, signatures, hashes, debug
+      information, security properties — told apart by their own first bytes and never by extension,
+      one page at a time so that opening a binary does not walk a symbol table nobody asked for. It
+      is `procman --inspect FILE [page]` and Inspect ▸ Binary inspector… in the window, so it clears
+      the reachability bar this section's preamble sets. Amber for two reasons, both named where they
+      live: **nothing disassembles**, which is a §4 refusal enforced by a test that walks the public
+      surface rather than an intention; and **the terminal has no inspector page**, which is owed
+      under §58 and is why `--inspect` is how somebody over a connection reads one
+- [ ] 🟡 Runtime inspection — the classification half is built and wider than this row said: ten
+      runtimes, not four — native, .NET, Mono, Java, Python, Ruby, Perl, PHP, Node and Wine — read
+      from the module list rather than guessed from a name, and *native* is a finding rather than a
+      hole because every module was looked at. Per loaded image too, from the image's own header:
+      an ELF, a PE with a CLI header, a PE without one, an archive, or read-and-not-code. **It is
+      Linux only.** The Windows probe assigns neither the runtime nor its reason, so a Windows
+      record carries "nobody looked" — and carries it with the reason field that means the value is
+      present, which is §72.3's defect rather than a platform limit. Reading a Windows module list is
+      already done for §31, so what is missing there is a name table for `coreclr.dll` and its
+      neighbours. The introspection half — a runtime's own threads, its loader contexts, its heap —
+      is §80's and unbuilt on both, and it is the half that cannot be had from the outside: it needs
+      the runtime to answer about itself
+- [ ] Process notes / rules — §66 in full, and nothing behind it: no note, colour, category, expected
+      publisher or preferred priority is attached to anything, and no rule matches an image to one.
+      Left open rather than refused because nothing is in the way. The store exists — §67's settings
+      file is already a documented `key=value` file at the platform's own config location, and §44
+      already keeps a per-image record across sessions, so persistence-by-image-path is a solved
+      problem here. The matching evidence exists too: §21 reads a digest, §70 reads what the package
+      database recorded, and §14 reads the command line. This is unwritten work with its dependencies
+      already met, which is a different thing from a blocked box and should not be filed as one
 - [x] Configurable columns
 
 ## DBC Task Manager
@@ -5932,7 +6039,16 @@ that has a tab for it. That drift is what made an earlier version of this matrix
 - [x] Services — listed in a view of its own, and controlled from it
 - [x] Startup — listed in a view of its own, and enabled or disabled from it
 - [x] Users
-- [ ] Minimal cognitive overhead for ordinary users
+- [ ] Minimal cognitive overhead for ordinary users — the one row here that is not a feature, and it
+      stays open for that reason rather than for a missing one. The parts of it that *are* built are
+      built: a **Basic** column set — name, PID, status, CPU, memory, disk, GPU — reachable by name
+      from all three front-ends and not written into anybody's settings (§94), a table that costs
+      nothing it was not asked for, and §5.2's rule that common information is visible immediately.
+      What cannot be ticked from the code is the claim itself. §5.2's second box — advanced
+      information one click away rather than in the default view — is still amber on its own page,
+      and no ordinary user has been sat in front of this and watched. Ticking a row about what people
+      find easy on the strength of a column set would be marking our own homework, which is the one
+      thing this matrix exists not to do
 
 ---
 
