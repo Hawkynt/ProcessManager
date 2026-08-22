@@ -300,6 +300,23 @@ internal static class ProbeFactory {
   }
 
   /// <summary>
+  /// The thing that can end somebody's login, or null where nothing can (PRD §43).
+  /// </summary>
+  /// <remarks>
+  /// Null rather than an object that refuses everything, for the same reason
+  /// <see cref="CreateServiceControl"/> is: a front-end asking for this is deciding whether to offer
+  /// the commands at all. Windows returns null until the terminal-services API is written — sessions
+  /// are not read there either, so there is nothing to command.
+  /// </remarks>
+  public static ISessionControl? CreateSessionControl() {
+    if (!OperatingSystem.IsLinux())
+      return null;
+
+    var control = new Platform.Linux.LoginctlSessionControl();
+    return ((ISessionControl)control).IsAvailable ? control : null;
+  }
+
+  /// <summary>
   /// The thing that can turn a login entry on and off, or null where nothing can.
   /// </summary>
   /// <remarks>

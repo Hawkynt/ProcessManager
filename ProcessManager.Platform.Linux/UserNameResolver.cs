@@ -14,6 +14,7 @@ namespace Hawkynt.ProcessManager.Platform.Linux;
 internal sealed class UserNameResolver(string passwdPath = "/etc/passwd") {
 
   private readonly Dictionary<int, string?> _cache = [];
+  private readonly Dictionary<string, string?> _fullNames = new(StringComparer.Ordinal);
   private bool _loaded;
 
   public string? Resolve(int uid) {
@@ -27,11 +28,31 @@ internal sealed class UserNameResolver(string passwdPath = "/etc/passwd") {
   }
 
   /// <summary>
+  /// The account's own description, by login name (PRD §43).
+  /// </summary>
+  /// <remarks>
+  /// By name and not by uid because a login record carries a name and no uid — and the same file
+  /// answers both, so a second reader would be a second thing to keep in step. Null where the
+  /// account has no description or is not in the file at all, which is the same limitation
+  /// <see cref="Resolve"/> has and for the same reason.
+  /// </remarks>
+  public string? FullName(string? userName) {
+    if (userName is not { Length: > 0 })
+      return null;
+
+    if (!this._loaded)
+      this.Load();
+
+    return this._fullNames.TryGetValue(userName, out var full) ? full : null;
+  }
+
+  /// <summary>
   /// Forgets everything. A user added while the program is running would otherwise stay numeric for
   /// as long as it runs.
   /// </summary>
   public void Invalidate() {
     this._cache.Clear();
+    this._fullNames.Clear();
     this._loaded = false;
   }
 
@@ -53,6 +74,13 @@ internal sealed class UserNameResolver(string passwdPath = "/etc/passwd") {
         continue;
 
       this._cache[uid] = fields[0];
+
+      // The fifth field, where the file has one. An account with a shorter line is not malformed —
+      // some system accounts are written without it — so a missing field is no description rather
+      // than a reason to skip the line that already gave a name.
+      this._fullNames[fields[0]] = fields.Length > 4
+        ? Query.SessionFacts.FullNameFromGecos(fields[4])
+        : null;
     }
   }
 

@@ -3099,19 +3099,30 @@ macOS:
 Windows job objects:
 
 - [ ] Job name · process membership · CPU limits · memory limits · process limits · UI restrictions ·
-      affinity · scheduling · accounting
+      affinity · scheduling · accounting. **Blocked on a handle, and the blocker is written down
+      rather than the box left bare.** `IsProcessInJob` answers whether a process is in one and is
+      reachable from any account; every other item on that line needs `QueryInformationJobObject`,
+      which needs a *handle* to the job. Almost every job on Windows is anonymous — created with a
+      null name and kept by whoever created it — so there is no `OpenJobObject` to make. The only
+      way in is the one Process Explorer takes: enumerate every handle on the machine, find one whose
+      type is `Job`, duplicate it and test its membership. That needs `SeDebugPrivilege`, which puts
+      the whole line behind the privileged helper of §68 rather than in the probe
 
 Linux cgroups:
 
 - [x] cgroup path
-- [ ] Hierarchy
+- [x] **Hierarchy** — every cgroup from the root down to the process's own, and which of them
+      imposes each ceiling. The half of the answer one directory cannot give: a limit set on an
+      ancestor governs everything below it, and the cgroup a process is actually in very often sets
+      nothing at all
 - [x] Controllers — which are *enabled* here, which is not the same as which limit files exist: a
       delegated cgroup may have `memory` and not `cpu`, and then the CPU limit is inherited from an
       ancestor rather than absent
 - [x] CPU limits — as a number of cores, plus how many times the cgroup has actually been throttled
 - [x] Memory limit — the hard cap and the soft one, which are different limits
 - [x] Current memory usage
-- [ ] I/O limits
+- [x] I/O limits — `io.max`, per block device and per direction, with the device named where the
+      machine can name it
 - [x] 🟡 **Task membership** — the count against the limit, named for what it counts; the list of
       members is not read
 - [x] Pressure metrics (PSI) — per cgroup, through the same parser the machine-wide ones use
@@ -3149,6 +3160,26 @@ false statement — an ancestor's quota still applies, and that is precisely the
 this page to find. The first real machine it was run against had `memory` and `pids` enabled and not
 `cpu`, so the distinction was doing work immediately rather than guarding a hypothetical.
 
+**And an ancestor's limit is the one that governs.** The page reads the whole chain from the root
+down, four small files a level, and shows what each level sets beside what is actually in force —
+the tightest ceiling anywhere in the chain, and the cgroup that imposes it. Reading one directory is
+how a program comes to report "no limit" about a process being held to a tenth of a core two levels
+up, which is the exact question somebody opens this page with. The machine this was written on shows
+it plainly: the terminal's own scope caps tasks at 153 425 and sits inside a user slice that caps
+them at 337 536, and the row now says which of the two a process will actually hit. A level with no
+unit in it is named by its path, because a slice is not a unit — the same rule §40's owning service
+follows, and for the same reason.
+
+**The disk ceiling is per device, because that is what the kernel enforces.** `io.max` is a line per
+block device with four keys on it, and a group may be held to a megabyte a second on the disk its
+database is on and left alone on the one its logs are on; a single figure headed "I/O" could not say
+that. Each direction carries its own answer, and the literal word `max` is *no limit in that
+direction* rather than a ceiling of nought — which would mean the device was closed to the group
+entirely, the opposite statement. A key the kernel did not write is read the same cautious way. The
+device is named through `/sys/dev/block` where the machine can be asked, because `nvme0n1` is a disk
+somebody recognises where `259:0` is not, and keeps its numbers where it cannot: a name that could
+not be looked up is not a device that has none.
+
 **Unlimited is not a quantity.** `max` is reported as *no limit* rather than as the very large number
 the file literally contains on some kernels, because "no limit" and "a limit of nine million
 terabytes" must not look alike. Likewise a quota is divided into a number of cores: "half a core" is
@@ -3164,8 +3195,34 @@ giving half an answer.
 
 Containers:
 
-- [ ] 🟡 Runtime · container ID ✔ (§14) · locally resolvable name · namespaces ✔ (on the security
-      page, where the boundary they draw belongs — §36) · resource limits ✔
+- [x] 🟡 Runtime ✔ · container ID ✔ (§14) · locally resolvable name ✔ where the machine itself
+      knows one · namespaces ✔ (on the security page, where the boundary they draw belongs — §36) ·
+      resource limits ✔. Amber for the name and for nothing else: a Docker or Podman container's name
+      lives in that runtime's daemon and not on the filesystem, so the id is reported with the reason
+      the name is not
+
+**The runtime is read from the cgroup and from nothing else**, for the reason §14 gives about process
+names: a process called `containerd-shim` is not a container, and a container's own processes are
+named after whatever they run. What cannot be argued with is which cgroup the kernel put them in.
+Docker, Podman, containerd, CRI-O, LXC and `systemd-nspawn` each write a shape of their own and every
+one of those shapes is a cgroup path, so the runtime is a reading rather than a guess. A run of
+hexadecimal has to be long enough to be an id before it is treated as one: `docker-cleanup.scope` is
+a unit somebody wrote, and matching on the prefix alone would put a container column on half of
+`system.slice`.
+
+**A virtual machine is not a container and is not reported as one.** libvirt registers a QEMU guest at
+`/machine.slice/machine-qemu\x2d1\x2ddebian.scope`, which is the shape `systemd-nspawn` uses for a
+container. Calling it one would be the false equivalence §5.3 forbids twice over: none of the guest's
+processes are on this machine's list at all, and the ones that are belong to the emulator.
+
+**The name is reported only where the machine itself knows it.** LXC and `machined` put the
+container's name in the cgroup path, so the path is the whole answer — unescaped first, because
+systemd writes a hyphen as `\x2d` and printing that verbatim shows somebody a name nothing on their
+machine is called. Docker, Podman, containerd and CRI-O put an id there and keep the name in their own
+daemon, reachable only over that daemon's socket; membership of that socket's group is, on every
+distribution that ships one, equivalent to root. So the id is shown together with the reason the name
+is not, rather than the program acquiring a root-equivalent dependency to fill in a column (§5.4,
+§32).
 
 # 39. Windows / UI objects
 
@@ -3234,8 +3291,17 @@ Endpoints are enumerated on both platforms and attributed to processes.
       prefix first. A socket on the wildcard address is on all of them and shows `*`; an address no
       route claims — a multicast group, a point-to-point peer — is left unknown rather than guessed at.
       Amber because Windows has no equivalent reading yet
-- [ ] Connection creation time
-- [ ] Connection age
+- [ ] Connection creation time — **impossible on Linux, unwritten on Windows, and the two halves are
+      not the same statement.** The Linux argument is below and stands; what was wrong was leaving the
+      box bare, which read as a refusal on both platforms. Windows keeps the figure: the owner-module
+      table, `GetExtendedTcpTable` with `TCP_TABLE_OWNER_MODULE_ALL`, hands back a row with a
+      `liCreateTimestamp` on it, and it is where TCPView gets the column. This program asks for the
+      owner-*pid* table instead, whose row has no such field, and the two tables have different rows
+      of different lengths — so this is a layout change to the byte offsets §8.3 reads them by, and
+      one nobody here can check against a table a real Windows kernel wrote. Written down at this
+      length so the next person with that machine in front of them can do it in an afternoon
+- [ ] Connection age — the same box one subtraction later, and blocked on the same thing. Nothing to
+      subtract from until there is a creation time
 - [x] Bytes sent / received — payload each way over the connection's life, retransmissions included.
       Not what the interface carried: headers are not in it
 - [x] Send rate / receive rate — those totals against the previous reading of the same socket, over
@@ -3261,11 +3327,16 @@ Endpoints are enumerated on both platforms and attributed to processes.
       thing that looks like one
 - [x] Container / cgroup — the holder's cgroup path, which is what says whether a listening port
       belongs to the host or to a container
-- [ ] Firewall / security context — no per-socket answer exists on Linux. A firewall rule matches
+- ∅ Firewall / security context — **refused, and re-checked rather than assumed.** No per-socket
+      answer exists on Linux. A firewall rule matches
       packets by address, port and mark, and the kernel records no link from a rule back to a socket;
       answering it would mean reading the nftables ruleset and re-evaluating it against each row,
       which is a simulation of the firewall rather than a reading of it. `conntrack` knows about
-      flows and not about which socket owns one
+      flows and not about which socket owns one. The nearest real thing is a *security* context and
+      not a firewall one: a socket carries its creator's SELinux label, which is the holding
+      process's and is already on the security page (§36), and `SO_PEERSEC` names the peer of a Unix
+      socket rather than any rule. Windows is no different — the filtering platform matches on
+      conditions and keeps no reverse map from a filter to a socket
 
 **Where the numbers come from.** Addresses, ports, states, queues and the current retransmit count are
 read from `/proc/net/{tcp,tcp6,udp,udp6,unix}`. Everything else on a TCP row — bytes, segments,
@@ -3290,13 +3361,16 @@ so a listening row reports none of them. And `tcp_info` grows with every release
 not long ago and is 280 now, so a field past the end of what a kernel sent is that kernel not having
 it, never a nought.
 
-**Connection creation time is not available on Linux and the box stays empty.** The obvious place to
-look is the descriptor — `/proc/[pid]/fd/[n]` has timestamps — and they are the time the `/proc`
+**Connection creation time is not available on Linux, and the box says which platform each half of
+that sentence is about.** The obvious place to look is the descriptor — `/proc/[pid]/fd/[n]` has timestamps — and they are the time the `/proc`
 inode was materialised, which is when something last looked, not when the socket was opened. A
 process fourteen seconds old and a descriptor seven seconds old both stamp as *now* the moment they
 are read. Reporting either as the connection's age would produce a number that moves when you look
 at it. The socket diagnostics do not change this: `tcp_info` carries no creation time either, and its
 closest fields are how long ago the connection last sent or received, which is not when it started.
+Windows is the other half and a different answer: its owner-module table stamps every row with the
+time the entry was made, so the column is readable there and simply is not read. Writing "not
+available" over both would have told a Windows reader their machine could not do something it does.
 
 Protocols:
 
@@ -3333,7 +3407,14 @@ Actions:
 - [ ] Close connection where natively supported — Linux has `SOCK_DESTROY` on the same netlink family
       the counters come from, and it is what `ss -K` uses. It needs `CAP_NET_ADMIN`, so for the user
       a process manager is normally run as it could only ever refuse, and an item that can only
-      refuse is a lie dressed as a feature (§32). It belongs with the elevated helper of §8
+      refuse is a lie dressed as a feature (§32). It belongs with the elevated helper of §8 —
+      **and the helper cannot carry it as its protocol stands.** A request frame is a fixed
+      twenty-five bytes with exactly one eight-byte argument, and a socket is named to the kernel by
+      an `inet_diag_sockid`: a family, two ports, two addresses, an interface index and a cookie,
+      forty-eight bytes of it. There is nowhere in the frame to put that. Adding the verb therefore
+      means a frame the helper's parser does not accept, which is a version bump to §68's protocol
+      and an addition to the opcode allowlist that §68.1 makes a specification change — so it is
+      §68's box to open and not this one's
 - [x] Terminate owner — with the confirmation §5.5 requires. The process is the pane's own rather
       than one read off a row: every row here belongs to the same process by construction
 - [x] Search remote endpoint — the far end's address, without its port, handed to the session's
@@ -3547,21 +3628,101 @@ Actions:
 
 # 43. Users and sessions
 
-- [ ] 🟡 Columns — user ✔ · login time ✔ · terminal ✔ · remote host ✔ · CPU ✔ · memory ✔ ·
-      process count ✔. Full name, session id and type, state, idle time, last input, and the disk,
-      network and GPU totals are not read
-- [ ] Rows expand to the processes owned by that user — the totals are summed, but there is no
-      tree to open
-- [ ] Actions: disconnect session · log off · send notification where native · view processes ·
-      copy session information
+- [x] Columns — user ✔ · full name ✔ · login time ✔ · terminal ✔ · remote host ✔ · session id ✔ ·
+      type ✔ · state ✔ · idle time ✔ · last input ✔ · process count ✔ · CPU ✔ · memory ✔ · disk ✔ ·
+      GPU ✔ · network ∅ (§18). Idle time and last input are one reading with two renderings and not
+      two readings: the record carries when the terminal was last written to, and the column shows
+      how long ago that was, because a table of logins is read for "how long has this been quiet"
+      rather than for a timestamp. In the window as well as at the prompt now: the view behind the rail
+      showed who was logged in and nothing about what that login cost, which is the half of the page
+      anybody opens it for. Both add the totals up through one function in Core, because two
+      additions of one column are two answers to one question (§5.1, §58)
+- [x] 🟡 Rows expand to the processes owned by that user — `--users --tree` opens each account's
+      row to the processes behind its totals, busiest first, and the window's own row has **Show this
+      user's processes**, which goes to the process list grouped by account. Amber because the second
+      is a navigation rather than a tree that opens in place: the process list already sorts, already
+      filters and already has every column, and a second list of processes inside the users view would
+      be a second thing to keep in step with the first (§5.1)
+- [x] 🟡 Actions: log off ✔ · lock and unlock the screen ✔ · view processes ✔ · copy session
+      information ✔ · disconnect session ∅ · send notification where native ∅. Both refusals are
+      argued below rather than left as gaps
 
 Reachable as `procman --users`, which answers two questions in one table: the sessions come from the
 login records and the totals from the process list. A user with a session and no processes is a stale
 login, and processes with no session belong to services.
 
 An empty remote host means a login at the machine itself, which is a different answer from not
-knowing where it came from — so it reads "local" rather than leaving the column blank.
-- [ ] Destructive session actions require confirmation (§90)
+knowing where it came from — so it reads "local" rather than leaving the column blank. The other half
+of that sentence is now printed too: the accounts that have processes and no login are listed under a
+heading of their own, so a reader can see that they belong to services rather than having to take it
+on trust from this paragraph.
+
+**utmp carries five fields and has never carried any more**, so every other column here is worked out
+from those five and from the machine around them. That working out is in Core, in one place, so the
+window and the report cannot disagree about it — and it touches no file, so it is tested on every CI
+leg (§5.1, §9.2).
+
+**The session id comes off the leader's cgroup.** `loginctl` names a session by an id and a login
+record has no such field; what systemd does have is a cgroup per session, `session-N.scope`, with the
+session's leader inside it. So the id is read from the process rather than asked of logind — and in
+particular rather than parsed out of `/run/systemd/sessions/N`, whose first line says it is private
+data and not to be parsed. A leader in no such scope has no id, which is a login systemd did not
+open; the row says so, and nothing offers to act on it, because `loginctl` knows a session only by
+its id and inventing one would send a command at somebody else's session.
+
+**The type is named for the evidence rather than for logind's vocabulary.** logind's `tty`, `x11`,
+`wayland` and `web` come from whatever asked it to open the session and live in that same private
+file. What the login record holds is a line and a host, and those distinguish four cases plainly: a
+line that is a display is a graphical login, a host that is a display is a terminal window on this
+machine, a host that is anything else is another machine, and `tty1` with no host is somebody at the
+keyboard. Anything else is left unknown rather than assigned to the nearest arm — *console* is the
+strongest claim on the list, because it says a person is physically present, and it must not be
+reached by falling through (§5.3).
+
+**The state is whether the leader is still there**, which is not logind's active/online/closing —
+those are about which session owns the seat. This is the cruder question a table of logins is read
+with, and it is the one this page's own prose has always made: a record that outlived its leader is
+the stale login.
+
+**Idle time is the terminal's modification time**, which is exactly what `who -u` and `w` measure,
+and it inherits their limits honestly: a session doing something that produces no terminal output
+looks idle, and a session with no terminal at all has nothing to measure. That second case reads as
+*not known* and never as nought — the sessions with no terminal are the graphical ones, and reporting
+those as never idle would be wrong about the busiest session on most desktops (§72.3).
+
+**Network bytes are not totalled, and the report says so where the column would have been.** §18
+refuses the per-process figure at length: there is no counter with a portable source, and every
+workaround is wrong in a way nothing on screen would betray. Summing wrong numbers per account makes
+the error larger rather than smaller.
+
+**There is no disconnect, and the item is absent rather than present and apologetic.** Windows
+separates disconnecting a session from logging it off because a terminal-services session survives
+with no client attached. Nothing on Linux has that state: logind offers terminate, lock and unlock,
+and there is no third thing between them. An item that could only ever refuse is a lie dressed as a
+feature (§32).
+
+**Sending a notification to another session is refused for the same reason.** A desktop notification
+goes over the recipient's own session bus, which this program cannot reach without their credentials —
+and the Unix mechanism that does work, `write` and `wall`, puts text on a terminal rather than raising
+a notification, needs the recipient to have left `mesg` on, and reaches nobody who is logged in
+graphically. Calling that "send notification" would be the false equivalence §5.3 forbids, and
+building it would mean a feature that silently reaches half the people it names.
+
+Ending a session asks the login manager rather than signalling anything, for the same reason §41
+asks the service manager: the state belongs to logind, `loginctl` is the supported way in, and it
+carries polkit — so an ordinary user gets whatever prompt their desktop is configured to give and a
+session that cannot prompt gets a refusal rather than a hang. No shell is involved and the id is
+checked before anything runs, because it is about to become a command-line argument and a "session"
+called `--all` would be a switch.
+- [x] Destructive session actions require confirmation (§90), and **the confirmation is not the one
+      the preference can switch off**. §69's `confirm.destructive` is turned off by people who end
+      their own editors all day and not by people who meant to log somebody out of a machine they
+      share, so ending a session is passed as a system target and asked about either way. The sentence
+      names the account, the session, the terminal and how many processes go with it, because §90
+      forbids a dialog that says only "are you sure" and because "this will close 318 programs" is
+      something a person can act on. At the prompt the same sentence is printed and a typed *yes*
+      wanted; a run whose input is not a terminal is refused rather than assumed to consent, and
+      `--yes` is how a script says it meant it (§5.5)
 
 # 44. Application / usage history
 

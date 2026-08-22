@@ -20,11 +20,12 @@ internal static class DesktopLauncher {
     IProcessActions? actions,
     IServiceControl? services,
     IStartupControl? startup,
+    ISessionControl? sessions,
     string? shootPath,
     double holdSeconds = 0,
     bool flat = false,
     UserSettings? settings = null,
     string? settingsPath = null
-  ) => Ui.Desktop.DesktopApp.Run(sampler, probe, actions, services, startup, shootPath, holdSeconds, flat, settings, settingsPath);
+  ) => Ui.Desktop.DesktopApp.Run(sampler, probe, actions, services, startup, sessions, shootPath, holdSeconds, flat, settings, settingsPath);
 
 }

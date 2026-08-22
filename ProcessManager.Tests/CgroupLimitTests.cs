@@ -24,14 +24,25 @@ public sealed class CgroupLimitTests {
   /// half the bug surface here: a cgroup path begins with a slash, and joining it to a root naively
   /// discards the root and reads from the filesystem root instead.
   /// </remarks>
+  /// <summary>
+  /// Deliberately a directory that is not there.
+  /// </summary>
+  /// <remarks>
+  /// The device numbers in a recorded hierarchy are somebody else's machine's, so resolving them
+  /// against <c>/sys/dev/block</c> here would put the name of one of <em>this</em> computer's disks
+  /// beside a limit recorded on another. It would also make the test's result depend on which disks
+  /// the machine running it happens to have, which is the other half of why fixtures exist.
+  /// </remarks>
+  private const string _NoDevices = "/nonexistent/sys/dev/block";
+
   private static CgroupInfo Capped() {
-    var info = Platform.Linux.CgroupReader.Read(Root, "/system.slice/capped.service");
+    var info = Platform.Linux.CgroupReader.Read(Root, "/system.slice/capped.service", _NoDevices);
     Assert.That(info, Is.Not.Null, "the fixture did not resolve");
     return info!;
   }
 
   private static CgroupInfo Free() {
-    var info = Platform.Linux.CgroupReader.Read(Root, "/user.slice/free.scope");
+    var info = Platform.Linux.CgroupReader.Read(Root, "/user.slice/free.scope", _NoDevices);
     Assert.That(info, Is.Not.Null);
     return info!;
   }
@@ -160,9 +171,176 @@ public sealed class CgroupLimitTests {
 
   [Test]
   public void ACgroupThatIsNotThereIsNullRatherThanAnError() {
-    Assert.That(Platform.Linux.CgroupReader.Read(Root, "/nothing/here.scope"), Is.Null);
-    Assert.That(Platform.Linux.CgroupReader.Read(Root, null), Is.Null);
-    Assert.That(Platform.Linux.CgroupReader.Read(Root, string.Empty), Is.Null);
+    Assert.That(Platform.Linux.CgroupReader.Read(Root, "/nothing/here.scope", _NoDevices), Is.Null);
+    Assert.That(Platform.Linux.CgroupReader.Read(Root, null, _NoDevices), Is.Null);
+    Assert.That(Platform.Linux.CgroupReader.Read(Root, string.Empty, _NoDevices), Is.Null);
   }
+
+  #region the hierarchy (PRD §38)
+
+  /// <summary>
+  /// The whole chain is read, root first, and the cgroup itself is the last of it.
+  /// </summary>
+  /// <remarks>
+  /// The last entry being this cgroup is what lets a caller say "and its ancestors" by dropping one
+  /// entry instead of reading the same four files a second time.
+  /// </remarks>
+  [Test]
+  public void TheChainRunsFromTheRootDownToTheCgroupItself() {
+    var paths = new List<string>();
+    foreach (var level in Capped().Chain)
+      paths.Add(level.Path);
+
+    Assert.That(paths, Is.EqualTo(new[] { "/", "/system.slice", "/system.slice/capped.service" }));
+  }
+
+  /// <summary>
+  /// The whole point: a ceiling set two levels up governs a cgroup that sets a looser one of its own.
+  /// </summary>
+  /// <remarks>
+  /// The fixture's service asks for 512M and sits in a slice capped at 256M, which is a layout the
+  /// kernel permits and enforces from the outside in. Reading one directory reports 512M — a number
+  /// the process will never be allowed to reach, presented as its limit.
+  /// </remarks>
+  [Test]
+  public void AnAncestorsCeilingIsTheOneInForce() {
+    var capped = Capped();
+
+    Assert.That(capped.MemoryMaxBytes.Value, Is.EqualTo(536870912ul), "what this cgroup asks for");
+
+    var ceiling = capped.TightestMemoryLimit();
+    Assert.That(ceiling.Value.Value, Is.EqualTo(268435456ul), "what it actually gets");
+    Assert.That(ceiling.Path, Is.EqualTo("/system.slice"));
+  }
+
+  /// <summary>
+  /// And the reverse: where the cgroup itself is the tighter one, it is named and the ancestor is not.
+  /// </summary>
+  [Test]
+  public void TheCgroupsOwnCeilingWinsWhenItIsTheTighter() {
+    var capped = Capped();
+
+    var tasks = capped.TightestTaskLimit();
+    Assert.That(tasks.Value.Value, Is.EqualTo(64ul));
+    Assert.That(tasks.Unit, Is.EqualTo("capped.service"));
+
+    var (cores, _, unit) = capped.TightestCpuQuota();
+    Assert.That(cores, Is.EqualTo(0.5).Within(0.0001), "half a core against the slice's two");
+    Assert.That(unit, Is.EqualTo("capped.service"));
+  }
+
+  /// <summary>
+  /// A slice is not a unit, so the level that imposes a limit is named by its path where it has no
+  /// unit name — reporting <c>system.slice</c> as a unit would name a container rather than an owner.
+  /// </summary>
+  [Test]
+  public void ASliceIsNamedByItsPathBecauseItIsNotAUnit() {
+    var ceiling = Capped().TightestMemoryLimit();
+
+    Assert.That(ceiling.Unit, Is.Null);
+    Assert.That(ceiling.Path, Is.EqualTo("/system.slice"));
+  }
+
+  /// <summary>
+  /// "Nothing in the chain limits this" and "no cgroup in the chain has the controller on" are
+  /// different answers, and a chain that answered <c>max</c> at some level said the first plainly.
+  /// </summary>
+  [Test]
+  public void UnlimitedAllTheWayUpIsNotTheSameAsNoControllerAnywhere() {
+    var free = Free();
+
+    var memory = free.TightestMemoryLimit();
+    Assert.That(memory.Path, Is.Null, "nobody set a number");
+    Assert.That(memory.Value.Reason, Is.EqualTo(UnknownReason.NoLimit), "but somebody wrote max");
+
+    // The user slice caps tasks even though the scope inside it does not, which is the ordinary
+    // shape of a desktop and the one a single-directory read gets wrong.
+    var tasks = free.TightestTaskLimit();
+    Assert.That(tasks.Value.Value, Is.EqualTo(4096ul));
+    Assert.That(tasks.Path, Is.EqualTo("/user.slice"));
+
+    var (cores, path, _) = free.TightestCpuQuota();
+    Assert.That(cores, Is.Null);
+    Assert.That(path, Is.Null);
+  }
+
+  #endregion
+
+  #region io.max (PRD §38)
+
+  [Test]
+  public void EveryDirectionOfADevicesCeilingIsRead() {
+    var capped = Capped();
+
+    Assert.That(capped.IoLimitsReason, Is.EqualTo(UnknownReason.None));
+    Assert.That(capped.Io, Has.Count.EqualTo(2));
+
+    var first = capped.Io[0];
+    Assert.That((first.Major, first.Minor), Is.EqualTo((8, 0)));
+    Assert.That(first.ReadBytesPerSecond.Value, Is.EqualTo(2097152ul));
+    Assert.That(first.WriteOperationsPerSecond.Value, Is.EqualTo(500ul));
+    Assert.That(first.IsLimited, Is.True);
+  }
+
+  /// <summary>
+  /// <c>max</c> in one direction is no ceiling in that direction, and must never read as a ceiling
+  /// of nought — which would say the device was closed to the group entirely.
+  /// </summary>
+  [Test]
+  public void MaxInOneDirectionIsNoLimitAndNotANought() {
+    var first = Capped().Io[0];
+
+    Assert.That(first.WriteBytesPerSecond.HasValue, Is.False);
+    Assert.That(first.WriteBytesPerSecond.Reason, Is.EqualTo(UnknownReason.NoLimit));
+  }
+
+  /// <summary>
+  /// A device line the kernel wrote with every direction unlimited is not a limited device, and a
+  /// page that listed it would show a row saying nothing.
+  /// </summary>
+  [Test]
+  public void ADeviceWithNothingCappedIsNotALimitedDevice() =>
+    Assert.That(Capped().Io[1].IsLimited, Is.False);
+
+  /// <summary>
+  /// No <c>io.max</c> at all means the controller is off here and an ancestor's throttling governs.
+  /// That is not "nothing is capped", which is what an empty list on its own would say (PRD §5.3).
+  /// </summary>
+  [Test]
+  public void NoIoMaxFileIsNotAnUnthrottledCgroup() {
+    var free = Free();
+
+    Assert.That(free.Io, Is.Empty);
+    Assert.That(free.IoLimitsReason, Is.EqualTo(UnknownReason.NotSupportedOnPlatform));
+  }
+
+  /// <summary>
+  /// The device numbers in a fixture are another machine's, so nothing here resolves them — and an
+  /// unresolvable number is still a device with a limit on it rather than a row that vanishes.
+  /// </summary>
+  [Test]
+  public void ADeviceWhoseNameCannotBeLookedUpKeepsItsNumbers() {
+    var first = Capped().Io[0];
+
+    Assert.That(first.Device, Is.Null);
+    Assert.That(first.Name, Is.EqualTo("8:0"));
+  }
+
+  /// <summary>An ancestor's throttling is in the chain, where somebody can find it.</summary>
+  [Test]
+  public void AnAncestorsThrottlingIsInTheChain() {
+    foreach (var level in Capped().Chain) {
+      if (level.Path != "/system.slice")
+        continue;
+
+      Assert.That(level.IoLimits, Has.Count.EqualTo(1));
+      Assert.That(level.IoLimits[0].WriteBytesPerSecond.Value, Is.EqualTo(1048576ul));
+      return;
+    }
+
+    Assert.Fail("the slice is not in the chain");
+  }
+
+  #endregion
 
 }

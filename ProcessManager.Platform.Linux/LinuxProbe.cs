@@ -790,7 +790,7 @@ public sealed partial class LinuxProbe : ISystemProbe {
         continue;
 
       var path = System.Text.Encoding.UTF8.GetString(line[3..]);
-      return CgroupReader.Read(this._options.CgroupRoot, path);
+      return CgroupReader.Read(this._options.CgroupRoot, path, this._options.BlockDeviceRoot);
     }
 
     return null;
@@ -2448,7 +2448,92 @@ public sealed partial class LinuxProbe : ISystemProbe {
 
     var buffer = new SessionRecord[Math.Max(1, content.Length / UtmpParser.RecordSize)];
     var count = UtmpParser.Parse(content, buffer);
+    for (var i = 0; i < count; ++i)
+      buffer[i] = this.Enrich(buffer[i]);
+
     return buffer[..count];
+  }
+
+  /// <summary>
+  /// The columns utmp does not carry, from the machine around it (PRD §43).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Four questions the login record cannot answer, each from the cheapest place that can. The
+  /// session id from the leader's cgroup, because a session <em>is</em> a scope and logind's own
+  /// state file says on its first line that it is private and not to be parsed. Whether the leader
+  /// is still there from whether its directory is. The idle time from the terminal's modification
+  /// time, which is what <c>who -u</c> and <c>w</c> both measure. The full name from the password
+  /// file that is already open for the process table.
+  /// </para>
+  /// <para>
+  /// Only for records that describe a person. A boot record has no terminal and no leader, and
+  /// stat-ing <c>/dev/~</c> for it would be four syscalls to learn nothing.
+  /// </para>
+  /// </remarks>
+  private SessionRecord Enrich(SessionRecord session) {
+    if (session.Kind != SessionKind.User)
+      return session;
+
+    var alive = session.Pid > 0 && Directory.Exists($"{this._procRoot}/{session.Pid.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
+    return session with {
+      SessionId = alive ? SessionFacts.IdFromCgroup(this.CgroupPathOf(session.Pid)) : null,
+      FullName = this._users.FullName(session.UserName),
+      Type = SessionFacts.Type(session.Terminal, session.RemoteHost),
+      State = alive ? SessionState.Alive : SessionState.Stale,
+      LastInputUtcTicks = this.TerminalWrittenAt(session.Terminal),
+    };
+  }
+
+  /// <summary>The unified hierarchy's line for a pid, or null where there is none to read.</summary>
+  private string? CgroupPathOf(int pid) {
+    Span<byte> pathBuffer = stackalloc byte[ProcPath.MaxLength];
+    if (!this._reader.TryRead(ProcPath.Build(pathBuffer, this._procRootUtf8, pid, "cgroup"u8), out var content, out _))
+      return null;
+
+    var scanner = new AsciiScanner(content);
+    while (!scanner.IsEmpty) {
+      var line = scanner.NextLine();
+      if (AsciiScanner.StartsWith(line, "0::"u8))
+        return Encoding.UTF8.GetString(line[3..]);
+    }
+
+    return null;
+  }
+
+  /// <summary>
+  /// When the session's terminal was last written to.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Nought where there is no terminal, where the name is not one, or where the timestamp could not
+  /// be read — and nought is not a time. A caller must render it as "not known" rather than as the
+  /// epoch or as this instant, because the sessions this cannot see are exactly the graphical ones,
+  /// and reporting those as never idle would be wrong about the busiest session on most desktops
+  /// (PRD §72.3).
+  /// </para>
+  /// <para>
+  /// The name is checked before it is joined to a path. It comes out of a file any root process may
+  /// write, and <c>../../etc/shadow</c> is a plausible thing to find in a corrupted one; a terminal
+  /// name has no slashes in it except the one in <c>pts/0</c>, and nothing else needs permitting.
+  /// </para>
+  /// </remarks>
+  private long TerminalWrittenAt(string? terminal) {
+    if (terminal is not { Length: > 0 } name || this._options.DeviceRoot is not { Length: > 0 } root)
+      return 0;
+
+    foreach (var character in name)
+      if (!char.IsAsciiLetterOrDigit(character) && character is not ('/' or '-' or '_'))
+        return 0;
+
+    try {
+      var device = Path.Combine(root, name);
+      return File.Exists(device) ? File.GetLastWriteTimeUtc(device).Ticks : 0;
+    } catch (IOException) {
+      return 0;
+    } catch (UnauthorizedAccessException) {
+      return 0;
+    }
   }
 
   /// <summary>

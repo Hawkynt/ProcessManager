@@ -19,6 +19,90 @@ namespace Hawkynt.ProcessManager.Model;
 public sealed record CgroupFreezer(bool Supported, bool Frozen);
 
 /// <summary>
+/// What one block device is allowed to do for a cgroup, from <c>io.max</c> (PRD §38).
+/// </summary>
+/// <remarks>
+/// <para>
+/// Per device, because the limit is: a group may be held to a megabyte a second on the disk its
+/// database is on and left alone on the one its logs are on, and a single figure for "I/O" could not
+/// say that. The device is a major and a minor number because that is what the kernel writes;
+/// <see cref="Device"/> is the name it resolves to where the machine could be asked, and null where
+/// it could not — a name that could not be looked up is not the same as a device that has none.
+/// </para>
+/// <para>
+/// Every ceiling is a <see cref="Counter"/> so that "no ceiling in this direction" —
+/// <see cref="UnknownReason.NoLimit"/>, which is what the literal word <c>max</c> means — cannot be
+/// confused with a ceiling of nought, which would mean the device was closed to the group entirely.
+/// </para>
+/// </remarks>
+/// <param name="ReadBytesPerSecond"><c>rbps</c>.</param>
+/// <param name="WriteBytesPerSecond"><c>wbps</c>.</param>
+/// <param name="ReadOperationsPerSecond"><c>riops</c>.</param>
+/// <param name="WriteOperationsPerSecond"><c>wiops</c>.</param>
+public sealed record CgroupIoLimit(
+  int Major,
+  int Minor,
+  string? Device,
+  Counter ReadBytesPerSecond,
+  Counter WriteBytesPerSecond,
+  Counter ReadOperationsPerSecond,
+  Counter WriteOperationsPerSecond
+) {
+
+  /// <summary>Whether this device is capped in any direction at all.</summary>
+  public bool IsLimited
+    => this.ReadBytesPerSecond.HasValue
+    || this.WriteBytesPerSecond.HasValue
+    || this.ReadOperationsPerSecond.HasValue
+    || this.WriteOperationsPerSecond.HasValue;
+
+  /// <summary>The device as a reader would name it: its name where there is one, its numbers where there is not.</summary>
+  public string Name => this.Device ?? $"{this.Major}:{this.Minor}";
+
+}
+
+/// <summary>
+/// One cgroup on the way from the root to a process's own, and what it caps (PRD §38).
+/// </summary>
+/// <remarks>
+/// <para>
+/// A limit set on an ancestor governs every group below it, and the group a process is in very often
+/// sets nothing at all. Reading only that group answers "no limit" about a process that is being
+/// held to a tenth of a core two levels up — which is the exact question somebody opens this page
+/// with, and the one a process table cannot answer.
+/// </para>
+/// <para>
+/// A level is a reading of the files that are there, so an ancestor whose controllers are switched
+/// off contributes <see cref="Counter.NotSupported"/> rather than "no limit". The tightest of the
+/// levels that did answer is the ceiling the process actually runs under, and the level it came from
+/// is the name worth showing beside it.
+/// </para>
+/// </remarks>
+/// <param name="Path">The cgroup path of this level. The root is <c>/</c>.</param>
+/// <param name="Unit">The systemd unit this level is, where it is one; null for a slice or the root.</param>
+public sealed record CgroupLevel(
+  string Path,
+  string? Unit,
+  IReadOnlyList<string> Controllers,
+  double? CpuQuotaCores,
+  Counter MemoryMaxBytes,
+  Counter MemoryHighBytes,
+  Counter PidsMax,
+  IReadOnlyList<CgroupIoLimit> IoLimits,
+  UnknownReason IoLimitsReason
+);
+
+/// <summary>
+/// Which limit governs, and which cgroup imposes it (PRD §38).
+/// </summary>
+/// <remarks>
+/// The point of reading the hierarchy at all. <see cref="Path"/> is null when nothing in the chain
+/// set this limit, in which case <see cref="Value"/> carries why — a controller that is switched off
+/// all the way up and a chain that deliberately set <c>max</c> are different answers (PRD §5.3).
+/// </remarks>
+public readonly record struct CgroupCeiling(Counter Value, string? Path, string? Unit);
+
+/// <summary>
 /// What a process's cgroup allows it and what it is using (PRD §38).
 /// </summary>
 /// <remarks>
@@ -58,8 +142,26 @@ public sealed record CgroupInfo(
   PressureReading CpuPressure,
   PressureReading MemoryPressure,
   PressureReading IoPressure,
-  CgroupFreezer? Freezer = null
+  CgroupFreezer? Freezer = null,
+  IReadOnlyList<CgroupIoLimit>? IoLimits = null,
+  UnknownReason IoLimitsReason = UnknownReason.NotImplementedHere,
+  IReadOnlyList<CgroupLevel>? Hierarchy = null
 ) {
+
+  /// <summary>
+  /// What each device is allowed here, from <c>io.max</c>. Empty where nothing is capped, and empty
+  /// as well where the controller is off — <see cref="IoLimitsReason"/> is what tells those apart.
+  /// </summary>
+  public IReadOnlyList<CgroupIoLimit> Io => IoLimits ?? [];
+
+  /// <summary>
+  /// Every cgroup from the root down to and including this one, outermost first.
+  /// </summary>
+  /// <remarks>
+  /// Empty where the chain was not read. The last entry is this cgroup itself, so a caller that
+  /// wants "and its ancestors" takes all but the last rather than reading the same files twice.
+  /// </remarks>
+  public IReadOnlyList<CgroupLevel> Chain => Hierarchy ?? [];
 
   /// <summary>Whether a controller is switched on for this cgroup.</summary>
   public bool Has(string controller) {
@@ -68,6 +170,72 @@ public sealed record CgroupInfo(
         return true;
 
     return false;
+  }
+
+  /// <summary>
+  /// The smallest processor quota anywhere in the chain, and which cgroup set it.
+  /// </summary>
+  /// <remarks>
+  /// A quota applies to the group that carries it and to everything below it, so several quotas in
+  /// one chain all apply at once and the smallest is the one that bites. Null cores means nothing in
+  /// the chain set one — including the case where the chain was never read, which is why a caller
+  /// showing this must say which of the two it is looking at.
+  /// </remarks>
+  public (double? Cores, string? Path, string? Unit) TightestCpuQuota() {
+    double? tightest = null;
+    string? path = null;
+    string? unit = null;
+    foreach (var level in this.Chain) {
+      if (level.CpuQuotaCores is not { } cores || (tightest is { } best && cores >= best))
+        continue;
+
+      tightest = cores;
+      path = level.Path;
+      unit = level.Unit;
+    }
+
+    return (tightest, path, unit);
+  }
+
+  /// <summary>The smallest memory ceiling anywhere in the chain, and which cgroup set it.</summary>
+  public CgroupCeiling TightestMemoryLimit() => Tightest(this.Chain, static level => level.MemoryMaxBytes);
+
+  /// <summary>The smallest task ceiling anywhere in the chain, and which cgroup set it.</summary>
+  public CgroupCeiling TightestTaskLimit() => Tightest(this.Chain, static level => level.PidsMax);
+
+  /// <summary>
+  /// The tightest of whichever ceilings in the chain are real numbers.
+  /// </summary>
+  /// <remarks>
+  /// A level that has no such controller and a level that says <c>max</c> are both skipped, because
+  /// neither is a ceiling — but the two are not interchangeable when <em>nothing</em> in the chain
+  /// answered: a chain where somebody wrote <c>max</c> is deliberately unbounded, and one where the
+  /// controller is off everywhere has simply never been asked to bound anything. The reason of the
+  /// innermost level that had an opinion is carried out so the difference survives (PRD §5.3).
+  /// </remarks>
+  private static CgroupCeiling Tightest(IReadOnlyList<CgroupLevel> chain, Func<CgroupLevel, Counter> pick) {
+    var tightest = Counter.NotSupported;
+    string? path = null;
+    string? unit = null;
+    foreach (var level in chain) {
+      var value = pick(level);
+      if (!value.HasValue) {
+        // No number, but possibly still an opinion: "max" here beats "no controller" further out.
+        if (path is null && value.Reason == UnknownReason.NoLimit)
+          tightest = value;
+
+        continue;
+      }
+
+      if (path is not null && tightest.HasValue && value.Value >= tightest.Value)
+        continue;
+
+      tightest = value;
+      path = level.Path;
+      unit = level.Unit;
+    }
+
+    return new(tightest, path, unit);
   }
 
 }
