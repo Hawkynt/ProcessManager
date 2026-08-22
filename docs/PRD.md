@@ -2613,9 +2613,16 @@ on trust, since a kernel that grew a file would turn a refusal into a gap withou
   `/proc/[pid]/task/[tid]/sched` is `numa_preferred_nid`, which is a memory node rather than a
   processor and reads `-1` on a machine with one node — and the thread pointer is readable only
   through `ptrace(ARCH_GET_FS)`, which means stopping the thread to ask.
-- **Wait duration** — deliberately left. `schedstat` reports cumulative time queued for a processor,
-  which is not how long the current wait has lasted, and labelling it as such would be exactly the
-  false equivalence §5.3 forbids. It is reported above under the name of what it actually is.
+- **Wait duration** — deliberately left, and on both platforms rather than only on Linux, which is
+  worth writing down because the Windows half looks answerable and is not. `schedstat` reports
+  cumulative time queued for a processor, which is not how long the current wait has lasted, and
+  labelling it as such would be exactly the false equivalence §5.3 forbids — so it is reported above
+  under the name of what it actually is. On Windows the only candidate is
+  `SYSTEM_THREAD_INFORMATION.WaitTime`, which the bulk query does carry and nothing reads: it counts
+  clock interrupts rather than time, the interval it counts is settable and is not published, and
+  what it means on a modern kernel is not something that can be established from here. Converting it
+  to a duration would be inventing a precision nobody has, and this was written and then taken out
+  again for that reason. There is no documented per-thread current-wait duration on either platform.
 - **Description** — Linux gives a thread one name, `comm`, and it is already the Name column. A
   Description column would repeat it.
 - **Service association** — a thread may be moved into its own cgroup under v2's threaded mode, so
