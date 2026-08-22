@@ -188,6 +188,25 @@ public sealed class LinuxProbeFixtureTests(bool portable) {
     Assert.That(snapshot.System.Cpu.UserNs, Is.EqualTo(userSum));
   }
 
+  /// <summary>
+  /// §104's source backend. A snapshot says which probe filled it, and a replay against a recorded
+  /// tree names the tree — so a reading taken from a diagnostic bundle can never be mistaken for one
+  /// taken from this machine.
+  /// </summary>
+  [Test]
+  public void ASnapshotNamesTheBackendThatFilledIt() {
+    using var probe = new LinuxProbe(Options);
+    using var sampler = new Sampler(probe);
+
+    // Before anybody sampled: the snapshot came from nowhere, and says so.
+    Assert.That(sampler.Current.Source, Is.Empty);
+
+    sampler.Sample();
+    Assert.That(sampler.Current.Source, Is.EqualTo(probe.Description));
+    Assert.That(sampler.Current.Source, Does.StartWith("linux:"));
+    Assert.That(sampler.Current.Source, Does.Not.EqualTo("linux:/proc"), "the fixture must not claim to be this machine");
+  }
+
   [Test]
   public void TheProcessTreeMatchesTheFixture() {
     using var probe = new LinuxProbe(Options);

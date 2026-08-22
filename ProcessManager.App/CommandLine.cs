@@ -805,6 +805,17 @@ internal sealed record CommandLineOptions {
   /// </remarks>
   public bool ConfirmSingleActions { get; init; } = true;
 
+  /// <summary>How long a newly started process stays highlighted, in seconds (PRD §87).</summary>
+  /// <remarks>
+  /// Here for the reason the confirmation above it is: the terminal and the window get every
+  /// preference by one route, and one that only the window read would be a preference the terminal
+  /// quietly ignored.
+  /// </remarks>
+  public double NewHighlightSeconds { get; init; } = 1;
+
+  /// <summary>Whether the table scrolls to a process that has just started (PRD §87).</summary>
+  public bool ScrollToNewProcess { get; init; }
+
   /// <summary>Whether the terminal asks for mouse reports (PRD §57.5).</summary>
   public bool UseMouse { get; init; } = true;
 
@@ -892,6 +903,8 @@ internal sealed record CommandLineOptions {
       DesktopColumns = settings.DesktopColumns.Length > 0 ? settings.DesktopColumns : null,
       UseMouse = settings.TerminalMouse,
       ConfirmSingleActions = settings.ConfirmDestructiveActions,
+      NewHighlightSeconds = settings.NewHighlightSeconds,
+      ScrollToNewProcess = settings.ScrollToNewProcess,
       TerminalColours = settings.TerminalColours,
       Notifications = settings.Notifications,
     };

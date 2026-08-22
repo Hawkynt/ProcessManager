@@ -23,6 +23,24 @@ public sealed record HostInfo {
   /// <summary>x86-64, ARM64, and so on.</summary>
   public string Architecture { get; init; } = string.Empty;
 
+  /// <summary>
+  /// When the machine came up, in UTC ticks — the host's creation timestamp (PRD §104).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// An instant rather than the age beside it in <see cref="SystemCounters.UptimeSeconds"/>, and the
+  /// two are not the same reading to hold: an age moves every second and cannot be compared with
+  /// anything, where an instant is what a process's start time is measured against and what an event
+  /// an hour old is placed relative to. Linux already computed it to derive every process's start
+  /// time and kept it to itself; this is the same figure, said out loud.
+  /// </para>
+  /// <para>
+  /// A <see cref="Counter"/> and not a bare <c>long</c>, because a machine whose boot time could not
+  /// be read must not report having come up in the year 1 (PRD §72.3).
+  /// </para>
+  /// </remarks>
+  public Counter BootTimeUtcTicks { get; init; } = Counter.Unknown(UnknownReason.NotSampledYet);
+
   #region processor
 
   /// <summary>The marketing name, e.g. "11th Gen Intel(R) Core(TM) i9-11950H @ 2.60GHz".</summary>

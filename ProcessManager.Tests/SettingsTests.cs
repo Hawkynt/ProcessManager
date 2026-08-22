@@ -240,9 +240,13 @@ public sealed class SettingsTests {
       ProcessField.TrustChain, ProcessField.ImageSha256, ProcessField.Reputation,
     });
 
+    // Every column §94 names for the set, the two cumulative totals included: they were absent while
+    // the fields were present, so the set answered "what is this process doing now" and not "what
+    // has it done".
     yield return new("io", new[] {
       ProcessField.Name, ProcessField.Pid, ProcessField.ReadBytesPerSecond,
-      ProcessField.WriteBytesPerSecond, ProcessField.IoPriority,
+      ProcessField.WriteBytesPerSecond, ProcessField.ReadBytesTotal, ProcessField.WriteBytesTotal,
+      ProcessField.OtherBytesPerSecond, ProcessField.IoPriority,
     });
 
     yield return new("network", new[] {

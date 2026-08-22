@@ -23,6 +23,11 @@ internal static class WindowsHostReader {
       OperatingSystemVersion = Environment.OSVersion.Version.ToString(),
       Architecture = RuntimeInformation.OSArchitecture.ToString(),
 
+      // Windows publishes the age rather than the instant, so the instant is the wall clock less the
+      // age. Read once, when the machine is described, precisely because it would otherwise answer
+      // slightly differently every time — the two clocks do not tick together (PRD §104).
+      BootTimeUtcTicks = Counter.Of(DateTime.UtcNow.Ticks - Environment.TickCount64 * TimeSpan.TicksPerMillisecond),
+
       CpuModel = brand.Model,
       CpuVendor = brand.Vendor,
       CpuBaseHertz = CpuBrand.BaseHertzFrom(brand.Model),

@@ -42,7 +42,8 @@ public sealed class ThreadRateTests {
     Counter.NotSupported,
     ThreadMode.Unknown,
     Counter.NotSupported,
-    Counter.NotSupported
+    Counter.NotSupported,
+    Owner: _Key
   );
 
   /// <summary>
@@ -149,6 +150,50 @@ public sealed class ThreadRateTests {
     delta.Update(_Key, [Thread(1, 3_000_000, Counter.Of(3ul)), Thread(2, 1_000_000, Counter.Of(1ul))], 8);
 
     Assert.That(delta.CpuPercent(1).Reason, Is.EqualTo(UnknownReason.NotSampledYet));
+  }
+
+  /// <summary>
+  /// §104 asks every entity for a stable internal id. A thread's is the owning process, the id and
+  /// the thread's own start time — the same three the rate matching had already arrived at, now on
+  /// the record rather than assembled at the one call site that knew them.
+  /// </summary>
+  [Test]
+  public void AThreadCarriesTheIdentityItIsMatchedOn() {
+    var thread = Thread(7, 1_000_000, Counter.Of(1ul), started: 4242);
+
+    Assert.That(thread.Key, Is.EqualTo(new ThreadKey(_Key, 7, 4242)));
+    Assert.That(thread.Key.IsNone, Is.False);
+
+    // The two things a bare tid cannot separate: the same number in another process, and the same
+    // number handed back to a new thread in this one.
+    Assert.That(thread.Key, Is.Not.EqualTo(new ThreadKey(new(2002, 100500), 7, 4242)));
+    Assert.That(thread.Key, Is.Not.EqualTo((thread with { StartTimeUtcTicks = 4243 }).Key));
+  }
+
+  /// <summary>
+  /// And the consequence: a pool that ends a worker and gets its number straight back must not have
+  /// the new thread charged with the old one's processor time (PRD §8.2, §104).
+  /// </summary>
+  [Test]
+  public void ARecycledThreadIdIsANewThreadRatherThanABusyOne() {
+    var delta = new ThreadDelta();
+    delta.Update(_Key, [Thread(1, 1_000_000, Counter.Of(1ul), started: 10)], 8);
+    delta.Update(_Key, [Thread(1, 9_000_000, Counter.Of(9ul), started: 10)], 8);
+
+    // Same process, same tid, later start: a different thread, and it has been measured once.
+    delta.Update(_Key, [Thread(1, 1_000ul, Counter.Of(0ul), started: 11)], 8);
+
+    Assert.That(delta.CpuPercent(0).HasValue, Is.False);
+    Assert.That(delta.CpuPercent(0).Reason, Is.EqualTo(UnknownReason.NotSampledYet));
+  }
+
+  /// <summary>A record nobody stamped says so, rather than claiming to belong to pid zero.</summary>
+  [Test]
+  public void AnUnstampedThreadHasNoOwnerRatherThanTheWrongOne() {
+    var orphan = Thread(1, 1_000, Counter.Of(1ul)) with { Owner = ProcessKey.None };
+
+    Assert.That(orphan.Key.Owner.IsNone, Is.True);
+    Assert.That(orphan.Key.IsNone, Is.False);
   }
 
   [Test]

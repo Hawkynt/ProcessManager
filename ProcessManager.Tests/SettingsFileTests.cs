@@ -156,6 +156,55 @@ public sealed class SettingsFileTests {
     Assert.That(text, Does.Not.Contain("confirm.destructive"));
     Assert.That(text, Does.Not.Contain("performance.density"));
     Assert.That(text, Does.Not.Contain("tui.mouse"));
+    Assert.That(text, Does.Not.Contain("highlight.new"));
+    Assert.That(text, Does.Not.Contain("scroll.new"));
+  }
+
+  #endregion
+
+  #region what a new process does (PRD §87)
+
+  [Test]
+  public void TheHighlightIsASecondAndTheViewDoesNotChaseAnything() {
+    var settings = new UserSettings();
+
+    // One second is what the flash already was at the default rate, so the setting arriving changed
+    // nothing for anybody who had not asked for it.
+    Assert.That(settings.NewHighlightSeconds, Is.EqualTo(1));
+    // Off, because §12 promises a refresh leaves the view where it was.
+    Assert.That(settings.ScrollToNewProcess, Is.False);
+  }
+
+  [Test]
+  public void TheHighlightAndTheFollowSurviveARoundTrip() {
+    var original = new UserSettings { NewHighlightSeconds = 2.5, ScrollToNewProcess = true };
+
+    var round = UserSettings.Parse(original.Write());
+
+    Assert.That(round.NewHighlightSeconds, Is.EqualTo(2.5));
+    Assert.That(round.ScrollToNewProcess, Is.True);
+  }
+
+  /// <summary>
+  /// Off is written and read as the word, because a reader of the file should not have to know that
+  /// a duration of nothing is how the highlight is switched off.
+  /// </summary>
+  [Test]
+  public void AHighlightThatIsOffSaysSoInWords() {
+    var text = new UserSettings { NewHighlightSeconds = 0 }.Write();
+
+    Assert.That(text, Does.Contain("highlight.new=off"));
+    Assert.That(UserSettings.Parse(text).NewHighlightSeconds, Is.Zero);
+    Assert.That(UserSettings.Parse("highlight.new=OFF").NewHighlightSeconds, Is.Zero);
+  }
+
+  /// <summary>A line that will not parse leaves the setting where it was, like every other here.</summary>
+  [Test]
+  public void ANonsenseHighlightLeavesTheDefaultAlone() {
+    Assert.That(UserSettings.Parse("highlight.new=soon").NewHighlightSeconds, Is.EqualTo(1));
+    Assert.That(UserSettings.Parse("highlight.new=-3").NewHighlightSeconds, Is.EqualTo(1));
+    Assert.That(UserSettings.Parse("highlight.new=99999").NewHighlightSeconds, Is.EqualTo(1));
+    Assert.That(UserSettings.Parse("scroll.new=perhaps").ScrollToNewProcess, Is.False);
   }
 
   /// <summary>

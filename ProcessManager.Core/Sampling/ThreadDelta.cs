@@ -31,15 +31,17 @@ public sealed class ThreadDelta {
   /// What one thread read last time.
   /// </summary>
   /// <remarks>
-  /// Keyed on the thread's start time as well as its id, because Linux reuses thread ids as freely as
-  /// it reuses process ids: a pool that ends a worker and starts another gets the same number back,
-  /// and charging the new thread with the old one's CPU time would show a thread that has been busy
-  /// since before it existed (PRD §8.2).
+  /// Keyed on <see cref="ThreadKey"/> — the owning process, the id and the thread's own start time —
+  /// because Linux reuses thread ids as freely as it reuses process ids: a pool that ends a worker
+  /// and starts another gets the same number back, and charging the new thread with the old one's
+  /// CPU time would show a thread that has been busy since before it existed (PRD §8.2, §104). The
+  /// key used to be assembled here out of two of the record's fields; it is on the record now, so
+  /// that a thread handed anywhere else carries the same identity this matches on.
   /// </remarks>
   private readonly record struct Reading(long Timestamp, Counter CpuTimeNs, Counter ContextSwitches);
 
-  private readonly Dictionary<(int Tid, long StartTimeUtcTicks), Reading> _previous = [];
-  private readonly HashSet<(int Tid, long StartTimeUtcTicks)> _seen = [];
+  private readonly Dictionary<ThreadKey, Reading> _previous = [];
+  private readonly HashSet<ThreadKey> _seen = [];
   private Rate[] _cpuPercent = [];
   private Rate[] _cpuPercentPerCore = [];
   private Rate[] _contextSwitchesPerSecond = [];
@@ -106,7 +108,7 @@ public sealed class ThreadDelta {
     this._seen.Clear();
     for (var i = 0; i < threads.Count; ++i) {
       var thread = threads[i];
-      var id = (thread.Tid, thread.StartTimeUtcTicks);
+      var id = thread.Key;
       this._seen.Add(id);
 
       // A thread that was not in the previous reading has no interval to divide by. TryGetValue
@@ -135,7 +137,7 @@ public sealed class ThreadDelta {
     // Threads that ended are dropped rather than left to accumulate: a long-lived pool churns
     // through ids all day, and a dictionary that only ever grows is a leak with a slow fuse.
     if (this._previous.Count > threads.Count) {
-      var gone = new List<(int, long)>();
+      var gone = new List<ThreadKey>();
       foreach (var id in this._previous.Keys)
         if (!this._seen.Contains(id))
           gone.Add(id);

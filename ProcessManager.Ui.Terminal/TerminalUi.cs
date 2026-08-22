@@ -30,6 +30,16 @@ public sealed class TerminalUi {
   /// it off for anything aimed at a process the machine depends on.
   /// </remarks>
   public bool ConfirmSingleActions { get; init; } = true;
+
+  /// <summary>
+  /// Whether the table scrolls to a process that has just started (PRD §87).
+  /// </summary>
+  /// <remarks>
+  /// Off, and the same flag the window reads, so the two front-ends cannot come to behave
+  /// differently about it. See <see cref="FollowNewProcess"/> for why it is not on.
+  /// </remarks>
+  public bool ScrollToNewProcess { get; init; }
+
   private readonly ISystemProbe _probe;
   private readonly ProcessView _view = new();
   private readonly TerminalScreen _screen;
@@ -260,6 +270,7 @@ public sealed class TerminalUi {
     this._swapHistory.Add(this.SwapPercent());
     this._view.Rebuild(this._sampler.Current, this._sampler.Delta);
     this.RestoreSelection();
+    this.FollowNewProcess();
     this.ForgetMarksOfProcessesThatEnded();
     // History for the rows on screen only, plus a little either side so a small scroll does not
     // start every plot from nothing (PRD §3.3).
@@ -442,6 +453,44 @@ public sealed class TerminalUi {
       // The aggregate form is one CPU bar, then memory and swap on a line each; the wide one packs
       // the cores and puts memory and swap together.
       return perLine == 0 ? 4 : (cores + perLine - 1) / perLine + 2;
+    }
+  }
+
+  /// <summary>
+  /// Brings a process that has just started into view, if it is not already (PRD §87).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Off unless asked for. §12 promises that a refresh leaves the view where it was, and this is the
+  /// one thing allowed to break that promise — on a machine where something starts most seconds it
+  /// would take the table out from under whoever was reading it.
+  /// </para>
+  /// <para>
+  /// The scroll and not the selection: moving the selection would change what the next keystroke
+  /// acts on, and a table that re-aimed a terminate at whatever had just started would be the worst
+  /// possible reading of "scroll to new process".
+  /// </para>
+  /// <para>
+  /// The first row that arrived in this sample, and only while it is off screen. Asked of the delta
+  /// rather than of the highlight, which stays true for as long as its window lasts and would hold
+  /// the view on one row for the whole of it.
+  /// </para>
+  /// </remarks>
+  private void FollowNewProcess() {
+    if (!this.ScrollToNewProcess || this._sampler.Delta.StartedCount == 0)
+      return;
+
+    var rows = this._view.Rows;
+    var height = this.ListHeight;
+    for (var i = 0; i < rows.Length; ++i) {
+      if (rows[i].IsGroupHeader || !this._sampler.Delta.AppearedThisSample(rows[i].Index))
+        continue;
+
+      if (i >= this._scrollOffset && i < this._scrollOffset + height)
+        return;
+
+      this._scrollOffset = Math.Clamp(i, 0, Math.Max(0, this._view.RowCount - height));
+      return;
     }
   }
 

@@ -136,8 +136,80 @@ public sealed class SnapshotDelta {
   /// <inheritdoc cref="ReadOperationsPerSecond"/>
   public Rate WriteOperationsPerSecond(int index) => this._writeOperationsPerSecond[index];
 
-  /// <summary>True when this process was not in the previous snapshot (the green flash).</summary>
+  /// <summary>
+  /// How long a process goes on counting as newly started, in seconds (PRD §87).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// One second by default, which is exactly what the flash used to be: it lasted until the next
+  /// sample, and the next sample is a second away unless somebody changed the rate. That is the
+  /// reason it needed saying — at a quarter-second tick the green was gone before an eye could land
+  /// on it, and at ten seconds it stayed for ten. What somebody means by "highlight new processes"
+  /// is a length of time, not a number of samples.
+  /// </para>
+  /// <para>
+  /// Nought switches it off, which is §12's "optionally highlighted" from the other end. A row is
+  /// never highlighted for less than the frame it first appears in, whatever this says, because a
+  /// row can only change how it looks when something draws it.
+  /// </para>
+  /// </remarks>
+  public double NewHighlightSeconds {
+    get;
+    set => field = double.IsFinite(value) && value > 0 ? Math.Min(value, _MaxHighlightSeconds) : 0;
+  } = 1;
+
+  /// <summary>
+  /// The ceiling on <see cref="NewHighlightSeconds"/>. Not a judgement about taste — the started-at
+  /// map holds an entry per process started inside the window, and an unbounded window is an
+  /// unbounded map.
+  /// </summary>
+  private const double _MaxHighlightSeconds = 3600;
+
+  /// <summary>
+  /// When each process still inside the highlight window was first seen, on the monotonic clock.
+  /// </summary>
+  /// <remarks>
+  /// Only those: an entry is dropped the moment its window closes, and the ones belonging to
+  /// processes that exited inside their window are swept at the same time. So this holds "what
+  /// started in the last second" and not "everything that has ever started", which is the difference
+  /// between a small dictionary and a leak.
+  /// </remarks>
+  private readonly Dictionary<ProcessKey, long> _startedAt = [];
+  private readonly List<ProcessKey> _expired = [];
+
+  /// <summary>
+  /// How many processes the highlight is still holding a start time for.
+  /// </summary>
+  /// <remarks>
+  /// Internal, and here for one thing: a test that proves the map is swept rather than grown. A
+  /// machine that forks steadily would otherwise accumulate an entry per process for the life of the
+  /// program, which is a leak with a slow fuse — the same one <see cref="ThreadDelta.HistoryCount"/>
+  /// exists to catch one level down.
+  /// </remarks>
+  internal int RememberedStartsCount => this._startedAt.Count;
+
+  /// <summary>
+  /// True while this process counts as newly started — the green flash (PRD §87).
+  /// </summary>
+  /// <remarks>
+  /// True for every frame inside <see cref="NewHighlightSeconds"/> of the process first being seen,
+  /// rather than only for the one sample it appeared in. Nothing is ever new against no previous
+  /// sample: on start-up the whole table would flash at once.
+  /// </remarks>
   public bool IsNew(int index) => this._isNew[index];
+
+  /// <summary>
+  /// True only for the sample a process first appeared in (PRD §87).
+  /// </summary>
+  /// <remarks>
+  /// The narrower half of <see cref="IsNew"/>, and a different question: that one asks whether a row
+  /// should still be drawn as new, this one asks whether something just happened. Following the
+  /// first would pin a table that scrolls to new processes onto one row for the whole length of the
+  /// highlight window; following this one moves once, when the process arrives.
+  /// </remarks>
+  public bool AppearedThisSample(int index) => this._appeared[index];
+
+  private bool[] _appeared = [];
 
   /// <summary>
   /// What share of the machine's memory a process holds resident.
@@ -269,6 +341,7 @@ public sealed class SnapshotDelta {
     EnsureLength(ref this._cyclesPerSecond, count);
     EnsureLength(ref this._privateBytesDelta, count);
     EnsureLength(ref this._isNew, count);
+    EnsureLength(ref this._appeared, count);
     EnsureLength(ref this._memoryPercent, count);
     EnsureLength(ref this._gpuGraphicsPercent, count);
     EnsureLength(ref this._gpuComputePercent, count);
@@ -283,6 +356,10 @@ public sealed class SnapshotDelta {
     this._exited.Clear();
     this.StartedCount = 0;
     this.HasPrevious = previous is not null;
+    // Whole ticks of the monotonic clock, which is the unit the snapshots are stamped in. Nought
+    // when the highlight is switched off, and then nothing is ever recorded or compared.
+    var highlightTicks = (long)(this.NewHighlightSeconds * System.Diagnostics.Stopwatch.Frequency);
+    var now = current.TimestampTicks;
 
     if (previous is null) {
       this.UpdateDevices(null, current, double.NaN);
@@ -316,8 +393,12 @@ public sealed class SnapshotDelta {
         this.FillGpu(i, in processes[i], in processes[i], hasPrevious: false, double.NaN);
         // Nothing is "new" against no previous sample; everything would flash green on start-up.
         this._isNew[i] = false;
+        this._appeared[i] = false;
       }
 
+      // And nothing is remembered as having started, for the same reason: an entry here would make
+      // the whole table new for the length of the highlight window instead of for one frame.
+      this._startedAt.Clear();
       this._previousCpuPercentCount = processes.Length;
       return;
     }
@@ -348,7 +429,14 @@ public sealed class SnapshotDelta {
         this._cyclesPerSecond[i] = Rate.NotSampledYet;
         this._privateBytesDelta[i] = Rate.NotSampledYet;
         this.FillGpu(i, in process, in process, hasPrevious: false, elapsed);
-        this._isNew[i] = true;
+        // Noted before it is answered, so that the frame a process appears in is highlighted for any
+        // window at all above nought — a row cannot be drawn new for less than the frame it arrives
+        // in, however short the window (PRD §87).
+        if (highlightTicks > 0)
+          this._startedAt[process.Key] = now;
+
+        this._isNew[i] = highlightTicks > 0;
+        this._appeared[i] = true;
         ++this.StartedCount;
         continue;
       }
@@ -372,9 +460,15 @@ public sealed class SnapshotDelta {
       this._cyclesPerSecond[i] = RateCalculator.PerSecond(before.Cycles, process.Cycles, elapsed);
       this._privateBytesDelta[i] = RateCalculator.SignedPerSecond(before.PrivateBytes, process.PrivateBytes, elapsed);
       this.FillGpu(i, in process, in before, hasPrevious: true, elapsed);
-      this._isNew[i] = false;
+      // Still new while it is still inside its window. This was "false" — the flash lasted exactly
+      // one sample, so how long it lasted was decided by the refresh rate rather than by anybody
+      // (PRD §87).
+      this._isNew[i] = this._startedAt.TryGetValue(process.Key, out var startedAt)
+        && now - startedAt < highlightTicks;
+      this._appeared[i] = false;
     }
 
+    this.ForgetProcessesPastTheirHighlight(now, highlightTicks);
     this._previousCpuPercentCount = currentProcesses.Length;
 
     // Whatever is left in the map was in the previous snapshot and is not in this one. Removing the
@@ -764,6 +858,28 @@ public sealed class SnapshotDelta {
   }
 
   #endregion
+
+  /// <summary>
+  /// Drops the started-at entries whose highlight window has closed.
+  /// </summary>
+  /// <remarks>
+  /// This is what keeps the map the size of "what started in the last second" rather than the size
+  /// of everything that has ever started. It also collects the processes that exited inside their
+  /// own window without a second pass: nothing looks them up again, and they age out here with
+  /// everything else.
+  /// </remarks>
+  private void ForgetProcessesPastTheirHighlight(long now, long highlightTicks) {
+    if (this._startedAt.Count == 0)
+      return;
+
+    this._expired.Clear();
+    foreach (var (key, startedAt) in this._startedAt)
+      if (now - startedAt >= highlightTicks)
+        this._expired.Add(key);
+
+    foreach (var key in this._expired)
+      this._startedAt.Remove(key);
+  }
 
   private static void EnsureLength<T>(ref T[] array, int length) {
     if (array.Length < length)

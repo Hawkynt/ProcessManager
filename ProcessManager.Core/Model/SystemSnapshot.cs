@@ -304,6 +304,25 @@ public sealed class SystemSnapshot {
   /// </summary>
   public long TimestampTicks { get; internal set; }
 
+  /// <summary>
+  /// Which backend filled this snapshot — the probe's own
+  /// <see cref="Abstractions.ISystemProbe.Description"/>, so <c>linux:/proc</c> on this machine and
+  /// <c>linux:/some/fixture</c> for a recorded tree (PRD §104).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A fact about the reading rather than one copied onto every record in it. Exactly one probe
+  /// fills a snapshot — the factory picks it once from the platform and there is no composition of
+  /// backends — so a per-record copy would be a hundred thousand copies of one constant per sample,
+  /// and the copies are the thing that would drift.
+  /// </para>
+  /// <para>
+  /// Empty until a sampler stamps it, which is exactly what a snapshot assembled by hand is: it
+  /// came from nowhere, and saying so beats naming a probe that never ran.
+  /// </para>
+  /// </remarks>
+  public string Source { get; internal set; } = string.Empty;
+
   public SystemCounters System;
 
   public int ProcessCount { get; internal set; }
