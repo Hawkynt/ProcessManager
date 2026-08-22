@@ -1477,6 +1477,9 @@ public sealed class MainWindow : Form {
     // Not a page, and so not in the list above: a stack belongs to a thread rather than to a process,
     // and there are as many of them as the process has threads (PRD §30).
     menu.DropDownItems.Add(Item("Stacks…", this.InspectStacks));
+    // Nor is this one: it is about the file on disk rather than about the process, and the same
+    // window opens from any module's own menu (PRD §53, §25.6).
+    menu.DropDownItems.Add(Item("Binary inspector…", this.InspectBinary));
     return menu;
   }
 
@@ -1697,6 +1700,23 @@ public sealed class MainWindow : Form {
         ? path
         : null;
 
+  /// <summary>
+  /// Opens the read-only inspector on the selected process's own executable (PRD §53).
+  /// </summary>
+  /// <remarks>
+  /// The file the process was started from, which is not always the code it is running: a process
+  /// whose image has been replaced or deleted since it started is still running the old bytes, and
+  /// the modules view is where each mapped image has the same window on its own menu (PRD §31).
+  /// </remarks>
+  private void InspectBinary() {
+    if (this.SelectedImagePath() is not { } path) {
+      this.ExplainMissingImage();
+      return;
+    }
+
+    new BinaryInspectorWindow(path).Show();
+  }
+
   /// <summary>Says why there is no executable to show, which is not always a fault.</summary>
   private void ExplainMissingImage() {
     if (this._binder.SelectedRow is not { } row)
@@ -1745,6 +1765,24 @@ public sealed class MainWindow : Form {
   /// performance page is on this leg for the same reason, and this one joins it because a hand-laid
   /// box is exactly the kind that renders as an empty rectangle while every test around it passes.
   /// </remarks>
+  /// <summary>
+  /// The binary inspector on the selected process's image, for the capture leg (PRD §9.6, §53).
+  /// </summary>
+  /// <remarks>
+  /// A rail beside a grid whose columns are rebuilt for every page, laid out by arithmetic — which
+  /// is exactly the shape that photographs as an empty rectangle while every test around it passes.
+  /// Null where the selected process has no readable executable, which the log says rather than
+  /// leaving a missing picture to be explained.
+  /// </remarks>
+  public BinaryInspectorWindow? OpenBinaryInspector() {
+    if (this.SelectedImagePath() is not { } path)
+      return null;
+
+    var window = new BinaryInspectorWindow(path);
+    window.Show();
+    return window;
+  }
+
   public FilePropertiesDialog? OpenExecutableProperties() {
     var dialog = this.BuildExecutableProperties();
     dialog?.Show();

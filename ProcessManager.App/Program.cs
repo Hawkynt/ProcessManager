@@ -84,6 +84,10 @@ internal static class Program {
       // cannot start at all (PRD §81).
       case RunMode.Settings:
         return SettingsCommand.Run(options.SettingsAction, options.SettingsTransferPath, settingsPath ?? options.SettingsPath);
+      // Here for the same reason: a binary inspector reads a file on disk and asks nothing of any
+      // running process, so it must work on a machine whose probe cannot start (PRD §53, §81).
+      case RunMode.Inspect:
+        return BinaryReport.Run(options);
     }
 
     var probe = ProbeFactory.Create(
