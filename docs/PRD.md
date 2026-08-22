@@ -31,8 +31,8 @@ shorthand:
 it is not known*. An unticked box must never become a zero on screen. This is restated here because
 it is the single requirement most likely to be broken while filling the tables in.
 
-**Counting, as of the last update:** **1114 of 1320 boxes are ticked** — 171 of 190 in the field
-registry (§14–22), 943 of 1130 across the capabilities. A further 162 are marked 🟡, meaning some of
+**Counting, as of the last update:** **1115 of 1320 boxes are ticked** — 171 of 190 in the field
+registry (§14–22), 944 of 1130 across the capabilities. A further 162 are marked 🟡, meaning some of
 the work behind them is already done. §100 tracks the phases; §101 defines when this may be called
 finished.
 
@@ -108,10 +108,24 @@ thread continuously consuming logical CPU 7."
 
 ## 3.1 Primary — MUST
 
-- [ ] 🟡 Replace everyday Task Manager workflows — process management, and views of services, startup
-      and users; services can now be commanded from every front-end, and a startup entry can be
-      turned on and off from the window. Neither is reachable from the terminal's own view, because
-      the terminal has no services or startup view — only the process's own unit
+- [x] 🟡 Replace everyday Task Manager workflows — process management, and views of services, startup
+      and users. **The terminal has the two views it was missing**: `W` lists every unit on the
+      machine grouped by state, and `b` lists what runs at login and what will not, with the reason
+      each one will not. Both are read when asked for rather than on the tick — enumerating every
+      unit once a second would be the monitor becoming the thing worth monitoring (§5.4) — and both
+      use the same words the window uses, so the two cannot describe one unit differently.
+
+      Still partial for the users view, which the terminal does not have, and because turning a
+      startup entry on or off is still a window action: the terminal lists them and does not command
+      them.
+
+      Checked against the machine rather than the suite: 377 units with 22 running, which is what
+      `systemctl list-units --state=running` counts, and the four main PIDs sampled match
+      `systemctl show -p MainPID` exactly — all of it off disk and the cgroup tree, with no D-Bus and
+      nothing spawned. 24 autostart entries and 14 that will run: 23 `.desktop` files in
+      `/etc/xdg/autostart` plus one systemd user unit sitting in `default.target.wants`, which
+      `systemctl --user is-enabled` calls *disabled* because it is answering a different question —
+      whether the user enabled it, not whether it runs
 - [x] Replace Process Explorer tree and lower-pane workflows — the pane is docked under the tree with
       overview, threads, modules, handles, environment and network, and pins to one process in a window
 - [ ] Replace the majority of System Informer process-inspection workflows
