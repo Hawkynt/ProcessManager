@@ -35,6 +35,9 @@ public enum NotificationKind : byte {
   /// <summary>A unit a rule names stopped having processes.</summary>
   ServiceStopped,
 
+  /// <summary>A rule somebody wrote themselves fired (PRD §84).</summary>
+  RuleFired,
+
 }
 
 /// <summary>One thing that happened, in the words it should be shown in.</summary>
@@ -88,6 +91,18 @@ public sealed record NotificationRules {
   /// <summary>Tell me when one of these units stops having processes.</summary>
   public IReadOnlyList<string> Services { get; init; } = [];
 
+  /// <summary>
+  /// The rules somebody wrote themselves, in the language of PRD §84.
+  /// </summary>
+  /// <remarks>
+  /// The six above are the ready-made rules §64 names, each of them one line and one number; these
+  /// are the ones nobody could have anticipated — a named service over a threshold for half a minute,
+  /// a process changing state, a daemon going. They arrive parsed rather than as text, so that a
+  /// settings file with a broken rule in it reports the rule and starts the program, instead of
+  /// discovering the problem the first time the rule would have fired.
+  /// </remarks>
+  public IReadOnlyList<AlertRule> Alerts { get; init; } = [];
+
   /// <summary>Whether anything at all was asked for. Nothing is polled and nothing is compared when not.</summary>
   public bool Any
     => this.ProcessStarted
@@ -96,7 +111,8 @@ public sealed record NotificationRules {
     || this.CpuPercent.HasValue
     || this.MemoryPercent.HasValue
     || this.DiskBytesPerSecond.HasValue
-    || this.Services.Count > 0;
+    || this.Services.Count > 0
+    || this.Alerts.Count > 0;
 
   /// <summary>Whether anything here needs the service list, which is the one dear thing on the list.</summary>
   public bool NeedsServices => this.Services.Count > 0;
@@ -133,9 +149,34 @@ public sealed class NotificationWatch(NotificationRules rules) {
   private readonly HashSet<ProcessKey> _overMemory = [];
   private readonly HashSet<ProcessKey> _overDisk = [];
   private readonly Dictionary<string, ServiceState> _services = new(StringComparer.OrdinalIgnoreCase);
+  private readonly AlertWatch _alerts = new(rules?.Alerts ?? []);
 
   /// <summary>The rules this watch was built with, for a front-end deciding whether to bother.</summary>
   public NotificationRules Rules => this._rules;
+
+  /// <summary>
+  /// What the user's own rules ask for between them (PRD §84).
+  /// </summary>
+  /// <remarks>
+  /// A front-end asks this to decide whether to put a notice on the status line at all. The six
+  /// ready-made rules of §64 always do both — they exist to interrupt somebody and to leave a record
+  /// — so this is the union of the written rules' actions with what those imply, and it is
+  /// <see cref="AlertAction.Both"/> for any file that used them.
+  /// </remarks>
+  public AlertAction Actions {
+    get {
+      var actions = this._alerts.Actions;
+      return this._rules.ProcessStarted
+        || this._rules.ProcessEnded
+        || this._rules.Names.Count > 0
+        || this._rules.CpuPercent.HasValue
+        || this._rules.MemoryPercent.HasValue
+        || this._rules.DiskBytesPerSecond.HasValue
+        || this._rules.Services.Count > 0
+        ? actions | AlertAction.Both
+        : actions;
+    }
+  }
 
   /// <summary>
   /// Everything worth saying about the interval that just ended.
@@ -156,6 +197,9 @@ public sealed class NotificationWatch(NotificationRules rules) {
 
     var processes = snapshot.Processes;
     if (!delta.HasPrevious) {
+      // The written rules see this sample too, so that a rule which needs a previous reading has one
+      // next time round. Nothing of theirs fires on it either, for the same reason nothing here does.
+      this._alerts.Examine(snapshot, delta);
       this.Remember(processes);
       return found;
     }
@@ -200,6 +244,11 @@ public sealed class NotificationWatch(NotificationRules rules) {
         value => $"{who} is moving {Humanize.Bytes((ulong)Math.Max(0, value))} a second to and from disk"
       );
     }
+
+    // Last, so that the six ready-made rules of §64 come out in front of the written ones: those are
+    // one line and one number each and read at a glance, and §84's own are the sentences somebody
+    // will want to stop and read.
+    found.AddRange(this._alerts.Examine(snapshot, delta));
 
     this.Remember(processes);
     return found;

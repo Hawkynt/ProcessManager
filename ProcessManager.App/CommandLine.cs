@@ -588,7 +588,11 @@ internal sealed record CommandLineOptions {
     || this.Wants(ProcessField.ImageSigner)
     || this.Wants(ProcessField.CertificateSubject)
     || this.Wants(ProcessField.CertificateIssuer)
-    || this.Wants(ProcessField.SignatureTimestamp);
+    || this.Wants(ProcessField.SignatureTimestamp)
+    // Grouping by publisher is somebody naming the Signer column, exactly as grouping by package is
+    // somebody naming that one: the headings are the field, and a run that did not verify would head
+    // every row "signature not checked" (PRD §83). Its own gate for the same reason that one has one.
+    || (!this.Minimal && this.Grouping == ProcessGrouping.Publisher);
 
   /// <summary>
   /// Whether anything this run asked for needs each process's power-throttling state (PRD §5.4,

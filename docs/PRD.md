@@ -5318,10 +5318,43 @@ The road here is worth keeping, because every step was a measurement rather than
 
 ## 71.5 Large resource sets
 
-- [ ] Virtualised tables
-- [ ] 10 000 process rows
-- [ ] 100 000 thread / module / result rows
-- [ ] 1 000 000 handle / resource-search results via streaming or pagination
+Measured on the desktop this is written on, at ten thousand synthetic processes, in the tests §99
+names. Every figure below is a number a test printed, not an argument.
+
+- [x] 🟡 Virtualised tables — **the drawing is, and the window's model is not.** Neither front-end
+      makes a widget per row: the terminal formats the cells for `min(list height, rows remaining)`
+      rows a frame, and the window's table paints from its top index for one viewport's worth. What
+      the window does still do is keep a row object per process and re-format every field in the
+      catalogue on it once a sample, whether or not that column is open — which is the whole of the
+      193 ms below and the one thing here still worth fixing.
+
+      Two per-sample bounds in the window were wrong and are now right, and both were the same
+      mistake: the table's `VisibleNodeCount` is every row in the flattened list, not the viewport,
+      and reading it as the viewport meant the per-sample history kept a ring for every process from
+      the scroll position to the end of the table, and auto-sizing a column measured every row below
+      the scroll position. Invisible at four hundred processes, the whole frame at ten thousand
+- [x] 10 000 process rows — rebuilding the view is **4.2 ms flat and 5.1 ms nested**, and 1.6–2.3 ms
+      for the chain and cycle shapes; twenty thousand deep is 3.6 ms, which is linear rather than
+      quadratic. Sorting by every field in the catalogue in turn is 835 ms for the lot. The window's
+      own refresh — the binder's four passes plus a row update per process — is **193 ms**, which
+      fits a one-second tick and does not fit §71.4's hundred milliseconds; the cost is the row
+      update and not the binder. The terminal keeps no row objects at all, so its per-sample cost
+      above the rebuild is the history for the rows around the viewport: **2.85 ms for 48 rows out
+      of ten thousand**, and forty-eight rings rather than ten thousand
+- [x] 100 000 thread / module / result rows — **threads 21.1 ms** a tick through `ThreadDelta`,
+      allocating nothing per tick once its buffers are grown and holding exactly one generation of
+      history after twelve rounds of a hundred thousand entirely new threads; **module rows 143 ms**
+      and **handle rows 26 ms** to tabulate. None of the three is on the sampling path, and all three
+      are linear in the rows
+- [ ] 🟡 1 000 000 handle / resource-search results via streaming or pagination — **the size is met
+      and the mechanism is not.** A thousand processes holding a thousand descriptors each are
+      searched in **61 ms**, one deep read per process rather than one per pattern, and a million
+      descriptors are tallied in **8 ms**, one pass. But the search returns one finished list and the
+      window's dialog then puts a node in the tree for every match: nothing streams, nothing pages,
+      and nothing caps. At the sizes above that is comfortable and at ten times them it would not be,
+      and a mechanism that has never had to work is not a mechanism. The one row cap in the program
+      is the binary inspector's twenty thousand, which says so on screen — that is the shape the
+      answer here should take
 
 ---
 
@@ -5560,8 +5593,11 @@ sorted the table to find.
 
 - [x] none
 - [x] parent tree
-- [ ] application — there is no notion of an application to read off a process. Task Manager gets
-      one from shell activation; nothing here does, and a heading that guessed would not be true
+- ∅ application — **refused rather than deferred.** There is no notion of an application to read off
+      a process. Task Manager gets one from shell activation; nothing here does, and a heading that
+      guessed would put processes under a name that is not true of them. The three honest readings
+      near it each say what they actually are and are all offered: the desktop entry that starts a
+      program (§14's `app.name`), the package it came out of, and the signature on its image
 - [x] executable
 - [x] user
 - [x] session
@@ -5571,21 +5607,105 @@ sorted the table to find.
 - [x] cgroup
 - [ ] 🟡 package — off the same reader §14's package column uses, so a heading and that column can
       never disagree. `--group package` and a saved `grouping=package` collect it and work; switching
-      to it in a running session heads every row "package not looked up" instead, because reading a
-      package costs a database lookup per image and the probe's expensive readings are chosen when it
-      is built (§5.4). Honest, and half a feature
-- [ ] publisher — needs the signature verification of §70, which is not built
-- [ ] Aggregations follow canonical query rules — a heading's key is read through the same accessor
-      the columns and the filters use, so that half holds; but the aggregates themselves are §82's
-      CPU, memory and I/O sums, and none of those exists yet. A heading counts its members and
-      claims nothing else
+      to it in a running session heads every row "package not looked up" instead. **The blocker is
+      not this section**: the probe's expensive readings are `init`-only and chosen when it is built
+      (§5.4), so nothing turns one on mid-session — the column chooser cannot either, and closing
+      this box means either rebuilding the probe on a settings change, which throws away every rate
+      and every cache, or making the readings switchable, which is §5.4's decision to reopen. Honest,
+      and half a feature
+- [ ] 🟡 publisher — the signer out of the image's own signature, read at the same key §21's Signer
+      column reads, which is §70's local verification and **is built**. Not the company name in a
+      version resource, which anybody may type: this one is bound to the key the signature was made
+      with. Windows in practice — an ELF carries no signature and never did, so on Linux every row
+      falls under one heading saying exactly that. Half a feature for the same reason `package` is,
+      and not for a different one: verification costs the whole image digested, so it is opt-in, and
+      `--group publisher` buys it where switching to it in a running session cannot. The four reasons
+      a row has no signer are four headings and never one — "nobody checked", "there is nothing here
+      to check", "checked, and nothing signed it" and "the check itself failed" are four different
+      findings, and only the third of them is about the program (§72.3)
+- [x] Aggregations follow canonical query rules — a heading's key **and its sums** are read through
+      the accessor the columns and the filters use, so a heading and the rows beneath it cannot come
+      to disagree about what a field is. Four figures: processor, resident memory, private memory and
+      disk. Not seven — §82's network total is §18's refusal rather than a gap, since nothing here
+      attributes bytes to a process, and the GPU reading is opt-in and off on most runs, so a column
+      of unreadable headings would cost the other three for no answer.
+
+      **An aggregate is visibly an aggregate**, in one wording in Core that neither front-end can
+      reword: every figure is introduced by the word "total". A sum is not a reading, and one taken
+      over fewer members than the group has says so — `total 1.2G resident over 8 of 12` — because a
+      sum missing a third of its processes and a sum over all of them are different claims and the
+      number alone cannot tell them apart. A figure nobody could read is left out rather than drawn
+      as nought: a heading reading "total 0 B/s" over twelve processes whose I/O this user may not
+      see would be §72.3's confident zero with a group's worth of authority behind it
 
 # 84. User-defined alerts
 
-- [ ] Rule form: `process.name == "myservice" AND process.cpu.usage > 80% for 30s`
-- [ ] Conditions: greater/less than · equals · contains · regex · appears · disappears · state changes
-- [ ] Actions: visual notification · OS notification · log event
-- [ ] Automatic process termination from alert rules is **not** enabled in baseline releases
+- [x] Rule form: `process.name == "myservice" AND process.cpu.usage > 80% for 30s` — that sentence,
+      character for character as it is written here, parses and arms
+- [x] Conditions: greater/less than · equals · contains · regex · appears · disappears · state changes
+- [ ] 🟡 Actions: visual notification ✔ · log event ✔. **An operating-system notification is refused
+      rather than deferred**, on §64's own argument: a program that put a system-wide toast on screen
+      because of a rule somebody wrote in a text file would be interrupting the whole session rather
+      than the window they were looking at. So the visual notification is the status line, in both
+      front-ends, and there is no third action for a front-end to have to decline
+- [x] Automatic process termination from alert rules is **not** enabled in baseline releases
+
+**A rule is the filter language of §56 with a tail.** The condition is `ProcessQuery`, unchanged and
+shared: greater and less than, equals, contains and regular expressions already exist over every
+field in the catalogue, and inventing a second dialect for alerts would mean two parsers to keep
+honest and two answers to "does this match". What a rule adds to a filter is *when* — which a filter
+has no way to say:
+
+```
+alert=process.name == "myservice" AND process.cpu.usage > 80% for 30s
+alert=name == "sshd" disappears then notify
+alert=user:root AND cpu:>50 changes state
+alert=name:/^kworker/ appears then log
+```
+
+`process.name` is `name`. The prefix is stripped once, in the registry, rather than added as an alias
+to a hundred and sixty entries — a rule language and a filter language that disagreed about how to
+spell a field would be two languages.
+
+**The four tails are the four conditions a filter cannot express.** `for 30s` is a dwell: the
+condition must hold for that long, and the length is measured by adding up the intervals it held
+across, so a machine refreshing every two seconds and one refreshing four times a second agree about
+what thirty seconds is. `appears` and `disappears` are the process arriving and going. `changes` is a
+field reading differently than it did last sample, and `changes` on its own means the state, which is
+the one this section names. A tail is scanned outside quotes, or a rule about a process called
+"appears" would silently become a trigger.
+
+**Edge-triggered, exactly as §64's thresholds are.** A process that has matched for a minute is one
+thing that happened and not sixty: the rule fires when the condition starts holding and says nothing
+more until it has stopped. Dropping back arms it again and starts the dwell over rather than resuming
+it — a process that was busy for twenty-nine seconds, idled, and got busy again has not been busy for
+thirty.
+
+**A process that does not match is not a process that stopped matching.** A condition over a reading
+nobody could take does not match at all — that is §56's rule and §72.3's — so an unreadable counter
+leaves a rule unfired rather than firing it or clearing it. It matters most for `disappears`, where
+what is remembered is the last sample the process was *seen* matching in, and never the absence of a
+match in the sample it went.
+
+**Rules live in the settings file, one `alert=` line each.** The only repeatable key in that file,
+and repeatable because this one is a language where the other seven are a number apiece: somebody
+watching three things has written three lines. A rule that will not parse is **reported on stderr at
+start-up and kept in the file verbatim**, which is the one place §67's "a bad line leaves its setting
+at the default" does not apply. A mistyped colour leaves a column the colour it already was and
+nobody is misled; a mistyped rule leaves somebody believing they are being watched for something.
+
+**Nothing a rule can say ends a process.** The whole vocabulary of what firing does is `notify` and
+`log`, and both of them produce a sentence — there is no member to add a third meaning to, and
+nothing in the rule engine can reach an action at all. A rule that asks for one is refused with the
+reason rather than quietly given a notice instead, because a rule somebody wrote and was not told
+about is a rule they believe is doing something.
+
+**The written rules come out of the same watch the ready-made ones do**, so a front-end that shows one
+shows the other and there is one path to keep honest rather than two. They carry their own category in
+the timeline of §63 — "a rule you wrote" — rather than being filed under "over a threshold", which
+would describe "sshd has gone" as something that did not happen. The window recorded no notification
+at all in its timeline until this section was built, where the terminal always had: precisely the
+drift §58's parity contract exists to catch.
 
 # 85. Historical charts
 

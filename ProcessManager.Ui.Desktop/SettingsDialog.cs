@@ -295,6 +295,7 @@ public sealed class SettingsDialog : Form {
     ProcessGrouping.Container,
     ProcessGrouping.Cgroup,
     ProcessGrouping.Package,
+    ProcessGrouping.Publisher,
     ProcessGrouping.Category,
   ];
 

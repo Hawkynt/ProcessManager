@@ -151,6 +151,7 @@ public sealed class GroupingTests {
       ProcessGrouping.Container,
       ProcessGrouping.Cgroup,
       ProcessGrouping.Package,
+      ProcessGrouping.Publisher,
     ]) {
       var view = new ProcessView { Grouping = grouping };
       view.Rebuild(snapshot, delta);
@@ -278,10 +279,182 @@ public sealed class GroupingTests {
 
   [Test]
   public void AWordNoBuildKnowsIsRefusedRatherThanGuessedAt() {
-    Assert.That(UserSettings.TryParseGrouping("publisher", out _), Is.False);
+    Assert.That(UserSettings.TryParseGrouping("application", out _), Is.False);
     Assert.That(UserSettings.TryParseGrouping(null, out _), Is.False);
     Assert.That(UserSettings.TryParseGrouping("  ", out _), Is.False);
   }
+
+  #region by publisher (PRD §83, §70)
+
+  /// <summary>
+  /// The heading is the signer out of the image's own signature — §70's local verification — and not
+  /// the company name in a version resource, which anybody may type.
+  /// </summary>
+  [Test]
+  public void GroupingByPublisherIsWhoTheSignatureSaysSignedIt() {
+    var snapshot = new SystemSnapshot();
+    var records = snapshot.PrepareProcesses(3);
+    Fill(ref records[0], 1, "svchost", "SYSTEM", 0, @"C:\Windows\System32\svchost.exe", null, 1);
+    Fill(ref records[1], 2, "notepad", "SYSTEM", 0, @"C:\Windows\notepad.exe", null, 1);
+    Fill(ref records[2], 3, "vendor", "SYSTEM", 0, @"C:\vendor.exe", null, 1);
+    records[0].ImageSignature = SignatureStatus.Verified;
+    records[0].ImageSigner = "Microsoft Windows";
+    records[1].ImageSignature = SignatureStatus.Verified;
+    records[1].ImageSigner = "Microsoft Windows";
+    records[2].ImageSignature = SignatureStatus.Verified;
+    records[2].ImageSigner = "Some Vendor Ltd";
+
+    var delta = new SnapshotDelta();
+    delta.Update(null, snapshot, CpuPercentMode.Normalized);
+    var view = new ProcessView { Grouping = ProcessGrouping.Publisher, SortColumn = ProcessField.Pid, SortDescending = false };
+    view.Rebuild(snapshot, delta);
+
+    Assert.That(Labels(view), Is.EqualTo(new[] { "Microsoft Windows", "Some Vendor Ltd" }));
+    Assert.That(view.Groups[0].Count, Is.EqualTo(2));
+  }
+
+  /// <summary>
+  /// Four different things a process with no signer in its row can mean, and they are four headings.
+  /// Folding them into one would claim of every process under it something that is only true of some
+  /// — most sharply "unsigned", which is a finding, against "nobody checked", which is not
+  /// (PRD §72.3, §5.4).
+  /// </summary>
+  [Test]
+  public void EachReasonThereIsNoSignerIsItsOwnHeading() {
+    var snapshot = new SystemSnapshot();
+    var records = snapshot.PrepareProcesses(4);
+    for (var i = 0; i < 4; ++i)
+      Fill(ref records[i], i + 1, "p" + i, "root", 0, "/p", null, 1);
+
+    // Default: nobody asked for verification on this run.
+    records[0].ImageSignature = SignatureStatus.NotChecked;
+    records[0].ImageSignatureReason = UnknownReason.None;
+    // The platform has no such thing to read — an ELF carries no signature and never did.
+    records[1].ImageSignature = SignatureStatus.NotChecked;
+    records[1].ImageSignatureReason = UnknownReason.NotSupportedOnPlatform;
+    // Checked, and there is nothing signing it.
+    records[2].ImageSignature = SignatureStatus.Unsigned;
+    // Checked, and the check itself failed.
+    records[3].ImageSignature = SignatureStatus.VerificationError;
+
+    var delta = new SnapshotDelta();
+    delta.Update(null, snapshot, CpuPercentMode.Normalized);
+    var view = new ProcessView { Grouping = ProcessGrouping.Publisher, SortColumn = ProcessField.Pid, SortDescending = false };
+    view.Rebuild(snapshot, delta);
+
+    Assert.That(Labels(view), Is.EqualTo(new[] {
+      "signature not checked",
+      "nothing here carries a signature",
+      "not signed",
+      "no signer — verification error",
+    }));
+  }
+
+  #endregion
+
+  #region what a heading adds up (PRD §82, §83)
+
+  /// <summary>
+  /// The sums under a heading come out of the same accessor the columns and the filters read, which
+  /// is what "aggregations follow canonical query rules" means: a heading and the rows beneath it
+  /// cannot come to disagree about what a field is (PRD §5.1, §83).
+  /// </summary>
+  [Test]
+  public void AHeadingTotalsItsMembersThroughTheSameAccessorTheColumnsUse() {
+    var (snapshot, delta) = Machine();
+    var view = new ProcessView { Grouping = ProcessGrouping.User, SortColumn = ProcessField.Pid, SortDescending = false };
+    view.Rebuild(snapshot, delta);
+
+    // Worked out the long way, from the accessor, rather than from the numbers the fixture was built
+    // with: a total that agreed with the fixture but not with the column would be exactly the drift
+    // this is here to catch.
+    var expected = new Dictionary<string, double>(StringComparer.Ordinal);
+    var records = snapshot.Processes;
+    for (var i = 0; i < records.Length; ++i) {
+      var user = records[i].UserName!;
+      expected[user] = expected.GetValueOrDefault(user)
+        + (FieldAccessor.Number(ProcessField.PrivateBytes, in records[i], delta, i) ?? 0);
+    }
+
+    foreach (var group in view.Groups) {
+      Assert.That(group.Totals.PrivateBytes.HasValue, Is.True, group.Label);
+      Assert.That(group.Totals.PrivateBytes.Value, Is.EqualTo(expected[group.Label]), group.Label);
+      Assert.That(group.Totals.PrivateBytes.Counted, Is.EqualTo(group.Count), group.Label);
+      Assert.That(group.Totals.PrivateBytes.IsPartial, Is.False, group.Label);
+    }
+  }
+
+  /// <summary>
+  /// §82: an aggregate is visibly an aggregate, never the parent's own usage. One wording, in Core,
+  /// so neither front-end can drop the word that says so.
+  /// </summary>
+  [Test]
+  public void AHeadingSaysItsFiguresAreTotals() {
+    var (snapshot, delta) = Machine();
+    var view = new ProcessView { Grouping = ProcessGrouping.User, SortColumn = ProcessField.Pid, SortDescending = false };
+    view.Rebuild(snapshot, delta);
+
+    var text = view.Groups[0].Describe();
+    Assert.That(text, Does.StartWith("root  (2 processes"));
+    Assert.That(text, Does.Contain("total"), "a sum has to say that it is one");
+    Assert.That(text, Does.Contain("resident"));
+  }
+
+  /// <summary>
+  /// A member whose counter could not be read is missing from the sum, and the sum says so. A total
+  /// over eight of twelve processes and a total over all twelve are different claims, and the number
+  /// on its own cannot tell them apart (PRD §72.3).
+  /// </summary>
+  [Test]
+  public void ATotalThatIsMissingAMemberSaysHowManyItIsOver() {
+    var snapshot = new SystemSnapshot();
+    var records = snapshot.PrepareProcesses(2);
+    Fill(ref records[0], 1, "a", "root", 0, "/a", null, 1);
+    Fill(ref records[1], 2, "b", "root", 0, "/b", null, 1);
+    records[0].WorkingSetBytes = Counter.Of(1024ul);
+    records[1].WorkingSetBytes = Counter.NotPermitted;
+
+    var delta = new SnapshotDelta();
+    delta.Update(null, snapshot, CpuPercentMode.Normalized);
+    var view = new ProcessView { Grouping = ProcessGrouping.User };
+    view.Rebuild(snapshot, delta);
+
+    var total = view.Groups[0].Totals.WorkingSetBytes;
+    Assert.Multiple(() => {
+      Assert.That(total.HasValue, Is.True);
+      Assert.That(total.Value, Is.EqualTo(1024));
+      Assert.That(total.Counted, Is.EqualTo(1));
+      Assert.That(total.Missing, Is.EqualTo(1));
+      Assert.That(total.IsPartial, Is.True);
+    });
+
+    Assert.That(view.Groups[0].Describe(), Does.Contain("over 1 of 2"));
+  }
+
+  /// <summary>
+  /// And a total nobody could read at all is not a total of nought. A heading reading "total 0 B/s"
+  /// over twelve processes whose I/O this user may not see would be the confident zero with a
+  /// group's worth of authority behind it.
+  /// </summary>
+  [Test]
+  public void ATotalNobodyCouldReadIsNotATotalOfNought() {
+    var snapshot = new SystemSnapshot();
+    var records = snapshot.PrepareProcesses(2);
+    Fill(ref records[0], 1, "a", "root", 0, "/a", null, 1);
+    Fill(ref records[1], 2, "b", "root", 0, "/b", null, 1);
+    records[0].WorkingSetBytes = Counter.NotPermitted;
+    records[1].WorkingSetBytes = Counter.NotPermitted;
+
+    var delta = new SnapshotDelta();
+    delta.Update(null, snapshot, CpuPercentMode.Normalized);
+    var view = new ProcessView { Grouping = ProcessGrouping.User };
+    view.Rebuild(snapshot, delta);
+
+    Assert.That(view.Groups[0].Totals.WorkingSetBytes.HasValue, Is.False);
+    Assert.That(view.Groups[0].Describe(), Does.Not.Contain("resident"));
+  }
+
+  #endregion
 
   #region a machine to group
 

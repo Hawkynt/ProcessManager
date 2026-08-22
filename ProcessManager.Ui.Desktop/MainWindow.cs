@@ -2513,9 +2513,10 @@ public sealed class MainWindow : Form {
 
     this._view.Rebuild(snapshot, delta);
 
-    // History only for the rows on screen (PRD §3.3). TopIndex and the visible count come from the
-    // control, so scrolling changes which processes are tracked rather than tracking all of them.
-    this._rowHistory.Update(snapshot, delta, this._view, this._tree.TopIndex, this._tree.VisibleNodeCount + 8);
+    // History only for the rows on screen (PRD §3.3, §71.5). TopIndex and the height of the viewport
+    // come from the control, so scrolling changes which processes are tracked rather than tracking
+    // all of them.
+    this._rowHistory.Update(snapshot, delta, this._view, this._tree.TopIndex, this.VisibleRows + 8);
     this._binder.Sync(snapshot, delta, this._view);
     this._cores.Bind(delta);
     this.StretchLastColumn();
@@ -2581,6 +2582,18 @@ public sealed class MainWindow : Form {
     }
 
     if (found.Count == 0)
+      return;
+
+    // Recorded as well as shown, in the words it was announced in, so that the timeline behind the
+    // rail and the notice on the status line cannot disagree — and so that a notice nobody was
+    // looking at when it appeared is still findable afterwards, which is what §63 is for. The window
+    // did not do this and the terminal did, which is precisely the kind of drift §58's parity
+    // contract exists to catch. Which of the two happens is the rule's own business (PRD §84).
+    var actions = this._watch.Actions;
+    if (actions.HasFlag(AlertAction.Log))
+      this._timeline.Add(found, DateTime.UtcNow.Ticks);
+
+    if (!actions.HasFlag(AlertAction.Notify))
       return;
 
     this._notice = NotificationWatch.Summarise(found);
@@ -4062,13 +4075,30 @@ public sealed class MainWindow : Form {
       : $"{ColumnSet.Info(this._columns.CurrentField).Header} fits what is on screen";
   }
 
+  /// <summary>
+  /// How many rows the table can actually show at its present height (PRD §71.5).
+  /// </summary>
+  /// <remarks>
+  /// <b>Not <c>VisibleNodeCount</c>, which is every row in the flattened list.</b> The two read alike
+  /// and mean opposite things, and both callers of this had the wrong one: the per-sample history was
+  /// keeping a ring for every process from the scroll position to the end of the table rather than
+  /// for the fifty on screen, and auto-sizing a column measured every row below the scroll position
+  /// rather than the ones being looked at. Neither is visible at four hundred processes and both are
+  /// the whole frame at ten thousand — which is exactly the shape of failure §71.5 exists to catch.
+  /// The control's own viewport count is not public, so it is worked out here from the same three
+  /// numbers it uses; the horizontal bar is not subtracted, which errs by one row towards keeping
+  /// too much rather than too little.
+  /// </remarks>
+  private int VisibleRows
+    => Math.Max(1, (this._tree.Height - this._tree.HeaderHeight) / Math.Max(1, this._tree.ItemHeight));
+
   private int MeasureColumn(MeasureText measure, int index) {
     var field = this._columns.FieldAt(index);
     // The header too: a column narrower than its own caption is a column whose caption is an
     // ellipsis, which names nothing.
     var widest = measure.WidthOf(ColumnSet.Info(field).Header + " ▾");
-    var visible = this._tree.VisibleNodeCount;
-    for (var row = this._tree.TopIndex; row < visible; ++row) {
+    var last = Math.Min(this._tree.VisibleNodeCount, this._tree.TopIndex + this.VisibleRows);
+    for (var row = this._tree.TopIndex; row < last; ++row) {
       if (this._tree.NodeAt(row) is not { } node)
         break;
 
@@ -4530,6 +4560,7 @@ public sealed class MainWindow : Form {
       (ProcessGrouping.Container, "Container"),
       (ProcessGrouping.Cgroup, "Cgroup"),
       (ProcessGrouping.Package, "Package"),
+      (ProcessGrouping.Publisher, "Publisher"),
       (ProcessGrouping.Category, "Kind — yours, the system's, a service"),
     ]) {
       var chosen = grouping;

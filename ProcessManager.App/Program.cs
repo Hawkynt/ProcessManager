@@ -66,6 +66,12 @@ internal static class Program {
     if (options.MinimalNotice is { } notice)
       Console.Error.WriteLine($"procman: {notice}");
 
+    // Here for the same reason, and with more urgency: a rule that would not parse is not a setting
+    // left at its default, it is somebody believing they are being watched for something and not
+    // being (PRD §84). Said once, up front, and the line itself is kept in the file untouched.
+    foreach (var problem in settings.AlertProblems)
+      Console.Error.WriteLine($"procman: this alert rule was not understood and is not armed: {problem}");
+
     if (options.SaveSettings && !SaveSettings(options, settings, settingsPath))
       Console.Error.WriteLine("procman: the settings could not be written; carrying on with them unsaved.");
 

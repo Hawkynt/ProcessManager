@@ -354,7 +354,10 @@ public sealed class ScaleTests {
       return this._handles;
     }
 
-    public IReadOnlyList<ModuleRecord> GetModules(ProcessKey key) => [];
+    /// <summary>As many modules as the test asked for, and none unless it did.</summary>
+    public ModuleRecord[] Modules { get; init; } = [];
+
+    public IReadOnlyList<ModuleRecord> GetModules(ProcessKey key) => this.Modules;
     public IReadOnlyList<ConnectionRecord> GetConnections(ProcessKey key) => [];
     public IReadOnlyList<ServiceRecord> GetServices() => [];
     public HostInfo DescribeHost() => new();
@@ -436,6 +439,146 @@ public sealed class ScaleTests {
     TestContext.Out.WriteLine($"1 000 000 descriptors tallied in {clock.Elapsed.TotalMilliseconds:0} ms");
 
     Assert.That(tally.Total, Is.EqualTo(1_000_000));
+    Assert.That(clock.Elapsed, Is.LessThan(TimeSpan.FromSeconds(5)));
+  }
+
+  #endregion
+
+  #region what the front-ends do with the rows (PRD §71.5)
+
+  /// <summary>
+  /// The window's own per-refresh work at ten thousand processes.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// §71.5 is about the front-ends and not about <see cref="ProcessView"/>, which the tests above
+  /// already take to ten thousand. The window keeps a row object per process and refreshes every
+  /// field on it once a sample, so this is the number that decides whether the promise holds: the
+  /// binder's four passes over the row list, plus one
+  /// <see cref="ProcessManager.Ui.Desktop.ProcessRow"/> update per process, and each of those
+  /// formats every field in the catalogue.
+  /// </para>
+  /// <para>
+  /// The ceiling is a second because that is what a refresh has: at ten thousand processes a window
+  /// that cannot finish a refresh in one sample interval is a window that never finishes one. It is
+  /// not the target — the target is §71.4's hundred milliseconds — and the gap between the two is
+  /// recorded in §71.5 rather than hidden by a looser assertion here.
+  /// </para>
+  /// </remarks>
+  [Test]
+  public void TheWindowsRowsSurviveTenThousandProcesses() {
+    var snapshot = Snapshot(10_000, i => i == 0 ? 0 : 1);
+    var delta = Delta(snapshot);
+    var view = new ProcessView { TreeMode = false, SortColumn = ProcessField.WorkingSetBytes };
+    view.Rebuild(snapshot, delta);
+
+    var tree = new Hawkynt.NativeForms.TreeListView();
+    var binder = new Ui.Desktop.ProcessTreeBinder(tree);
+
+    // One sync to build the nodes, which is start-up rather than steady state, then the one that is
+    // measured: a refresh of a table that is already there.
+    binder.Sync(snapshot, delta, view);
+
+    var clock = Stopwatch.StartNew();
+    binder.Sync(snapshot, delta, view);
+    clock.Stop();
+    TestContext.Out.WriteLine($"desktop binder, 10 000 rows: {clock.Elapsed.TotalMilliseconds:0} ms a refresh");
+
+    Assert.That(tree.Nodes, Has.Count.EqualTo(10_000), "every process has a row");
+    Assert.That(clock.Elapsed, Is.LessThan(TimeSpan.FromSeconds(1)));
+  }
+
+  /// <summary>
+  /// And the terminal's, which keeps no row objects at all: it formats the cells inside the viewport
+  /// and nothing else, so its per-frame cost is the size of the screen rather than the size of the
+  /// machine. What it does pay per sample is the rebuild, measured above, and the history rings for
+  /// the rows around the viewport — bounded by the caller and asserted here, because an unbounded
+  /// call is how the window's own equivalent came to keep a ring for every row on the machine.
+  /// </summary>
+  [Test]
+  public void TheTerminalsHistoryFollowsTheViewportAndNotTheTable() {
+    var snapshot = Snapshot(10_000, i => i == 0 ? 0 : 1);
+    var delta = Delta(snapshot);
+    var view = new ProcessView { TreeMode = false, SortColumn = ProcessField.WorkingSetBytes };
+    view.Rebuild(snapshot, delta);
+
+    var history = new ProcessHistory();
+    const int Viewport = 48;
+
+    var clock = Stopwatch.StartNew();
+    history.Update(snapshot, delta, view, 0, Viewport);
+    clock.Stop();
+    TestContext.Out.WriteLine($"terminal history, {Viewport} of 10 000 rows: {clock.Elapsed.TotalMilliseconds:0.00} ms");
+
+    // The rows on screen have a ring; the ten thousandth does not, and that is the whole point.
+    Assert.That(history.Get(snapshot.Processes[view.Rows[0].Index].Key, HistorySeries.Cpu), Is.Not.Null);
+    Assert.That(history.Get(snapshot.Processes[view.Rows[9_999].Index].Key, HistorySeries.Cpu), Is.Null);
+    Assert.That(history.Count, Is.EqualTo(Viewport), "one ring a row on screen, and not one a process");
+    Assert.That(clock.Elapsed, Is.LessThan(TimeSpan.FromMilliseconds(200)));
+  }
+
+  /// <summary>
+  /// A hundred thousand module rows, which is the size §71.5 names and which one process really can
+  /// reach: a browser with every tab's mappings, or anything that has been given a few thousand
+  /// plugins. The table is built whole and then drawn a screen at a time, so what is measured is the
+  /// building — the drawing is bounded by the terminal, not by this.
+  /// </summary>
+  [Test]
+  public void AHundredThousandModuleRowsCanBeTabulated() {
+    var modules = new ModuleRecord[100_000];
+    for (var i = 0; i < modules.Length; ++i)
+      modules[i] = new(
+        "/usr/lib/libthing.so." + (i % 64).ToString(System.Globalization.CultureInfo.InvariantCulture),
+        (ulong)(0x7f0000000000 + (i * 0x1000)),
+        0x1000,
+        "r-xp",
+        (ulong)(0x7f0000000000 + (i * 0x1000) + 0x1000),
+        Counter.Of(4096ul),
+        Counter.Of(0ul),
+        Counter.Of((ulong)i),
+        "8:1",
+        false,
+        1,
+        Counter.Of(65536ul),
+        0,
+        ModuleType.SharedObject,
+        "x86-64",
+        Counter.NotSupported,
+        null,
+        null,
+        ImageMitigations.None,
+        null,
+        ModuleLoadReason.Unknown,
+        1,
+        ModuleRuntime.Unknown
+      );
+
+    var probe = new CrowdedProbe(0) { Modules = modules };
+
+    var clock = Stopwatch.StartNew();
+    var table = ProcessDetailTables.Modules(probe, new(1, 1000));
+    clock.Stop();
+    TestContext.Out.WriteLine($"100 000 module rows tabulated in {clock.Elapsed.TotalMilliseconds:0} ms");
+
+    Assert.That(table.Rows, Has.Count.EqualTo(100_000));
+    Assert.That(clock.Elapsed, Is.LessThan(TimeSpan.FromSeconds(5)));
+  }
+
+  /// <summary>
+  /// And a hundred thousand handle rows through the same tabulator, which is the other half of
+  /// §71.5's second line. Its formatter is the dearest of the detail tables — seven cells, three of
+  /// them derived — so it is the one that would show a per-row cost that is not linear.
+  /// </summary>
+  [Test]
+  public void AHundredThousandHandleRowsCanBeTabulated() {
+    var probe = new CrowdedProbe(100_000);
+
+    var clock = Stopwatch.StartNew();
+    var table = ProcessDetailTables.Handles(probe, new(1, 1000));
+    clock.Stop();
+    TestContext.Out.WriteLine($"100 000 handle rows tabulated in {clock.Elapsed.TotalMilliseconds:0} ms");
+
+    Assert.That(table.Rows, Has.Count.EqualTo(100_000));
     Assert.That(clock.Elapsed, Is.LessThan(TimeSpan.FromSeconds(5)));
   }
 

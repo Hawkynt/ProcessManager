@@ -56,7 +56,7 @@ public static class FieldRegistry {
     new(ProcessField.CpuPercent, "cpu", "CPU %", "CPU%",
       "Processor use where 100% is the whole machine.",
       FieldKind.Rate, FieldUnit.Percent, _ALL, FieldCost.Derived, 78, 5, true, true,
-      Aliases: "cpu.percent",
+      Aliases: "cpu.percent cpu.usage",
       Series: HistorySeries.Cpu,
       History: FieldHistory.Row | FieldHistory.Process),
     new(ProcessField.CpuPercentPerCore, "cpu.raw", "CPU % (per core)", "CPU%c",
@@ -896,6 +896,13 @@ public static class FieldRegistry {
       return false;
 
     var wanted = text.Trim();
+    // "process.name" is "name". PRD §84 writes its rules that way, and a rule language and a filter
+    // language that disagreed about how to spell a field would be two languages. Stripped here, once,
+    // rather than added as an alias to every one of the entries above — a prefix is a prefix, and a
+    // hundred and sixty extra alias strings would be a hundred and sixty chances to miss one.
+    if (wanted.StartsWith("process.", StringComparison.OrdinalIgnoreCase) && wanted.Length > 8)
+      wanted = wanted[8..];
+
     foreach (var descriptor in All) {
       if (string.Equals(descriptor.Key, wanted, StringComparison.OrdinalIgnoreCase)
           || string.Equals(descriptor.Header, wanted, StringComparison.OrdinalIgnoreCase)) {

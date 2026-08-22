@@ -322,6 +322,18 @@ public sealed record UserSettings {
   /// <summary>Lines this build did not understand, kept so an older build cannot eat them.</summary>
   public IReadOnlyList<string> Unknown { get; init; } = [];
 
+  /// <summary>
+  /// What was wrong with each <c>alert=</c> line that would not parse (PRD §84).
+  /// </summary>
+  /// <remarks>
+  /// Kept and reported rather than swallowed, which is the one place this file departs from "a line
+  /// that will not parse leaves its setting at the default". A mistyped colour leaves a column the
+  /// colour it already was and nobody is misled; a mistyped rule leaves somebody believing they are
+  /// being watched for something. The line itself is also kept verbatim in <see cref="Unknown"/>, so
+  /// saving the settings does not eat the rule they were halfway through writing.
+  /// </remarks>
+  public IReadOnlyList<string> AlertProblems { get; init; } = [];
+
   #region the presets of §94
 
   /// <summary>
@@ -467,6 +479,8 @@ public sealed record UserSettings {
     var colours = new Dictionary<string, uint>(StringComparer.OrdinalIgnoreCase);
     var terminalColours = new Dictionary<string, uint>(StringComparer.OrdinalIgnoreCase);
     var unknown = new List<string>();
+    var alerts = new List<AlertRule>();
+    var alertProblems = new List<string>();
 
     foreach (var raw in text.Split('\n')) {
       var line = raw.Trim();
@@ -778,6 +792,21 @@ public sealed record UserSettings {
           settings = settings with { Notifications = settings.Notifications with { Services = SplitList(value) } };
           break;
 
+        // PRD §84. Repeatable, unlike every other key in this file: the six above are one rule each
+        // and this one is a language, and somebody watching three things has written three lines.
+        case "alert":
+          if (AlertRule.TryParse(value, out var alert, out var wrong) && alert is not null) {
+            alerts.Add(alert);
+            break;
+          }
+
+          // Kept verbatim so that saving the settings does not eat the rule somebody was halfway
+          // through writing, and reported so they find out now rather than the first time it should
+          // have fired.
+          alertProblems.Add($"{value} — {wrong}");
+          unknown.Add(line);
+          break;
+
         default:
           unknown.Add(line);
           break;
@@ -789,6 +818,8 @@ public sealed record UserSettings {
       Colours = colours,
       TerminalColours = terminalColours,
       Unknown = unknown,
+      Notifications = settings.Notifications with { Alerts = alerts },
+      AlertProblems = alertProblems,
     };
   }
 
@@ -905,6 +936,12 @@ public sealed record UserSettings {
 
       if (this.Notifications.Services.Count > 0)
         text.Append("notify.service=").AppendLine(string.Join(",", this.Notifications.Services));
+
+      // In the words they were written in. A rule is a sentence somebody composed, and writing back
+      // a reconstruction of it — even an equivalent one — makes them read it twice to see whether
+      // the program understood them (PRD §84, §67).
+      foreach (var alert in this.Notifications.Alerts)
+        text.Append("alert=").AppendLine(alert.Text);
     }
 
     if (this.TerminalGraphs is { } graphs) {
@@ -1077,6 +1114,7 @@ public sealed record UserSettings {
     ProcessGrouping.Executable => "executable",
     ProcessGrouping.Container => "container",
     ProcessGrouping.Package => "package",
+    ProcessGrouping.Publisher => "publisher",
     ProcessGrouping.Category => "category",
     _ => "cgroup",
   };
@@ -1097,6 +1135,7 @@ public sealed record UserSettings {
       case "container": grouping = ProcessGrouping.Container; return true;
       case "cgroup": grouping = ProcessGrouping.Cgroup; return true;
       case "package" or "pkg": grouping = ProcessGrouping.Package; return true;
+      case "publisher" or "signer" or "signed.by": grouping = ProcessGrouping.Publisher; return true;
       case "category" or "kind" or "friendly": grouping = ProcessGrouping.Category; return true;
       default: return false;
     }
