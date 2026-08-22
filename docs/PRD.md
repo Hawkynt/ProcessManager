@@ -4317,7 +4317,9 @@ Read-only. PE, ELF and Mach-O.
 
 - [x] Executable / command · arguments · working directory · environment overrides
 - [ ] Selected user / account where supported
-- [ ] Elevation
+- [ ] 🟡 Elevation — the request carries it and the box offers it; on Linux nothing yet raises a
+      program that was not started raised, because doing it honestly means the privileged helper
+      (§68) rather than a `sudo` that would want a terminal to ask in
 - [x] Launch suspended — expert mode
 - [x] 🟡 Priority · affinity ✔, and I/O priority; a CPU set is not offered
 - [x] 🟡 Environment inheritance ✔ and shell execution deliberately *not* offered; terminal and
@@ -5381,9 +5383,24 @@ that has a tab for it. That drift is what made an earlier version of this matrix
 - [x] Details
 - [x] Services — a window view of every unit and its state, and a right-click that starts, stops,
       restarts, reloads, enables or disables one
-- [ ] 🟡 Run new task — `--run` starts a program with a directory, environment and priority; no dialog
+- [x] Run new task — a box on the Process menu, and `--run` from a terminal, both building the same
+      request so the two cannot start a program differently. The program is its own field rather than
+      the first word of a line, so a path with a space in it needs no quoting — the case somebody is
+      most likely to get wrong and least likely to think about. **It is not a shell**: a quoted run
+      stays one argument and nothing else is interpreted, no globs, no variables, no substitution. A
+      box that quietly ran a shell would make every character somebody typed a possible command,
+      which is a much larger thing to offer than "start this program" — and the reason this exists at
+      all is the case where the shell is what has gone wrong
 - [x] End task
-- [ ] Restart supported applications
+- [ ] 🟡 Restart supported applications — a process can be ended and started again as it was, from
+      the window, the terminal and `--restart`, reading its image, arguments and directory *before*
+      anything is sent because none of it is readable afterwards. On Linux only; Windows has no
+      implementation.
+
+      **Task Manager's own feature is a different thing** and this deliberately does not claim it:
+      there, an application registers with `RegisterApplicationRestart` and Windows brings it back
+      after a reboot or an update, with the state it asked to keep. Nothing on Linux offers that, and
+      calling this by that name would be the false equivalence §5.3 forbids
 - [x] Priority
 - [x] Affinity
 - ∅ Efficiency / QoS — refused rather than unwritten: the nearest Linux relatives are the scheduling class and the I/O class, both already settable, and mapping a QoS class onto them is the false equivalence §5.3 forbids

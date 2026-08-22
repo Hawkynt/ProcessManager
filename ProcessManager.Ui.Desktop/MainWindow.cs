@@ -2360,6 +2360,10 @@ public sealed class MainWindow : Form {
     view.DropDownItems.Add(Item("Find window…", this.PickWindow));
 
     var process = new ToolStripMenuItem("Process");
+    // First, because it is the one entry on this menu that starts something rather than acting on
+    // something already running — and because §91 counts a capability nobody can find as absent.
+    process.DropDownItems.Add(Item("Run a new task…", this.RunNewTask));
+    process.DropDownItems.Add(new ToolStripSeparator());
     process.DropDownItems.Add(Item("End task", this.EndTask));
     process.DropDownItems.Add(Item("End process", () => this.Act("end", key => this._actions!.Terminate(key), ActionClass.DataLoss, _EndsWithoutAsking)));
     process.DropDownItems.Add(Item("End process tree", this.EndTree));
@@ -4390,6 +4394,43 @@ public sealed class MainWindow : Form {
     };
 
     this._tray = tray;
+  }
+
+  /// <summary>
+  /// Starts a program (PRD §54, §91).
+  /// </summary>
+  /// <remarks>
+  /// The same request the command line builds, so the window and `--run` cannot start a program
+  /// differently. The result is reported whatever it was: a launch can succeed while the priority
+  /// asked for does not, because there is no portable way to start a process already niced, and a
+  /// person who asked for one and got the other should be told rather than left to find out.
+  /// </remarks>
+  private void RunNewTask() {
+    if (this._actions is null) {
+      MessageBox.Show("This build has no actions for this platform.", "Process Manager");
+      return;
+    }
+
+    // No using: a Form in this toolkit is not IDisposable, and closing it is what releases it.
+    var dialog = new RunTaskDialog();
+    dialog.ShowDialog();
+    if (!dialog.Accepted || dialog.Request is not { } request)
+      return;
+
+    var started = this._actions.Launch(request);
+    if (!started.Outcome.Succeeded) {
+      this.Report(started.Outcome);
+      return;
+    }
+
+    // Its number, because that is what somebody wants next — to find it in the table, which they
+    // can, because the sample that follows this will have it.
+    MessageBox.Show(
+      $"{request.FileName} started as PID {started.Pid.ToString(CultureInfo.InvariantCulture)}.",
+      "Process Manager"
+    );
+
+    this.Refresh();
   }
 
   private void ShowPerformance() {
