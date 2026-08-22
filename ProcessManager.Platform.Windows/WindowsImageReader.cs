@@ -271,6 +271,23 @@ internal sealed class WindowsImageReader {
     record.CertificateSubject = null;
     record.CertificateIssuer = null;
     record.SignatureTimestampUtcTicks = Counter.NotSampledYet;
+    NoTrustChain(ref record);
+  }
+
+  /// <summary>
+  /// Says why there is no trust chain here, rather than leaving the slot at its default (PRD §70).
+  /// </summary>
+  /// <remarks>
+  /// Windows is the platform that actually has certificates and a root store, so "this platform has
+  /// no such thing" would be false — it has one and this program does not walk it. The verifier
+  /// beside this recomputes the digest and checks the signer's own signature and deliberately stops
+  /// there, which §21 argues at length; what it must not do is leave the slot at a default reason,
+  /// because a defaulted reason means "the value is present" and the value would be NotChecked read
+  /// as a finding (PRD §72.3).
+  /// </remarks>
+  public static void NoTrustChain(ref ProcessRecord record) {
+    record.TrustChain = SignatureStatus.NotChecked;
+    record.TrustChainReason = UnknownReason.NotImplementedHere;
   }
 
 }
