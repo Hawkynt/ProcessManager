@@ -128,6 +128,12 @@ public static class ProcessDetailTables {
         thread.BasePriority?.ToString(CultureInfo.InvariantCulture) ?? "—",
         Humanize.SchedulingPolicy(thread.Policy),
         thread.Affinity ?? "—",
+        Humanize.Count(thread.Cycles),
+        // Ideal is beside CPU# on purpose: the pair is the question. A thread the scheduler prefers
+        // on processor 2 that keeps running on 7 is a thread being bounced off its own cache, and
+        // neither column says that alone.
+        Humanize.Count(thread.IdealProcessor),
+        Humanize.Address(thread.TebBase),
         // The wait reason last and widest: it is what somebody opened this page to find out.
         thread.WaitReason ?? Humanize.Address(thread.StartAddress),
       ]);
@@ -135,8 +141,8 @@ public static class ProcessDetailTables {
     return new(
       "Threads",
       ["TID", "Name", "S", "Started", "CPU time", "User", "Kernel", "Ctx", "Vol / invol",
-       "CPU#", "Pri", "Base", "Policy", "Affinity", "Waiting on"],
-      [8, 16, 6, 20, 10, 9, 9, 9, 14, 5, 4, 5, 14, 12, 28],
+       "CPU#", "Pri", "Base", "Policy", "Affinity", "Cycles", "Ideal", "TEB", "Waiting on"],
+      [8, 16, 6, 20, 10, 9, 9, 9, 14, 5, 4, 5, 14, 12, 12, 6, 18, 28],
       rows
     );
   }

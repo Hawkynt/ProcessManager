@@ -653,7 +653,10 @@ public sealed class ScaleTests {
         Counter.NotSupported,
         ThreadMode.Unknown,
         Counter.NotSupported,
-        Counter.NotSupported
+        Counter.NotSupported,
+        Cycles: Counter.NotSupported,
+        IdealProcessor: Counter.NotSupported,
+        TebBase: Counter.NotSupported
       );
 
     return threads;

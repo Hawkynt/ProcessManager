@@ -152,6 +152,39 @@ public readonly record struct ThreadSchedStat(
 /// declines to invent: this is how long the thread has been kept waiting by other threads since it
 /// started, not how long its current wait has lasted.
 /// </param>
+/// <param name="Cycles">
+/// Processor cycles the thread has been charged with, from <c>QueryThreadCycleTime</c> on Windows.
+/// A different measurement from <paramref name="CpuTimeNs"/> rather than the same one in other units,
+/// which is why both are columns: time is what the clock says the thread held a processor for and
+/// cycles are what the processor actually retired. On a machine whose frequency moves — every laptop
+/// — a thread on a core parked at 800 MHz looks exactly as busy by time as one at 4.8 GHz.
+/// <para>
+/// Linux reports <see cref="UnknownReason.NotImplementedHere"/> and not <c>n/a</c>: the kernel will
+/// count cycles per thread through <c>perf_event_open</c>, subject to
+/// <c>kernel.perf_event_paranoid</c>. Nothing here opens one yet, which is a fact about this program
+/// and not about the machine (PRD §7, §72.3).
+/// </para>
+/// </param>
+/// <param name="IdealProcessor">
+/// The processor the Windows scheduler prefers to run the thread on, from
+/// <c>GetThreadIdealProcessorEx</c>. Not the same thing as <paramref name="LastCpu"/> or
+/// <paramref name="Affinity"/>: affinity is where a thread is <i>allowed</i>, last CPU is where it
+/// happened to run, and this is where the scheduler would put it given a free choice — the hint that
+/// keeps a thread near its own cache. Linux has no per-thread equivalent a caller can read, so the
+/// answer there is <see cref="UnknownReason.NotSupportedOnPlatform"/>.
+/// </param>
+/// <param name="TebBase">
+/// Where the thread's environment block lives, from <c>NtQueryInformationThread</c>'s
+/// <c>ThreadBasicInformation</c>. The address only: what is <i>inside</i> a TEB — the TLS slot array,
+/// the last error, the stack limits — is another process's memory, and reading it means attaching,
+/// which §4 rules out along with the kernel driver. So this is the pointer a debugger would start
+/// from and not the contents it would go on to read.
+/// <para>
+/// Linux has no TEB. It has a thread pointer serving a similar purpose, and it lives in a register
+/// only <c>ptrace</c> will hand over — again the attach §4 refuses — so the answer there is
+/// <see cref="UnknownReason.NotSupportedOnPlatform"/> about the structure that does not exist rather
+/// than a claim about the one that does.
+/// </para>
 /// <param name="Owner">
 /// The process the thread belongs to, which with <paramref name="Tid"/> and
 /// <paramref name="StartTimeUtcTicks"/> is <see cref="Key"/> (PRD §104). Last and defaulted because
@@ -186,6 +219,9 @@ public readonly record struct ThreadRecord(
   ThreadMode Mode,
   Counter SyscallNumber,
   Counter QueuedNs,
+  Counter Cycles,
+  Counter IdealProcessor,
+  Counter TebBase,
   ProcessKey Owner = default
 ) {
 

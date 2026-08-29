@@ -16,7 +16,16 @@ public sealed class ThreadRateTests {
 
   private static readonly ProcessKey _Key = new(1001, 100500);
 
-  private static ThreadRecord Thread(int tid, ulong cpuNs, Counter switches, long started = 1) => new(
+  private static ThreadRecord Thread(
+    int tid,
+    ulong cpuNs,
+    Counter switches,
+    long started = 1,
+    // Nullable and not default(Counter): a default counter is a confident zero, and handing one
+    // to every existing caller would give them a thread that has retired no cycles rather than one
+    // nobody counted (PRD §72.3).
+    Counter? cycles = null
+  ) => new(
     tid,
     ProcessState.Running,
     Counter.Of(cpuNs),
@@ -43,6 +52,9 @@ public sealed class ThreadRateTests {
     ThreadMode.Unknown,
     Counter.NotSupported,
     Counter.NotSupported,
+    Cycles: cycles ?? Counter.NotSupported,
+    IdealProcessor: Counter.NotSupported,
+    TebBase: Counter.NotSupported,
     Owner: _Key
   );
 
