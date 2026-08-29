@@ -54,4 +54,89 @@ public static class CpuList {
     return found;
   }
 
+  /// <summary>
+  /// The same notation as a mask, for the platform calls that want one (PRD §66).
+  /// </summary>
+  /// <remarks>
+  /// <b>Strict where <see cref="Parse"/> is forgiving</b>, and the difference is which side the text
+  /// came from. <see cref="Parse"/> reads kernel files, where a field this program has not caught up
+  /// with should cost a heat map rather than the whole view. This reads what a person typed into a
+  /// rule, and a mistyped range must be refused: the alternative is an affinity that quietly means
+  /// something other than what they wrote, applied to a running program.
+  /// </remarks>
+  /// <returns>False for anything malformed, out of range, or empty.</returns>
+  public static bool TryParseMask(string? list, out ulong mask) {
+    mask = 0;
+    if (list is not { Length: > 0 })
+      return false;
+
+    foreach (var part in list.Split(',')) {
+      var piece = part.Trim();
+      if (piece.Length == 0)
+        return false;
+
+      var dash = piece.IndexOf('-');
+      if (dash < 0) {
+        if (!TryBit(piece, ref mask))
+          return false;
+
+        continue;
+      }
+
+      if (!int.TryParse(piece.AsSpan(0, dash), out var first)
+          || !int.TryParse(piece.AsSpan(dash + 1), out var last)
+          || first < 0
+          || last < first
+          // Sixty-four is what a mask holds. A machine with more processors than that needs the
+          // platform's group form, and dropping the processors above 63 would hand back a mask
+          // saying something the person did not.
+          || last > 63)
+        return false;
+
+      for (var i = first; i <= last; ++i)
+        mask |= 1ul << i;
+    }
+
+    // An empty mask is not "every processor" and not "none": it is a line nobody finished. No
+    // scheduler will take it, so refusing here is the difference between a rule that says why and a
+    // call that fails somewhere else.
+    return mask != 0;
+  }
+
+  private static bool TryBit(string piece, ref ulong mask) {
+    if (!int.TryParse(piece, out var cpu) || cpu is < 0 or > 63)
+      return false;
+
+    mask |= 1ul << cpu;
+    return true;
+  }
+
+  /// <summary>And back, so a mask can be shown the way the kernel would have written it.</summary>
+  public static string Describe(ulong mask) {
+    if (mask == 0)
+      return "—";
+
+    var text = new System.Text.StringBuilder();
+    var cpu = 0;
+    while (cpu < 64) {
+      if ((mask & (1ul << cpu)) == 0) {
+        ++cpu;
+        continue;
+      }
+
+      var first = cpu;
+      while (cpu < 64 && (mask & (1ul << cpu)) != 0)
+        ++cpu;
+
+      if (text.Length > 0)
+        text.Append(',');
+
+      text.Append(first);
+      if (cpu - 1 > first)
+        text.Append('-').Append(cpu - 1);
+    }
+
+    return text.ToString();
+  }
+
 }

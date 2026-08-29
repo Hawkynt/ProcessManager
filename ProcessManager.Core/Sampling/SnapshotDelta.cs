@@ -409,12 +409,28 @@ public sealed class SnapshotDelta {
 
     this._previousIndex.Clear();
     var previousProcesses = previous.Processes;
-    for (var i = 0; i < previousProcesses.Length; ++i)
+    for (var i = 0; i < previousProcesses.Length; ++i) {
+      // A tombstone in the previous sample is not a process that has just exited: it exited a while
+      // ago and is being kept on screen. Indexing it here would leave it unmatched every sample and
+      // report the same death over and over, once a second, for as long as the row was retained
+      // (PRD §14, §87).
+      if (previousProcesses[i].HasExited)
+        continue;
+
       this._previousIndex[previousProcesses[i].Key] = i;
+    }
 
     var currentProcesses = current.Processes;
     for (var i = 0; i < currentProcesses.Length; ++i) {
       ref readonly var process = ref currentProcesses[i];
+      // And a tombstone in this sample is neither new nor moving. Every rate over it is unsampled,
+      // because a row that has stopped must not go on reporting the rate it had when it stopped —
+      // that would show a dead process using a processor (PRD §3.4, §72.3).
+      if (process.HasExited) {
+        this.Blank(i, in process, elapsed);
+        continue;
+      }
+
       if (!this._previousIndex.Remove(process.Key, out var previousPosition)) {
         this._cpuPercent[i] = Rate.NotSampledYet;
         this._cpuPercentDelta[i] = Rate.NotSampledYet;
@@ -595,6 +611,32 @@ public sealed class SnapshotDelta {
   /// everything after it, and matching by index would attribute one device's traffic to another —
   /// the same reason processes are matched by identity rather than by their place in the array.
   /// </remarks>
+  /// <summary>
+  /// Every rate for one row set to unsampled, for a row there is nothing to measure over.
+  /// </summary>
+  /// <remarks>
+  /// Unsampled and not nought. A dead row reporting nought per cent would be a measurement — "this
+  /// process used no processor in the last second" — where the truth is that there was no last second
+  /// for it to use one in (PRD §3.4, §72.3).
+  /// </remarks>
+  private void Blank(int i, in ProcessRecord process, double elapsed) {
+    this._cpuPercent[i] = Rate.NotSampledYet;
+    this._cpuPercentDelta[i] = Rate.NotSampledYet;
+    this._cpuPercentPerCore[i] = Rate.NotSampledYet;
+    this._readBytesPerSecond[i] = Rate.NotSampledYet;
+    this._writeBytesPerSecond[i] = Rate.NotSampledYet;
+    this._otherBytesPerSecond[i] = Rate.NotSampledYet;
+    this._readOperationsPerSecond[i] = Rate.NotSampledYet;
+    this._writeOperationsPerSecond[i] = Rate.NotSampledYet;
+    this._pageFaultsPerSecond[i] = Rate.NotSampledYet;
+    this._contextSwitchesPerSecond[i] = Rate.NotSampledYet;
+    this._cyclesPerSecond[i] = Rate.NotSampledYet;
+    this._privateBytesDelta[i] = Rate.NotSampledYet;
+    this.FillGpu(i, in process, in process, hasPrevious: false, elapsed);
+    this._isNew[i] = false;
+    this._appeared[i] = false;
+  }
+
   private void UpdateDevices(SystemSnapshot? previous, SystemSnapshot current, double elapsed) {
     this._diskRates.Clear();
     this._networkRates.Clear();
@@ -708,6 +750,17 @@ public sealed class SnapshotDelta {
   /// A machine that will not say how much memory it has leaves this unknown rather than reporting
   /// every process at nought percent (PRD §5.3).
   /// </remarks>
+  /// <summary>One row's share of the machine's memory, for a caller filling one row at a time.</summary>
+  private static Rate MemoryPercentOf(in ProcessRecord process, SystemSnapshot current) {
+    var total = current.System.TotalMemoryBytes;
+    if (!total.HasValue || total.Value == 0)
+      return Rate.Unknown(total.HasValue ? UnknownReason.CounterInvalid : total.Reason);
+
+    return process.WorkingSetBytes.HasValue
+      ? Rate.Of(process.WorkingSetBytes.Value * 100d / total.Value)
+      : Rate.Unknown(process.WorkingSetBytes.Reason);
+  }
+
   private static void FillMemoryPercent(Rate[] destination, SystemSnapshot current) {
     var processes = current.Processes;
     var total = current.System.TotalMemoryBytes;
@@ -879,6 +932,62 @@ public sealed class SnapshotDelta {
 
     foreach (var key in this._expired)
       this._startedAt.Remove(key);
+  }
+
+  /// <summary>
+  /// Makes room for the rows appended after this ran, and blanks every rate over them (PRD §14, §87).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The order is forced and is worth stating. This class is what says which processes have gone, so
+  /// the sampler cannot append their rows until it has run — and its per-row arrays are sized to the
+  /// snapshot as it was when it ran, which was before those rows existed. Without this call, asking
+  /// for any rate of a kept row indexes past the end of every array here.
+  /// </para>
+  /// <para>
+  /// It was found by a test rather than by a reader: the row was in the snapshot and looked right,
+  /// and the first front-end to ask it for a CPU percentage would have thrown.
+  /// </para>
+  /// </remarks>
+  /// <param name="current">The snapshot, now including the rows that outlive their processes.</param>
+  /// <param name="from">The first appended row — everything below it is living and already measured.</param>
+  internal void ExtendForRetainedRows(SystemSnapshot current, int from) {
+    ArgumentNullException.ThrowIfNull(current);
+    var count = current.ProcessCount;
+    if (count <= from)
+      return;
+
+    EnsureLength(ref this._cpuPercent, count);
+    EnsureLength(ref this._cpuPercentDelta, count);
+    EnsureLength(ref this._cpuPercentPerCore, count);
+    EnsureLength(ref this._readBytesPerSecond, count);
+    EnsureLength(ref this._writeBytesPerSecond, count);
+    EnsureLength(ref this._otherBytesPerSecond, count);
+    EnsureLength(ref this._readOperationsPerSecond, count);
+    EnsureLength(ref this._writeOperationsPerSecond, count);
+    EnsureLength(ref this._pageFaultsPerSecond, count);
+    EnsureLength(ref this._contextSwitchesPerSecond, count);
+    EnsureLength(ref this._cyclesPerSecond, count);
+    EnsureLength(ref this._privateBytesDelta, count);
+    EnsureLength(ref this._isNew, count);
+    EnsureLength(ref this._appeared, count);
+    EnsureLength(ref this._memoryPercent, count);
+    EnsureLength(ref this._gpuGraphicsPercent, count);
+    EnsureLength(ref this._gpuComputePercent, count);
+    EnsureLength(ref this._gpuCopyPercent, count);
+    EnsureLength(ref this._gpuEncodePercent, count);
+    EnsureLength(ref this._gpuDecodePercent, count);
+    EnsureLength(ref this._gpuEnginePercent, count);
+    EnsureLength(ref this._gpuDedicatedBytesDelta, count);
+    EnsureLength(ref this._gpuEngine, count);
+
+    var processes = current.Processes;
+    for (var i = from; i < count; ++i) {
+      this.Blank(i, in processes[i], this.ElapsedNanoseconds);
+      // The share of memory is a fact about the last reading rather than a rate over an interval, so
+      // it is filled rather than blanked: a kept row still held the working set it held.
+      this._memoryPercent[i] = MemoryPercentOf(in processes[i], current);
+    }
   }
 
   private static void EnsureLength<T>(ref T[] array, int length) {

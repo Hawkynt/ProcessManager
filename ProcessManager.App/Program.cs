@@ -139,7 +139,12 @@ internal static class Program {
     using (probe)
     using (ProbeFactory.Elevated) {
       var actions = ProbeFactory.CreateActions(options.ProbeRoot);
-      using var sampler = new Sampler(probe);
+      using var sampler = new Sampler(probe) {
+        // On the sampler and not on a front-end, because a row that outlives its process has to
+        // outlive the buffer it was read into — and because one setting must not make two programs
+        // (PRD §14, §87).
+        KeepExitedSeconds = options.KeepExitedSeconds,
+      };
 
       // Only when the file says so, and only for the two modes that keep sampling. A one-shot
       // listing takes two samples a second apart and would write a record consisting of one

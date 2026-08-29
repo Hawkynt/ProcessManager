@@ -53,6 +53,13 @@ public sealed class ProcessPropertiesWindow : Form {
   // top of this one; naming the tab after either would be the false equivalence §5.3 forbids.
   private const string _CgroupTab = "cgroup";
 
+  private const string _StringsTab = "Strings";
+
+  /// <summary>How much of an image this tab reads before it stops — see <c>UpdateStrings</c>.</summary>
+  private const long _StringsScanLimit = 16L * 1024 * 1024;
+
+  private const string _TimelineTab = "Timeline";
+
   private readonly ISystemProbe _probe;
   private readonly IProcessActions? _actions;
   private readonly DetailPane _pane;
@@ -182,6 +189,41 @@ public sealed class ProcessPropertiesWindow : Form {
   /// </remarks>
   private readonly ProcessFactsPage _cgroup = new();
 
+  /// <summary>
+  /// The runs of text in this process's own image (PRD §35, §26).
+  /// </summary>
+  /// <remarks>
+  /// <b>The file on disk, and never the process's memory.</b> §25.5 records why the other half of §35
+  /// is refused: <c>process_vm_readv</c> and <c>/proc/[pid]/mem</c> are both governed by
+  /// <c>PTRACE_MODE_ATTACH</c>, which Yama declines by default for anything this program did not
+  /// start, and a memory reverse-engineering suite is §4's first non-goal. So this is the same scan
+  /// the binary inspector does, pointed at the image the process is running.
+  /// </remarks>
+  private readonly RecordTable _strings = new(
+    "Strings in this image",
+    ("Offset", 120),
+    ("Encoding", 90),
+    ("Length", 70),
+    ("Text", 700)
+  );
+
+  /// <summary>Whether the scan has run, so it happens once and on being asked for.</summary>
+  private bool _stringsScanned;
+
+  /// <summary>What has happened to this process while the program has been watching (PRD §63, §26).</summary>
+  /// <remarks>
+  /// The window's own ring, filtered to this pid, rather than a second recorder. §63 already keeps
+  /// one bounded log fed from what the sampler computed, and a per-process page that recorded its own
+  /// events would be a second answer to the same question — with its own bound, its own start time
+  /// and its own opportunity to disagree.
+  /// </remarks>
+  private readonly RecordTable _timeline = new(
+    "What has happened to this process",
+    ("When", 200),
+    ("Kind", 190),
+    ("What", 620)
+  );
+
   private TabPage? _gpuPage;
   private TabPage? _cgroupPage;
   private ImageInfo? _image;
@@ -260,6 +302,8 @@ public sealed class ProcessPropertiesWindow : Form {
       AddPage(this._tabs, "I/O", this._io.Control);
       this._gpuPage = AddPage(this._tabs, _GpuTab, this._gpu.Control);
       this._cgroupPage = AddPage(this._tabs, _CgroupTab, this._cgroup.Control);
+      AddPage(this._tabs, _StringsTab, this._strings.Control);
+      AddPage(this._tabs, _TimelineTab, this._timeline.Control);
       this._tabs.SelectedTab = this.PageNamed(_GeneralTab);
       // The map is the one page whose cost is the size of the process, so it is filled when somebody
       // asks for it rather than when the window opens. The tick fills it too, for the same reason and
@@ -354,6 +398,31 @@ public sealed class ProcessPropertiesWindow : Form {
 
   /// <summary>What the cgroup page says (PRD §38).</summary>
   public string CgroupText => this._cgroup.Description;
+
+  /// <summary>The sentence above the strings list — what was scanned, or why nothing was (§35).</summary>
+  public string StringsHeading => this._strings.Heading;
+
+  /// <summary>The runs, one line each, for a test and for the capture log.</summary>
+  public IReadOnlyList<string> StringsRows => RowsOf(this._strings);
+
+  /// <summary>The sentence above the timeline, which has three forms and means three things (§63).</summary>
+  public string TimelineHeading => this._timeline.Heading;
+
+  /// <summary>The entries about this process, newest first.</summary>
+  public IReadOnlyList<string> TimelineRows => RowsOf(this._timeline);
+
+  private static IReadOnlyList<string> RowsOf(RecordTable table) {
+    var lines = new List<string>();
+    // The description is the heading and then a line per row, so the heading comes off the front:
+    // a caller asking for the rows must not get a count one too high and a first entry that is a
+    // sentence.
+    var text = table.Description.Split('\n');
+    for (var i = 1; i < text.Length; ++i)
+      if (text[i].Trim() is { Length: > 0 } line)
+        lines.Add(line);
+
+    return lines;
+  }
 
   /// <summary>What the Services page says (PRD §41).</summary>
   public string ServicesText => this._pane.ServicesText;
@@ -835,9 +904,122 @@ public sealed class ProcessPropertiesWindow : Form {
   /// </para>
   /// </remarks>
   private void FillVisiblePage() {
-    if (this._tabs?.SelectedTab is { } page && string.Equals(page.Text, _CgroupTab, StringComparison.Ordinal))
+    if (this._tabs?.SelectedTab is not { } page)
+      return;
+
+    if (string.Equals(page.Text, _CgroupTab, StringComparison.Ordinal))
       this.UpdateCgroup();
+    else if (string.Equals(page.Text, _StringsTab, StringComparison.Ordinal))
+      this.UpdateStrings();
+    else if (string.Equals(page.Text, _TimelineTab, StringComparison.Ordinal))
+      this.UpdateTimeline();
   }
+
+  /// <summary>
+  /// Scans the image for text, once, when somebody opens the page (PRD §35, §5.4).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The one reading in this window whose cost is the size of the file: every other page reads a few
+  /// kilobytes of structure and this one reads every byte there is. So it happens when the tab is
+  /// selected rather than when the window opens, and once rather than on every tick — the bytes of a
+  /// file on disk do not change under a process that has it mapped, and if the file is replaced the
+  /// mapping is still the old one, which the Modules page is the place to say.
+  /// </para>
+  /// <para>
+  /// A process with no readable image gets a sentence rather than an empty table. An empty list and a
+  /// list this user may not read look identical, and only one of them is worth acting on (§5.3).
+  /// </para>
+  /// </remarks>
+  private void UpdateStrings() {
+    if (this._stringsScanned)
+      return;
+
+    this._stringsScanned = true;
+    if (this._imagePath is not { Length: > 0 } path) {
+      this._strings.Fill(
+        "There is no image path for this process, so there is nothing to scan.",
+        0,
+        _ => []
+      );
+
+      return;
+    }
+
+    using var inspection = BinaryInspector.Open(path);
+
+    // Bounded, and the bound is said out loud. This runs on the thread that draws the window, so a
+    // two-hundred-megabyte image would freeze it for as long as the disk took; the binary inspector
+    // is where somebody goes to scan a whole file on purpose. Sixteen megabytes covers every ordinary
+    // executable whole and cuts short only the ones nobody opened this tab expecting to read (§5.4).
+    var view = inspection.Strings(TextScanOptions.Default with { Length = _StringsScanLimit });
+    var rows = view.Rows;
+    var note = view.Note ?? (rows.Count > 0 ? $"{rows.Count} runs." : "Nothing readable came back.");
+    if (inspection.ScanCost > _StringsScanLimit)
+      note += $" Only the first {_StringsScanLimit / (1024 * 1024)} MB of "
+        + $"{inspection.ScanCost / (1024 * 1024)} MB were scanned; the binary inspector reads it whole.";
+
+    this._strings.Fill(note, rows.Count, i => rows[i]);
+    this._strings.Stretch();
+  }
+
+  /// <summary>
+  /// The shared event ring, filtered to this process (PRD §63, §26).
+  /// </summary>
+  /// <remarks>
+  /// Refilled on every tick rather than once, because unlike the strings this changes: the whole
+  /// point of the page is that something happened while somebody was looking at it. It costs a walk
+  /// of a bounded list and no reading at all.
+  /// </remarks>
+  private void UpdateTimeline() {
+    if (this.Timeline is not { } log) {
+      this._timeline.Fill(
+        "Nothing is recording events for this window, so there is nothing to show.",
+        0,
+        _ => []
+      );
+
+      return;
+    }
+
+    var mine = new List<TimelineEvent>();
+    foreach (var entry in log.Entries)
+      if (entry.Pid == this.Key.Pid)
+        mine.Add(entry);
+
+    // Newest first: a page opened because something just happened should not need scrolling to the
+    // bottom to find it.
+    mine.Reverse();
+
+    this._timeline.Fill(
+      mine.Count > 0
+        ? $"{mine.Count} of {log.Count} recorded events are about this process."
+        : log.Count > 0
+          ? $"Nothing has happened to this process since the program started; {log.Count} events "
+            + "have been recorded about others."
+          : "Nothing has been recorded yet. Events are kept only while this program is running "
+            + "(§63), so a process that has been quiet since it started has none.",
+      mine.Count,
+      i => [
+        new DateTime(mine[i].UtcTicks, DateTimeKind.Utc).ToLocalTime()
+          .ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.CurrentCulture),
+        EventLog.Describe(mine[i].Category),
+        mine[i].Text,
+      ]
+    );
+
+    this._timeline.Stretch();
+  }
+
+  /// <summary>
+  /// The window's event ring, or null where the caller kept none (PRD §63).
+  /// </summary>
+  /// <remarks>
+  /// Handed in rather than made here. One ring per program and not one per properties window: two
+  /// logs of the same machine would have two bounds, two start times and two chances to disagree
+  /// about what happened.
+  /// </remarks>
+  public EventLog? Timeline { get; set; }
 
   #endregion
 

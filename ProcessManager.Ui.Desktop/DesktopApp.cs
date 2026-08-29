@@ -272,6 +272,27 @@ public static class DesktopApp {
                 : $"properties {tab}: none — {pageFail}\n";
             }
 
+            // The window's own two pages, which are not the pane's and so are not described by it.
+            // Both can legitimately come up empty — an image nobody may read, a process nothing has
+            // happened to — and both say which in the heading, so the heading is what goes in the
+            // log: an empty rectangle and "nothing has been recorded yet" are the same picture and
+            // opposite conclusions (PRD §9.6, §35, §63).
+            foreach (var (tab, image) in (ReadOnlySpan<(string Tab, string Image)>)[
+              ("Strings", "properties-strings.png"),
+              ("Timeline", "properties-timeline.png"),
+            ]) {
+              properties.ShowPage(tab);
+              properties.ApplyLayout();
+              description += tab == "Strings"
+                ? $"  properties strings: {properties.StringsRows.Count} run(s) — {properties.StringsHeading}\n"
+                : $"  properties timeline: {properties.TimelineRows.Count} entr(ies) — {properties.TimelineHeading}\n";
+
+              var ownPath = Path.Combine(directory, image);
+              description += GtkCapture.Window(ownPath, out var ownFail, properties.Text) is { } ownShot
+                ? $"properties {tab}: {ownShot.Width}x{ownShot.Height} -> {ownPath}\n"
+                : $"properties {tab}: none — {ownFail}\n";
+            }
+
             // After the loop, not before it: the map is filled when the page is asked for, so read
             // off beforehand this said "0 mappings" about a page that had never been opened.
             description += $"properties map: {properties.MemoryMapRows} mappings — {properties.MemoryMapHeading}\n";
