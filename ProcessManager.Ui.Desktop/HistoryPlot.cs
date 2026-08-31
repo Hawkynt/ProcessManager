@@ -17,8 +17,8 @@ namespace Hawkynt.ProcessManager.Ui.Desktop;
 /// or projected per frame.</item>
 /// <item>A <see cref="Rate"/> without a value breaks the line rather than being drawn as zero. A gap
 /// in sampling is not a quiet second, and a plot that draws it as one is lying (PRD §3.3).</item>
-/// <item>The horizontal axis is time and not sample count, so the axis labels — "60 seconds ago" and
-/// "Now" — say something true about the pixels under them (PRD §45.4).</item>
+/// <item>The horizontal axis is time and not sample count. When older history is compressed, the
+/// cursor, grid, statistics and end label all use the same non-linear mapping as the pixels.</item>
 /// </list>
 /// </remarks>
 public sealed class HistoryPlot : OwnerDrawnControl {
@@ -130,11 +130,29 @@ public sealed class HistoryPlot : OwnerDrawnControl {
           && string.Equals(this.Caption, "Memory", StringComparison.Ordinal)
       );
 
-  /// <summary>How many seconds the width covers (PRD §45.4).</summary>
+  /// <summary>
+  /// The recent, uncompressed span. Older retained samples may extend the visible horizon beyond it.
+  /// </summary>
   public int SpanSeconds { get; set; } = 60;
 
-  /// <summary>How far apart the samples are, which is what turns the span into a sample count.</summary>
+  /// <summary>How far apart the samples are, which is what turns a span in seconds into a count.</summary>
   public double SecondsPerSample { get; set; } = 1;
+
+  /// <summary>
+  /// How much older history the graph asks to fit beside the recent span.
+  /// </summary>
+  /// <remarks>
+  /// Fifteen is the useful long-history default from the reference UI. It is a request, not invented
+  /// storage: <see cref="HistoryAxis"/> caps it to the backing ring's actual retained capacity.
+  /// Set to one for the traditional linear axis.
+  /// </remarks>
+  public double HistoryMultiplier { get; set; } = HistoryAxis.DefaultMultiplier;
+
+  /// <summary>The multiplier the current ring can actually support.</summary>
+  public double EffectiveHistoryMultiplier => this.TimeAxis.Multiplier;
+
+  /// <summary>The real left edge of the current time axis, in seconds.</summary>
+  public double VisibleSpanSeconds => this.TimeAxis.OldestSampleAge * Math.Max(0.05, this.SecondsPerSample);
 
   /// <summary>
   /// How many of the newest samples to leave undrawn — what "paused" is made of.
@@ -189,7 +207,7 @@ public sealed class HistoryPlot : OwnerDrawnControl {
     this._series.Add(new(values, color, label, filled));
   }
 
-  /// <summary>How many samples the axis is wide.</summary>
+  /// <summary>How many samples the ordinary recent span is wide.</summary>
   private int Samples => Math.Max(1, (int)Math.Round(this.SpanSeconds / Math.Max(0.05, this.SecondsPerSample)));
 
   /// <summary>
@@ -203,7 +221,7 @@ public sealed class HistoryPlot : OwnerDrawnControl {
   /// </summary>
   private int MeterWidth => Math.Clamp(this.Width / 4, 34, 44);
 
-  /// <summary>The rectangle in which time still means horizontal distance.</summary>
+  /// <summary>The rectangle in which time means horizontal distance.</summary>
   private Rectangle PlotBounds {
     get {
       if (!this.DrawsSegmentedMeter)
@@ -211,6 +229,14 @@ public sealed class HistoryPlot : OwnerDrawnControl {
 
       var left = this.MeterWidth + _MeterGap;
       return new(left, 0, Math.Max(1, this.Width - left), this.Height);
+    }
+  }
+
+  /// <summary>One mapping for painting, labels, cursor movement and statistics.</summary>
+  private HistoryAxis TimeAxis {
+    get {
+      var retained = this._series.Count > 0 ? this._series[0].Values.Capacity : this.Samples;
+      return new(Math.Max(1, this.PlotBounds.Width), this.Samples, retained, this.HistoryMultiplier);
     }
   }
 
@@ -305,8 +331,8 @@ public sealed class HistoryPlot : OwnerDrawnControl {
       return;
     }
 
-    var perSample = plot.Width / (double)this.Samples;
-    var age = (int)Math.Round((plot.Right - 1 - this._hoverX) / perSample);
+    var axis = this.TimeAxis;
+    var age = (int)Math.Round(axis.AgeAtDistance(plot.Right - 1 - this._hoverX));
     var text = new System.Text.StringBuilder();
     text.Append(age <= 0 ? "now" : $"{age * this.SecondsPerSample:0.#} s ago");
 
@@ -349,9 +375,10 @@ public sealed class HistoryPlot : OwnerDrawnControl {
       return string.Empty;
 
     var text = new System.Text.StringBuilder();
+    var visibleSamples = this.TimeAxis.VisibleSamples;
     foreach (var series in this._series) {
       var count = Math.Max(0, series.Values.Count - this.SkipNewest);
-      var take = Math.Min(count, this.Samples);
+      var take = Math.Min(count, visibleSamples);
       var lowest = double.PositiveInfinity;
       var highest = double.NegativeInfinity;
       var total = 0d;
@@ -391,6 +418,7 @@ public sealed class HistoryPlot : OwnerDrawnControl {
     var theme = this.Theme;
     var bounds = new Rectangle(0, 0, this.Width, this.Height);
     var plot = this.PlotBounds;
+    var axis = this.TimeAxis;
 
     // Black ground and a green graticule, which is what a monitor's plot has looked like since
     // before any of these tools existed. It is deliberately *not* the theme's field colour: this is
@@ -398,14 +426,21 @@ public sealed class HistoryPlot : OwnerDrawnControl {
     // glance than one that always looks the same.
     g.FillRectangle(RowPalette.PlotBackground, bounds);
 
-    // A graticule rather than four rules: the vertical lines give the eye something to measure
-    // horizontal movement against, which is most of what a scrolling plot is for.
     const int Cell = 16;
     for (var y = Cell; y < plot.Height; y += Cell)
       g.DrawLine(RowPalette.PlotGrid(theme), plot.Left, y, plot.Right, y);
 
-    for (var x = plot.Left + (plot.Width % Cell); x < plot.Right; x += Cell)
-      g.DrawLine(RowPalette.PlotGrid(theme), x, 0, x, plot.Height);
+    // Equal amounts of time, not equal amounts of pixels. On a compressed graph these rules crowd
+    // toward the old edge, which is the visual cue that the horizontal scale is changing rather than
+    // a row of evenly-spaced lines quietly pretending it is not.
+    const int TimeDivisions = 12;
+    for (var i = 1; i < TimeDivisions; ++i) {
+      var age = axis.OldestSampleAge * i / TimeDivisions;
+      var distance = axis.DistanceAtAge(age);
+      var x = plot.Right - 1 - (int)Math.Round(distance);
+      if (x > plot.Left && x < plot.Right)
+        g.DrawLine(RowPalette.PlotGrid(theme), x, 0, x, plot.Height);
+    }
 
     foreach (var series in this._series)
       SeriesPainter.Draw(
@@ -416,7 +451,8 @@ public sealed class HistoryPlot : OwnerDrawnControl {
         series.Color,
         this.Samples,
         this.SkipNewest,
-        series.Filled ?? this.Filled
+        series.Filled ?? this.Filled,
+        this.HistoryMultiplier
       );
 
     this.DrawSegmentedMeter(g, theme);
@@ -525,14 +561,25 @@ public sealed class HistoryPlot : OwnerDrawnControl {
     if (plot.Height < 56 || plot.Width < 220)
       return;
 
+    var axis = this.TimeAxis;
     var strip = new Rectangle(plot.Left + 4, this.Height - 18, plot.Width - 8, 16);
-    Shadowed(g, Ago(this.SpanSeconds), theme, strip, ContentAlignment.TopLeft);
+    var oldest = Ago((int)Math.Round(this.VisibleSpanSeconds));
+    if (axis.IsCompressed)
+      oldest += " · compressed";
+
+    Shadowed(g, oldest, theme, strip, ContentAlignment.TopLeft);
     Shadowed(g, this.Paused ? "Paused" : "Now", theme, strip, ContentAlignment.TopRight);
   }
 
   /// <summary>"60 seconds ago", "15 minutes ago" — the far end of the axis, in the units it is set in.</summary>
-  private static string Ago(int seconds)
-    => seconds >= 120 ? $"{seconds / 60} minutes ago" : $"{seconds} seconds ago";
+  private static string Ago(int seconds) {
+    if (seconds < 120)
+      return $"{seconds} seconds ago";
+
+    var minutes = seconds / 60;
+    var remainder = seconds % 60;
+    return remainder == 0 ? $"{minutes} minutes ago" : $"{minutes} min {remainder} s ago";
+  }
 
   /// <summary>
   /// A rule down the sample the pointer is on, and its readings beside it.
