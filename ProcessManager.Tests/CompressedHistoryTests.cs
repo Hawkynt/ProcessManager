@@ -82,6 +82,26 @@ public sealed class CompressedHistoryTests {
   }
 
   [Test]
+  public void AnOldSpikeSurvivesWhenSeveralSamplesShareOnePixel() {
+    var axis = new HistoryAxis(400, 60, 960, 15);
+    var bucket = axis.AgesForPixel(399);
+    var spikeAge = (int)Math.Floor((bucket.Youngest + bucket.Oldest) / 2);
+    var history = new HistoryRing<Rate>(960);
+
+    for (var i = 0; i < 960; ++i) {
+      var age = 959 - i;
+      history.Add(Rate.Of(age == spikeAge ? 100 : 1));
+    }
+
+    var reading = SeriesPainter.ReadingForPixel(history, history.Count, axis, 399);
+    Assert.Multiple(() => {
+      Assert.That(bucket.Oldest - bucket.Youngest, Is.GreaterThan(1));
+      Assert.That(reading.HasValue, Is.True);
+      Assert.That(reading.Value, Is.EqualTo(100), "compression must retain a spike, not average it away");
+    });
+  }
+
+  [Test]
   public void ThePlotReportsTheRealCompressedHorizon() {
     var history = new HistoryRing<Rate>(960);
     history.Add(Rate.Of(10));
