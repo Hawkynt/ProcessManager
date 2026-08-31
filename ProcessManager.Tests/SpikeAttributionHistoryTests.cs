@@ -14,7 +14,7 @@ public sealed class SpikeAttributionHistoryTests {
     ulong ioBytes,
     ulong privateBytes
   ) => new() {
-    Key = new(pid, pid * 1000L),
+    Key = new(pid, (ulong)pid * 1000ul),
     Name = name,
     UserName = "tester",
     CpuTimeNs = Counter.Of(cpuNanoseconds),
@@ -60,9 +60,18 @@ public sealed class SpikeAttributionHistoryTests {
     history.Add(after, Delta(before, after), 12345);
 
     Assert.Multiple(() => {
-      Assert.That(history.AtAge(SpikeMetric.Cpu, 0).ToArray().Select(item => item.Name), Is.EqualTo(new[] { "large", "middle" }));
-      Assert.That(history.AtAge(SpikeMetric.Io, 0).ToArray().Select(item => item.Name), Is.EqualTo(new[] { "large", "middle" }));
-      Assert.That(history.AtAge(SpikeMetric.MemoryGrowth, 0).ToArray().Select(item => item.Name), Is.EqualTo(new[] { "large", "middle" }));
+      Assert.That(
+        history.AtAge(SpikeMetric.Cpu, 0).ToArray().Select(item => item.Name),
+        Is.EqualTo(new[] { "large", "middle" })
+      );
+      Assert.That(
+        history.AtAge(SpikeMetric.Io, 0).ToArray().Select(item => item.Name),
+        Is.EqualTo(new[] { "large", "middle" })
+      );
+      Assert.That(
+        history.AtAge(SpikeMetric.MemoryGrowth, 0).ToArray().Select(item => item.Name),
+        Is.EqualTo(new[] { "large", "middle" })
+      );
       Assert.That(history.UtcTicksAtAge(0), Is.EqualTo(12345));
     });
   }
@@ -84,7 +93,7 @@ public sealed class SpikeAttributionHistoryTests {
 
     history.Add(after, Delta(before, after), 1);
 
-    var memory = history.AtAge(SpikeMetric.MemoryGrowth, 0);
+    var memory = history.AtAge(SpikeMetric.MemoryGrowth, 0).ToArray();
     Assert.Multiple(() => {
       Assert.That(memory, Has.Length.EqualTo(1));
       Assert.That(memory[0].Name, Is.EqualTo("allocator"));
@@ -103,12 +112,12 @@ public sealed class SpikeAttributionHistoryTests {
     history.Add(busy, Delta(before, busy), 100);
     history.Add(empty, Delta(busy, empty), 200);
 
-    var old = history.AtAge(SpikeMetric.Cpu, 1);
+    var old = history.AtAge(SpikeMetric.Cpu, 1).ToArray();
     Assert.Multiple(() => {
       Assert.That(old, Has.Length.EqualTo(1));
-      Assert.That(old[0].Key, Is.EqualTo(new ProcessKey(42, 42_000)));
+      Assert.That(old[0].Key, Is.EqualTo(new ProcessKey(42, 42_000ul)));
       Assert.That(old[0].Name, Is.EqualTo("brief-worker"));
-      Assert.That(history.AtAge(SpikeMetric.Cpu, 0), Is.Empty);
+      Assert.That(history.AtAge(SpikeMetric.Cpu, 0).Length, Is.Zero);
     });
   }
 
@@ -147,9 +156,9 @@ public sealed class SpikeAttributionHistoryTests {
     history.Add(after, Delta(before, after), 1);
 
     Assert.Multiple(() => {
-      Assert.That(history.AtAge(SpikeMetric.Cpu, 0), Is.Empty);
-      Assert.That(history.AtAge(SpikeMetric.Io, 0), Is.Empty);
-      Assert.That(history.AtAge(SpikeMetric.MemoryGrowth, 0), Is.Empty);
+      Assert.That(history.AtAge(SpikeMetric.Cpu, 0).Length, Is.Zero);
+      Assert.That(history.AtAge(SpikeMetric.Io, 0).Length, Is.Zero);
+      Assert.That(history.AtAge(SpikeMetric.MemoryGrowth, 0).Length, Is.Zero);
     });
   }
 
