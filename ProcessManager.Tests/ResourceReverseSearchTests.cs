@@ -142,15 +142,16 @@ public sealed class ResourceReverseSearchTests {
       Module("/var/lib/app/cache.db", ModuleLoadReason.Data, ModuleRuntime.NotCode),
     ];
 
+    var code = ResourceReverseSearch.Find(probe, Snapshot(), "libssl");
+    var data = ResourceReverseSearch.Find(probe, Snapshot(), "cache.db");
     Assert.Multiple(() => {
-      Assert.That(
-        ResourceReverseSearch.Find(probe, Snapshot(), "libssl").Matches.Single().Kind,
-        Is.EqualTo(ReverseResourceKind.Module)
-      );
-      Assert.That(
-        ResourceReverseSearch.Find(probe, Snapshot(), "cache.db").Matches.Single().Kind,
-        Is.EqualTo(ReverseResourceKind.MappedFile)
-      );
+      Assert.That(code.Matches.Count(match => match.Kind == ReverseResourceKind.Module), Is.EqualTo(1));
+      Assert.That(code.Matches.Any(match => match.Kind == ReverseResourceKind.MappedFile), Is.False);
+      // cache.db also appears in the fixture's command line. That is a second, truthful reference,
+      // not a reason to collapse the mapping into it or to require the entire result set to contain
+      // exactly one item. The deep mapping itself must still be classified as data rather than code.
+      Assert.That(data.Matches.Count(match => match.Kind == ReverseResourceKind.MappedFile), Is.EqualTo(1));
+      Assert.That(data.Matches.Any(match => match.Kind == ReverseResourceKind.Module), Is.False);
     });
   }
 
