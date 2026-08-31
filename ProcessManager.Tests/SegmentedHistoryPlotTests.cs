@@ -6,22 +6,31 @@ using Hawkynt.ProcessManager.Ui.Desktop;
 
 namespace Hawkynt.ProcessManager.Tests;
 
-/// <summary>The segmented utilisation plate on processor system-information graphs.</summary>
+/// <summary>The segmented utilisation/capacity plates on system-information graphs.</summary>
 [TestFixture]
 public sealed class SegmentedHistoryPlotTests {
 
-  [TestCase("Processor", true)]
-  [TestCase("Core 0", true)]
-  [TestCase("Core 127", true)]
-  [TestCase("Node 0", false)]
-  [TestCase("Memory", false)]
-  [TestCase("GPU — card0", false)]
-  public void OnlyProcessorAndLogicalProcessorPlotsUseTheMeter(string caption, bool expected) {
+  [TestCase("Processor", PerformanceUnit.Percent, 100, true)]
+  [TestCase("Core 0", PerformanceUnit.Percent, 100, true)]
+  [TestCase("Core 127", PerformanceUnit.Percent, 100, true)]
+  [TestCase("Memory", PerformanceUnit.Percent, 100, true)]
+  [TestCase("Physical memory", PerformanceUnit.Bytes, 16 * 1024, true)]
+  [TestCase("Swap", PerformanceUnit.Bytes, 4 * 1024, true)]
+  [TestCase("Committed", PerformanceUnit.Bytes, 32 * 1024, false)]
+  [TestCase("Node 0", PerformanceUnit.Percent, 100, false)]
+  [TestCase("Active time", PerformanceUnit.Percent, 100, false)]
+  [TestCase("Utilisation", PerformanceUnit.Percent, 100, false)]
+  public void OnlyTheReferenceSystemMetersGetSegmentedPlates(
+    string caption,
+    PerformanceUnit unit,
+    double maximum,
+    bool expected
+  ) {
     var plot = new HistoryPlot {
       Bounds = new(0, 0, 240, 100),
       Caption = caption,
-      Maximum = 100,
-      Unit = PerformanceUnit.Percent,
+      Maximum = maximum,
+      Unit = unit,
     };
 
     Assert.That(plot.UsesSegmentedMeter, Is.EqualTo(expected));
@@ -34,6 +43,18 @@ public sealed class SegmentedHistoryPlotTests {
       Caption = "Processor",
       Maximum = 100,
       Unit = PerformanceUnit.Celsius,
+    };
+
+    Assert.That(plot.UsesSegmentedMeter, Is.False);
+  }
+
+  [Test]
+  public void AnUnboundedMemorySeriesDoesNotPretendToHaveACapacity() {
+    var plot = new HistoryPlot {
+      Bounds = new(0, 0, 240, 100),
+      Caption = "Swap",
+      Maximum = 0,
+      Unit = PerformanceUnit.Bytes,
     };
 
     Assert.That(plot.UsesSegmentedMeter, Is.False);
