@@ -28,7 +28,10 @@ public sealed class SpikeInspectionWindowTests {
       Assert.That(text, Does.Contain("brief-worker (PID 42)"));
       Assert.That(text, Does.Contain("91.5 % — exited"));
       Assert.That(text, Does.Contain("server (PID 77)"));
-      Assert.That(text, Does.Contain("12.25 % — running"));
+      // The inspection window deliberately uses the application's Humanize formatter, including
+      // its configured percentage precision, rather than printing the raw Rate differently from
+      // every graph and process column beside it.
+      Assert.That(text, Does.Contain("12.3 % — running"));
       Assert.That(text, Does.Contain("Exited processes remain historical evidence"));
     });
   }
