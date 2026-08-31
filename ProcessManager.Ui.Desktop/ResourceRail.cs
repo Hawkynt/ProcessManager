@@ -81,6 +81,16 @@ public sealed class ResourceRail : ListBox {
   /// </remarks>
   public int Samples { get; set; } = 60;
 
+  /// <summary>
+  /// How much older history is progressively fitted behind <see cref="Samples"/>.
+  /// </summary>
+  /// <remarks>
+  /// The main graph and every rail row must use one time axis. Keeping this explicit rather than
+  /// relying on the painter's default means a runtime history-mode change cannot leave the rail on
+  /// a different horizon from the selected resource.
+  /// </remarks>
+  public double HistoryMultiplier { get; set; } = HistoryAxis.DefaultMultiplier;
+
   /// <summary>Frozen with the graphs, so pausing the page pauses all of it (PRD §45.4).</summary>
   public int SkipNewest { get; set; }
 
@@ -125,7 +135,7 @@ public sealed class ResourceRail : ListBox {
     // pretending to be a graph.
     var spark = new Rectangle(left, bounds.Y + 22, width, this.SparkHeight);
     if (row.History is not null)
-      Sparkline.Draw(g, spark, row.History, row.Maximum, row.Accent, theme, this.Samples, this.SkipNewest);
+      Sparkline.Draw(g, spark, row.History, row.Maximum, row.Accent, theme, this.Samples, this.SkipNewest, this.HistoryMultiplier);
 
     var readings = new Rectangle(left, bounds.Bottom - 18, width, 16);
     g.DrawText(row.Primary, theme.DefaultFont, text, readings, ContentAlignment.TopLeft);
