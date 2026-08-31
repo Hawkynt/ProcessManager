@@ -62,7 +62,7 @@ public sealed class FindResourceDialog : Form {
     this._results.ItemHeight = 17;
     this._results.Columns.Add(new("Process", 190, node => Row(node).ProcessName));
     this._results.Columns.Add(new("PID", 68, node => Row(node).Pid.ToString(System.Globalization.CultureInfo.InvariantCulture)));
-    this._results.Columns.Add(new("Kind", 100, node => Name(Row(node).Kind)));
+    this._results.Columns.Add(new("Kind", 100, node => KindName(Row(node).Kind)));
     this._results.Columns.Add(new("Type", 100, node => Row(node).ObjectType));
     // What the holder may do with the thing that matched: the access mode of a descriptor, the
     // permission characters of a mapping. The question after "who has my file open" is always
@@ -179,7 +179,7 @@ public sealed class FindResourceDialog : Form {
       : $"{found} Partial deep scan: {report.DeepScanned}/{report.DeepAttempted} processes read; the rest denied or exited.";
   }
 
-  private static string Name(ReverseResourceKind kind) => kind switch {
+  private static string KindName(ReverseResourceKind kind) => kind switch {
     ReverseResourceKind.Process => "Process",
     ReverseResourceKind.CommandLine => "Command line",
     ReverseResourceKind.ImagePath => "Image",
