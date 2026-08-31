@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using Hawkynt.NativeForms;
 using Hawkynt.ProcessManager.Model;
+using Hawkynt.ProcessManager.Query;
 using Hawkynt.ProcessManager.Sampling;
 
 namespace Hawkynt.ProcessManager.Ui.Desktop;
