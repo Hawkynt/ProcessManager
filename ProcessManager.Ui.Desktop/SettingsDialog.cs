@@ -100,6 +100,9 @@ public sealed class SettingsDialog : Form {
 
   private readonly CheckBox _busiest = new() { Text = "Open the performance page on whatever is busiest" };
   private readonly CheckBox _compact = new() { Text = "Open the performance page tightened up" };
+  private readonly CheckBox _compressHistory = new() { Text = "Compress older graph history" };
+  private readonly Label _historyMultiplierCaption = new() { Text = "Older history reaches" };
+  private readonly ComboBox _historyMultiplier = new() { DropDownStyle = ComboBoxStyle.DropDownList };
   private readonly Button _thresholds = new() { Text = "Highlighting thresholds…" };
 
   private readonly Label _intervalCaption = new() { Text = "Sample every" };
@@ -132,6 +135,7 @@ public sealed class SettingsDialog : Form {
   ];
 
   private int _filledHighlight = -1;
+  private int _filledHistoryMultiplier = -1;
 
   /// <summary>
   /// How the terminal draws a history column, including letting it decide for itself.
@@ -221,6 +225,9 @@ public sealed class SettingsDialog : Form {
 
     this.Fill(settings);
 
+    this._compressHistory.CheckedChanged += (_, _) =>
+      this._historyMultiplier.Enabled = this._compressHistory.Checked;
+
     this._thresholds.Click += (_, _) => this.EditThresholds();
     this._defaults.Click += (_, _) => this.Fill(new UserSettings {
       // The defaults for what this box shows; the rest of the file is left alone, because
@@ -258,6 +265,8 @@ public sealed class SettingsDialog : Form {
     this.Section("The performance page", _HeadingGap);
     this.Row(this._busiest);
     this.Row(this._compact);
+    this.Row(this._compressHistory);
+    this.Pair(this._historyMultiplierCaption, this._historyMultiplier);
     this.Row(this._thresholds);
 
     this.Section("How often, and what the numbers mean", _HeadingGap);
@@ -274,10 +283,7 @@ public sealed class SettingsDialog : Form {
     // A picker's caption is a separate label, so the picker itself has no text to be announced by
     // and reads as an unlabelled combo box (PRD §74). The checkboxes above need none: their caption
     // is their own text.
-    foreach (var (picker, caption) in (ReadOnlySpan<(ComboBox Picker, Label Caption)>)[
-      (this._interval, this._intervalCaption),
-      (this._cpuMode, this._cpuCaption),
-    ]) {
+    foreach (var (picker, caption) in this.Pickers()) {
       picker.AccessibleName = caption.Text;
       caption.AccessibleRole = AccessibleRole.StaticText;
     }
@@ -340,6 +346,7 @@ public sealed class SettingsDialog : Form {
         HideUnavailableTabs = this._hideTabs.Checked,
         PerformanceOpensOnBusiest = this._busiest.Checked,
         CompactPerformancePage = this._compact.Checked,
+        CompressPerformanceHistory = this._compressHistory.Checked,
         CpuMode = this._cpuMode.SelectedIndex == 1 ? CpuPercentMode.PerCore : CpuPercentMode.Normalized,
         PercentDecimals = Math.Clamp(this._decimals.SelectedIndex, 0, Humanize.MaximumPercentDecimals),
         Grouping = _Groupings[Math.Clamp(this._grouping.SelectedIndex, 0, _Groupings.Length - 1)],
@@ -351,6 +358,15 @@ public sealed class SettingsDialog : Form {
         ScrollToNewProcess = this._followNew.Checked,
         ManualRefresh = manual,
       };
+
+      // Like the arbitrary refresh/highlight durations below: the file accepts any multiplier in a
+      // broad safe range, while the picker offers four useful landmarks. Merely opening Settings
+      // must not round a hand-written 7.5× to 8×.
+      var historyMultiplier = this._historyMultiplier.SelectedIndex;
+      if (historyMultiplier >= 0 && historyMultiplier != this._filledHistoryMultiplier)
+        settings = settings with {
+          PerformanceHistoryMultiplier = UserSettings.OfferedPerformanceHistoryMultipliers[historyMultiplier],
+        };
 
       // The same care the interval gets below, and for the same reason: the file takes any duration
       // and this picker offers six, so a file saying three seconds opens showing "2 seconds" — the
@@ -426,6 +442,7 @@ public sealed class SettingsDialog : Form {
     (this._graphs, this._graphsCaption),
     (this._decimals, this._decimalsCaption),
     (this._highlight, this._highlightCaption),
+    (this._historyMultiplier, this._historyMultiplierCaption),
   ];
 
   private string CaptionOf(ComboBox picker) {
@@ -460,6 +477,9 @@ public sealed class SettingsDialog : Form {
     this._hideTabs.Checked = settings.HideUnavailableTabs;
     this._busiest.Checked = settings.PerformanceOpensOnBusiest;
     this._compact.Checked = settings.CompactPerformancePage;
+    this._compressHistory.Checked = settings.CompressPerformanceHistory;
+    this.FillHistoryMultiplier(settings.PerformanceHistoryMultiplier);
+    this._historyMultiplier.Enabled = settings.CompressPerformanceHistory;
     this._followNew.Checked = settings.ScrollToNewProcess;
     this.FillHighlight(settings.NewHighlightSeconds);
     if (this._graphs.Items.Count == 0)
@@ -498,6 +518,22 @@ public sealed class SettingsDialog : Form {
 
     this._interval.SelectedIndex = nearest;
     this._filledInterval = nearest;
+  }
+
+  /// <summary>The nearest useful graph-history multiplier to whatever the file said.</summary>
+  private void FillHistoryMultiplier(double multiplier) {
+    if (this._historyMultiplier.Items.Count == 0)
+      foreach (var offered in UserSettings.OfferedPerformanceHistoryMultipliers)
+        this._historyMultiplier.Items.Add($"{offered:0.#}× the selected span");
+
+    var nearest = 0;
+    for (var i = 1; i < UserSettings.OfferedPerformanceHistoryMultipliers.Count; ++i)
+      if (Math.Abs(UserSettings.OfferedPerformanceHistoryMultipliers[i] - multiplier)
+          < Math.Abs(UserSettings.OfferedPerformanceHistoryMultipliers[nearest] - multiplier))
+        nearest = i;
+
+    this._historyMultiplier.SelectedIndex = nearest;
+    this._filledHistoryMultiplier = nearest;
   }
 
   /// <summary>The nearest offered highlight duration to whatever the file said (PRD §87).</summary>
