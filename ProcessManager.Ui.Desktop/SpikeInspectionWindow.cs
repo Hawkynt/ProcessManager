@@ -23,6 +23,7 @@ internal sealed class SpikeInspectionWindow : Form {
   private readonly TreeListView _rows = new();
   private readonly Button _close = new() { Text = "Close" };
   private readonly List<Entry> _entries = [];
+  private readonly SpikeMetric _metric;
 
   private readonly record struct Entry(SpikeContributor Contributor, bool IsAlive);
 
@@ -35,6 +36,7 @@ internal sealed class SpikeInspectionWindow : Form {
   ) {
     ArgumentNullException.ThrowIfNull(isAlive);
 
+    this._metric = metric;
     this.Text = $"{MetricName(metric)} — contributors";
     this.QuitsOnClose = false;
     this.Bounds = new(0, 0, 760, 390);
@@ -80,22 +82,11 @@ internal sealed class SpikeInspectionWindow : Form {
     foreach (var entry in this._entries)
       text.Append(entry.Contributor.Name)
         .Append(" (PID ").Append(entry.Contributor.Key.Pid.ToString(CultureInfo.InvariantCulture)).Append(") — ")
-        .Append(ReadingFromWindow(entry.Contributor.Value)).Append(" — ")
+        .Append(Reading(this._metric, entry.Contributor.Value)).Append(" — ")
         .AppendLine(entry.IsAlive ? "running" : "exited");
 
     return text.ToString();
   }
-
-  private SpikeMetric _metric;
-
-  /// <summary>
-  /// Called immediately after construction by the performance page so <see cref="Describe"/> uses
-  /// the same unit as the visible Contribution column. Kept as a method rather than another mutable
-  /// public property because changing a historical sample's metric after it is shown makes no sense.
-  /// </summary>
-  public void SetMetricForDescription(SpikeMetric metric) => this._metric = metric;
-
-  private string ReadingFromWindow(Rate value) => Reading(this._metric, value);
 
   private static Entry Row(TreeNode node) => (Entry)node.Tag!;
 
