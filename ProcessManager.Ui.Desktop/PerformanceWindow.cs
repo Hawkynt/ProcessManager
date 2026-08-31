@@ -6,6 +6,7 @@ using Hawkynt.ProcessManager.Abstractions;
 using Hawkynt.ProcessManager.Model;
 using Hawkynt.ProcessManager.Query;
 using Hawkynt.ProcessManager.Sampling;
+using Hawkynt.ProcessManager.Settings;
 
 namespace Hawkynt.ProcessManager.Ui.Desktop;
 
@@ -152,14 +153,28 @@ public sealed class PerformanceWindow : Form {
   /// which is what the program does; a caller that says either way is not asking about anybody's
   /// configuration — which is what lets this be tested without one (PRD §67).
   /// </param>
-  public PerformanceWindow(ISystemProbe probe, Sampler sampler, bool? openOnBusiest = null) {
+  /// <param name="historyMultiplier">
+  /// Requested older-history horizon. Null follows the settings file when the ordinary application
+  /// constructor is used. Tests that supply <paramref name="openOnBusiest"/> keep their historical
+  /// isolation and use the built-in multiplier unless they explicitly supply this value too.
+  /// </param>
+  public PerformanceWindow(ISystemProbe probe, Sampler sampler, bool? openOnBusiest = null, double? historyMultiplier = null) {
     ArgumentNullException.ThrowIfNull(probe);
     ArgumentNullException.ThrowIfNull(sampler);
 
     this._probe = probe;
     this._sampler = sampler;
     this._topology = probe.DescribeTopology();
-    this.OpenOnBusiest = openOnBusiest ?? Settings.SettingsStore.Load().PerformanceOpensOnBusiest;
+
+    // Product construction asks the file once and uses it for both performance-page preferences.
+    // Tests have historically supplied openOnBusiest specifically to avoid depending on a real
+    // profile; keep that property by not reading the file merely to obtain the new history setting.
+    var settings = openOnBusiest is null ? SettingsStore.Load() : null;
+    this.OpenOnBusiest = openOnBusiest ?? settings!.PerformanceOpensOnBusiest;
+    this.HistoryMultiplier = historyMultiplier
+      ?? (settings is null
+        ? UserSettings.DefaultPerformanceHistoryMultiplier
+        : settings.CompressPerformanceHistory ? settings.PerformanceHistoryMultiplier : 1);
 
     this.Text = "System information";
     // A secondary window closing must not take the program with it. Form.QuitsOnClose defaults to
@@ -248,11 +263,11 @@ public sealed class PerformanceWindow : Form {
   } = 1;
 
   /// <summary>
-  /// How many seconds the graphs cover (PRD §45.4).
+  /// How many seconds the newest, uncompressed part of the graphs covers (PRD §45.4).
   /// </summary>
   /// <remarks>
-  /// Set here rather than only through the drop-down, because the same span has to reach the rail's
-  /// sparklines as well as the plots — one page, one time axis.
+  /// Set here rather than only through the drop-down, because the same recent span has to reach the
+  /// rail's sparklines as well as the plots — one page, one time axis.
   /// </remarks>
   public int SpanSeconds {
     get;
@@ -264,6 +279,37 @@ public sealed class PerformanceWindow : Form {
       this.ApplySpan();
     }
   } = 60;
+
+  /// <summary>
+  /// Requested total history horizon relative to <see cref="SpanSeconds"/>; one means linear.
+  /// </summary>
+  /// <remarks>
+  /// The renderer caps this to what its backing ring can actually retain. Keeping the request on the
+  /// page rather than on one plot means the rail, a per-core wall and a stacked GPU page always use
+  /// the same time semantics.
+  /// </remarks>
+  public double HistoryMultiplier {
+    get;
+    set {
+      var normalized = double.IsFinite(value) ? Math.Clamp(value, 1d, 64d) : 1d;
+      if (Math.Abs(field - normalized) < 0.000001)
+        return;
+
+      field = normalized;
+      this.ApplySpan();
+    }
+  } = UserSettings.DefaultPerformanceHistoryMultiplier;
+
+  /// <summary>The real visible horizon of the currently displayed graphs, after retention capping.</summary>
+  public double VisibleHistorySeconds {
+    get {
+      foreach (var plot in this.Plots())
+        if (plot.Visible)
+          return plot.VisibleSpanSeconds;
+
+      return this.SpanSeconds;
+    }
+  }
 
   /// <summary>Whether the drawing is frozen. Collection carries on regardless (PRD §45.4).</summary>
   public bool Paused => this._frozenSamples >= 0;
@@ -285,7 +331,7 @@ public sealed class PerformanceWindow : Form {
       this._spanBox.Items.Add(span.Label);
 
     this._spanBox.SelectedIndex = 1;
-    this._spanBox.AccessibleName = "History span";
+    this._spanBox.AccessibleName = "Recent history span";
     this._spanBox.SelectedIndexChanged += (_, _) => this.ChooseSpan(this._spanBox.SelectedIndex);
     this.Controls.Add(this._spanBox);
 
@@ -298,7 +344,7 @@ public sealed class PerformanceWindow : Form {
     this.Controls.Add(this._inspect);
   }
 
-  /// <summary>The spans §45.4 offers, shortest first.</summary>
+  /// <summary>The recent spans §45.4 offers, shortest first.</summary>
   private static readonly (string Label, int Seconds)[] _Spans = [
     ("30 seconds", 30),
     ("60 seconds", 60),
@@ -316,15 +362,17 @@ public sealed class PerformanceWindow : Form {
       this._spanBox.SelectedIndex = index;
   }
 
-  /// <summary>Puts the span on every plot and on the rail, so one page has one time axis.</summary>
+  /// <summary>Puts the time mode on every plot and on the rail, so one page has one time axis.</summary>
   private void ApplySpan() {
     foreach (var plot in this.Plots()) {
       plot.SpanSeconds = this.SpanSeconds;
       plot.SecondsPerSample = this.SecondsPerSample;
+      plot.HistoryMultiplier = this.HistoryMultiplier;
       plot.Invalidate();
     }
 
     this._rail.Samples = Math.Max(1, (int)Math.Round(this.SpanSeconds / this.SecondsPerSample));
+    this._rail.HistoryMultiplier = this.HistoryMultiplier;
     this._rail.Invalidate();
   }
 
@@ -370,7 +418,15 @@ public sealed class PerformanceWindow : Form {
   /// </summary>
   private void Inspect() {
     var text = new StringBuilder();
-    text.Append(this._shown).Append(" — last ").Append(this.SpanSeconds).AppendLine(" seconds");
+    var visible = this.VisibleHistorySeconds;
+    text.Append(this._shown).Append(" — ");
+    if (this.HistoryMultiplier <= 1.000001)
+      text.Append("last ").Append(Duration(visible));
+    else
+      text.Append(Duration(visible)).Append(" visible; newest ").Append(Duration(this.SpanSeconds))
+        .Append(" at ordinary resolution");
+
+    text.AppendLine();
     text.AppendLine();
     foreach (var plot in this.Plots()) {
       if (!plot.Visible)
@@ -383,6 +439,13 @@ public sealed class PerformanceWindow : Form {
 
     new InspectionWindow(this._shown, text.ToString()).Show();
   }
+
+  /// <summary>A compact truthful duration for graph menus and inspection text.</summary>
+  private static string Duration(double seconds) => seconds switch {
+    >= 3600 => $"{seconds / 3600:0.#} hours",
+    >= 120 => $"{seconds / 60:0.#} minutes",
+    _ => $"{seconds:0.#} seconds",
+  };
 
   #endregion
 
@@ -420,6 +483,7 @@ public sealed class PerformanceWindow : Form {
       graph.DropDownItems.Add(Item(_Spans[i].Label, () => this.ChooseSpan(chosen)));
     }
 
+    graph.DropDownItems.Add(this.BuildHistoryMenu());
     graph.DropDownItems.Add(new ToolStripSeparator());
     graph.DropDownItems.Add(Item("Expand…", this.Inspect));
     graph.DropDownItems.Add(Item("Show logical processors", () => this._perCore.Checked = !this._perCore.Checked));
@@ -452,9 +516,25 @@ public sealed class PerformanceWindow : Form {
     }
 
     menu.Items.Add(span);
+    menu.Items.Add(this.BuildHistoryMenu());
     menu.Items.Add(Item("Show logical processors", () => this._perCore.Checked = !this._perCore.Checked));
     menu.Items.Add(Item("Engineering diagnostics", this.ToggleDiagnostics));
     return menu;
+  }
+
+  /// <summary>
+  /// Session-local graph horizon override. Persistent defaults live in Settings; this menu is the
+  /// quick troubleshooting control beside the graph itself.
+  /// </summary>
+  private ToolStripMenuItem BuildHistoryMenu() {
+    var history = new ToolStripMenuItem("Older history");
+    history.DropDownItems.Add(Item("Linear — selected span only", () => this.HistoryMultiplier = 1));
+    foreach (var multiplier in UserSettings.OfferedPerformanceHistoryMultipliers) {
+      var chosen = multiplier;
+      history.DropDownItems.Add(Item($"{chosen:0.#}× history", () => this.HistoryMultiplier = chosen));
+    }
+
+    return history;
   }
 
   private static ToolStripMenuItem Item(string text, Action action, Keys shortcut = Keys.None) {
@@ -602,7 +682,10 @@ public sealed class PerformanceWindow : Form {
         ++plots;
 
     builder.AppendLine($"page stats:   {live} live, {hardware} hardware, {diagnostics} diagnostics");
-    builder.AppendLine($"page graphs:  {plots} visible, {this.SpanSeconds} s span, {(this.Paused ? "paused" : "live")}");
+    builder.AppendLine(
+      $"page graphs:  {plots} visible, {this.SpanSeconds} s recent, {this.HistoryMultiplier:0.###}× requested, "
+      + $"{this.VisibleHistorySeconds:0.#} s visible, {(this.Paused ? "paused" : "live")}"
+    );
     builder.AppendLine($"page plots:   {this._plotArea.Width}x{this._plotArea.Height} at {this._plotArea.X},{this._plotArea.Y}");
     builder.AppendLine($"page bar:     {(this._composition.Visible ? "composition shown" : "none")}");
     return builder.ToString();
