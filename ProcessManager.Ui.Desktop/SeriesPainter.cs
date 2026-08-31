@@ -62,16 +62,11 @@ internal static class SeriesPainter {
 
     for (var x = plot.Right - 1; x >= plot.Left; --x) {
       var distance = plot.Right - 1 - x;
-      var (youngest, oldest) = axis.AgesForPixel(distance);
+      var (youngest, _) = axis.AgesForPixel(distance);
       if (youngest >= count)
         break;
 
-      // Once a pixel represents more than one sample, retain the peak rather than average it away.
-      // A compressed history exists precisely so an old one-second spike remains findable.
-      var reading = oldest - youngest <= 1d
-        ? Interpolated(values, count, youngest)
-        : Peak(values, count, youngest, oldest);
-
+      var reading = ReadingForPixel(values, count, axis, distance);
       if (!reading.HasValue) {
         // A gap breaks the fill as well as the line. Filling through it would draw activity that was
         // never measured (PRD §3.3).
@@ -100,6 +95,21 @@ internal static class SeriesPainter {
       previousY = y;
       havePrevious = true;
     }
+  }
+
+  /// <summary>
+  /// What one pixel column says, preserving a peak when that column represents several old samples.
+  /// </summary>
+  internal static Rate ReadingForPixel(
+    HistoryRing<Rate> values,
+    int count,
+    HistoryAxis axis,
+    int pixelsFromNewest
+  ) {
+    var (youngest, oldest) = axis.AgesForPixel(pixelsFromNewest);
+    return oldest - youngest <= 1d
+      ? Interpolated(values, count, youngest)
+      : Peak(values, count, youngest, oldest);
   }
 
   /// <summary>
