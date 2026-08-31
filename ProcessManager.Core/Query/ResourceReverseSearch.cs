@@ -103,7 +103,10 @@ public static class ResourceReverseSearch {
     var deepAttempted = 0;
     var processes = snapshot.Processes;
     for (var i = 0; i < processes.Length; ++i) {
-      ref readonly var process = ref processes[i];
+      // A value copy, because the process key is captured by the guarded probe-read lambdas below.
+      // Ref locals cannot be captured and, more importantly, the snapshot is mutable on the next
+      // sample while a reverse lookup's identity must stay the one it started with.
+      var process = processes[i];
       AddIdentity(in process, matcher, matches);
 
       if (servicesByPid.TryGetValue(process.Pid, out var ownedServices))
@@ -117,8 +120,9 @@ public static class ResourceReverseSearch {
 
       ++deepAttempted;
       var complete = true;
+      var key = process.Key;
 
-      var handles = Read(() => probe.GetHandles(process.Key), out var handlesRead);
+      var handles = Read(() => probe.GetHandles(key), out var handlesRead);
       complete &= handlesRead;
       foreach (var handle in handles) {
         if (handle.Name is not { } name || !matcher.Matches(name))
@@ -134,7 +138,7 @@ public static class ResourceReverseSearch {
         );
       }
 
-      var modules = Read(() => probe.GetModules(process.Key), out var modulesRead);
+      var modules = Read(() => probe.GetModules(key), out var modulesRead);
       complete &= modulesRead;
       foreach (var module in modules) {
         if (!matcher.Matches(module.Path))
@@ -151,7 +155,7 @@ public static class ResourceReverseSearch {
         );
       }
 
-      var connections = Read(() => probe.GetConnections(process.Key), out var connectionsRead);
+      var connections = Read(() => probe.GetConnections(key), out var connectionsRead);
       complete &= connectionsRead;
       foreach (var connection in connections) {
         var endpoint = $"{connection.LocalAddress}:{connection.LocalPort} → {connection.RemoteAddress}:{connection.RemotePort}";
