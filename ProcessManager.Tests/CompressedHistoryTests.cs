@@ -156,4 +156,47 @@ public sealed class CompressedHistoryTests {
     });
   }
 
+  [Test]
+  public void PointedSampleAgeUsesTheSameCompressedAxisAsTheReading() {
+    var history = new HistoryRing<Rate>(960);
+    for (var i = 0; i < 960; ++i)
+      history.Add(Rate.Of(i));
+
+    var plot = new HistoryPlot {
+      Bounds = new(0, 0, 500, 160),
+      SpanSeconds = 60,
+      SecondsPerSample = 1,
+      HistoryMultiplier = 15,
+    };
+    plot.AddSeries(history, Color.Green, "CPU");
+
+    plot.PointAt(499);
+    Assert.That(plot.PointedSampleAge, Is.EqualTo(0));
+
+    plot.PointAt(250);
+    Assert.That(plot.PointedSampleAge, Is.GreaterThan(60), "the middle of a compressed 15x axis is older than the recent span");
+  }
+
+  [Test]
+  public void PointedSampleAgeIncludesPauseAndRejectsTheSegmentedMeter() {
+    var history = new HistoryRing<Rate>(960);
+    for (var i = 0; i < 20; ++i)
+      history.Add(Rate.Of(i));
+
+    var plot = new HistoryPlot {
+      Bounds = new(0, 0, 500, 160),
+      Caption = "Processor",
+      Unit = Hawkynt.ProcessManager.Query.PerformanceUnit.Percent,
+      Maximum = 100,
+      SkipNewest = 7,
+    };
+    plot.AddSeries(history, Color.Green, "CPU");
+
+    plot.PointAt(499);
+    Assert.That(plot.PointedSampleAge, Is.EqualTo(7), "paused now is seven samples behind the ring's real now");
+
+    plot.PointAt(10);
+    Assert.That(plot.PointedSampleAge, Is.Null, "the segmented meter has no time coordinate");
+  }
+
 }
