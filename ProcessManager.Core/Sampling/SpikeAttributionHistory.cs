@@ -150,7 +150,7 @@ public sealed class SpikeAttributionHistory {
 
     // Insertion into five elements is cheaper and simpler than allocating/sorting a list containing
     // every process. Ties remain in process-table order so repeated identical readings do not jitter.
-    var insert = count;
+    var insert = (int)count;
     for (var i = 0; i < count; ++i)
       if (value.Value > entries[i].Value.Value) {
         insert = i;
@@ -160,7 +160,7 @@ public sealed class SpikeAttributionHistory {
     if (insert >= this._contributors)
       return;
 
-    var newCount = Math.Min(count + 1, this._contributors);
+    var newCount = Math.Min((int)count + 1, this._contributors);
     for (var i = newCount - 1; i > insert; --i)
       entries[i] = entries[i - 1];
 
