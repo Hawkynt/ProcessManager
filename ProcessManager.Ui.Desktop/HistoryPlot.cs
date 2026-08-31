@@ -105,19 +105,30 @@ public sealed class HistoryPlot : OwnerDrawnControl {
   } = string.Empty;
 
   /// <summary>
-  /// Whether this is one of the processor plots that carries the segmented utilisation meter.
+  /// Whether this plot carries the segmented utilisation/capacity meter used by the system pages.
   /// </summary>
   /// <remarks>
-  /// The meter is deliberately semantic rather than opt-in state on the performance window: the
-  /// whole processor and its logical-processor parts are the same instrument at two resolutions.
-  /// NUMA nodes and unrelated percentage plots are not logical processors and keep the ordinary
-  /// history-only shape.
+  /// Processor plots and the bounded physical-memory/swap plots are the meters the reference UI
+  /// actually pairs with histories. A disk, GPU or sensor does not acquire one merely because its
+  /// scale happens to be a percentage: that would turn a visual convention into a unit heuristic.
   /// </remarks>
-  public bool UsesSegmentedMeter
+  public bool UsesSegmentedMeter => this.IsProcessorMeter || this.IsMemoryMeter;
+
+  private bool IsProcessorMeter
     => this.Unit == PerformanceUnit.Percent
       && Math.Abs(this.Maximum - 100) < 0.0001
       && (string.Equals(this.Caption, "Processor", StringComparison.Ordinal)
         || this.Caption.StartsWith("Core ", StringComparison.Ordinal));
+
+  private bool IsMemoryMeter
+    => this.Maximum > 0
+      && (
+        this.Unit == PerformanceUnit.Bytes
+          && this.Caption is "Physical memory" or "Swap"
+        || this.Unit == PerformanceUnit.Percent
+          && Math.Abs(this.Maximum - 100) < 0.0001
+          && string.Equals(this.Caption, "Memory", StringComparison.Ordinal)
+      );
 
   /// <summary>How many seconds the width covers (PRD §45.4).</summary>
   public int SpanSeconds { get; set; } = 60;
@@ -188,7 +199,7 @@ public sealed class HistoryPlot : OwnerDrawnControl {
     => this.UsesSegmentedMeter && this._series.Count > 0 && this.Width >= 80 && this.Height >= 40;
 
   /// <summary>
-  /// Narrow per-core cells get a narrow meter; the whole-processor plot can afford the XP-sized one.
+  /// Narrow per-core cells get a narrow meter; the whole-resource plot can afford the wider one.
   /// </summary>
   private int MeterWidth => Math.Clamp(this.Width / 4, 34, 44);
 
@@ -417,7 +428,7 @@ public sealed class HistoryPlot : OwnerDrawnControl {
       g.DrawRectangle(theme.Border, new(0, 0, this.Width - 1, this.Height - 1));
 
     // The caption and the current reading sit inside the plot, top-left, the way the reference tools
-    // place them — a label outside would cost a row of pixels the plot can use. The processor meter
+    // place them — a label outside would cost a row of pixels the plot can use. A segmented meter
     // carries the current reading itself, so its adjacent history only needs to say what it is.
     var caption = this.DrawsSegmentedMeter
       ? this.Caption
@@ -436,13 +447,14 @@ public sealed class HistoryPlot : OwnerDrawnControl {
   }
 
   /// <summary>
-  /// Paints the compact XP-style utilisation plate beside processor histories.
+  /// Paints the compact segmented meter beside the bounded system-information histories.
   /// </summary>
   /// <remarks>
   /// Two-pixel bars and one-pixel gaps are a visual convention, not a data model. The values come
   /// from the same history rings as the graph, including <see cref="SkipNewest"/>, so pausing cannot
-  /// leave the meter on "now" while its history is frozen in the past. Kernel time is a subset of
-  /// total busy time and is therefore clamped to it before segment counts are calculated.
+  /// leave the meter on "now" while its history is frozen in the past. On processor plots kernel
+  /// time is a subset of total busy time and is therefore clamped to it before segment counts are
+  /// calculated.
   /// </remarks>
   private void DrawSegmentedMeter(IGraphics g, ITheme theme) {
     if (!this.DrawsSegmentedMeter)
@@ -453,8 +465,9 @@ public sealed class HistoryPlot : OwnerDrawnControl {
     g.FillRectangle(RowPalette.PlotBackground, meter);
 
     var total = this.Latest(this._series[0]);
-    var kernel = this._series.Count > 1 ? this.Latest(this._series[1]) : null;
-    var totalValue = Math.Clamp(total ?? 0, 0, 100);
+    var kernel = this.IsProcessorMeter && this._series.Count > 1 ? this.Latest(this._series[1]) : null;
+    var ceiling = Math.Max(double.Epsilon, this.Maximum);
+    var totalValue = Math.Clamp(total ?? 0, 0, ceiling);
     var kernelValue = Math.Clamp(kernel ?? 0, 0, totalValue);
 
     const int Padding = 3;
@@ -462,8 +475,8 @@ public sealed class HistoryPlot : OwnerDrawnControl {
     var bar = new Rectangle(Padding, Padding, meterWidth - (Padding * 2), Math.Max(1, this.Height - textHeight - (Padding * 2)));
     var step = _SegmentHeight + _SegmentGap;
     var segmentCount = Math.Max(1, bar.Height / step);
-    var lit = Math.Clamp((int)Math.Round(segmentCount * totalValue / 100), 0, segmentCount);
-    var kernelLit = Math.Clamp((int)Math.Round(segmentCount * kernelValue / 100), 0, lit);
+    var lit = Math.Clamp((int)Math.Round(segmentCount * totalValue / ceiling), 0, segmentCount);
+    var kernelLit = Math.Clamp((int)Math.Round(segmentCount * kernelValue / ceiling), 0, lit);
     var userColour = this._series[0].Color;
     var kernelColour = this._series.Count > 1 ? this._series[1].Color : RowPalette.CpuKernel;
     var unlitColour = RowPalette.PlotGrid(theme);
@@ -476,7 +489,7 @@ public sealed class HistoryPlot : OwnerDrawnControl {
 
     if (textHeight > 0) {
       var reading = total.HasValue
-        ? string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{totalValue:0}%")
+        ? this.Reading(Rate.Of(totalValue))
         : Humanize.Placeholder(UnknownReason.NotSampledYet);
       g.DrawText(
         reading,
