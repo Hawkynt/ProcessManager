@@ -84,6 +84,17 @@ public sealed class Sampler : IDisposable {
   public SnapshotDelta Delta { get; } = new();
 
   /// <summary>
+  /// The top processes behind each sampled CPU, I/O and memory-growth point (PRD §45, §73).
+  /// </summary>
+  /// <remarks>
+  /// Kept with the sampler rather than with the performance window so closing that window does not
+  /// erase the evidence that explains the spike somebody opens it to investigate. The capacity is a
+  /// little over fifteen minutes at the default one-second interval and is bounded independently of
+  /// process count; each slot stores at most five identities per metric.
+  /// </remarks>
+  public SpikeAttributionHistory Attribution { get; } = new(960);
+
+  /// <summary>
   /// What each program has cost across sessions, or null when nobody asked for it (PRD §44).
   /// </summary>
   /// <remarks>
@@ -126,11 +137,17 @@ public sealed class Sampler : IDisposable {
 
     this.Delta.Update(this._hasPrevious ? this._previous : null, this._current, this.CpuPercentMode);
 
+    // One wall-clock stamp for everything retained from this sample. If attribution and usage each
+    // called UtcNow themselves they could disagree across a clock tick about what "this interval"
+    // means even though both were derived from the same snapshot pair.
+    var utcNow = DateTime.UtcNow.Ticks;
+    this.Attribution.Add(this._current, this.Delta, utcNow);
+
     // Here rather than in each front-end, because this is the one place all three pass through and
     // three copies of "add this interval" would be three chances to add it twice. Null unless
     // somebody asked for it: a file recording which programs a person ran is surveillance if it
     // appears unasked, however useful it is once asked for (PRD §44).
-    this.Usage?.Add(this._current, this._hasPrevious ? this.Delta.ElapsedSeconds : 0, DateTime.UtcNow.Ticks);
+    this.Usage?.Add(this._current, this._hasPrevious ? this.Delta.ElapsedSeconds : 0, utcNow);
 
     // After the delta, because the delta is what says which processes have gone — and before anything
     // reads the snapshot, because a row that is going to be shown has to be in it (PRD §14, §87).
