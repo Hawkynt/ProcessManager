@@ -23,6 +23,11 @@ namespace Hawkynt.ProcessManager.Ui.Desktop;
 /// </remarks>
 public sealed class HistoryPlot : OwnerDrawnControl {
 
+  private const int _SegmentHeight = 2;
+  private const int _SegmentGap = 1;
+  private const int _MeterGap = 4;
+  private const int _MeterTextHeight = 16;
+
   private readonly List<Series> _series = [];
 
   /// <param name="Filled">
@@ -99,6 +104,21 @@ public sealed class HistoryPlot : OwnerDrawnControl {
     }
   } = string.Empty;
 
+  /// <summary>
+  /// Whether this is one of the processor plots that carries the segmented utilisation meter.
+  /// </summary>
+  /// <remarks>
+  /// The meter is deliberately semantic rather than opt-in state on the performance window: the
+  /// whole processor and its logical-processor parts are the same instrument at two resolutions.
+  /// NUMA nodes and unrelated percentage plots are not logical processors and keep the ordinary
+  /// history-only shape.
+  /// </remarks>
+  public bool UsesSegmentedMeter
+    => this.Unit == PerformanceUnit.Percent
+      && Math.Abs(this.Maximum - 100) < 0.0001
+      && (string.Equals(this.Caption, "Processor", StringComparison.Ordinal)
+        || this.Caption.StartsWith("Core ", StringComparison.Ordinal));
+
   /// <summary>How many seconds the width covers (PRD §45.4).</summary>
   public int SpanSeconds { get; set; } = 60;
 
@@ -161,6 +181,28 @@ public sealed class HistoryPlot : OwnerDrawnControl {
   /// <summary>How many samples the axis is wide.</summary>
   private int Samples => Math.Max(1, (int)Math.Round(this.SpanSeconds / Math.Max(0.05, this.SecondsPerSample)));
 
+  /// <summary>
+  /// The segmented meter needs a useful bar and the history still needs enough width to be a graph.
+  /// </summary>
+  private bool DrawsSegmentedMeter
+    => this.UsesSegmentedMeter && this._series.Count > 0 && this.Width >= 80 && this.Height >= 40;
+
+  /// <summary>
+  /// Narrow per-core cells get a narrow meter; the whole-processor plot can afford the XP-sized one.
+  /// </summary>
+  private int MeterWidth => Math.Clamp(this.Width / 4, 34, 44);
+
+  /// <summary>The rectangle in which time still means horizontal distance.</summary>
+  private Rectangle PlotBounds {
+    get {
+      if (!this.DrawsSegmentedMeter)
+        return new(0, 0, this.Width, this.Height);
+
+      var left = this.MeterWidth + _MeterGap;
+      return new(left, 0, Math.Max(1, this.Width - left), this.Height);
+    }
+  }
+
   #region what the pointer is over (PRD §45.4)
 
   /// <summary>
@@ -205,10 +247,11 @@ public sealed class HistoryPlot : OwnerDrawnControl {
   /// Walks the cursor along the axis — what an arrow key does. Starts at the newest sample.
   /// </summary>
   public void MoveCursor(int step) {
-    if (this.Width < 2)
+    var plot = this.PlotBounds;
+    if (plot.Width < 2)
       return;
 
-    this.PointAt(this._hoverX < 0 ? this.Width - 1 : Math.Clamp(this._hoverX + step, 0, this.Width - 1));
+    this.PointAt(this._hoverX < plot.Left ? plot.Right - 1 : Math.Clamp(this._hoverX + step, plot.Left, plot.Right - 1));
   }
 
   /// <summary>Takes the cursor off the plot, which is what leaving it does.</summary>
@@ -245,13 +288,14 @@ public sealed class HistoryPlot : OwnerDrawnControl {
   }
 
   private void UpdateHoverText() {
-    if (this._hoverX < 0 || this._series.Count == 0 || this.Width < 2) {
+    var plot = this.PlotBounds;
+    if (this._hoverX < plot.Left || this._hoverX >= plot.Right || this._series.Count == 0 || plot.Width < 2) {
       this.HoverText = string.Empty;
       return;
     }
 
-    var perSample = this.Width / (double)this.Samples;
-    var age = (int)Math.Round((this.Width - 1 - this._hoverX) / perSample);
+    var perSample = plot.Width / (double)this.Samples;
+    var age = (int)Math.Round((plot.Right - 1 - this._hoverX) / perSample);
     var text = new System.Text.StringBuilder();
     text.Append(age <= 0 ? "now" : $"{age * this.SecondsPerSample:0.#} s ago");
 
@@ -335,6 +379,7 @@ public sealed class HistoryPlot : OwnerDrawnControl {
     var g = e.Graphics;
     var theme = this.Theme;
     var bounds = new Rectangle(0, 0, this.Width, this.Height);
+    var plot = this.PlotBounds;
 
     // Black ground and a green graticule, which is what a monitor's plot has looked like since
     // before any of these tools existed. It is deliberately *not* the theme's field colour: this is
@@ -345,16 +390,16 @@ public sealed class HistoryPlot : OwnerDrawnControl {
     // A graticule rather than four rules: the vertical lines give the eye something to measure
     // horizontal movement against, which is most of what a scrolling plot is for.
     const int Cell = 16;
-    for (var y = Cell; y < this.Height; y += Cell)
-      g.DrawLine(RowPalette.PlotGrid(theme), 0, y, this.Width, y);
+    for (var y = Cell; y < plot.Height; y += Cell)
+      g.DrawLine(RowPalette.PlotGrid(theme), plot.Left, y, plot.Right, y);
 
-    for (var x = this.Width % Cell; x < this.Width; x += Cell)
-      g.DrawLine(RowPalette.PlotGrid(theme), x, 0, x, this.Height);
+    for (var x = plot.Left + (plot.Width % Cell); x < plot.Right; x += Cell)
+      g.DrawLine(RowPalette.PlotGrid(theme), x, 0, x, plot.Height);
 
     foreach (var series in this._series)
       SeriesPainter.Draw(
         g,
-        bounds,
+        plot,
         series.Values,
         this.Maximum,
         series.Color,
@@ -363,22 +408,96 @@ public sealed class HistoryPlot : OwnerDrawnControl {
         series.Filled ?? this.Filled
       );
 
+    this.DrawSegmentedMeter(g, theme);
     this.DrawCursor(g);
-    g.DrawRectangle(theme.Border, new(0, 0, this.Width - 1, this.Height - 1));
+
+    if (this.DrawsSegmentedMeter)
+      g.DrawRectangle(theme.Border, new(plot.Left, 0, plot.Width - 1, plot.Height - 1));
+    else
+      g.DrawRectangle(theme.Border, new(0, 0, this.Width - 1, this.Height - 1));
 
     // The caption and the current reading sit inside the plot, top-left, the way the reference tools
-    // place them — a label outside would cost a row of pixels the plot can use.
-    var caption = this.Value.Length > 0 && this.Caption.Length > 0
-      ? $"{this.Caption}: {this.Value}"
-      : this.Caption + this.Value;
+    // place them — a label outside would cost a row of pixels the plot can use. The processor meter
+    // carries the current reading itself, so its adjacent history only needs to say what it is.
+    var caption = this.DrawsSegmentedMeter
+      ? this.Caption
+      : this.Value.Length > 0 && this.Caption.Length > 0
+        ? $"{this.Caption}: {this.Value}"
+        : this.Caption + this.Value;
 
+    var textBounds = new Rectangle(plot.Left + 4, 2, Math.Max(0, plot.Width - 8), 16);
     if (caption.Length > 0)
-      g.DrawText(caption, theme.DefaultFont, RowPalette.PlotInk(theme, PlotInkKind.Caption), new(4, 2, this.Width - 8, 16), ContentAlignment.TopLeft);
+      g.DrawText(caption, theme.DefaultFont, RowPalette.PlotInk(theme, PlotInkKind.Caption), textBounds, ContentAlignment.TopLeft);
 
     if (this.ScaleLabel.Length > 0)
-      Shadowed(g, this.ScaleLabel, theme, new(4, 2, this.Width - 8, 16), ContentAlignment.TopRight);
+      Shadowed(g, this.ScaleLabel, theme, textBounds, ContentAlignment.TopRight);
 
     this.DrawAxis(g, theme);
+  }
+
+  /// <summary>
+  /// Paints the compact XP-style utilisation plate beside processor histories.
+  /// </summary>
+  /// <remarks>
+  /// Two-pixel bars and one-pixel gaps are a visual convention, not a data model. The values come
+  /// from the same history rings as the graph, including <see cref="SkipNewest"/>, so pausing cannot
+  /// leave the meter on "now" while its history is frozen in the past. Kernel time is a subset of
+  /// total busy time and is therefore clamped to it before segment counts are calculated.
+  /// </remarks>
+  private void DrawSegmentedMeter(IGraphics g, ITheme theme) {
+    if (!this.DrawsSegmentedMeter)
+      return;
+
+    var meterWidth = this.MeterWidth;
+    var meter = new Rectangle(0, 0, meterWidth, this.Height);
+    g.FillRectangle(RowPalette.PlotBackground, meter);
+
+    var total = this.Latest(this._series[0]);
+    var kernel = this._series.Count > 1 ? this.Latest(this._series[1]) : null;
+    var totalValue = Math.Clamp(total ?? 0, 0, 100);
+    var kernelValue = Math.Clamp(kernel ?? 0, 0, totalValue);
+
+    const int Padding = 3;
+    var textHeight = this.Height >= 48 ? _MeterTextHeight : 0;
+    var bar = new Rectangle(Padding, Padding, meterWidth - (Padding * 2), Math.Max(1, this.Height - textHeight - (Padding * 2)));
+    var step = _SegmentHeight + _SegmentGap;
+    var segmentCount = Math.Max(1, bar.Height / step);
+    var lit = Math.Clamp((int)Math.Round(segmentCount * totalValue / 100), 0, segmentCount);
+    var kernelLit = Math.Clamp((int)Math.Round(segmentCount * kernelValue / 100), 0, lit);
+    var userColour = this._series[0].Color;
+    var kernelColour = this._series.Count > 1 ? this._series[1].Color : RowPalette.CpuKernel;
+    var unlitColour = RowPalette.PlotGrid(theme);
+
+    for (var i = 0; i < segmentCount; ++i) {
+      var y = bar.Bottom - ((i + 1) * step) + _SegmentGap;
+      var colour = i < kernelLit ? kernelColour : i < lit ? userColour : unlitColour;
+      g.FillRectangle(colour, new(bar.Left, y, bar.Width, _SegmentHeight));
+    }
+
+    if (textHeight > 0) {
+      var reading = total.HasValue
+        ? string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{totalValue:0}%")
+        : Humanize.Placeholder(UnknownReason.NotSampledYet);
+      g.DrawText(
+        reading,
+        theme.DefaultFont,
+        RowPalette.PlotInk(theme, PlotInkKind.Caption),
+        new(0, this.Height - textHeight, meterWidth, textHeight - 1),
+        ContentAlignment.MiddleCenter
+      );
+    }
+
+    g.DrawRectangle(theme.Border, new(0, 0, meterWidth - 1, this.Height - 1));
+  }
+
+  /// <summary>The newest sample the drawing is allowed to show.</summary>
+  private double? Latest(Series series) {
+    var index = series.Values.Count - 1 - Math.Max(0, this.SkipNewest);
+    if ((uint)index >= (uint)series.Values.Count)
+      return null;
+
+    var reading = series.Values[index];
+    return reading.HasValue ? reading.Value : null;
   }
 
   /// <summary>
@@ -389,10 +508,11 @@ public sealed class HistoryPlot : OwnerDrawnControl {
   /// most of the picture, and the grid's axis is the same as the big plot's above it.
   /// </remarks>
   private void DrawAxis(IGraphics g, ITheme theme) {
-    if (this.Height < 56 || this.Width < 220)
+    var plot = this.PlotBounds;
+    if (plot.Height < 56 || plot.Width < 220)
       return;
 
-    var strip = new Rectangle(4, this.Height - 18, this.Width - 8, 16);
+    var strip = new Rectangle(plot.Left + 4, this.Height - 18, plot.Width - 8, 16);
     Shadowed(g, Ago(this.SpanSeconds), theme, strip, ContentAlignment.TopLeft);
     Shadowed(g, this.Paused ? "Paused" : "Now", theme, strip, ContentAlignment.TopRight);
   }
@@ -410,13 +530,15 @@ public sealed class HistoryPlot : OwnerDrawnControl {
   /// comparing against.
   /// </remarks>
   private void DrawCursor(IGraphics g) {
-    if (this._hoverX < 0 || this.HoverText.Length == 0)
+    var plot = this.PlotBounds;
+    if (this._hoverX < plot.Left || this._hoverX >= plot.Right || this.HoverText.Length == 0)
       return;
 
     var theme = this.Theme;
     g.DrawLine(RowPalette.PlotInk(theme, PlotInkKind.Cursor), this._hoverX, 0, this._hoverX, this.Height);
-    var wide = this._hoverX > this.Width / 2;
-    var box = new Rectangle(wide ? 4 : this.Width / 2, 18, (this.Width / 2) - 8, 14);
+    var half = plot.Width / 2;
+    var wide = this._hoverX > plot.Left + half;
+    var box = new Rectangle(wide ? plot.Left + 4 : plot.Left + half, 18, Math.Max(0, half - 8), 14);
     g.DrawText(this.HoverText, theme.DefaultFont, RowPalette.PlotInk(theme, PlotInkKind.Caption), box, wide ? ContentAlignment.TopLeft : ContentAlignment.TopRight);
   }
 
