@@ -32,7 +32,8 @@ internal readonly record struct HistoryAxis {
     this.NominalSamples = Math.Max(1, nominalSamples);
 
     var availableMultiplier = Math.Max(1d, retainedSamples / (double)this.NominalSamples);
-    this.Multiplier = Math.Clamp(requestedMultiplier, 1d, availableMultiplier);
+    var requested = double.IsNaN(requestedMultiplier) ? 1d : requestedMultiplier;
+    this.Multiplier = Math.Clamp(requested, 1d, availableMultiplier);
   }
 
   /// <summary>Width of the drawable time axis.</summary>
