@@ -253,6 +253,27 @@ public sealed class HistoryPlot : OwnerDrawnControl {
   public string HoverText { get; private set; } = string.Empty;
 
   /// <summary>
+  /// Age of the sample under the cursor in the backing history, newest sample at zero.
+  /// </summary>
+  /// <remarks>
+  /// Unlike <see cref="HoverText"/>'s display age this includes <see cref="SkipNewest"/>. That is the
+  /// distinction an investigation needs: while a graph is paused, its right edge still reads as the
+  /// frozen "now", but the corresponding attribution record has continued moving away from the
+  /// ring's real newest sample. Null over the segmented meter or outside the time plot, where a
+  /// horizontal coordinate has no timestamp at all.
+  /// </remarks>
+  public int? PointedSampleAge {
+    get {
+      var plot = this.PlotBounds;
+      if (this._hoverX < plot.Left || this._hoverX >= plot.Right || this._series.Count == 0 || plot.Width < 2)
+        return null;
+
+      var visibleAge = (int)Math.Round(this.TimeAxis.AgeAtDistance(plot.Right - 1 - this._hoverX));
+      return Math.Max(0, this.SkipNewest) + Math.Max(0, visibleAge);
+    }
+  }
+
+  /// <summary>
   /// Raised whenever the cursor lands somewhere new, however it got there (PRD §28).
   /// </summary>
   /// <remarks>
