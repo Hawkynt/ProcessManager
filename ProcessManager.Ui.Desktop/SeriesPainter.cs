@@ -17,11 +17,9 @@ namespace Hawkynt.ProcessManager.Ui.Desktop;
 /// different numbers of pixels and exactly the same number of seconds.
 /// </para>
 /// <para>
-/// The axis is the span, not the data. A plot showing sixty seconds puts the newest sample at the
-/// right edge and the sample sixty seconds old at the left, whatever is in between; a page open for
-/// sixteen seconds fills the right quarter of the graph and leaves the rest empty, which is the
-/// truth and is what every hardware monitor has always done. Stretching sixteen samples across a
-/// minute of axis would draw a shape nobody measured.
+/// The axis is the span, not the data. The newest part keeps the ordinary linear scale; older time
+/// may be compressed by <see cref="HistoryAxis"/>, but only as far as the backing ring can retain.
+/// That keeps recent motion readable without making a long horizon cost one pixel per raw sample.
 /// </para>
 /// </remarks>
 internal static class SeriesPainter {
@@ -29,12 +27,15 @@ internal static class SeriesPainter {
   /// <summary>
   /// Draws <paramref name="values"/> into <paramref name="plot"/>.
   /// </summary>
-  /// <param name="samples">How many samples wide the axis is — the span divided by the interval.</param>
+  /// <param name="samples">How many samples the uncompressed span contains.</param>
   /// <param name="skipNewest">
   /// How many of the newest samples to ignore, which is what a paused plot is: collection carries
   /// on, and the drawing stays where it was (PRD §45.4).
   /// </param>
   /// <param name="filled">Fill under the trace rather than stroking its outline.</param>
+  /// <param name="historyMultiplier">
+  /// Requested old-history horizon. The axis caps it to the number of samples the ring can retain.
+  /// </param>
   public static void Draw(
     IGraphics g,
     Rectangle plot,
@@ -43,7 +44,8 @@ internal static class SeriesPainter {
     Color color,
     int samples,
     int skipNewest = 0,
-    bool filled = true
+    bool filled = true,
+    double historyMultiplier = HistoryAxis.DefaultMultiplier
   ) {
     if (plot.Width < 2 || plot.Height < 2 || maximum <= 0 || samples < 1)
       return;
@@ -52,26 +54,27 @@ internal static class SeriesPainter {
     if (count == 0)
       return;
 
-    var perSample = plot.Width / (double)samples;
+    var axis = new HistoryAxis(plot.Width, samples, values.Capacity, historyMultiplier);
     var edge = Lighten(color);
     var previousX = 0;
     var previousY = 0;
     var havePrevious = false;
 
     for (var x = plot.Right - 1; x >= plot.Left; --x) {
-      // Age in samples, counted back from the newest one being drawn. Zero is "now", and now is
-      // always at the right edge — which is what makes a scrolling plot readable without an axis.
-      var age = (plot.Right - 1 - x) / perSample;
-      if (age >= count)
+      var distance = plot.Right - 1 - x;
+      var (youngest, oldest) = axis.AgesForPixel(distance);
+      if (youngest >= count)
         break;
 
-      var reading = perSample >= 1
-        ? Interpolated(values, count, age)
-        : Peak(values, count, age, (plot.Right - x) / perSample);
+      // Once a pixel represents more than one sample, retain the peak rather than average it away.
+      // A compressed history exists precisely so an old one-second spike remains findable.
+      var reading = oldest - youngest <= 1d
+        ? Interpolated(values, count, youngest)
+        : Peak(values, count, youngest, oldest);
 
       if (!reading.HasValue) {
-        // A gap breaks the fill as well as the line. Filling through it would draw a second of
-        // activity that was never measured (PRD §3.3).
+        // A gap breaks the fill as well as the line. Filling through it would draw activity that was
+        // never measured (PRD §3.3).
         havePrevious = false;
         continue;
       }
@@ -103,7 +106,7 @@ internal static class SeriesPainter {
   /// The reading a fractional age falls on, between the two samples either side of it.
   /// </summary>
   /// <remarks>
-  /// For the ordinary case, where a plot is wider than the number of samples it holds. Drawing each
+  /// For the newest part, where one pixel still represents no more than one sample. Drawing each
   /// sample as a block of its own would turn a thirty-second graph on an 880-pixel page into
   /// twenty-nine-pixel stairs, which reads as data that arrived in bursts.
   /// </remarks>
@@ -130,9 +133,9 @@ internal static class SeriesPainter {
   /// The largest reading in the range one pixel covers, for a span longer than the plot is wide.
   /// </summary>
   /// <remarks>
-  /// Peaks rather than averages or nearest: at fifteen minutes on an 880-pixel plot each column is
-  /// worth a second and a bit, and a one-second spike is exactly what somebody scrolling back
-  /// fifteen minutes is looking for. Averaging is what makes a long window flat and useless.
+  /// Peaks rather than averages or nearest: a one-second spike is exactly what somebody scrolling
+  /// back through compressed history is looking for. Averaging is what makes a long window flat and
+  /// useless.
   /// </remarks>
   private static Rate Peak(HistoryRing<Rate> values, int count, double youngest, double oldest) {
     var first = Math.Max(0, count - 1 - (int)oldest);
