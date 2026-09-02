@@ -31,8 +31,8 @@ shorthand:
 it is not known*. An unticked box must never become a zero on screen. This is restated here because
 it is the single requirement most likely to be broken while filling the tables in.
 
-**Counting, as of the last update:** **1118 of 1320 boxes are ticked** — 173 of 190 in the field
-registry (§14–22), 945 of 1130 across the capabilities. A further 163 are marked 🟡, meaning some of
+**Counting, as of the last update:** **1123 of 1320 boxes are ticked** — 173 of 190 in the field
+registry (§14–22), 950 of 1130 across the capabilities. A further 173 are marked 🟡, meaning some of
 the work behind them is already done. §100 tracks the phases; §101 defines when this may be called
 finished.
 
@@ -269,7 +269,7 @@ Each registry entry declares:
 - [x] Whether it is instantaneous, cumulative, delta, rate, state, enumeration or derived
 - [x] Supported platforms
 - [x] Required privilege — ordinary, or the owner's. Two levels because two is what a reader can act
-      on: there is nothing to do, or there is the elevated helper. `--fields` prints it, so the
+      on: there is nothing to do, or there is the elevated helper. `--help-fields` prints it, so the
       column of em dashes over somebody else's processes is answered before it is met. A field
       declares the most it can need on a platform that supports it: the I/O counters are free on
       Windows, where one system-wide query fills them, and behind the owner's authority on Linux,
@@ -578,8 +578,12 @@ Lower-pane modes:
 - [x] Windows
 - [x] Services
 - [x] Security
-- [ ] Timeline — it needs the event history of §63, and nothing in this program records one. A tab
-      named for a feature nobody wrote is worse than a missing one
+- [ ] Timeline — **the history exists now and this tab does not.** §63's ring records process starts
+      and exits, threshold alerts and service state changes, and it is already drawn in three places:
+      a page behind this window's rail, an overlay in the terminal, and a Timeline tab inside the
+      properties window — which reaches it by adding a page to *this* pane's own strip. So what is
+      left is the main window's instance of the pane, where the tab is still not added and the code
+      still carries the sentence this box used to
 
 The lower pane is the defining Process Explorer interaction and is the highest-value single item in
 this document.
@@ -681,7 +685,9 @@ name, which is what keeps a preset improvable instead of something to be worked 
 - [x] Memory debugging — as `memory`
 - [x] Security
 - [x] I/O debugging — as `io`
-- [ ] Network — blocked on §18
+- [x] 🟡 Network — the set exists, as endpoint counts rather than as traffic: TCP connections, UDP
+      sockets, listening sockets and distinct peers. Send and receive are §18's refusal rather than
+      a gap in the set (§94)
 - [x] Full forensic — everything `expert` has, plus who the process really is and what it is doing
       to the disk. Deliberately the dearest set there is: the package, the digest and the descriptor
       count each cost a reading nothing else takes, and asking for a forensic table is asking to pay
@@ -740,7 +746,11 @@ once a second. What is held now is the *node* at the top — noted before the re
 afterwards, and put back — and a node that has exited leaves the view where the rebuild put it,
 because there is nowhere better for it to be.
 
-- [ ] Dead processes remain visible for one cycle with terminated styling, if enabled
+- [x] Dead processes remain visible for one cycle with terminated styling, if enabled — `keep.exited`
+      is a duration rather than a cycle and is nought by default; the sampler tombstones the record
+      it last had and re-appends it until the time is up or two thousand have queued, and
+      `ProcessCategory.Exited` is the wash the row gets meanwhile. There is no fade: the colour is
+      constant for the whole window and then the row goes (§86)
 - [x] New processes are optionally highlighted
 
 Node reuse across samples is what makes expansion and selection survive — and it is why sorting
@@ -2135,7 +2145,11 @@ equivalence §5.3 forbids.
 - [x] Copy path
 - [x] Copy command line
 - [x] Search Internet — confirmed, and the confirmation names the engine before it goes
-- [ ] Inspect binary (§53) — needs a disassembler, which §53 has not been written
+- [x] 🟡 Inspect binary (§53) — **Inspect ▸ Binary inspector…**, on the row's own menu, on the
+      window's Process menu and on any mapped module's menu, opening §53's window on the selected
+      process's image. No disassembler, and §53 says why it never wanted one. Amber because nothing
+      tests the wiring: §53's own pages are under test and the three menu items that reach them are
+      not
 
 Navigation is grouped under one menu and none of it changes anything, which is what keeps it away
 from the items that do (§5.5).
@@ -2976,10 +2990,17 @@ people install Process Explorer at all.
 
 - [x] Search targets: resource/handle names · file descriptors · executable paths · loaded modules ·
       memory mappings · sockets · service names · process names · command lines
-- [ ] 🟡 Modes — substring ✔ (case-insensitive) and regex ✔ as `/pattern/`; wildcard, exact and a
-      case-sensitive toggle are not
-- [ ] 🟡 Results — process ✔ · PID ✔ · resource type ✔ · name/path ✔ · user ✔; the access mask is
-      not reported
+- [x] 🟡 Modes — all four, chosen by the shape of what is typed rather than by a control, so the
+      window, the terminal and `--find` mean the same thing by one string: substring ✔, wildcard ✔
+      as `*.so.6`, exact ✔ as `"quoted"` and regex ✔ as `/pattern/`. Case is the one option no
+      punctuation could carry without colliding with a file name, so it is a **Match case** box ✔ —
+      the window's, and the terminal and `--find` do not offer it. Amber for that and because only
+      the substring and regex paths have tests
+- [ ] 🟡 Results — process ✔ · PID ✔ · resource type ✔ · name/path ✔ · user ✔ · access 🟡. There is
+      an access column and it is a mode rather than a mask: a descriptor's open mode for a file and
+      the mapping's permission characters for a loaded module, which is what Linux publishes. It is
+      null where the question does not arise, and null on Windows, whose access mask sits in the
+      handle table and is not decoded
 - [x] 🟡 Double-click navigates to the process — from **View ▸ Find handles or files…**, which is the
       window's half of what `--find` always did from a terminal. Navigating to the *resource* still
       has nowhere to go: there is no handle view to land in
@@ -3108,9 +3129,18 @@ encoding is a column rather than a footnote.
 
 Windows:
 
-- [ ] 🟡 User SID ✔ · groups · restricted SIDs · privileges and their state · integrity level ✔ ·
-      elevation ✔ · virtualisation · AppContainer · capabilities · claims/security attributes ·
-      token type · impersonation · session ✔ · protection level · process mitigations
+- [ ] 🟡 User SID · groups · restricted SIDs · privileges and their state · integrity level ✔ ·
+      elevation ✔ · virtualisation · AppContainer ✔ · capabilities · claims/security attributes ·
+      token type · impersonation · session ✔ · protection level ✔ · process mitigations ✔ (DEP,
+      ASLR, CFG, CET, ACG and CIG, six fields off one query).
+
+      **The SID lost its tick on the evidence.** It is read — `TokenUser`, then
+      `ConvertSidToStringSidW` — and then used only as the key of the name cache; no record carries
+      it, no column shows it and no page prints it, so what the reader gets is the account name the
+      lookup returned. What is genuinely missing is the half a token view is normally *for*: the
+      group list, the restricted SIDs, the privilege array and its enabled/disabled state, and the
+      claims. **And none of the ticked ones is on the security page** — that page is Linux-shaped;
+      the Windows readings are table columns and a column set
 
 Linux — most of this is already in `/proc/pid/status`, which the sampler already reads:
 
@@ -3310,7 +3340,11 @@ is not, rather than the program acquiring a root-equivalent dependency to fill i
 
 - [ ] 🟡 Window title ✔ · native window ID ✔ · process ✔ · class ✔ · visible ✔ · bounds ✔ ·
       thread, minimised/maximised, responding, workspace, monitor and parent/owner are not read
-- [ ] Actions: bring to foreground · minimize · maximize · restore · close · inspect properties
+- [ ] 🟡 Actions: bring to foreground ✔ · minimize ✔ · maximize ✔ · restore ✔ · close ✔ · **inspect
+      properties is not** — there is no window-properties box to open. The five that work go through
+      X11 itself rather than by shelling out, and each re-checks that the window still belongs to the
+      process before it sends anything. All five are Linux only, because nothing enumerates a window
+      on Windows or macOS to act on (above)
 - [x] **Find window** — point at a window and the process behind it is selected in the list
 
 Windows has `EnumWindows`. X11 has `_NET_CLIENT_LIST`, and where a session has no window manager to
@@ -4589,7 +4623,10 @@ where supported the core and memory clocks, voltage, power limit and temperature
 - [x] Top disk writers
 - [ ] Top network senders — no per-process byte counters exist (§18)
 - [ ] Top network receivers — likewise
-- [ ] Top GPU processes — needs per-process GPU attribution (§19)
+- [ ] Top GPU processes — **and the reason is no longer §19's.** The attribution exists: §19 reads a
+      process's graphics share off the DRM descriptors and it is a column and in the `basic` set. The
+      top-N is generic over any field, and the four lists that get built name the processor, memory
+      and the two disk directions. This one is simply not built
 - [x] Process creation rate
 - [x] Process termination rate
 - [x] Context-switch rate — machine-wide, from the kernel's own counter
@@ -4718,7 +4755,11 @@ already records as owed.
 # 54. Run / launch new process
 
 - [x] Executable / command · arguments · working directory · environment overrides
-- [ ] Selected user / account where supported
+- [ ] Selected user / account where supported — **and this is a decision rather than a gap.** There
+      is no account field on the box and no credential on the request, deliberately: running as
+      somebody else is the platform's own job — `sudo`, `pkexec`, `runas` — which is why the
+      elevation flag asks for a launcher and never for a secret. Left open rather than refused
+      because "where supported" could one day mean handing the request to one of those
 - [ ] 🟡 Elevation — the request carries it and the box offers it; on Linux nothing yet raises a
       program that was not started raised, because doing it honestly means the privileged helper
       (§68) rather than a `sudo` that would want a terminal to ask in
@@ -4757,10 +4798,20 @@ is no credential on the request to begin with.
 
 # 55. System power and session actions
 
-- [ ] Lock · log out · sleep · hibernate · restart · shutdown
-- [ ] **Isolated from ordinary process actions** — meaning not in the same menu as "End task": very
-      different consequences, very similar mouse positions
-- [ ] Confirmation according to user settings
+- [ ] 🟡 Lock ✔ · log out ✔ · sleep · hibernate · restart · shutdown — the first two exist, over a
+      *session* rather than over the machine: logind is asked to lock, unlock or end a login, from
+      `--session` and from the Users page's own menu. The four that take the machine do not exist
+      anywhere, and the session interface says why it stops where it does — nothing it offers can
+      take the machine, and treating a lock as though it could would train people to click through
+      the dialogs that matter
+- [ ] 🟡 **Isolated from ordinary process actions** — meaning not in the same menu as "End task": very
+      different consequences, very similar mouse positions. True of the two that exist: the session
+      verbs are on the Users page and nowhere near a process row. Untickable until there is something
+      to isolate, because the four dangerous ones are the reason the rule was written
+- [ ] 🟡 Confirmation according to user settings — the same shape. Ending a login is §69's class 2
+      and is confirmed under `confirm.destructive`, overruled to always-ask because it is aimed at
+      somebody else, and the sentence names the account, the terminal and how many processes go with
+      it. Nothing here yet asks about the machine, because nothing here yet acts on it
 
 ---
 
@@ -5040,10 +5091,16 @@ which would turn "we could not read this" into the literal string "—" in a col
 # 63. Event timeline
 
 - [ ] 🟡 Records: process start ✔ · process exit ✔ · high CPU alert ✔ · high memory alert ✔ ·
-      user action ✔ (its own category, because somebody reading a timeline after an incident has to
-      be able to tell what the machine did from what they did to it, and a line that does not
-      distinguish them will be misread under exactly the pressure it exists for) · service state
-      change ✔ where a rule watches one.
+      user action **✘** · service state change ✔ where a rule watches one.
+
+      **The user-action half is a category with no caller**, and it had a tick it never earned. It
+      has its own category for the right reason — somebody reading a timeline after an incident has
+      to tell what the machine did from what they did to it, and a line that does not distinguish
+      them will be misread under exactly the pressure it exists for — and the emitter for it is
+      written, and both front-ends render it. Nothing calls it. Not a kill, not a signal, not a
+      priority or an affinity, not a service verb, not a session command: every mutation in this
+      program completes without writing a line. That is also §105's missing audit stage, and it is
+      one call site per action rather than a feature.
 
       Connection appeared and disappeared, executable and signature change, and this program's own
       privilege escalation are **not recorded yet**. The first would need the socket table walked
@@ -5286,11 +5343,12 @@ about a preferences file (§81).
       about the feature existing, and once about having turned it off. The disclosure is the worst of
       the three: a sentence describing what gets transmitted, over a program that transmits nothing,
       teaches the person who went looking for reassurance the opposite of what is true
-- [ ] **History** — enable persistence · retention · storage size. Waiting on §44 and on §85's
-      "persistent history, separate and optional", neither of which exists: the ring buffers are in
-      memory and go when the program does, so there is nothing yet to retain, to size, or to switch
-      off. §44's own rule is that a file recording what somebody ran must not appear without being
-      asked for, and these three controls are that asking — so they arrive with it, not before it
+- [ ] 🟡 **History** — enable persistence ✔ and retention ✔ arrived with §44 and are `history.usage`
+      and `history.usage.days` in the file; §85's "persistent history, separate and optional" is that
+      same record. **Storage size is not**, and neither of the two that exist is in the box: the
+      whole group is still file-only, which is what keeps this amber rather than ticked. The ring
+      buffers remain in memory and go when the program does, which is why the retention is over the
+      usage record and not over them
 - ∅ **Privacy** — telemetry · crash reporting · recent commands · saved searches. **Refused, because
       there is nothing here to control.** §97 does not say collection is off by default; it says the
       program contains no network client at all, keeps no command history and saves no searches. A
@@ -5538,8 +5596,11 @@ The road here is worth keeping, because every step was a measurement rather than
 
 ## 71.3 Memory
 
-- [x] TUI below 60 MB baseline
-- [x] GUI below 150 MB baseline
+- [ ] TUI below 60 MB baseline — **not measured**, and ticked here while §45.10 said the opposite
+      about the same figure. Nothing reads this program's own resident size: the budget harness
+      (`ProcessManager.Benchmarks/Program.cs`) gates snapshot latency, per-sample allocation and
+      collector CPU, and no test or CI step weighs either front-end
+- [ ] GUI below 150 MB baseline — the same, and the box §45.10 has always had open
 
 ## 71.4 UI responsiveness
 
@@ -5986,9 +6047,17 @@ drift §58's parity contract exists to catch.
 # 86. Selection persistence
 
 - [x] Selection uses stable instance identity, not PID alone
-- [ ] A selected process that exits stays selected during fade-out
-- [ ] Its properties view changes status to terminated
-- [ ] Retained historical graphs remain viewable until the window closes or retention expires
+- [ ] A selected process that exits stays selected during fade-out — **there is no fade.** The
+      selection does survive, because the binder re-asserts the node it held and a retained row is
+      still in the snapshot (§12); what is missing is the fade itself, and the moment the retention
+      runs out the node goes and the selection with it
+- [x] Its properties view changes status to terminated — matched by identity rather than by pid, so
+      a window left open over a recycled number never starts describing a stranger: the caption
+      becomes "name (pid) — ended" and the window stops sampling
+- [x] Retained historical graphs remain viewable until the window closes or retention expires — the
+      window is kept open rather than closed from under somebody reading it, its lists keep whatever
+      they last held, and the performance page's footer names how many samples are retained against
+      the ring's limit
 
 # 87. Process creation / termination visual behaviour
 
@@ -6049,7 +6118,11 @@ screen. The behaviour is still available as `ProcessTreeBinder.ExpandOnNewChild`
 
 - [ ] 🟡 A confirmation states the action · target name · PID or service identifier ·
       likely consequence · whether child processes are included · whether unsaved data may be lost
-- [ ] **No vague "Are you sure?" dialogs**
+- [x] **No vague "Are you sure?" dialogs** — no such string exists. Every prompt in either front-end
+      is composed from the verb, the name and the pid, with the consequence under it and the
+      system-target warning where §69 asks for one; a bulk action names the count instead of the
+      pids, which is what that confirmation is for. Asserted rather than reviewed: a test works the
+      menu item and reads the sentence back
 
 Model: *"Terminate `editor` (PID 4832)? This forcibly stops the process and may cause unsaved data to
 be lost."*
@@ -6375,10 +6448,19 @@ package · SHA-256
 
 # 95. Copy behaviour
 
-- [ ] `Ctrl+C` copies selected cells in cell-selection mode, otherwise selected rows using the
-      visible columns
-- [ ] Copy cell · copy row · copy field name/value · copy all properties · copy as JSON
-- [ ] The TUI uses the same serialisation logic
+- [ ] 🟡 `Ctrl+C` copies selected cells in cell-selection mode, otherwise selected rows using the
+      visible columns — **the second half holds and the first has nothing to hold over.** `Ctrl+C` is
+      the row, or every ticked row, over the columns actually on screen. There is no cell selection
+      to be in: the current column is a keyboard position and not something the header is drawn to
+      show, so the cell has the deliberate chord instead
+- [ ] 🟡 Copy cell ✔ · copy row ✔ · copy field name/value · copy all properties · copy as JSON —
+      the cell and the row are in both front-ends, with a copy-column beside them that this list
+      never asked for. A name/value pair is nowhere, copy-as-JSON is nowhere, and "all properties" is
+      a button on three particular boxes rather than a command
+- [ ] 🟡 The TUI uses the same serialisation logic — the *values* do: both front-ends format a cell
+      through `FieldAccessor.RawText`, so they cannot disagree about what a cell says. The framing
+      does not — the header line and the row loop are written twice, once in each, and only the file
+      export goes through `Exporter`
 
 # 96. Host summary
 
@@ -6429,7 +6511,12 @@ Hostile process metadata — the program must not be attackable by what it reads
 - [ ] Malicious icons (no icons yet)
 - [x] Unusual Unicode
 - [x] Invalid paths
-- [ ] Corrupted symbols (no symbols yet)
+- [ ] Corrupted symbols — **there are symbols now**, so the parenthetical this used to carry is gone:
+      §30 resolves an address against an image's own `.symtab` or `.dynsym`, and the reader bounds
+      what a malformed header can make it do — a section-count ceiling, a symbol-table ceiling and a
+      name-length ceiling, each written down as being for exactly that. What is missing is the
+      evidence: no test feeds it a deliberately corrupted table, so the bounds are argued rather than
+      demonstrated, which is the difference this box is about
 
 The `comm` backscan in §6.2 is a small instance of this: a process may legitimately be named `)`, and
 a naive parser hands the attacker the parse.
