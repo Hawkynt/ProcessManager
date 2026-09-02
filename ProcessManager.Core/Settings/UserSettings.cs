@@ -299,6 +299,30 @@ public sealed record UserSettings {
   /// </remarks>
   public bool PerformanceOpensOnBusiest { get; init; } = true;
 
+  /// <summary>Whether older performance history is progressively compressed into the selected span.</summary>
+  /// <remarks>
+  /// On by default because it extends context without taking resolution away from the newest data.
+  /// The graph still caps the request to what its backing ring actually retained, so this setting can
+  /// never manufacture history that was not sampled.
+  /// </remarks>
+  public bool CompressPerformanceHistory { get; init; } = true;
+
+  /// <summary>The default requested history horizon relative to the selected recent span.</summary>
+  public const double DefaultPerformanceHistoryMultiplier = 15;
+
+  /// <summary>Multipliers offered by the desktop UI, smallest useful compression first.</summary>
+  public static IReadOnlyList<double> OfferedPerformanceHistoryMultipliers { get; } = [2, 4, 8, 15];
+
+  /// <summary>
+  /// How much older history the graph asks to fit behind the recent span when compression is on.
+  /// </summary>
+  /// <remarks>
+  /// This is deliberately independent of <see cref="CompressPerformanceHistory"/>. Turning the
+  /// feature off and on again restores the chosen horizon rather than replacing it with the default.
+  /// Hand-written values are accepted from 1× through 64×; the UI offers a smaller useful set.
+  /// </remarks>
+  public double PerformanceHistoryMultiplier { get; init; } = DefaultPerformanceHistoryMultiplier;
+
   /// <summary>
   /// Colours the file overrides, by the names <see cref="ColourNames"/> lists.
   /// </summary>
@@ -775,6 +799,19 @@ public sealed record UserSettings {
 
           break;
 
+        case "performance.history.compress":
+          if (TryParseBool(value, out var compressHistory))
+            settings = settings with { CompressPerformanceHistory = compressHistory };
+
+          break;
+
+        case "performance.history.multiplier":
+          if (double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var historyMultiplier)
+              && double.IsFinite(historyMultiplier) && historyMultiplier is >= 1 and <= 64)
+            settings = settings with { PerformanceHistoryMultiplier = historyMultiplier };
+
+          break;
+
         case "confirm.destructive":
           if (TryParseBool(value, out var confirm))
             settings = settings with { ConfirmDestructiveActions = confirm };
@@ -980,6 +1017,18 @@ public sealed record UserSettings {
       text.AppendLine();
       text.AppendLine("# The performance page opens tightened up, with its diagnostics block open.");
       text.AppendLine("performance.density=compact");
+    }
+
+    if (!this.CompressPerformanceHistory || this.PerformanceHistoryMultiplier != DefaultPerformanceHistoryMultiplier) {
+      text.AppendLine();
+      text.AppendLine("# Older performance data is progressively compressed while the newest part keeps");
+      text.AppendLine("# ordinary resolution. The multiplier is a requested horizon and is capped by");
+      text.AppendLine("# however much history the in-memory ring actually retained.");
+      if (!this.CompressPerformanceHistory)
+        text.AppendLine("performance.history.compress=false");
+      if (this.PerformanceHistoryMultiplier != DefaultPerformanceHistoryMultiplier)
+        text.Append("performance.history.multiplier=")
+          .AppendLine(this.PerformanceHistoryMultiplier.ToString("0.###", CultureInfo.InvariantCulture));
     }
 
     // Only when it is not the one second it has always been, which is the rule every block here

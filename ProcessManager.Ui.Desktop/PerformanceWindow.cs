@@ -6,6 +6,7 @@ using Hawkynt.ProcessManager.Abstractions;
 using Hawkynt.ProcessManager.Model;
 using Hawkynt.ProcessManager.Query;
 using Hawkynt.ProcessManager.Sampling;
+using Hawkynt.ProcessManager.Settings;
 
 namespace Hawkynt.ProcessManager.Ui.Desktop;
 
@@ -129,9 +130,10 @@ public sealed class PerformanceWindow : Form {
   /// Whether the resource on screen has no graph, and so hands its plot area to its figures.
   /// </summary>
   /// <remarks>
-  /// The overview and the activity lists are pages of text: they measure nothing, they are given no
-  /// graph (§45.6), and leaving the space where the graph would have been empty above them wastes
-  /// half a window on a page that has twenty-four rows to show.
+  /// The overview is a page of text: it measures nothing, it is given no graph (§45.6), and leaving
+  /// the space where the graph would have been empty above it wastes half a window on a page that
+  /// has figures to show. Activity used to be the same shape; it now has truthful process-attributed
+  /// histories and therefore keeps the graph area it can actually explain.
   /// </remarks>
   private bool _tall;
 
@@ -152,14 +154,28 @@ public sealed class PerformanceWindow : Form {
   /// which is what the program does; a caller that says either way is not asking about anybody's
   /// configuration — which is what lets this be tested without one (PRD §67).
   /// </param>
-  public PerformanceWindow(ISystemProbe probe, Sampler sampler, bool? openOnBusiest = null) {
+  /// <param name="historyMultiplier">
+  /// Requested older-history horizon. Null follows the settings file when the ordinary application
+  /// constructor is used. Tests that supply <paramref name="openOnBusiest"/> keep their historical
+  /// isolation and use the built-in multiplier unless they explicitly supply this value too.
+  /// </param>
+  public PerformanceWindow(ISystemProbe probe, Sampler sampler, bool? openOnBusiest = null, double? historyMultiplier = null) {
     ArgumentNullException.ThrowIfNull(probe);
     ArgumentNullException.ThrowIfNull(sampler);
 
     this._probe = probe;
     this._sampler = sampler;
     this._topology = probe.DescribeTopology();
-    this.OpenOnBusiest = openOnBusiest ?? Settings.SettingsStore.Load().PerformanceOpensOnBusiest;
+
+    // Product construction asks the file once and uses it for both performance-page preferences.
+    // Tests have historically supplied openOnBusiest specifically to avoid depending on a real
+    // profile; keep that property by not reading the file merely to obtain the new history setting.
+    var settings = openOnBusiest is null ? SettingsStore.Load() : null;
+    this.OpenOnBusiest = openOnBusiest ?? settings!.PerformanceOpensOnBusiest;
+    this.HistoryMultiplier = historyMultiplier
+      ?? (settings is null
+        ? UserSettings.DefaultPerformanceHistoryMultiplier
+        : settings.CompressPerformanceHistory ? settings.PerformanceHistoryMultiplier : 1);
 
     this.Text = "System information";
     // A secondary window closing must not take the program with it. Form.QuitsOnClose defaults to
@@ -186,6 +202,7 @@ public sealed class PerformanceWindow : Form {
     this._model.TextAlign = ContentAlignment.TopRight;
     this.Controls.Add(this._model);
 
+    this._plot.Expanded += (sender, _) => this.InspectPlot((HistoryPlot)sender!);
     this.Controls.Add(this._plot);
     this.Controls.Add(this._composition);
     this.Controls.Add(this._compositionHint);
@@ -248,11 +265,11 @@ public sealed class PerformanceWindow : Form {
   } = 1;
 
   /// <summary>
-  /// How many seconds the graphs cover (PRD §45.4).
+  /// How many seconds the newest, uncompressed part of the graphs covers (PRD §45.4).
   /// </summary>
   /// <remarks>
-  /// Set here rather than only through the drop-down, because the same span has to reach the rail's
-  /// sparklines as well as the plots — one page, one time axis.
+  /// Set here rather than only through the drop-down, because the same recent span has to reach the
+  /// rail's sparklines as well as the plots — one page, one time axis.
   /// </remarks>
   public int SpanSeconds {
     get;
@@ -264,6 +281,37 @@ public sealed class PerformanceWindow : Form {
       this.ApplySpan();
     }
   } = 60;
+
+  /// <summary>
+  /// Requested total history horizon relative to <see cref="SpanSeconds"/>; one means linear.
+  /// </summary>
+  /// <remarks>
+  /// The renderer caps this to what its backing ring can actually retain. Keeping the request on the
+  /// page rather than on one plot means the rail, a per-core wall and a stacked GPU page always use
+  /// the same time semantics.
+  /// </remarks>
+  public double HistoryMultiplier {
+    get;
+    set {
+      var normalized = double.IsFinite(value) ? Math.Clamp(value, 1d, 64d) : 1d;
+      if (Math.Abs(field - normalized) < 0.000001)
+        return;
+
+      field = normalized;
+      this.ApplySpan();
+    }
+  } = UserSettings.DefaultPerformanceHistoryMultiplier;
+
+  /// <summary>The real visible horizon of the currently displayed graphs, after retention capping.</summary>
+  public double VisibleHistorySeconds {
+    get {
+      foreach (var plot in this.Plots())
+        if (plot.Visible)
+          return plot.VisibleSpanSeconds;
+
+      return this.SpanSeconds;
+    }
+  }
 
   /// <summary>Whether the drawing is frozen. Collection carries on regardless (PRD §45.4).</summary>
   public bool Paused => this._frozenSamples >= 0;
@@ -285,7 +333,7 @@ public sealed class PerformanceWindow : Form {
       this._spanBox.Items.Add(span.Label);
 
     this._spanBox.SelectedIndex = 1;
-    this._spanBox.AccessibleName = "History span";
+    this._spanBox.AccessibleName = "Recent history span";
     this._spanBox.SelectedIndexChanged += (_, _) => this.ChooseSpan(this._spanBox.SelectedIndex);
     this.Controls.Add(this._spanBox);
 
@@ -298,7 +346,7 @@ public sealed class PerformanceWindow : Form {
     this.Controls.Add(this._inspect);
   }
 
-  /// <summary>The spans §45.4 offers, shortest first.</summary>
+  /// <summary>The recent spans §45.4 offers, shortest first.</summary>
   private static readonly (string Label, int Seconds)[] _Spans = [
     ("30 seconds", 30),
     ("60 seconds", 60),
@@ -316,15 +364,17 @@ public sealed class PerformanceWindow : Form {
       this._spanBox.SelectedIndex = index;
   }
 
-  /// <summary>Puts the span on every plot and on the rail, so one page has one time axis.</summary>
+  /// <summary>Puts the time mode on every plot and on the rail, so one page has one time axis.</summary>
   private void ApplySpan() {
     foreach (var plot in this.Plots()) {
       plot.SpanSeconds = this.SpanSeconds;
       plot.SecondsPerSample = this.SecondsPerSample;
+      plot.HistoryMultiplier = this.HistoryMultiplier;
       plot.Invalidate();
     }
 
     this._rail.Samples = Math.Max(1, (int)Math.Round(this.SpanSeconds / this.SecondsPerSample));
+    this._rail.HistoryMultiplier = this.HistoryMultiplier;
     this._rail.Invalidate();
   }
 
@@ -366,11 +416,58 @@ public sealed class PerformanceWindow : Form {
   }
 
   /// <summary>
+  /// Chooses between ordinary graph statistics and historical process attribution.
+  /// </summary>
+  /// <remarks>
+  /// Only the Activity page has process-attributable system graphs. A disk's active-time plot, for
+  /// example, cannot use aggregate per-process I/O as if it were per-device I/O. On every other graph
+  /// a double-click keeps the pre-existing statistics behaviour.
+  /// </remarks>
+  private void InspectPlot(HistoryPlot plot) {
+    if (string.Equals(this._shown, "Activity", StringComparison.Ordinal)
+      && plot.PointedSampleAge is { } age
+      && ProcessActivityGraphs.TryGetMetric(plot.Caption, out var metric)) {
+      this.InspectSpike(metric, age);
+      return;
+    }
+
+    this.Inspect();
+  }
+
+  private void InspectSpike(SpikeMetric metric, int sampleAge) {
+    var attribution = this._sampler.Attribution;
+    var window = new SpikeInspectionWindow(
+      metric,
+      attribution.UtcTicksAtAge(sampleAge),
+      sampleAge,
+      attribution.AtAge(metric, sampleAge),
+      this.IsCurrentProcess
+    );
+
+    // The stable key is forwarded through the same route as a current top-five row. The main window
+    // re-validates it before navigation, so an exited process never becomes whichever process later
+    // inherited its PID (PRD §8.2).
+    window.ProcessChosen += (_, key) => this.ProcessChosen?.Invoke(this, key);
+    window.Show();
+  }
+
+  private bool IsCurrentProcess(ProcessKey key)
+    => this._sampler.Current.TryGetProcess(key, out var process) && !process.HasExited;
+
+  /// <summary>
   /// The inspection view §45.4 asks a double-click for: current, minimum, maximum and average.
   /// </summary>
   private void Inspect() {
     var text = new StringBuilder();
-    text.Append(this._shown).Append(" — last ").Append(this.SpanSeconds).AppendLine(" seconds");
+    var visible = this.VisibleHistorySeconds;
+    text.Append(this._shown).Append(" — ");
+    if (this.HistoryMultiplier <= 1.000001)
+      text.Append("last ").Append(Duration(visible));
+    else
+      text.Append(Duration(visible)).Append(" visible; newest ").Append(Duration(this.SpanSeconds))
+        .Append(" at ordinary resolution");
+
+    text.AppendLine();
     text.AppendLine();
     foreach (var plot in this.Plots()) {
       if (!plot.Visible)
@@ -383,6 +480,13 @@ public sealed class PerformanceWindow : Form {
 
     new InspectionWindow(this._shown, text.ToString()).Show();
   }
+
+  /// <summary>A compact truthful duration for graph menus and inspection text.</summary>
+  private static string Duration(double seconds) => seconds switch {
+    >= 3600 => $"{seconds / 3600:0.#} hours",
+    >= 120 => $"{seconds / 60:0.#} minutes",
+    _ => $"{seconds:0.#} seconds",
+  };
 
   #endregion
 
@@ -420,6 +524,7 @@ public sealed class PerformanceWindow : Form {
       graph.DropDownItems.Add(Item(_Spans[i].Label, () => this.ChooseSpan(chosen)));
     }
 
+    graph.DropDownItems.Add(this.BuildHistoryMenu());
     graph.DropDownItems.Add(new ToolStripSeparator());
     graph.DropDownItems.Add(Item("Expand…", this.Inspect));
     graph.DropDownItems.Add(Item("Show logical processors", () => this._perCore.Checked = !this._perCore.Checked));
@@ -452,9 +557,25 @@ public sealed class PerformanceWindow : Form {
     }
 
     menu.Items.Add(span);
+    menu.Items.Add(this.BuildHistoryMenu());
     menu.Items.Add(Item("Show logical processors", () => this._perCore.Checked = !this._perCore.Checked));
     menu.Items.Add(Item("Engineering diagnostics", this.ToggleDiagnostics));
     return menu;
+  }
+
+  /// <summary>
+  /// Session-local graph horizon override. Persistent defaults live in Settings; this menu is the
+  /// quick troubleshooting control beside the graph itself.
+  /// </summary>
+  private ToolStripMenuItem BuildHistoryMenu() {
+    var history = new ToolStripMenuItem("Older history");
+    history.DropDownItems.Add(Item("Linear — selected span only", () => this.HistoryMultiplier = 1));
+    foreach (var multiplier in UserSettings.OfferedPerformanceHistoryMultipliers) {
+      var chosen = multiplier;
+      history.DropDownItems.Add(Item($"{chosen:0.#}× history", () => this.HistoryMultiplier = chosen));
+    }
+
+    return history;
   }
 
   private static ToolStripMenuItem Item(string text, Action action, Keys shortcut = Keys.None) {
@@ -602,7 +723,10 @@ public sealed class PerformanceWindow : Form {
         ++plots;
 
     builder.AppendLine($"page stats:   {live} live, {hardware} hardware, {diagnostics} diagnostics");
-    builder.AppendLine($"page graphs:  {plots} visible, {this.SpanSeconds} s span, {(this.Paused ? "paused" : "live")}");
+    builder.AppendLine(
+      $"page graphs:  {plots} visible, {this.SpanSeconds} s recent, {this.HistoryMultiplier:0.###}× requested, "
+      + $"{this.VisibleHistorySeconds:0.#} s visible, {(this.Paused ? "paused" : "live")}"
+    );
     builder.AppendLine($"page plots:   {this._plotArea.Width}x{this._plotArea.Height} at {this._plotArea.X},{this._plotArea.Y}");
     builder.AppendLine($"page bar:     {(this._composition.Visible ? "composition shown" : "none")}");
     return builder.ToString();
@@ -659,7 +783,7 @@ public sealed class PerformanceWindow : Form {
   /// Rereads everything. Called on every sample tick for as long as the page is open.
   /// </summary>
   public void UpdateFromSample() {
-    this._sections = PerformanceReport.Build(
+    var sections = PerformanceReport.Build(
       this._probe.DescribeHost(),
       this._sampler.Current,
       this._sampler.Delta,
@@ -668,6 +792,7 @@ public sealed class PerformanceWindow : Form {
       this._probe.DescribeGpus,
       topology: this._topology
     );
+    this._sections = this.WithActivityGraphs(sections);
 
     this.RecordHistory();
 
@@ -680,6 +805,27 @@ public sealed class PerformanceWindow : Form {
 
     this.SyncRail();
     this.ShowSelected(force: false);
+  }
+
+  /// <summary>
+  /// Gives the desktop Activity page the three histories whose per-process causes the sampler retains.
+  /// </summary>
+  /// <remarks>
+  /// The rows still come from <see cref="PerformanceReport"/> and the graph definitions come from the
+  /// core <see cref="ProcessActivityGraphs"/> helper. This layer only combines them for the graphical
+  /// investigation surface; it does not invent a second set of measurements.
+  /// </remarks>
+  private PerformanceSection[] WithActivityGraphs(IReadOnlyList<PerformanceSection> sections) {
+    var result = new PerformanceSection[sections.Count];
+    var graphs = ProcessActivityGraphs.Build(this._sampler.Current, this._sampler.Delta);
+    for (var i = 0; i < sections.Count; ++i) {
+      var section = sections[i];
+      result[i] = string.Equals(section.Title, "Activity", StringComparison.Ordinal)
+        ? section with { Graphs = graphs }
+        : section;
+    }
+
+    return result;
   }
 
   /// <summary>
@@ -704,6 +850,11 @@ public sealed class PerformanceWindow : Form {
         if (graph.HasCompanion)
           this.Ring(CompanionKey(section.Title, graph.Label)).Add(graph.Companion);
       }
+
+      // Graph-only pages such as Activity have no headline primary. Recording default(Rate) under
+      // the section title would create a confident zero sparkline for a quantity nobody measured.
+      if (section.PrimaryLabel.Length == 0)
+        continue;
 
       this.Ring(section.Title).Add(section.Primary);
 
@@ -1034,16 +1185,16 @@ public sealed class PerformanceWindow : Form {
   }
 
   /// <summary>
-  /// How many rows a column has to hold: the most any resource needs, not the one on screen.
+  /// How many rows a column has to hold: the most any ordinary resource needs, not the one on screen.
   /// </summary>
   private int RowsNeeded() {
     var needed = 1;
     foreach (var section in this._sections) {
-      // Only the resources that have a graph. A page that is a list rather than a measurement — the
-      // host description, the activity lists — has no plot area to leave room under, and letting its
-      // twenty-four rows set the height for everybody would push every graph on the page into a
-      // strip and leave half the memory page blank.
-      if (!section.HasPrimary || !section.IsTopLevel)
+      // A graph-only investigation page such as Activity flows its live rows across both columns and
+      // must not squeeze every other resource's graph merely because it owns twenty current entries.
+      // A primary headline is the marker that this is one of the ordinary resource pages whose two
+      // live/hardware columns set the common geometry.
+      if (section.PrimaryLabel.Length == 0 || !section.IsTopLevel)
         continue;
 
       var live = 0;
@@ -1100,11 +1251,11 @@ public sealed class PerformanceWindow : Form {
       if (section.Title != title)
         continue;
 
-      // A section that measures nothing gets no ring and no sparkline. It used to get both, because
-      // default(Rate) is a confident zero — so the host description and the activity lists each drew
-      // a flat line along the floor of a graph of nothing (PRD §5.3).
+      // A section that measures no headline gets no rail sparkline. Graph-only investigation pages
+      // still have their histories in the detail pane, but no default primary is promoted into a
+      // confident zero merely to give the rail something to draw (PRD §5.3).
       HistoryRing<Rate>? ring = null;
-      if (section.HasPrimary)
+      if (section.PrimaryLabel.Length > 0)
         this._history.TryGetValue(title, out ring);
 
       return new(
@@ -1218,11 +1369,22 @@ public sealed class PerformanceWindow : Form {
   /// <remarks>
   /// Every unused slot is blanked rather than removed, and a figure that does not fit says so: a row
   /// dropped off the bottom of a column is indistinguishable from a machine that never reported it.
+  /// The Activity page is the one deliberate exception to the live/hardware split: it has no
+  /// hardware facts, so its current top-process rows flow into the otherwise empty right column
+  /// rather than being discarded under three history graphs.
   /// </remarks>
   private void FillColumns(PerformanceSection chosen) {
     var perColumn = this._rowsPerColumn;
     this.EnsurePool(this._labels, this._values, perColumn * 2);
 
+    var hasHardware = false;
+    foreach (var row in chosen.Rows)
+      if (row.Level == PerformanceRowLevel.Hardware) {
+        hasHardware = true;
+        break;
+      }
+
+    var flowLiveAcrossColumns = chosen.Graphs is { Count: > 0 } && !hasHardware;
     var live = 0;
     var hardware = 0;
     var diagnostics = 0;
@@ -1256,27 +1418,31 @@ public sealed class PerformanceWindow : Form {
         }
 
         default: {
-          if (live >= perColumn) {
+          var limit = flowLiveAcrossColumns ? perColumn * 2 : perColumn;
+          if (live >= limit) {
             ++dropped;
             continue;
           }
 
-          this._labels[live].Text = row.Label;
-          this._values[live].Text = row.Value;
-          this._subjects[live] = row.Subject;
+          var slot = flowLiveAcrossColumns && live >= perColumn ? perColumn + (live - perColumn) : live;
+          this._labels[slot].Text = row.Label;
+          this._values[slot].Text = row.Value;
+          this._subjects[slot] = row.Subject;
           ++live;
           continue;
         }
       }
     }
 
-    for (var i = live; i < perColumn; ++i) {
+    var firstLive = Math.Min(live, perColumn);
+    for (var i = firstLive; i < perColumn; ++i) {
       this._labels[i].Text = string.Empty;
       this._values[i].Text = string.Empty;
       this._subjects[i] = default;
     }
 
-    for (var i = perColumn + hardware; i < this._labels.Count; ++i) {
+    var secondUsed = flowLiveAcrossColumns ? Math.Max(0, live - perColumn) : hardware;
+    for (var i = perColumn + secondUsed; i < this._labels.Count; ++i) {
       this._labels[i].Text = string.Empty;
       this._values[i].Text = string.Empty;
       this._subjects[i] = default;
@@ -1294,13 +1460,15 @@ public sealed class PerformanceWindow : Form {
       this._diagnosticValues[shownDiagnostics - 1].Text += $"   (+{diagnostics - shownDiagnostics} more, resize)";
 
     this._hardwareHeading.Text = hardware > 0 ? "Hardware" : string.Empty;
-    this._liveHeading.Text = live > 0 ? "Live" : string.Empty;
+    this._liveHeading.Text = live > 0 ? flowLiveAcrossColumns ? "Current activity" : "Live" : string.Empty;
     this._diagnosticsHeading.Visible = diagnostics > 0;
 
     // A window too short for everything says how much it is not showing. Silently dropping the last
     // three rows of a column is the failure this page had, and it is invisible in a screenshot.
-    if (dropped > 0 && live > 0)
-      this._values[Math.Min(live, perColumn) - 1].Text += $"   (+{dropped} more, resize)";
+    if (dropped > 0 && live > 0) {
+      var last = flowLiveAcrossColumns ? Math.Min(live, perColumn * 2) - 1 : Math.Min(live, perColumn) - 1;
+      this._values[last].Text += $"   (+{dropped} more, resize)";
+    }
   }
 
   /// <summary>
@@ -1498,7 +1666,7 @@ public sealed class PerformanceWindow : Form {
   private void GrowPlots(int wanted) {
     while (this._corePlots.Count < wanted) {
       var plot = new HistoryPlot { Visible = false };
-      plot.Expanded += (_, _) => this.Inspect();
+      plot.Expanded += (sender, _) => this.InspectPlot((HistoryPlot)sender!);
       this._corePlots.Add(plot);
       this.Controls.Add(plot);
     }
@@ -1529,8 +1697,8 @@ public sealed class PerformanceWindow : Form {
   /// A resource's own colour, used by its sparkline and by its graph alike.
   /// </summary>
   /// <remarks>
-  /// One accent per resource across the whole window is what lets the eye follow one thing from the
-  /// rail to the plot (§45.5). The two used to be worked out separately and disagreed: a GPU's rail
+  /// One accent per resource across the whole window is what lets the eye follow it from the rail
+  /// to the plot (§45.5). The two used to be worked out separately and disagreed: a GPU's rail
   /// sparkline was orange and its graphs teal, which reads as two different resources.
   /// <para>
   /// A core keeps the processor's own colour. The reader is comparing one core with the whole

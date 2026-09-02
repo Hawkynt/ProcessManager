@@ -17,9 +17,14 @@ namespace Hawkynt.ProcessManager.Ui.Desktop;
 internal static class Sparkline {
 
   /// <param name="samples">
-  /// How many samples wide the axis is. The rail's rows are given the same span as the main graph,
-  /// which is what §45.1 asks for: a row's sparkline is "over the same history the main graph uses",
-  /// and a sparkline drawing a pixel per sample would show four minutes beside a graph showing one.
+  /// How many samples wide the recent axis is. The rail's rows are given the same span as the main
+  /// graph, which is what §45.1 asks for: a row's sparkline is "over the same history the main graph
+  /// uses", and a sparkline drawing a pixel per sample would show four minutes beside a graph
+  /// showing one.
+  /// </param>
+  /// <param name="historyMultiplier">
+  /// How far older retained history reaches relative to that recent span. Kept explicit so the rail
+  /// and the selected resource cannot silently use different non-linear time axes.
   /// </param>
   /// <param name="theme">
   /// The desktop's, so the rule at the half can come up to something visible under a high-contrast
@@ -33,7 +38,8 @@ internal static class Sparkline {
     Color color,
     ITheme theme,
     int samples = 60,
-    int skipNewest = 0
+    int skipNewest = 0,
+    double historyMultiplier = HistoryAxis.DefaultMultiplier
   ) {
     ArgumentNullException.ThrowIfNull(theme);
     var plot = new Rectangle(bounds.X + 2, bounds.Y + 2, Math.Max(4, bounds.Width - 4), Math.Max(4, bounds.Height - 4));
@@ -45,7 +51,7 @@ internal static class Sparkline {
     if (history is null || history.Count == 0 || scale <= 0)
       return;
 
-    SeriesPainter.Draw(g, plot, history, scale, color, samples, skipNewest);
+    SeriesPainter.Draw(g, plot, history, scale, color, samples, skipNewest, historyMultiplier: historyMultiplier);
   }
 
 }
