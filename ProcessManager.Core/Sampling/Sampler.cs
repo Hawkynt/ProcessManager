@@ -84,6 +84,12 @@ public sealed class Sampler : IDisposable {
   public SnapshotDelta Delta { get; } = new();
 
   /// <summary>
+  /// Coherent point-in-time process tables retained while the sampler runs, for playback seconds,
+  /// minutes and hours into the past.
+  /// </summary>
+  public SystemReplayHistory Replay { get; } = new();
+
+  /// <summary>
   /// The top processes behind each sampled CPU, I/O and memory-growth point (PRD §45, §73).
   /// </summary>
   /// <remarks>
@@ -142,6 +148,7 @@ public sealed class Sampler : IDisposable {
     // means even though both were derived from the same snapshot pair.
     var utcNow = DateTime.UtcNow.Ticks;
     this.Attribution.Add(this._current, this.Delta, utcNow);
+    this.Replay.Add(this._current, this.Delta, utcNow);
 
     // Here rather than in each front-end, because this is the one place all three pass through and
     // three copies of "add this interval" would be three chances to add it twice. Null unless
@@ -158,7 +165,6 @@ public sealed class Sampler : IDisposable {
   }
 
   public void Dispose() => this._probe.Dispose();
-
 
   /// <summary>
   /// Puts the rows of processes that have ended back into the snapshot, while they are still wanted.
