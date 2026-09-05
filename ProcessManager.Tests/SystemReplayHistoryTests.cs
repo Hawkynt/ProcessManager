@@ -9,15 +9,16 @@ public sealed class SystemReplayHistoryTests {
   [Test]
   public void AtOrBeforeReturnsTheLastFrameThatAlreadyExisted() {
     var history = new SystemReplayHistory();
-    var snapshot = Snapshot(42, "first");
-    var delta = new SnapshotDelta();
-    delta.Update(null, snapshot, CpuPercentMode.Normalized);
+    var first = Snapshot(42, "first");
+    var second = Snapshot(42, "second");
+    var firstDelta = new SnapshotDelta();
+    var secondDelta = new SnapshotDelta();
+    firstDelta.Update(null, first, CpuPercentMode.Normalized);
+    secondDelta.Update(first, second, CpuPercentMode.Normalized);
 
     var start = new DateTime(2026, 9, 5, 12, 0, 0, DateTimeKind.Utc);
-    history.Add(snapshot, delta, start.Ticks);
-
-    snapshot.Processes[0].Name = "second";
-    history.Add(snapshot, delta, start.AddSeconds(2).Ticks);
+    history.Add(first, firstDelta, start.Ticks);
+    history.Add(second, secondDelta, start.AddSeconds(2).Ticks);
 
     var frame = history.AtOrBefore(start.AddSeconds(1));
 
