@@ -18,12 +18,14 @@ public readonly record struct ReplayProcessSample(
   Rate GpuPercent
 );
 
-/// <summary>A coherent point-in-time copy of the process table and its derived activity rates.</summary>
+/// <summary>A coherent point-in-time copy of the complete sampled system state.</summary>
 public sealed class SystemReplayFrame {
 
   internal SystemReplayFrame(SystemSnapshot snapshot, SnapshotDelta delta, long utcTicks) {
     this.UtcTicks = utcTicks;
     this.Source = snapshot.Source;
+    this.System = snapshot.System;
+    this.PerCore = snapshot.PerCore.ToArray();
     this.SystemCpuPercent = delta.SystemCpuPercent;
     this.ElapsedSeconds = delta.ElapsedSeconds;
 
@@ -49,7 +51,13 @@ public sealed class SystemReplayFrame {
   public DateTime TimestampUtc => new(this.UtcTicks, DateTimeKind.Utc);
 
   /// <summary>The probe/backend which produced the frame.</summary>
-  public string? Source { get; }
+  public string Source { get; }
+
+  /// <summary>All machine-wide absolute counters sampled with this process table.</summary>
+  public SystemCounters System { get; }
+
+  /// <summary>Absolute per-core CPU counters sampled with this process table.</summary>
+  public IReadOnlyList<CpuTimes> PerCore { get; }
 
   /// <summary>Busy percentage of the complete machine at this point.</summary>
   public Rate SystemCpuPercent { get; }
@@ -76,7 +84,7 @@ public sealed class SystemReplayFrame {
 }
 
 /// <summary>
-/// Bounded, tiered point-in-time history of the complete sampled process table.
+/// Bounded, tiered point-in-time history of the complete sampled system state.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -86,9 +94,9 @@ public sealed class SystemReplayFrame {
 /// fourteen thousand, while preserving second/minute/hour rewind semantics.
 /// </para>
 /// <para>
-/// A frame is created once and may be referenced by more than one tier. No tier splices process
-/// values from different samples together. Retention is based on wall-clock ticks supplied by the
-/// sampler, so changing the UI refresh interval does not change what "four hours" means.
+/// A frame is created once and may be referenced by more than one tier. No tier splices process or
+/// machine values from different samples together. Retention is based on wall-clock ticks supplied
+/// by the sampler, so changing the UI refresh interval does not change what "four hours" means.
 /// </para>
 /// </remarks>
 public sealed class SystemReplayHistory {
