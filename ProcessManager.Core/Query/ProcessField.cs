@@ -109,6 +109,7 @@ public enum ProcessField : byte {
   GpuCopyPercent,
   GpuEncodePercent,
   GpuDecodePercent,
+  GpuHistory,
 
   Elevated,
   Integrity,
@@ -404,7 +405,7 @@ public sealed record FieldDescriptor(
   FieldHistory History = FieldHistory.None
 ) {
 
-  /// <summary>True for the three drawn histories, which have no text and no sort order.</summary>
+  /// <summary>True for the drawn histories, which have no text and no sort order.</summary>
   public bool IsGraph => this.Kind == FieldKind.Graph;
 
   /// <summary>

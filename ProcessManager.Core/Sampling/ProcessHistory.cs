@@ -4,17 +4,17 @@ using Hawkynt.ProcessManager.Query;
 namespace Hawkynt.ProcessManager.Sampling;
 
 /// <summary>Which series a per-process history holds.</summary>
-public enum HistorySeries : byte { Cpu, Memory, Io }
+public enum HistorySeries : byte { Cpu, Memory, Io, Gpu }
 
 /// <summary>
 /// A short rolling history per process, for the in-row sparklines.
 /// </summary>
 /// <remarks>
 /// <para>
-/// PRD §3.3 says history is kept only for the processes somebody is looking at, and this is what
-/// enforces it: rings exist for the rows a front-end says are on screen, and are dropped a few
-/// samples after they stop being. Keeping 600 samples × 1000 processes × 3 series would be 14 MB of
-/// numbers nobody reads, and re-allocating that every second would be worse.
+/// History is kept only for the processes somebody is looking at, and this is what enforces it:
+/// rings exist for the rows a front-end says are on screen, and are dropped a few samples after they
+/// stop being. Keeping 600 samples × 1000 processes × 4 series would be 19 MB of numbers nobody
+/// reads, and re-allocating that every second would be worse.
 /// </para>
 /// <para>
 /// The rings are short on purpose — a sparkline is forty pixels wide, so sixty samples is already
@@ -22,10 +22,10 @@ public enum HistorySeries : byte { Cpu, Memory, Io }
 /// </para>
 /// <para>
 /// Which field feeds which ring is not decided here: the catalogue declares it, as
-/// <see cref="Query.FieldDescriptor.Series"/> on <c>cpu</c>, <c>private</c> and <c>io.total</c>, and
-/// on the three drawn columns that plot them. A test reads the declaration and checks this class
-/// against it, so a ring cannot quietly come to hold something other than the column it is drawn
-/// beside (PRD §5.1).
+/// <see cref="Query.FieldDescriptor.Series"/> on <c>cpu</c>, <c>private</c>, <c>io.total</c> and
+/// <c>gpu</c>, and on the four drawn columns that plot them. A test reads the declaration and checks
+/// this class against it, so a ring cannot quietly come to hold something other than the column it is
+/// drawn beside (PRD §5.1).
 /// </para>
 /// </remarks>
 public sealed class ProcessHistory {
@@ -37,6 +37,7 @@ public sealed class ProcessHistory {
     public readonly HistoryRing<Rate> Cpu = new(_Capacity);
     public readonly HistoryRing<Rate> Memory = new(_Capacity);
     public readonly HistoryRing<Rate> Io = new(_Capacity);
+    public readonly HistoryRing<Rate> Gpu = new(_Capacity);
     public int LastSeen;
   }
 
@@ -53,6 +54,7 @@ public sealed class ProcessHistory {
   private const double _CpuFloor = 5;                     // percent
   private const double _MemoryFloor = 32 * 1024 * 1024;   // bytes
   private const double _IoFloor = 64 * 1024;              // bytes per second
+  private const double _GpuFloor = 5;                     // percent
 
   /// <summary>The busiest CPU reading recently seen, in percent; the top of the CPU sparklines.</summary>
   public double CpuScale { get; private set; } = _CpuFloor;
@@ -62,6 +64,9 @@ public sealed class ProcessHistory {
 
   /// <summary>The largest byte rate recently seen.</summary>
   public double IoScale { get; private set; } = _IoFloor;
+
+  /// <summary>The busiest adapter reading recently seen, in percent.</summary>
+  public double GpuScale { get; private set; } = _GpuFloor;
 
   /// <summary>How many processes are being tracked.</summary>
   public int Count => this._entries.Count;
@@ -86,6 +91,7 @@ public sealed class ProcessHistory {
     var peakCpu = _CpuFloor;
     var peakMemory = _MemoryFloor;
     var peakIo = _IoFloor;
+    var peakGpu = _GpuFloor;
 
     for (var i = Math.Max(0, first); i < last; ++i) {
       // A grouping heading occupies a row and is not a process; there is nothing to keep a history
@@ -121,11 +127,21 @@ public sealed class ProcessHistory {
       entry.Io.Add(io);
       if (io.HasValue)
         peakIo = Math.Max(peakIo, io.Value);
+
+      // The busiest engine the process is running on, which is what the `gpu` column shows — never
+      // the sum of the engines, because a card runs them at once and adding them reports a transcode
+      // at two hundred percent (PRD §19). Read from the delta rather than added up here, so the plot
+      // and the column beside it cannot become two different numbers under one name.
+      var gpu = delta.GpuPercent(index);
+      entry.Gpu.Add(gpu);
+      if (gpu.HasValue)
+        peakGpu = Math.Max(peakGpu, gpu.Value);
     }
 
     this.CpuScale = Math.Max(peakCpu, this.CpuScale * 0.92);
     this.MemoryScale = Math.Max(peakMemory, this.MemoryScale * 0.92);
     this.IoScale = Math.Max(peakIo, this.IoScale * 0.92);
+    this.GpuScale = Math.Max(peakGpu, this.GpuScale * 0.92);
     this.Prune();
   }
 
@@ -137,7 +153,8 @@ public sealed class ProcessHistory {
     return series switch {
       HistorySeries.Cpu => entry.Cpu,
       HistorySeries.Memory => entry.Memory,
-      _ => entry.Io,
+      HistorySeries.Io => entry.Io,
+      _ => entry.Gpu,
     };
   }
 
@@ -145,14 +162,16 @@ public sealed class ProcessHistory {
   public double ScaleOf(HistorySeries series) => series switch {
     HistorySeries.Cpu => this.CpuScale,
     HistorySeries.Memory => this.MemoryScale,
-    _ => this.IoScale,
+    HistorySeries.Io => this.IoScale,
+    _ => this.GpuScale,
   };
 
   /// <summary>What the top of a series' scale currently is, for a caption or a tooltip.</summary>
   public string DescribeScale(HistorySeries series) => series switch {
     HistorySeries.Cpu => $"{this.CpuScale:0.#} %",
     HistorySeries.Memory => Query.Humanize.Bytes(Model.Counter.Of((ulong)this.MemoryScale)),
-    _ => Query.Humanize.Bytes(Model.Counter.Of((ulong)this.IoScale)) + "/s",
+    HistorySeries.Io => Query.Humanize.Bytes(Model.Counter.Of((ulong)this.IoScale)) + "/s",
+    _ => $"{this.GpuScale:0.#} %",
   };
 
   private void Prune() {

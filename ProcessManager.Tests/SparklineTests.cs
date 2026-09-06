@@ -186,6 +186,45 @@ public sealed class ProcessHistoryTests {
     Assert.That(history.MemoryScale, Is.GreaterThanOrEqualTo(32d * 1024 * 1024));
     Assert.That(history.CpuScale, Is.GreaterThanOrEqualTo(5));
     Assert.That(history.IoScale, Is.GreaterThanOrEqualTo(64 * 1024));
+    Assert.That(history.GpuScale, Is.GreaterThanOrEqualTo(5));
+  }
+
+  /// <summary>
+  /// And where there is a reading, the ring holds the busiest engine and the scale follows it.
+  /// </summary>
+  [Test]
+  public void TheGpuRingHoldsTheBusiestEngineAndTheScaleFollowsIt() {
+    var snapshot = new SystemSnapshot { TimestampTicks = 0 };
+    snapshot.System.CoreCount = 1;
+    snapshot.System.TotalMemoryBytes = Counter.Of(16UL * 1024 * 1024 * 1024);
+    var buffer = snapshot.PrepareProcesses(1);
+    buffer[0] = default;
+    buffer[0].Key = new(1, 1000ul);
+    buffer[0].Name = "p1";
+    buffer[0].CpuTimeNs = Counter.Of(0ul);
+    buffer[0].PrivateBytes = Counter.Of(1024ul);
+    // The NVML shape: one figure for the card with the engine it belongs to named beside it, which
+    // needs no second sample the way the DRM nanosecond counters do.
+    buffer[0].GpuBusyPercent = Counter.Of(40ul);
+    buffer[0].GpuBusyEngine = GpuEngine.Graphics;
+
+    var delta = new SnapshotDelta();
+    delta.Update(null, snapshot, CpuPercentMode.Normalized);
+    var view = new ProcessView { SortColumn = ProcessField.Pid, SortDescending = false };
+    view.Rebuild(snapshot, delta);
+
+    var history = new ProcessHistory();
+    history.Update(snapshot, delta, view, 0, 1);
+
+    var ring = history.Get(new(1, 1000), HistorySeries.Gpu);
+    Assert.That(ring, Is.Not.Null);
+    Assert.That(ring!.TryPeekLast(out var sample), Is.True);
+    Assert.Multiple(() => {
+      Assert.That(sample.HasValue, Is.True);
+      Assert.That(sample.Value, Is.EqualTo(40).Within(0.001));
+      Assert.That(history.GpuScale, Is.EqualTo(40).Within(0.001), "the shared scale follows the busiest row");
+      Assert.That(history.DescribeScale(HistorySeries.Gpu), Does.EndWith("%"));
+    });
   }
 
   [Test]
