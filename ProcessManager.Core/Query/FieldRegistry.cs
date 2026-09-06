@@ -371,7 +371,9 @@ public static class FieldRegistry {
       "How much of its adapter this process is using: the busiest of the engines it is running on, never their sum — a card's engines run at once, so adding them reports a transcode at two hundred percent.",
       FieldKind.Rate, FieldUnit.Percent, _LINUX, FieldCost.High, 78, 5, true, true,
       Aliases: "gpu.percent",
-      Privilege: FieldPrivilege.Owner),
+      Series: HistorySeries.Gpu,
+      Privilege: FieldPrivilege.Owner,
+      History: FieldHistory.Row),
     new(ProcessField.GpuEngineName, "gpu.engine", "GPU engine", "Engine",
       "Which part of the adapter the process is busiest on: 3D, compute, copy, encode or decode.",
       FieldKind.State, FieldUnit.None, _LINUX, FieldCost.High, 96, 8, false, false,
@@ -423,6 +425,16 @@ public static class FieldRegistry {
       "Share of the adapter's video decoder.",
       FieldKind.Rate, FieldUnit.Percent, _LINUX, FieldCost.High, 98, 6, true, true,
       Privilege: FieldPrivilege.Owner),
+    // The plot beside the `gpu` column, on the same reading and the same scale, so the shape and the
+    // number cannot disagree. It carries the adapter's cost like the column it is drawn beside: a
+    // graph is not a free view of a figure somebody has already paid for unless that figure is on
+    // screen, and this one is not collected until somebody names either of them (PRD §5.4).
+    new(ProcessField.GpuHistory, "gpu.history", "GPU history", "GPU hist",
+      "The last sixty seconds of adapter use, on the same scale as the GPU column beside it: 100% is the busiest engine the process is running on, saturated. A plot with no stated scale is a shape rather than a measurement.",
+      FieldKind.Graph, FieldUnit.Percent, _LINUX, FieldCost.High, 90, 12, false, false,
+      HistorySeries.Gpu,
+      Privilege: FieldPrivilege.Owner,
+      History: FieldHistory.Row),
 
     new(ProcessField.Elevated, "elevated", "Elevated", "Elev",
       "Whether the process runs with administrative authority — effective uid 0 on Unix.",

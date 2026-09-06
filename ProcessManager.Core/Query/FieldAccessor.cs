@@ -393,6 +393,7 @@ public static class FieldAccessor {
       case ProcessField.CpuHistory:
       case ProcessField.MemoryHistory:
       case ProcessField.IoHistory:
+      case ProcessField.GpuHistory:
       default:
         return string.Empty;
     }

@@ -476,8 +476,8 @@ interesting bug in a tool of this kind is a division that should not have been p
 **History.** Per-visible-row ring buffers with shared, decayed, floored scales.
 
 - [x] 60 s at sample resolution, visible rows only
-- [x] Floors (CPU 5 %, memory 32 MB, I/O 64 KB) so an idle process is a flat line, not noise
-      amplified to full scale
+- [x] Floors (CPU 5 %, memory 32 MB, I/O 64 KB, GPU 5 %) so an idle process is a flat line, not
+      noise amplified to full scale
 - [x] Decay ×0.92 so a spike does not permanently flatten everything after it
 - [x] Longer windows (5 min, 15 min, 1 h) — **and no decimating ring was needed, because the
       affordability problem this box names is avoided rather than solved.** It is real: 3600 points
@@ -1290,6 +1290,9 @@ to work there would be worse than one that says it does not.
       one figure covering both; each says so rather than reporting a nought
 - [x] `gpu.copy`
 - [x] `gpu.graphics`
+- [x] `gpu.history` — the row sparkline over `gpu.percent`, on the same reading and the same shared
+      scale as the column it is drawn beside, so the shape and the number cannot disagree. It carries
+      the adapter's cost like that column does, and so is off until somebody names either of them
 - [ ] `gpu.power` — neither NVML nor the DRM interface attributes power to a process, and a card's
       draw split by utilisation share is a model rather than a reading. §22 is where a labelled
       estimate would belong
