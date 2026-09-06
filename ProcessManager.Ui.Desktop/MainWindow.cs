@@ -14,7 +14,7 @@ namespace Hawkynt.ProcessManager.Ui.Desktop;
 /// The Process-Explorer-shaped window: system plots on top, the process tree below, a detail pane
 /// under it, and a status bar that admits what the sample cost (PRD §7.1).
 /// </summary>
-public sealed class MainWindow : Form {
+public sealed partial class MainWindow : Form {
 
   private readonly Sampler _sampler;
   private readonly ISystemProbe _probe;
@@ -437,6 +437,7 @@ public sealed class MainWindow : Form {
     builder.AppendLine($"rail:         {this._rail.Bounds}, {this._rail.Items.Count} entries — {string.Join(", ", this._rail.Items)}");
     builder.AppendLine($"command bar:  {this._commands.Bounds}, {this._commands.Items.Count} items");
     builder.AppendLine($"content:      {this._content.Bounds} showing {this._shown?.Title ?? "nothing"}");
+    builder.AppendLine($"navigation:   {this.NavigationForCapture()}");
     builder.AppendLine($"plots:        cpu {this._cpuPlot.Bounds}, memory {this._memoryPlot.Bounds}, cores {this._cores.Bounds}");
     builder.AppendLine($"topology:     {this._cores.Topology.Cores.Count} logical, {this._cores.Topology.Packages.Count} socket(s), hybrid {this._cores.Topology.IsHybrid}");
     builder.AppendLine($"status:       {this._status.Text}");
@@ -802,7 +803,10 @@ public sealed class MainWindow : Form {
     // every verb in this window reads the selection as a ProcessRow and declines without one
     // (PRD §83).
     this._tree.BeforeSelect += (_, e) => e.Cancel = e.Node?.Tag is GroupRow;
-    this._tree.AfterSelect += (_, _) => this.UpdateDetails();
+    this._tree.AfterSelect += (_, _) => {
+      this.UpdateDetails();
+      this.UpdateProcessNavigationState();
+    };
     // Double-click is how every tool of this kind opens a process, and the gesture people try first.
     this._tree.MouseDoubleClick += (_, _) => this.ShowProperties();
     this._tree.ContextMenuStrip = this.BuildContextMenu();
@@ -2276,6 +2280,7 @@ public sealed class MainWindow : Form {
     this._content.Controls.Add(view.Content);
     view.Show();
     this.UpdateCommandBar();
+    this.RecordNavigationVisit();
   }
 
   /// <summary>
@@ -2293,6 +2298,7 @@ public sealed class MainWindow : Form {
     // is present, mapped and nought pixels tall, which photographs exactly like a strip nobody added.
     this._commands.Height = 30;
 
+    this.BuildNavigationCommands();
     this._commands.Items.Add(Command("Properties", this.ShowProperties));
     this._commands.Items.Add(Command("End task", this.EndTask));
     this._commands.Items.Add(new ToolStripSeparator());
@@ -2321,11 +2327,16 @@ public sealed class MainWindow : Form {
   private void UpdateCommandBar() {
     var processes = this._shown is null || ReferenceEquals(this._shown.Content, this._split);
     foreach (var item in this._commands.Items)
-      if (item is ToolStripButton button && button.Text != "Refresh")
+      // Back, Forward and the path are the exceptions to "the view decides": they lead *out* of
+      // whatever is showing, so a view without processes must not grey out the way back from it.
+      // Their own state follows the history, and UpdateNavigationCommands below sets it.
+      if (item is ToolStripButton button && button.Text != "Refresh" && !this.IsNavigationCommand(button))
         button.Enabled = processes;
 
     if (this._lowerPaneButton is { } lower)
       lower.Text = this.LowerPaneVisible ? "Hide lower pane" : "Show lower pane";
+
+    this.UpdateNavigationCommands();
   }
 
   /// <summary>Collects the showing view's rows again, which is the only way any of them updates.</summary>
@@ -2504,6 +2515,13 @@ public sealed class MainWindow : Form {
     menu.Items.Add(this.BuildColumnMenu());
     menu.Items.Add(this.BuildEditMenu());
 
+    view.DropDownItems.Add(new ToolStripSeparator());
+
+    // On the chords a browser, a file manager and every other program with a session history binds
+    // them to, so they are reachable without the toolbar — and on the menu, so they are findable
+    // without knowing the chords (PRD §74).
+    view.DropDownItems.Add(Shortcut("Back", Keys.Alt | Keys.Left, () => this.NavigateBack()));
+    view.DropDownItems.Add(Shortcut("Forward", Keys.Alt | Keys.Right, () => this.NavigateForward()));
     view.DropDownItems.Add(new ToolStripSeparator());
 
     // The one interaction §10 calls the highest-value single item in the document, and the third of
