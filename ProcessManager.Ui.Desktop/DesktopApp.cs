@@ -45,6 +45,7 @@ public static class DesktopApp {
         return $"there is no UI backend for {Environment.OSVersion.Platform}";
 
       var window = new MainWindow(sampler, probe, actions, services, startup, sessions);
+      window.EnablePlayback();
 
       // Before FlatMode, so an explicit --flat still wins over what the file remembered.
       window.SettingsFile = SettingsStore.Locate(settingsPath);
